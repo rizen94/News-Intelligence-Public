@@ -36,6 +36,7 @@ import BookmarkAddIcon from '@mui/icons-material/BookmarkAdd';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useDomainRoute } from '../../hooks/useDomainRoute';
+import { useTaskPolling } from '../../hooks/useTaskPolling';
 import apiService from '../../services/apiService';
 import type {
   FinancialAnalysisResult as FinancialAnalysisResultPayload,
@@ -263,66 +264,56 @@ export default function FinancialAnalysisResult() {
   } | null>(null);
   const [updateTopicSaving, setUpdateTopicSaving] = useState(false);
 
+  const { status: taskStatus, result: taskResult, error: pollError, isPolling } =
+    useTaskPolling(taskId ?? null, domain);
+
+  useEffect(() => {
+    if (taskStatus || taskResult) {
+      setData({
+        task_id: taskId!,
+        status: taskStatus?.status ?? 'pending',
+        phase: taskStatus?.phase,
+        ...taskResult,
+      });
+    }
+    if (taskStatus?.status === 'complete' || taskStatus?.status === 'failed') {
+      setLoading(false);
+    } else if (isPolling) {
+      setLoading(true);
+    }
+  }, [taskStatus, taskResult, taskId, isPolling]);
+
+  useEffect(() => {
+    if (pollError) {
+      setError(pollError);
+      setLoading(false);
+    }
+  }, [pollError]);
+
   useEffect(() => {
     if (!taskId || !domain) return;
     let cancelled = false;
-
-    const poll = async () => {
+    const loadLedger = async () => {
       try {
-        const [res, ledgerRes] = await Promise.all([
-          apiService.getFinanceTaskResult(taskId, domain),
-          apiService
-            .getFinanceTaskLedger(taskId, domain)
-            .catch(() => ({ data: { entries: [] } })),
-        ]);
-        if (cancelled) return;
-        const d = res?.data;
-        if (d?.status) {
-          setData({
-            task_id: taskId,
-            status: d.status.status,
-            phase: d.status.phase,
-            ...d.result,
-          });
-        }
-        const entries = ledgerRes?.data?.entries || [];
-        setLedgerEntries(entries);
-        const st = d?.status?.status;
-        if (st === 'complete' || st === 'failed') {
-          setLoading(false);
-          return;
-        }
-      } catch (err: any) {
+        const ledgerRes = await apiService
+          .getFinanceTaskLedger(taskId, domain)
+          .catch(() => ({ data: { entries: [] } }));
         if (!cancelled) {
-          const status = err?.response?.status;
-          const detail = err?.response?.data?.detail;
-          if (status === 503 && detail) {
-            setError(`Backend: ${detail}`);
-          } else if (status != null && detail) {
-            setError(
-              `Request failed (${status}): ${
-                typeof detail === 'string' ? detail : JSON.stringify(detail)
-              }`
-            );
-          } else if (err?.message === 'Network Error' || !err?.response) {
-            setError(
-              'Cannot reach API. Check that the backend is running and the API URL (e.g. proxy or VITE_API_URL) is correct.'
-            );
-          } else {
-            setError(err?.message || 'Failed to fetch result');
-          }
-          setLoading(false);
+          setLedgerEntries(ledgerRes?.data?.entries || []);
         }
-        return;
+      } catch {
+        if (!cancelled) setLedgerEntries([]);
       }
-      setTimeout(poll, 2000);
     };
-
-    poll();
+    void loadLedger();
+    const t = setInterval(() => {
+      if (!cancelled && isPolling) void loadLedger();
+    }, 2000);
     return () => {
       cancelled = true;
+      clearInterval(t);
     };
-  }, [taskId, domain]);
+  }, [taskId, domain, isPolling]);
 
   useEffect(() => {
     if (!taskId || !domain || data?.status !== 'complete') return;

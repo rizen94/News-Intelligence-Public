@@ -277,9 +277,20 @@ def _validate_connection(conn) -> bool:
         with conn.cursor() as cur:
             cur.execute("SELECT 1")
             cur.fetchone()
+        # SELECT opens a transaction; rollback so checkout does not leak idle-in-tx sessions.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return True
     except Exception:
         return False
+
+
+def _direct_fallback_allowed() -> bool:
+    """When false, pool exhaustion fails fast instead of opening unaccounted direct sessions."""
+    raw = os.getenv("DB_ALLOW_DIRECT_FALLBACK", "true").strip().lower()
+    return raw not in ("0", "false", "no", "off")
 
 
 def _getconn_from_pool(pool_ref):
@@ -332,23 +343,69 @@ def get_db_connection(use_reserved: bool = False):
 
     import concurrent.futures
     pool_ref = _init_pool(pool_kind=pool_kind)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-        fut = ex.submit(_getconn_from_pool, pool_ref)
-        try:
-            conn = fut.result(timeout=timeout_sec)
-        except concurrent.futures.TimeoutError:
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(_getconn_from_pool, pool_ref)
+            try:
+                conn = fut.result(timeout=timeout_sec)
+            except concurrent.futures.TimeoutError:
+                # Log detailed pool information for debugging
+                try:
+                    pool_stats = get_db_pool_snapshot()
+                    logger.error(
+                        f"Database {pool_kind} pool timeout after {timeout_sec}s. Pool stats: {pool_stats}"
+                    )
+                except Exception:
+                    pass
+                raise ConnectionError(
+                    f"Database {pool_kind} pool timeout after {timeout_sec}s (pool likely exhausted). "
+                    "Check for connection leaks: use get_db_connection_context() or conn.close() in finally."
+                ) from None
+        if conn is not None:
+            return conn
+        logger.warning("%s pool returned stale connections; trying direct connect", pool_kind)
+    except Exception as e:
+        logger.error(f"Error getting connection from {pool_kind} pool: {e}")
+        if not _direct_fallback_allowed():
             raise ConnectionError(
-                f"Database {pool_kind} pool timeout after {timeout_sec}s (pool likely exhausted). "
+                f"Database {pool_kind} pool exhausted and DB_ALLOW_DIRECT_FALLBACK=false. "
                 "Check for connection leaks: use get_db_connection_context() or conn.close() in finally."
-            ) from None
-    if conn is not None:
-        return conn
-    logger.warning("%s pool returned stale connections; trying direct connect", pool_kind)
+            ) from e
+        # Try to recover with direct connection (bypasses pool accounting)
+        try:
+            kwargs = get_db_connect_kwargs()
+            raw = psycopg2.connect(**kwargs)
+            if _validate_connection(raw):
+                logger.warning(
+                    "Using direct DB connection outside %s pool (DB_ALLOW_DIRECT_FALLBACK=true)",
+                    pool_kind,
+                )
+                return PooledConnection(raw, None)
+            try:
+                raw.close()
+            except Exception:
+                pass
+        except Exception as e2:
+            logger.error(f"Direct connection failed: {e2}")
+        raise ConnectionError(
+            "Database connection failed (pool and direct). "
+            "Check DB_HOST, DB_PORT, DB_PASSWORD in .env and that the database is running."
+        ) from e
+
+    if not _direct_fallback_allowed():
+        raise ConnectionError(
+            f"Database {pool_kind} pool returned stale connections and "
+            "DB_ALLOW_DIRECT_FALLBACK=false."
+        )
 
     try:
         kwargs = get_db_connect_kwargs()
         raw = psycopg2.connect(**kwargs)
         if _validate_connection(raw):
+            logger.warning(
+                "Using direct DB connection outside %s pool (DB_ALLOW_DIRECT_FALLBACK=true)",
+                pool_kind,
+            )
             return PooledConnection(raw, None)
         try:
             raw.close()

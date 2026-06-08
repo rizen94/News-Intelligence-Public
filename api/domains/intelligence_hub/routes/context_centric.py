@@ -4,6 +4,7 @@ Read-only APIs for entity_profiles, contexts, tracked_events, claims.
 Flat /api/... routes. See docs/CONTEXT_CENTRIC_UPGRADE_PLAN.md.
 """
 
+import asyncio
 import json
 import logging
 from datetime import date, datetime
@@ -11,7 +12,7 @@ from decimal import Decimal
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Query
-from shared.database.connection import get_db_connection
+from shared.database.connection import get_db_connection, get_ui_db_connection_context
 from shared.domain_registry import (
     domain_key_to_schema,
     get_active_domain_keys,
@@ -1052,25 +1053,15 @@ def _contexts_list_where_params(
     return "TRUE", tuple()
 
 
-@router.get("/contexts", response_model=dict)
-def list_contexts(
-    domain_key: str | None = Query(None),
-    source_type: str | None = Query(None, description="e.g. article"),
-    limit: int = Query(
-        50,
-        ge=1,
-        le=50_000,
-        description="Page size; use offset for pagination. Large limits can be slow without brief=true.",
-    ),
-    offset: int = Query(0, ge=0),
-    brief: bool = Query(False, description="If true, truncate content for faster list load"),
+def _list_contexts_sync(
+    domain_key: str | None,
+    source_type: str | None,
+    limit: int,
+    offset: int,
+    brief: bool,
 ) -> dict:
-    """List intelligence contexts. Optional domain and source_type filters. Use brief=True for list views."""
-    conn = get_db_connection()
-    if not conn:
-        raise HTTPException(status_code=503, detail="Database unavailable")
-    try:
-        where_frag, base_params = _contexts_list_where_params(domain_key, source_type)
+    where_frag, base_params = _contexts_list_where_params(domain_key, source_type)
+    with get_ui_db_connection_context() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f"SELECT COUNT(*) FROM intelligence.contexts WHERE {where_frag}",
@@ -1088,20 +1079,35 @@ def list_contexts(
                 (*base_params, limit, offset),
             )
             rows = cur.fetchall()
-        conn.close()
-        content_len = 400 if brief else 2000
-        return {
-            "items": [_row_to_context(r, content_len) for r in rows],
-            "limit": limit,
-            "offset": offset,
-            "total": total,
-        }
+    content_len = 400 if brief else 2000
+    return {
+        "items": [_row_to_context(r, content_len) for r in rows],
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+    }
+
+
+@router.get("/contexts", response_model=dict)
+async def list_contexts(
+    domain_key: str | None = Query(None),
+    source_type: str | None = Query(None, description="e.g. article"),
+    limit: int = Query(
+        50,
+        ge=1,
+        le=50_000,
+        description="Page size; use offset for pagination. Large limits can be slow without brief=true.",
+    ),
+    offset: int = Query(0, ge=0),
+    brief: bool = Query(False, description="If true, truncate content for faster list load"),
+) -> dict:
+    """List intelligence contexts. Optional domain and source_type filters. Use brief=True for list views."""
+    try:
+        return await asyncio.to_thread(
+            _list_contexts_sync, domain_key, source_type, limit, offset, brief
+        )
     except Exception as e:
         logger.warning(f"list_contexts: {e}")
-        try:
-            conn.close()
-        except Exception:
-            pass
         raise HTTPException(status_code=500, detail="Failed to list contexts")
 
 
@@ -1363,33 +1369,23 @@ def _row_to_event(row: tuple) -> dict:
     return out
 
 
-@router.get("/tracked_events", response_model=dict)
-def list_tracked_events(
-    event_type: str | None = Query(None),
-    domain_key: str | None = Query(None, description="Filter: events that include this domain"),
-    limit: int = Query(
-        50,
-        ge=1,
-        le=50_000,
-        description="Page size; use offset for pagination.",
-    ),
-    offset: int = Query(0, ge=0),
+def _list_tracked_events_sync(
+    event_type: str | None,
+    domain_key: str | None,
+    limit: int,
+    offset: int,
 ) -> dict:
-    """List tracked events. Events can span multiple domains; domain_key filters to events that include that domain."""
-    conn = get_db_connection()
-    if not conn:
-        raise HTTPException(status_code=503, detail="Database unavailable")
-    try:
-        conditions = []
-        params: list = []
-        if event_type:
-            conditions.append("event_type = %s")
-            params.append(event_type)
-        if domain_key:
-            conditions.append("%s = ANY(domain_keys)")
-            params.append(domain_key)
-        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-        params.extend([limit, offset])
+    conditions = []
+    params: list = []
+    if event_type:
+        conditions.append("event_type = %s")
+        params.append(event_type)
+    if domain_key:
+        conditions.append("%s = ANY(domain_keys)")
+        params.append(domain_key)
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    params.extend([limit, offset])
+    with get_ui_db_connection_context() as conn:
         with conn.cursor() as cur:
             cur.execute("SET LOCAL statement_timeout = '5s'")
             cur.execute(
@@ -1406,6 +1402,7 @@ def list_tracked_events(
         items = [_row_to_event(r) for r in rows]
         try:
             from services.quality_feedback_service import get_latest_event_validations
+
             event_ids = [e["id"] for e in items]
             validations = get_latest_event_validations(event_ids, conn=conn)
             for e in items:
@@ -1413,14 +1410,28 @@ def list_tracked_events(
         except Exception:
             for e in items:
                 e["validation_status"] = None
-        conn.close()
-        return {"items": items, "limit": limit, "offset": offset}
+    return {"items": items, "limit": limit, "offset": offset}
+
+
+@router.get("/tracked_events", response_model=dict)
+async def list_tracked_events(
+    event_type: str | None = Query(None),
+    domain_key: str | None = Query(None, description="Filter: events that include this domain"),
+    limit: int = Query(
+        50,
+        ge=1,
+        le=50_000,
+        description="Page size; use offset for pagination.",
+    ),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    """List tracked events. Events can span multiple domains; domain_key filters to events that include that domain."""
+    try:
+        return await asyncio.to_thread(
+            _list_tracked_events_sync, event_type, domain_key, limit, offset
+        )
     except Exception as e:
         logger.warning(f"list_tracked_events: {e}")
-        try:
-            conn.close()
-        except Exception:
-            pass
         raise HTTPException(status_code=500, detail="Failed to list tracked events")
 
 

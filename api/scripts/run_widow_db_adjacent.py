@@ -81,16 +81,61 @@ def _run_pending_db_flush() -> None:
     logging.info("pending_db_flush: %s", stats)
 
 
+def _run_terminate_idle_in_transaction(minutes: int = 5) -> int:
+    """Terminate stale idle-in-transaction sessions (pool leak recovery)."""
+    from shared.database.connection import get_ephemeral_db_connection_context
+
+    terminated = 0
+    with get_ephemeral_db_connection_context() as conn:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT pg_terminate_backend(pid)
+                FROM pg_stat_activity
+                WHERE datname = current_database()
+                  AND state = 'idle in transaction'
+                  AND pid <> pg_backend_pid()
+                  AND state_change < NOW() - (%s || ' minutes')::interval
+                """,
+                (str(max(1, minutes)),),
+            )
+            terminated = cur.rowcount
+    logging.info(
+        "idle_in_tx_cleanup: terminated %s session(s) older than %s min",
+        terminated,
+        minutes,
+    )
+    return terminated
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Widow DB-adjacent batch (no API)")
     parser.add_argument("--rss", action="store_true", help="Run collect_rss_feeds (omit if newsplatform-secondary runs RSS)")
     parser.add_argument("--context-sync", action="store_true")
     parser.add_argument("--entity-profile-sync", action="store_true")
     parser.add_argument("--pending-db-flush", action="store_true")
+    parser.add_argument(
+        "--terminate-idle-in-tx",
+        action="store_true",
+        help="Terminate idle-in-transaction sessions older than --idle-in-tx-minutes",
+    )
+    parser.add_argument(
+        "--idle-in-tx-minutes",
+        type=int,
+        default=5,
+        help="Age threshold for --terminate-idle-in-tx (default 5)",
+    )
     args = parser.parse_args()
 
     if not any(
-        (args.rss, args.context_sync, args.entity_profile_sync, args.pending_db_flush)
+        (
+            args.rss,
+            args.context_sync,
+            args.entity_profile_sync,
+            args.pending_db_flush,
+            args.terminate_idle_in_tx,
+        )
     ):
         parser.print_help()
         return 2
@@ -102,14 +147,27 @@ def main() -> int:
     )
     _load_env()
 
+    from services.pipeline_schedule_service import db_adjacent_sync_allowed, rss_collection_allowed
+
     if args.rss:
-        _run_rss()
+        if rss_collection_allowed():
+            _run_rss()
+        else:
+            logging.info("RSS skipped (pipeline quiet window)")
     if args.context_sync:
-        _run_context_sync()
+        if db_adjacent_sync_allowed():
+            _run_context_sync()
+        else:
+            logging.info("context_sync skipped (pipeline quiet window)")
     if args.entity_profile_sync:
-        _run_entity_profile_sync()
+        if db_adjacent_sync_allowed():
+            _run_entity_profile_sync()
+        else:
+            logging.info("entity_profile_sync skipped (pipeline quiet window)")
     if args.pending_db_flush:
         _run_pending_db_flush()
+    if args.terminate_idle_in_tx:
+        _run_terminate_idle_in_transaction(minutes=args.idle_in_tx_minutes)
 
     return 0
 

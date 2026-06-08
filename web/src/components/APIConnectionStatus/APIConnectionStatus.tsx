@@ -3,9 +3,10 @@
  * Displays API connection status and allows manual reconnection
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Box, Chip, IconButton, Tooltip, Alert } from '@mui/material';
 import { CheckCircle, Error, Refresh } from '@mui/icons-material';
+import { useShellStatusOptional } from '../../contexts/ShellStatusContext';
 import { getAPIConnectionManager } from '../../services/apiConnectionManager';
 
 interface APIConnectionStatusProps {
@@ -15,25 +16,38 @@ interface APIConnectionStatusProps {
 const APIConnectionStatus: React.FC<APIConnectionStatusProps> = ({
   showDetails = false,
 }) => {
-  const [isConnected, setIsConnected] = useState(false);
+  const shell = useShellStatusOptional();
   const [isChecking, setIsChecking] = useState(false);
+  const [manualConnected, setManualConnected] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const connectionManager = getAPIConnectionManager();
+  const isConnected =
+    manualConnected !== null ? manualConnected : (shell?.apiConnected ?? false);
 
   const checkConnection = async () => {
     setIsChecking(true);
     setError(null);
     try {
+      if (shell) {
+        await shell.refresh();
+        setManualConnected(shell.apiConnected);
+        if (!shell.apiConnected) {
+          setError(
+            'API not reachable at /api on this host (504/timeout usually means the backend is overloaded, not a wrong API URL). Ensure the API service is running on Widow.'
+          );
+        }
+        return;
+      }
+      const connectionManager = getAPIConnectionManager();
       const connected = await connectionManager.testConnection();
-      setIsConnected(connected);
+      setManualConnected(connected);
       if (!connected) {
         setError(
           'API not reachable at /api on this host (504/timeout usually means the backend is overloaded, not a wrong API URL). Ensure the API service is running on Widow.'
         );
       }
     } catch (err: unknown) {
-      setIsConnected(false);
+      setManualConnected(false);
       setError(
         (err as Error)?.message ||
           'Connection check failed. Is the API running on port 8000?'
@@ -42,19 +56,6 @@ const APIConnectionStatus: React.FC<APIConnectionStatusProps> = ({
       setIsChecking(false);
     }
   };
-
-  useEffect(() => {
-    // Initial check
-    checkConnection();
-
-    // Optional: Check periodically (but not too frequently)
-    // User can also manually refresh
-    const interval = setInterval(() => {
-      checkConnection();
-    }, 120000); // HeroStatusBar polls health every 60s — avoid duplicate hammering
-
-    return () => clearInterval(interval);
-  }, []);
 
   const getStatusIcon = () => {
     if (isChecking) {
@@ -78,36 +79,21 @@ const APIConnectionStatus: React.FC<APIConnectionStatusProps> = ({
 
   return (
     <Box display='flex' alignItems='center' gap={1}>
-      <Tooltip
-        title={
-          error ||
-          (isConnected
-            ? 'API connection is active'
-            : 'API connection failed. Start the API (e.g. uvicorn on port 8000) and click to retry.')
-        }
-      >
+      <Tooltip title='Refresh API connection status'>
+        <IconButton size='small' onClick={checkConnection} disabled={isChecking}>
+          {getStatusIcon()}
+        </IconButton>
+      </Tooltip>
+      {showDetails && (
         <Chip
-          icon={getStatusIcon()}
+          size='small'
           label={getStatusText()}
           color={getStatusColor()}
-          size='small'
-          onClick={checkConnection}
-          sx={{ cursor: 'pointer' }}
+          variant='outlined'
         />
-      </Tooltip>
-      <Tooltip title='Refresh connection'>
-        <span>
-          <IconButton
-            size='small'
-            onClick={checkConnection}
-            disabled={isChecking}
-          >
-            <Refresh />
-          </IconButton>
-        </span>
-      </Tooltip>
+      )}
       {showDetails && error && (
-        <Alert severity='error' sx={{ ml: 1 }}>
+        <Alert severity='error' sx={{ py: 0, px: 1 }}>
           {error}
         </Alert>
       )}

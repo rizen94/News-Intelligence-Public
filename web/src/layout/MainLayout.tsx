@@ -20,6 +20,7 @@ import { Box, Select, MenuItem, FormControl, InputLabel } from '@mui/material';
 import { HeroStatusBar } from './HeroStatusBar';
 import { AppNav, APP_NAV_WIDTH } from './AppNav';
 import { useDomain } from '../contexts/DomainContext';
+import { ShellStatusProvider } from '../contexts/ShellStatusContext';
 import {
   isValidDomain,
   type DomainKey,
@@ -53,6 +54,7 @@ const MainLayout: React.FC = () => {
   };
 
   return (
+    <ShellStatusProvider>
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
       <HeroStatusBar />
       <Box sx={{ display: 'flex', flex: 1 }}>
@@ -86,6 +88,7 @@ const MainLayout: React.FC = () => {
         </Box>
       </Box>
     </Box>
+    </ShellStatusProvider>
   );
 };
 

@@ -87,6 +87,12 @@ _BROWSER_UA = (
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
+# Boilerplate extracted when video/embed players fail (extension blockers, etc.) — not usable article text.
+_BODY_BOILERPLATE_SUBSTRINGS: tuple[str, ...] = (
+    "browser extensions seems to be blocking the video player",
+    "to watch this content, you may need to disable it on this site",
+)
+
 # Phrases that indicate the extracted "content" is a paywall/subscription block instead of the article
 _PAYWALL_PHRASES = (
     "subscribe to unlock",
@@ -133,6 +139,103 @@ def _is_paywall_content(text: str) -> bool:
     return False
 
 
+_SENTENCE_BOUNDARY_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def strip_boilerplate_sentences(text: str) -> str:
+    """
+    Remove sentences that match known non-article stubs (e.g. blocked video player messages).
+    Applied after paragraph spacing so storyline excerpts and readers stay clean.
+    """
+    if not text or not str(text).strip():
+        return (text or "").strip()
+    needles = _BODY_BOILERPLATE_SUBSTRINGS
+    paras = str(text).replace("\r\n", "\n").replace("\r", "\n").split("\n\n")
+    out_paras: list[str] = []
+    for para in paras:
+        p = para.strip()
+        if not p:
+            continue
+        sentences = [s.strip() for s in _SENTENCE_BOUNDARY_SPLIT_RE.split(p) if s.strip()]
+        if not sentences:
+            continue
+        low_block = p.lower()
+        if len(sentences) == 1 and _SENTENCE_BOUNDARY_SPLIT_RE.search(p) is None:
+            if any(n in low_block for n in needles):
+                continue
+            out_paras.append(p)
+            continue
+        kept: list[str] = []
+        for s in sentences:
+            low = s.lower()
+            if any(n in low for n in needles):
+                continue
+            kept.append(s)
+        if kept:
+            out_paras.append(" ".join(kept))
+    return "\n\n".join(out_paras).strip()
+
+
+def format_article_content_excerpt(raw: str | None, max_len: int) -> str | None:
+    """Normalize a DB snippet for API responses (paragraphs + boilerplate strip + truncate)."""
+    if raw is None:
+        return None
+    out = format_article_body_paragraphs(str(raw).strip())
+    if not out:
+        return None
+    return out[:max_len] if len(out) > max_len else out
+
+
+def format_article_body_paragraphs(text: str) -> str:
+    """
+    Insert blank lines between paragraphs for readability in the article reader.
+    Scraped text often arrives as a single block or with only single newlines.
+    """
+    if not text or not str(text).strip():
+        return (text or "").strip()
+
+    out = str(text).replace("\r\n", "\n").replace("\r", "\n")
+    out = re.sub(r"[ \t]+\n", "\n", out)
+    out = re.sub(r"\n[ \t]+", "\n", out)
+    # Line break after sentence end when the next line starts a new sentence or list item.
+    out = re.sub(r"(?<=[.!?])\n+(?=[A-Z0-9\"'(\[])", "\n\n", out)
+    out = re.sub(r"(?<=[.!?])\n+(?=\d+\.\s)", "\n\n", out)
+
+    if "\n\n" not in out.strip():
+        sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(\[])", out.strip())
+        if len(sentences) >= 4:
+            paragraphs: list[str] = []
+            chunk: list[str] = []
+            chunk_len = 0
+            for sentence in sentences:
+                s = sentence.strip()
+                if not s:
+                    continue
+                chunk.append(s)
+                chunk_len += len(s)
+                if len(chunk) >= 3 or chunk_len >= 420:
+                    paragraphs.append(" ".join(chunk))
+                    chunk = []
+                    chunk_len = 0
+            if chunk:
+                paragraphs.append(" ".join(chunk))
+            if len(paragraphs) >= 2:
+                out = "\n\n".join(paragraphs)
+
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return strip_boilerplate_sentences(out.strip())
+
+
+def _finalize_extracted_text(text: str) -> str:
+    """Paywall check + paragraph spacing for stored and returned article bodies."""
+    text = (text or "").strip()
+    if not text:
+        return ""
+    if _is_paywall_content(text):
+        return ""
+    return format_article_body_paragraphs(text)
+
+
 def _extract_from_html(html: str) -> str:
     """Extract main text from HTML with trafilatura; return empty if paywall or failure."""
     if not html or len(html.strip()) < 100:
@@ -145,15 +248,18 @@ def _extract_from_html(html: str) -> str:
                 html,
                 include_comments=False,
                 include_tables=False,
+                include_formatting=True,
                 config=_FAST_CONFIG,
             )
             if _FAST_CONFIG
-            else trafilatura.extract(html, include_comments=False, include_tables=False)
+            else trafilatura.extract(
+                html,
+                include_comments=False,
+                include_tables=False,
+                include_formatting=True,
+            )
         )
-        text = (text or "").strip()
-        if text and _is_paywall_content(text):
-            return ""
-        return text
+        return _finalize_extracted_text(text)
     except Exception as e:
         logger.debug("trafilatura extract from HTML failed: %s", e)
         return ""
@@ -311,6 +417,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
     from services.context_processor_service import (
         ensure_context_for_article,
         sync_context_from_article_after_content_change,
+        update_context_content_for_article,
     )
 
     conn = get_db_connection()
@@ -330,6 +437,14 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
         n_domains = len(pairs)
         share = max(1, (batch_size + n_domains - 1) // n_domains)
         _ca_ord = sql_order_created_at()
+        batch_commit_every = 10
+        pending_commits = 0
+
+        def _flush_commit(force: bool = False) -> None:
+            nonlocal pending_commits
+            if force or pending_commits >= batch_commit_every:
+                conn.commit()
+                pending_commits = 0
 
         for domain_key, schema_name in pairs:
             if remaining <= 0:
@@ -395,7 +510,8 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                         f"""UPDATE {schema_name}.articles SET enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1, updated_at = NOW() WHERE id = %s""",
                         (article_id,),
                     )
-                conn.commit()
+                pending_commits += 1
+                _flush_commit()
 
                 text = _fetch_full_text(url)
                 if text:
@@ -424,7 +540,8 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                         conn.commit()
                         time.sleep(RATE_LIMIT_SLEEP)
                         continue
-                conn.commit()
+                pending_commits += 1
+                _flush_commit()
 
                 if text:
                     enriched += 1
@@ -433,12 +550,15 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
 
                 time.sleep(RATE_LIMIT_SLEEP)
 
+            _flush_commit(force=True)
+
         for _dk, sch in pairs:
             with conn.cursor() as cur:
                 cur.execute(
                     f"""UPDATE {sch}.articles SET enrichment_status = 'inaccessible' WHERE enrichment_status = 'failed' AND enrichment_attempts >= 3"""
                 )
-            conn.commit()
+            pending_commits += 1
+        _flush_commit(force=True)
 
         if enriched > 0:
             logger.info("Content enrichment (v8): %s articles enriched", enriched)
@@ -477,36 +597,40 @@ def _fetch_full_text(url: str, config=None) -> str:
                     downloaded,
                     include_comments=False,
                     include_tables=False,
+                    include_formatting=True,
                     config=cfg,
                 )
                 if cfg
-                else trafilatura.extract(downloaded, include_comments=False, include_tables=False)
+                else trafilatura.extract(
+                    downloaded,
+                    include_comments=False,
+                    include_tables=False,
+                    include_formatting=True,
+                )
             )
-            text = (text or "").strip()
-            if text and not _is_paywall_content(text):
-                return text
+            text = _finalize_extracted_text(text)
             if text:
-                logger.debug("Paywall/subscription content rejected for %s", url[:80])
+                return text
     except Exception as e:
         logger.debug("trafilatura fetch failed for %s: %s", url[:80], e)
 
     # 1b. Same live URL with browser User-Agent (some CDNs block non-browser clients)
-    text = _fetch_live_with_browser_ua(url)
+    text = _finalize_extracted_text(_fetch_live_with_browser_ua(url))
     if text:
         return text
 
     # 2. Browser (headless)
-    text = _fetch_via_browser(url)
+    text = _finalize_extracted_text(_fetch_via_browser(url))
     if text:
         return text
 
     # 3. Wayback
-    text = _fetch_via_wayback(url)
+    text = _finalize_extracted_text(_fetch_via_wayback(url))
     if text:
         return text
 
     # 4. archive.today
-    text = _fetch_via_archivetoday(url)
+    text = _finalize_extracted_text(_fetch_via_archivetoday(url))
     if text:
         return text
 
@@ -541,7 +665,9 @@ def fetch_full_content_for_article(domain_key: str, article_id: int) -> dict[str
         sync_context_from_article_after_content_change,
     )
 
-    schema_name = domain_key.replace("-", "_")
+    from shared.domain_registry import resolve_domain_schema
+
+    schema_name = resolve_domain_schema(domain_key)
 
     try:
         with get_ui_db_connection_context() as conn:
@@ -559,12 +685,20 @@ def fetch_full_content_for_article(domain_key: str, article_id: int) -> dict[str
                     "content": None,
                 }
             url, existing = row[0], (row[1] or "")
+            existing_stripped = format_article_body_paragraphs(existing.strip())
+            if len(existing_stripped) >= 80:
+                return {
+                    "success": True,
+                    "not_found": False,
+                    "message": None,
+                    "content": existing_stripped,
+                }
             if not url or not str(url).strip():
                 return {
                     "success": False,
                     "not_found": False,
                     "message": "Article has no source URL",
-                    "content": existing.strip() or None,
+                    "content": existing_stripped or None,
                 }
 
             text = _fetch_full_text(str(url).strip(), config=_ONDEMAND_CONFIG)

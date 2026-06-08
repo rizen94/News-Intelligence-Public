@@ -55,11 +55,10 @@ import {
 } from 'recharts';
 import apiService from '@/services/apiService';
 import {
-  contextCentricApi,
   heroBarEventsStoredCount,
-  type ContextCentricStatus,
 } from '@/services/api/contextCentric';
 import { getDefaultDomainKey, getDomainKeysList } from '@/utils/domainHelper';
+import { useShellStatus } from '@/contexts/ShellStatusContext';
 import { usePinnedThreads } from '@/hooks/usePinnedThreads';
 
 /** Poll interval for full Monitor refresh (overview + pipeline + processing pulse together). */
@@ -154,6 +153,73 @@ function formatPulseCount(n: number | null | undefined): string {
  * inside the 24h total. Baseline = mean completions over the other 23 hours in the rolling window;
  * if those are too sparse, fall back to mean over full 24h (still a rough rate, not a formal test).
  */
+type ProcessingPulseState = {
+  success?: boolean;
+  data?: {
+    generated_at_utc?: string;
+    pending_metrics_included?: boolean;
+    pending_metrics_as_of_utc?: string;
+    operator_metrics?: Record<string, unknown>;
+    reporting_definitions?: Record<string, string>;
+    dimensions?: ProcessingPulseDimension[];
+    phase_dashboard?: ProcessingPulsePhase[];
+    phases?: ProcessingPulsePhase[];
+    hourly_phase_ticks?: Array<{
+      hour_utc?: string;
+      phase_name?: string;
+      runs?: number;
+      failures?: number;
+    }>;
+    hourly_phase_tick_bucket_count?: number | null;
+  };
+  error?: string;
+};
+
+/** Keep backlog_metrics columns when a fast-path poll refreshes throughput/run counts. */
+function mergeProcessingPulseWithCachedPending(
+  fast: ProcessingPulseState,
+  cached: ProcessingPulseState | null
+): ProcessingPulseState {
+  if (!fast?.data) return fast;
+  if (fast.data.pending_metrics_included) return fast;
+  if (!cached?.data?.pending_metrics_included) return fast;
+
+  const cachedPhases = cached.data.phase_dashboard ?? cached.data.phases ?? [];
+  const cachedByPhase = new Map(
+    cachedPhases
+      .filter(p => typeof p.phase_name === 'string' && p.phase_name.length > 0)
+      .map(p => [p.phase_name as string, p])
+  );
+  if (cachedByPhase.size === 0) return fast;
+
+  const fastPhases = fast.data.phase_dashboard ?? fast.data.phases ?? [];
+  const mergedPhases = fastPhases.map(p => {
+    const name = p.phase_name;
+    if (!name) return p;
+    const c = cachedByPhase.get(name);
+    if (!c) return p;
+    return {
+      ...p,
+      pending_records: c.pending_records,
+      estimated_batch_per_run: c.estimated_batch_per_run,
+      batches_to_drain: c.batches_to_drain,
+    };
+  });
+
+  return {
+    ...fast,
+    data: {
+      ...fast.data,
+      phase_dashboard: mergedPhases,
+      phases: mergedPhases,
+      pending_metrics_included: true,
+      pending_metrics_as_of_utc:
+        cached.data.pending_metrics_as_of_utc ?? cached.data.generated_at_utc,
+      operator_metrics: cached.data.operator_metrics ?? fast.data.operator_metrics,
+    },
+  };
+}
+
 function pulseTrendSymbol(
   last1h: number,
   last24h: number
@@ -217,27 +283,8 @@ export default function MonitorPage() {
     };
     error?: string;
   } | null>(null);
-  const [processingPulse, setProcessingPulse] = useState<{
-    success?: boolean;
-    data?: {
-      generated_at_utc?: string;
-      /** False when API skipped backlog_metrics (faster; phase "Unprocessed rows" are zeros). */
-      pending_metrics_included?: boolean;
-      reporting_definitions?: Record<string, string>;
-      dimensions?: ProcessingPulseDimension[];
-      phase_dashboard?: ProcessingPulsePhase[];
-      phases?: ProcessingPulsePhase[];
-      hourly_phase_ticks?: Array<{
-        hour_utc?: string;
-        phase_name?: string;
-        runs?: number;
-        failures?: number;
-      }>;
-      /** When hourly rows are omitted (default API), server still returns bucket count. */
-      hourly_phase_tick_bucket_count?: number | null;
-    };
-    error?: string;
-  } | null>(null);
+  const [processingPulse, setProcessingPulse] =
+    useState<ProcessingPulseState | null>(null);
   /** First full bundle (overview + pipeline + pulse) not yet finished. */
   const [initialLoad, setInitialLoad] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -248,12 +295,7 @@ export default function MonitorPage() {
     message: string;
     warning?: string;
   } | null>(null);
-  /** Global corpus counters + orchestrator collection times (moved from Dashboard). */
-  const [ccStatus, setCcStatus] = useState<ContextCentricStatus | null>(null);
-  const [orchCollection, setOrchCollection] = useState<Record<
-    string,
-    unknown
-  > | null>(null);
+  const { ctxStatus: ccStatus, orchStatus: orchCollection } = useShellStatus();
   /** From GET /api/system_monitoring/automation/status — confirms FIFO vs legacy LIFO batch ordering. */
   const [pipelineArticleSelection, setPipelineArticleSelection] = useState<{
     mode?: string;
@@ -262,35 +304,43 @@ export default function MonitorPage() {
     order_env?: string;
   } | null>(null);
 
-  /** One bundle: health/activity, pipeline card, full processing pulse (incl. unprocessed rows). */
-  const refreshMonitor = useCallback(async () => {
-    const orchDash = (async () => {
-      try {
-        const fn = apiService.getOrchestratorDashboard;
-        if (typeof fn !== 'function') return null;
-        const d = await fn.call(apiService, { decision_log_limit: 1 });
-        return (d as { status?: Record<string, unknown> } | null)?.status ?? null;
-      } catch {
-        return null;
-      }
-    })();
+  /** Fast path: health + activity only — must not wait on pipeline/pulse (120s-class calls). */
+  const refreshOverview = useCallback(async () => {
+    const ov = await apiService.getMonitoringOverview();
+    setOverview(ov ?? null);
+    return ov;
+  }, []);
 
-    const [ov, pipe, pulse, gpuH, stData, orchData, autoEnvelope] = await Promise.all([
-      apiService.getMonitoringOverview(),
+  /** Heavy panels: pipeline, pulse, GPU, automation — orchestrator/CC from ShellStatusContext. */
+  const refreshHeavyPanels = useCallback(async () => {
+    const results = await Promise.allSettled([
       apiService.getPipelineStatus(),
-      // Real per-phase queue depths require backlog_metrics (slower); nginx allows long reads on /api/system_monitoring/.
-      apiService.getProcessingProgress({ includePendingMetrics: true }),
+      apiService.getProcessingProgress({ includePendingMetrics: false }),
       apiService.getGpuMetricHistory(72),
-      contextCentricApi.getStatus(null).catch(() => null),
-      orchDash,
       apiService.getAutomationStatus().catch(() => null),
     ]);
-    setOverview(ov ?? null);
+    const settledErr = (r: PromiseSettledResult<unknown>, label: string) =>
+      r.status === 'rejected'
+        ? { success: false as const, error: `${label}: ${(r.reason as Error)?.message ?? 'failed'}` }
+        : null;
+    const pipe =
+      results[0].status === 'fulfilled' ? results[0].value : settledErr(results[0], 'pipeline_status');
+    const pulse =
+      results[1].status === 'fulfilled' ? results[1].value : settledErr(results[1], 'processing_progress');
+    const gpuH = results[2].status === 'fulfilled' ? results[2].value : null;
+    const autoEnvelope = results[3].status === 'fulfilled' ? results[3].value : null;
     setPipeline(pipe ?? null);
-    setProcessingPulse(pulse ?? null);
+    if (pulse && typeof pulse === 'object' && 'success' in pulse) {
+      setProcessingPulse(prev =>
+        mergeProcessingPulseWithCachedPending(
+          pulse as ProcessingPulseState,
+          prev
+        )
+      );
+    } else {
+      setProcessingPulse(pulse ?? null);
+    }
     setGpuMetricHistory(gpuH ?? null);
-    setCcStatus(stData ?? null);
-    setOrchCollection(orchData ?? null);
     const autoData = (
       autoEnvelope as {
         data?: {
@@ -304,6 +354,31 @@ export default function MonitorPage() {
       } | null
     )?.data;
     setPipelineArticleSelection(autoData?.pipeline_article_selection ?? null);
+  }, []);
+
+  const [pendingMetricsLoading, setPendingMetricsLoading] = useState(false);
+
+  /** Heavy backlog_metrics pass — populates phase pending_records / runs-to-clear columns. */
+  const fetchPendingMetrics = useCallback(async () => {
+    setPendingMetricsLoading(true);
+    try {
+      const pulse = await apiService.getProcessingProgress({
+        includePendingMetrics: true,
+      });
+      if (pulse?.success && pulse.data) {
+        setProcessingPulse({
+          ...pulse,
+          data: {
+            ...pulse.data,
+            pending_metrics_as_of_utc: pulse.data.generated_at_utc,
+          },
+        });
+      }
+    } catch {
+      /* getProcessingProgress returns { success: false } on failure */
+    } finally {
+      setPendingMetricsLoading(false);
+    }
   }, []);
 
   const lastCollectionTimes = useMemo(() => {
@@ -338,12 +413,19 @@ export default function MonitorPage() {
   useEffect(() => {
     let cancelled = false;
     let pollTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    let pollTick = 0;
 
     void (async () => {
       setInitialLoad(true);
       setError(null);
       try {
-        await refreshMonitor();
+        // Unblock health/activity UI as soon as overview returns (do not wait on 120s pipeline/pulse).
+        const overviewPromise = refreshOverview().finally(() => {
+          if (!cancelled) setInitialLoad(false);
+        });
+        void refreshHeavyPanels();
+        await overviewPromise;
+        if (!cancelled) void fetchPendingMetrics();
       } catch (e) {
         if (!cancelled) setError((e as Error).message);
       } finally {
@@ -357,7 +439,11 @@ export default function MonitorPage() {
           void (async () => {
             if (cancelled) return;
             try {
-              await refreshMonitor();
+              await refreshOverview();
+              void refreshHeavyPanels();
+              pollTick += 1;
+              // Refresh queue depths ~every minute (backlog SQL is heavy for every 15s poll).
+              if (pollTick % 4 === 0) void fetchPendingMetrics();
             } catch {
               /* monitoring APIs usually return { success: false }; guard anyway */
             }
@@ -372,7 +458,7 @@ export default function MonitorPage() {
       cancelled = true;
       if (pollTimeoutId !== null) clearTimeout(pollTimeoutId);
     };
-  }, [refreshMonitor]);
+  }, [refreshOverview, refreshHeavyPanels, fetchPendingMetrics]);
 
   const handleTriggerPhase = async () => {
     if (!triggerPhaseName || !apiService.triggerPhase) return;
@@ -396,7 +482,10 @@ export default function MonitorPage() {
         setTriggerPhaseName('');
         void refreshMonitor();
         setTimeout(() => void refreshMonitor(), 2500);
-        setTimeout(() => void refreshMonitor(), 6000);
+        setTimeout(() => {
+          void refreshMonitor();
+          void fetchPendingMetrics();
+        }, 6000);
       } else {
         setTriggerResult({
           success: false,
@@ -926,12 +1015,27 @@ export default function MonitorPage() {
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               {processingPulse.data.pending_metrics_included === false && (
                 <Alert severity='info' sx={{ py: 0.5 }}>
-                  Per-phase <strong>Unprocessed rows</strong> use a fast path (skips heavy backlog counts
-                  so proxies do not close the connection). Throughput chips and run counts still reflect the
-                  last 7 days. For queue depths and ETAs, call{' '}
-                  <code style={{ fontSize: '0.85em' }}>GET /api/system_monitoring/backlog_status</code>.
+                  {pendingMetricsLoading ? (
+                    <>
+                      Loading <strong>unprocessed row</strong> counts from backlog_metrics…
+                    </>
+                  ) : (
+                    <>
+                      Per-phase <strong>unprocessed rows</strong> are not loaded yet (fast path
+                      refresh). Throughput chips and run counts still reflect the last 7 days. Queue
+                      depths load in the background and refresh ~every minute.
+                    </>
+                  )}
                 </Alert>
               )}
+              {processingPulse.data.pending_metrics_included === true &&
+                processingPulse.data.pending_metrics_as_of_utc && (
+                  <Typography variant='caption' color='text.secondary'>
+                    Queue depths as of{' '}
+                    {shortLocalDateTime(processingPulse.data.pending_metrics_as_of_utc)} — throughput
+                    and run counts update every 15s
+                  </Typography>
+                )}
               <Typography variant='caption' color='text.secondary'>
                 Generated{' '}
                 {processingPulse.data.generated_at_utc

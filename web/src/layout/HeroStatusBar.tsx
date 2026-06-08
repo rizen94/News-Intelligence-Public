@@ -2,62 +2,14 @@
  * Hero status bar — system health, quick stats, last update.
  * Product notes: docs/archive/planning_incubator/WEB_PRODUCT_DISPLAY_PLAN.md
  */
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Box, Typography, Chip } from '@mui/material';
-import {
-  contextCentricApi,
-  heroBarEventsStoredCount,
-  type ContextCentricStatus,
-} from '../services/api/contextCentric';
-import apiService from '../services/apiService';
+import { heroBarEventsStoredCount } from '../services/api/contextCentric';
 import APIConnectionStatus from '../components/APIConnectionStatus/APIConnectionStatus';
+import { useShellStatus } from '../contexts/ShellStatusContext';
 
 export const HeroStatusBar: React.FC = () => {
-  const [health, setHealth] = useState<{ status?: string; services?: Record<string, string> } | null>(null);
-  const [orchStatus, setOrchStatus] = useState<{
-    running?: boolean;
-    last_collection_times?: Record<string, string>;
-    collection_sources?: string[];
-  } | null>(null);
-  const [ctxStatus, setCtxStatus] = useState<ContextCentricStatus | null>(null);
-  const [lastFetch, setLastFetch] = useState<Date | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const fetchAll = async () => {
-      try {
-        const orchPromise = (async () => {
-          try {
-            const fn = apiService.getOrchestratorDashboard;
-            if (typeof fn !== 'function') return null;
-            const d = await fn.call(apiService, { decision_log_limit: 1 });
-            return d?.status ?? null;
-          } catch {
-            return null;
-          }
-        })();
-
-        const [h, o, c] = await Promise.all([
-          apiService.getHealth().catch(() => null),
-          orchPromise,
-          contextCentricApi.getStatus(null).catch(() => null),
-        ]);
-        if (cancelled) return;
-        if (h && typeof h === 'object') setHealth(h);
-        if (o && typeof o === 'object') setOrchStatus(o);
-        if (c && typeof c === 'object') setCtxStatus(c);
-        setLastFetch(new Date());
-      } catch {
-        if (!cancelled) setLastFetch(new Date());
-      }
-    };
-    fetchAll();
-    const t = setInterval(fetchAll, 60_000);
-    return () => {
-      cancelled = true;
-      clearInterval(t);
-    };
-  }, []);
+  const { health, orchStatus, ctxStatus, lastFetch } = useShellStatus();
 
   const systemHealthy = health?.status === 'healthy';
   const sourcesCount = orchStatus?.collection_sources?.length ?? 0;

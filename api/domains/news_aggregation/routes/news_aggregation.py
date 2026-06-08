@@ -18,6 +18,7 @@ from shared.domain_registry import (
     first_active_domain_key,
     get_active_domain_keys,
     is_valid_domain_key,
+    resolve_domain_schema,
 )
 from shared.services.domain_aware_service import (
     get_domain_data_schemas,
@@ -412,6 +413,16 @@ async def fetch_articles_from_feeds(background_tasks: BackgroundTasks):
     }
 
 
+def _get_domain_articles_sync(
+    domain: str,
+    limit: int,
+    offset: int,
+    filters: dict[str, Any],
+) -> dict:
+    article_service = ArticleService(domain=domain)
+    return article_service.get_articles(limit=limit, offset=offset, filters=filters)
+
+
 @router.get("/{domain}/articles")
 async def get_domain_articles(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN, description="Domain key"),
@@ -450,22 +461,15 @@ async def get_domain_articles(
     Domain-aware endpoint that returns articles from the specified domain schema.
     """
     try:
-        # Validate domain
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
 
-        # Create domain-aware service
-        article_service = ArticleService(domain=domain)
-
-        # Build filters (search / sort / quality / sentiment applied in SQL before LIMIT)
         filters: dict[str, Any] = {}
         if source_domain and str(source_domain).strip():
             filters["source_domain"] = str(source_domain).strip()
         if processing_status:
             filters["processing_status"] = processing_status
         if hours:
-            from datetime import datetime, timedelta
-
             filters["published_after"] = datetime.now() - timedelta(hours=hours)
         if unlinked:
             filters["unlinked"] = True
@@ -484,10 +488,9 @@ async def get_domain_articles(
         if max_quality_score is not None:
             filters["max_quality_score"] = max_quality_score
 
-        # Get articles
-        result = article_service.get_articles(limit=limit, offset=offset, filters=filters)
-
-        return result
+        return await asyncio.to_thread(
+            _get_domain_articles_sync, domain, limit, offset, filters
+        )
 
     except HTTPException:
         raise
@@ -608,7 +611,7 @@ async def delete_domain_article(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:
@@ -658,7 +661,7 @@ async def delete_domain_articles_bulk(
         if not article_ids:
             raise HTTPException(status_code=400, detail="No article IDs provided")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:

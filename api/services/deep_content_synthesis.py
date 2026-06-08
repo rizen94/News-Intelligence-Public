@@ -12,6 +12,7 @@ Features:
 """
 
 import json
+from shared.domain_registry import resolve_domain_schema
 import logging
 import os
 import re
@@ -355,7 +356,7 @@ Focus on the most important and newsworthy facts. Extract 5-15 key facts."""
         Pulls full intelligence context (entities, claims, events, positions)
         from content_synthesis_service when available.
         """
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         # Fetch storyline and articles
         storyline, articles = self._fetch_storyline_with_articles(schema, storyline_id)
@@ -479,7 +480,7 @@ Focus on the most important and newsworthy facts. Extract 5-15 key facts."""
 
     def get_saved_synthesis(self, domain: str, storyline_id: int) -> dict[str, Any] | None:
         """Retrieve saved synthesis from database"""
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         try:
             conn = self.get_db_connection()
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -516,7 +517,7 @@ Focus on the most important and newsworthy facts. Extract 5-15 key facts."""
         """
         Create comprehensive synthesized content for a topic.
         """
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         # Fetch relevant articles for topic
         articles = self._fetch_articles_for_topic(schema, topic_name, hours)
@@ -537,7 +538,7 @@ Focus on the most important and newsworthy facts. Extract 5-15 key facts."""
         """
         Create synthesized content for breaking/trending stories.
         """
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         # Find clustered articles (breaking news)
         clusters = self._find_article_clusters(schema, hours, min_articles)
@@ -995,6 +996,59 @@ Write in neutral, encyclopedic tone. Be informative and comprehensive."""
 
         return f"[Content generation failed for this section. Topic: {prompt[:100]}...]"
 
+    def iter_stream_llm_content(self, prompt: str, max_tokens: int = 800):
+        """Yield text chunks from Ollama streaming /api/generate (interactive synthesis preview)."""
+        import json as _json
+
+        try:
+            with requests.post(
+                f"{OLLAMA_BASE_URL}/api/generate",
+                json={
+                    "model": LLM_MODEL,
+                    "prompt": prompt,
+                    "stream": True,
+                    "keep_alive": "5m",
+                    "options": {"num_predict": max_tokens, "temperature": 0.7},
+                },
+                timeout=LLM_TIMEOUT,
+                stream=True,
+            ) as response:
+                if response.status_code != 200:
+                    yield f"[Stream error: HTTP {response.status_code}]"
+                    return
+                for raw in response.iter_lines(decode_unicode=True):
+                    if not raw:
+                        continue
+                    try:
+                        payload = _json.loads(raw)
+                    except _json.JSONDecodeError:
+                        continue
+                    chunk = payload.get("response") or ""
+                    if chunk:
+                        yield chunk
+                    if payload.get("done"):
+                        break
+        except Exception as e:
+            logger.error("LLM stream generation failed: %s", e)
+            yield f"[Content stream failed: {e}]"
+
+    def build_storyline_stream_prompt(
+        self, domain: str, storyline_id: int, depth: str = "comprehensive"
+    ) -> str:
+        """Lightweight prompt for streamed lead section (time-to-first-token)."""
+        schema = resolve_domain_schema(domain)
+        storyline, articles = self._fetch_storyline_with_articles(schema, storyline_id)
+        if not storyline:
+            raise ValueError(f"Storyline {storyline_id} not found")
+        titles = [a.get("title") or "" for a in articles[:8] if a.get("title")]
+        headline = storyline.get("title") or "Unknown Topic"
+        sources = "\n".join(f"- {t}" for t in titles if t.strip())
+        return (
+            f"Write a clear, informative lead section ({depth} depth) for the news storyline "
+            f'"{headline}". Use only these source headlines as context:\n{sources}\n\n'
+            "Output markdown paragraphs only — no JSON."
+        )
+
     def _identify_terms_needing_explanation(
         self, facts: list[ExtractedFact], domain: str
     ) -> list[str]:
@@ -1016,7 +1070,7 @@ Write in neutral, encyclopedic tone. Be informative and comprehensive."""
     def _get_term_explanation(self, domain: str, term: str) -> str | None:
         """Get explanation for a technical term"""
         # First check domain knowledge base
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         kb = self.knowledge_service.knowledge_bases.get(
             domain, self.knowledge_service.knowledge_bases.get(schema, {})
         )

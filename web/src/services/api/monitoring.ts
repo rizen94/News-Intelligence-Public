@@ -8,11 +8,16 @@ import Logger from '../../utils/logger';
 export const monitoringApi = {
   async getHealth() {
     try {
-      const response = await getApi().get('/api/system_monitoring/health');
+      const response = await getApi().get('/api/system_monitoring/health', {
+        timeout: 10000,
+      });
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch health', error as Error);
-      return { success: false, error: (error as any).message };
+      return {
+        success: false,
+        error: `system_monitoring/health: ${(error as Error).message}`,
+      };
     }
   },
 
@@ -21,17 +26,19 @@ export const monitoringApi = {
     try {
       const response = await getApi().get(
         '/api/system_monitoring/monitoring/overview',
-        // DB check + activity enrich can be slow under pool pressure; align with other monitor GETs
-        { timeout: 120000 }
+        // Fail fast when API/pool is saturated — Monitor loads other panels in parallel.
+        { timeout: 20000 }
       );
       return response.data;
     } catch (error) {
-      Logger.apiError('Failed to fetch monitoring overview', error as Error);
+      const err = error as Error & { code?: string };
+      const msg = err.message || 'request failed';
+      Logger.apiError('Failed to fetch monitoring overview', err);
       return {
         success: false,
         connections: {},
         activities: { current: [], recent: [] },
-        error: (error as any).message,
+        error: `monitoring/overview: ${msg}`,
       };
     }
   },
@@ -84,7 +91,7 @@ export const monitoringApi = {
     try {
       const response = await getApi().get(
         '/api/system_monitoring/pipeline_status',
-        { timeout: 120000 }
+        { timeout: 60000 }
       );
       return response.data;
     } catch (error) {
@@ -186,7 +193,7 @@ export const monitoringApi = {
         {
           params: { include_pending_metrics: includePendingMetrics },
           // Light response ~seconds; with pending metrics can be minutes — keep headroom for cold DB.
-          timeout: includePendingMetrics ? 300000 : 120000,
+          timeout: includePendingMetrics ? 300000 : 30000,
         }
       );
       return response.data;

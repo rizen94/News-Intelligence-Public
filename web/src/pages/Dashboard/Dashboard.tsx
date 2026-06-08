@@ -56,32 +56,56 @@ export default function Dashboard() {
   const [events, setEvents] = useState<TrackedEvent[]>([]);
   const [contextsLoading, setContextsLoading] = useState(true);
   const [eventsLoading, setEventsLoading] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
+
+  const loadDashboardData = async (background = false) => {
+    if (!background) {
+      setContextsLoading(true);
+      setEventsLoading(true);
+    }
+
+    const ctxRes = contextCentricApi.getContexts({ domain_key: domain, limit: 10, brief: true }).catch(() => ({ items: [] as Context[] }));
+    const evRes = contextCentricApi.getTrackedEvents({ domain_key: domain, limit: 8 }).catch(() => ({ items: [] as TrackedEvent[] }));
+    const [ctxData, evData] = await Promise.all([ctxRes, evRes]);
+    const rawCtx = ctxData?.items ?? [];
+    const rawEv = evData?.items ?? [];
+    setContexts(rawCtx.filter((c) => !c.domain_key || c.domain_key === domain));
+    setEvents(
+      rawEv.filter(
+        (e) => !e.domain_keys?.length || e.domain_keys.includes(domain),
+      ),
+    );
+    if (!background) {
+      setContextsLoading(false);
+      setEventsLoading(false);
+    }
+    setLastUpdated(new Date());
+  };
 
   useEffect(() => {
     let cancelled = false;
+    let pollInterval: NodeJS.Timeout | null = null;
 
-    const load = async () => {
-      setContextsLoading(true);
-      setEventsLoading(true);
+    const startPolling = () => {
+      // Initial load
+      loadDashboardData();
 
-      const ctxRes = contextCentricApi.getContexts({ domain_key: domain, limit: 10, brief: true }).catch(() => ({ items: [] as Context[] }));
-      const evRes = contextCentricApi.getTrackedEvents({ domain_key: domain, limit: 8 }).catch(() => ({ items: [] as TrackedEvent[] }));
-      const [ctxData, evData] = await Promise.all([ctxRes, evRes]);
-      if (cancelled) return;
-      const rawCtx = ctxData?.items ?? [];
-      const rawEv = evData?.items ?? [];
-      setContexts(rawCtx.filter((c) => !c.domain_key || c.domain_key === domain));
-      setEvents(
-        rawEv.filter(
-          (e) => !e.domain_keys?.length || e.domain_keys.includes(domain),
-        ),
-      );
-      setContextsLoading(false);
-      setEventsLoading(false);
+      // Set up polling interval (every 30 seconds)
+      pollInterval = setInterval(() => {
+        if (!cancelled) {
+          void loadDashboardData(true);
+        }
+      }, 30000); // 30 seconds
     };
 
-    load();
-    return () => { cancelled = true; };
+    startPolling();
+
+    return () => {
+      cancelled = true;
+      if (pollInterval) {
+        clearInterval(pollInterval);
+      }
+    };
   }, [domain]);
 
   return (

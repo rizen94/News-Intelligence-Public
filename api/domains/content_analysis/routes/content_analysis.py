@@ -14,7 +14,7 @@ from domains.content_analysis.services.topic_filter_rules import (
 )
 from domains.content_analysis.services.topic_merge_suggestions import get_merge_suggestions
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
-from shared.database.connection import get_db_connection
+from shared.database.connection import get_db_connection, get_ui_db_connection_context
 from shared.domain_registry import (
     DOMAIN_PATH_PATTERN,
     resolve_domain_schema,
@@ -63,6 +63,114 @@ async def health_check():
         }
 
 
+def _get_articles_sync(
+    limit: int,
+    offset: int,
+    status: str | None,
+    schema: str | None,
+) -> dict:
+    with get_ui_db_connection_context() as conn:
+        with conn.cursor() as cur:
+            if schema:
+                wh = " WHERE processing_status = %s" if status else ""
+                q = f"""
+                    SELECT id, title, content, url, source_domain, published_at,
+                           summary, quality_score, sentiment_score, sentiment_label,
+                           processing_status, created_at
+                    FROM {schema}.articles
+                    {wh}
+                    ORDER BY created_at DESC NULLS LAST
+                    LIMIT %s OFFSET %s
+                """
+                params = []
+                if status:
+                    params.append(status)
+                params.extend([limit, offset])
+                cur.execute(q, params)
+            else:
+                branches = []
+                params = []
+                for sch in get_domain_data_schemas():
+                    wh = " WHERE processing_status = %s" if status else ""
+                    branches.append(f"""
+                        SELECT id, title, content, url, source_domain, published_at,
+                               summary, quality_score, sentiment_score, sentiment_label,
+                               processing_status, created_at
+                        FROM {sch}.articles
+                        {wh}
+                    """)
+                    if status:
+                        params.append(status)
+                union = " UNION ALL ".join(branches)
+                params.extend([limit, offset])
+                cur.execute(
+                    f"""
+                    SELECT * FROM (
+                        {union}
+                    ) all_articles
+                    ORDER BY created_at DESC NULLS LAST
+                    LIMIT %s OFFSET %s
+                """,
+                    params,
+                )
+
+            articles = []
+            for row in cur.fetchall():
+                pub_at = row[5].isoformat() if row[5] else None
+                src_domain = row[4]
+                articles.append(
+                    {
+                        "id": row[0],
+                        "title": row[1],
+                        "content": row[2][:800] + "..."
+                        if row[2] and len(row[2]) > 800
+                        else (row[2] or ""),
+                        "url": row[3],
+                        "source_domain": src_domain,
+                        "source": src_domain,
+                        "published_at": pub_at,
+                        "published_date": pub_at,
+                        "summary": row[6],
+                        "quality_score": row[7],
+                        "sentiment_score": row[8],
+                        "sentiment_label": row[9],
+                        "processing_status": row[10],
+                        "created_at": row[11].isoformat() if row[11] else None,
+                    }
+                )
+
+            if schema:
+                count_query = f"SELECT COUNT(*) FROM {schema}.articles"
+                count_params = []
+                if status:
+                    count_query += " WHERE processing_status = %s"
+                    count_params.append(status)
+                cur.execute(count_query, count_params)
+                total_count = cur.fetchone()[0]
+            else:
+                total_count = 0
+                for sch in get_domain_data_schemas():
+                    cq = f"SELECT COUNT(*) FROM {sch}.articles"
+                    cp = []
+                    if status:
+                        cq += " WHERE processing_status = %s"
+                        cp.append(status)
+                    cur.execute(cq, cp)
+                    total_count += cur.fetchone()[0] or 0
+
+    return {
+        "success": True,
+        "data": {
+            "articles": articles,
+            "total": total_count,
+            "page": (offset // limit) + 1,
+            "limit": limit,
+        },
+        "message": f"Retrieved {len(articles)} articles",
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
 @router.get("/articles")
 async def get_articles(
     limit: int = 20,
@@ -80,114 +188,10 @@ async def get_articles(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
-        conn = get_db_connection()
-        if not conn:
-            raise HTTPException(status_code=500, detail="Database connection failed")
+        return await asyncio.to_thread(_get_articles_sync, limit, offset, status, schema)
 
-        try:
-            with conn.cursor() as cur:
-                if schema:
-                    wh = " WHERE processing_status = %s" if status else ""
-                    q = f"""
-                        SELECT id, title, content, url, source_domain, published_at,
-                               summary, quality_score, sentiment_score, sentiment_label,
-                               processing_status, created_at
-                        FROM {schema}.articles
-                        {wh}
-                        ORDER BY created_at DESC NULLS LAST
-                        LIMIT %s OFFSET %s
-                    """
-                    params = []
-                    if status:
-                        params.append(status)
-                    params.extend([limit, offset])
-                    cur.execute(q, params)
-                else:
-                    branches = []
-                    params = []
-                    for sch in get_domain_data_schemas():
-                        wh = " WHERE processing_status = %s" if status else ""
-                        branches.append(f"""
-                            SELECT id, title, content, url, source_domain, published_at,
-                                   summary, quality_score, sentiment_score, sentiment_label,
-                                   processing_status, created_at
-                            FROM {sch}.articles
-                            {wh}
-                        """)
-                        if status:
-                            params.append(status)
-                    union = " UNION ALL ".join(branches)
-                    params.extend([limit, offset])
-                    cur.execute(
-                        f"""
-                        SELECT * FROM (
-                            {union}
-                        ) all_articles
-                        ORDER BY created_at DESC NULLS LAST
-                        LIMIT %s OFFSET %s
-                    """,
-                        params,
-                    )
-
-                articles = []
-                for row in cur.fetchall():
-                    pub_at = row[5].isoformat() if row[5] else None
-                    src_domain = row[4]
-                    articles.append(
-                        {
-                            "id": row[0],
-                            "title": row[1],
-                            "content": row[2][:800] + "..."
-                            if row[2] and len(row[2]) > 800
-                            else (row[2] or ""),
-                            "url": row[3],
-                            "source_domain": src_domain,
-                            "source": src_domain,
-                            "published_at": pub_at,
-                            "published_date": pub_at,
-                            "summary": row[6],
-                            "quality_score": row[7],
-                            "sentiment_score": row[8],
-                            "sentiment_label": row[9],
-                            "processing_status": row[10],
-                            "created_at": row[11].isoformat() if row[11] else None,
-                        }
-                    )
-
-                if schema:
-                    count_query = f"SELECT COUNT(*) FROM {schema}.articles"
-                    count_params = []
-                    if status:
-                        count_query += " WHERE processing_status = %s"
-                        count_params.append(status)
-                    cur.execute(count_query, count_params)
-                    total_count = cur.fetchone()[0]
-                else:
-                    total_count = 0
-                    for sch in get_domain_data_schemas():
-                        cq = f"SELECT COUNT(*) FROM {sch}.articles"
-                        cp = []
-                        if status:
-                            cq += " WHERE processing_status = %s"
-                            cp.append(status)
-                        cur.execute(cq, cp)
-                        total_count += cur.fetchone()[0] or 0
-
-                return {
-                    "success": True,
-                    "data": {
-                        "articles": articles,
-                        "total": total_count,
-                        "page": (offset // limit) + 1,
-                        "limit": limit,
-                    },
-                    "message": f"Retrieved {len(articles)} articles",
-                    "timestamp": datetime.now().isoformat(),
-                }
-
-        finally:
-            conn.close()
-
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error fetching articles: {e}")
         raise HTTPException(status_code=500, detail=str(e))

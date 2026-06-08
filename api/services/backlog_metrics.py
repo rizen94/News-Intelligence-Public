@@ -40,8 +40,17 @@ from shared.pipeline_article_selection import sql_order_created_at
 
 logger = logging.getLogger(__name__)
 
-# Cache TTL seconds; scheduler runs every 5s, we refresh counts every 30s
-BACKLOG_CACHE_TTL = 30
+def _backlog_cache_ttl_seconds() -> int:
+    """Cache TTL for pending/backlog counts; override via BACKLOG_CACHE_TTL_SECONDS."""
+    raw = os.getenv("BACKLOG_CACHE_TTL_SECONDS", "90").strip()
+    try:
+        return max(15, int(raw))
+    except ValueError:
+        return 90
+
+
+# Cache TTL seconds; scheduler runs every 5s, default refresh every 90s
+BACKLOG_CACHE_TTL = _backlog_cache_ttl_seconds()
 _backlog_cache: Dict[str, int] = {}
 _backlog_cache_time: float = 0
 

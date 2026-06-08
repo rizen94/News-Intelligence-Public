@@ -58,7 +58,12 @@ VALID_JOB_TYPES = frozenset(
 
 # ~70B narrative finisher + headline refiner share one GPU-friendly cap per batch
 _HEAVY_70B_JOB_TYPES = frozenset({JOB_NARRATIVE_FINISHER, JOB_HEADLINE_REFINER})
-_MAX_FINISHER_PER_CYCLE = int(os.environ.get("CONTENT_REFINEMENT_MAX_FINISHER_JOBS_PER_CYCLE", "1"))
+_MAX_FINISHER_PER_CYCLE = int(
+    os.environ.get(
+        "NARRATIVE_FINISHER_MAX_INFLIGHT",
+        os.environ.get("CONTENT_REFINEMENT_MAX_FINISHER_JOBS_PER_CYCLE", "1"),
+    )
+)
 _MAX_JOBS_PER_CYCLE = int(os.environ.get("CONTENT_REFINEMENT_MAX_JOBS_PER_CYCLE", "4"))
 # Claim enough pending rows to sort by "initial master narrative" vs refresh before applying caps
 _CLAIM_BATCH = int(os.environ.get("CONTENT_REFINEMENT_CLAIM_BATCH", "32"))

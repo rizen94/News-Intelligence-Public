@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate, useParams, Link as RouterLink } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams, Link as RouterLink } from 'react-router-dom';
 import {
   Accordion,
   AccordionDetails,
@@ -71,6 +71,8 @@ const SynthesizedView: React.FC = () => {
   const [quality, setQuality] = useState<QualityResponse>(null);
   const [depth, setDepth] = useState('comprehensive');
   const [tabValue, setTabValue] = useState(0);
+  const [searchParams] = useSearchParams();
+  const useStream = searchParams.get('stream') === 'true';
 
   useEffect(() => {
     if (!id || !domain) return;
@@ -122,6 +124,37 @@ const SynthesizedView: React.FC = () => {
         } catch {
           // No cache — fall through to POST synthesis.
         }
+      }
+      if (useStream) {
+        const streamUrl = `/api/${domain}/synthesis/storyline/${id}/stream?depth=${encodeURIComponent(depth)}`;
+        const res = await fetch(streamUrl);
+        if (!res.ok || !res.body) {
+          throw new Error(`Stream failed (${res.status})`);
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let markdown = '';
+        setSynthesis({
+          title: 'Streaming synthesis…',
+          summary: '',
+          streaming: true,
+          markdown: '',
+          sections: [],
+        });
+        setLoading(false);
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          markdown += decoder.decode(value, { stream: true });
+          setSynthesis({
+            title: 'Streaming synthesis…',
+            summary: markdown.split('\n\n')[0] || '',
+            streaming: true,
+            markdown,
+            sections: parseSectionsFromContent(markdown),
+          });
+        }
+        return;
       }
       const response = await getApi().post(
         `/api/${domain}/synthesis/storyline/${id}`,

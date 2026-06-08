@@ -14,3 +14,6 @@ PATH=/usr/local/bin:/usr/bin:/bin
 
 # Every 15 minutes: contexts + entity profile map + replay spill file (replace pete + path if needed)
 */15 * * * * pete cd /opt/news-intelligence && PYTHONPATH=api /opt/news-intelligence/.venv/bin/python api/scripts/run_widow_db_adjacent.py --context-sync --entity-profile-sync --pending-db-flush >> /opt/news-intelligence/logs/widow_db_adjacent.log 2>&1
+
+# Every 5 minutes: terminate idle-in-transaction sessions older than 5 min (pool leak recovery)
+*/5 * * * * pete cd /opt/news-intelligence && PYTHONPATH=api /opt/news-intelligence/.venv/bin/python api/scripts/run_widow_db_adjacent.py --terminate-idle-in-tx --idle-in-tx-minutes 5 >> /opt/news-intelligence/logs/widow_db_adjacent.log 2>&1

@@ -54,7 +54,7 @@ from datetime import datetime
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 # Add the modules directory to the path
 sys.path.append(os.path.join(os.path.dirname(__file__), "modules"))
@@ -79,9 +79,11 @@ except Exception as e:
 from config.settings import (
     MODELS,
     news_intel_api_docs_enabled,
+    news_intel_auth_jwt_secret,
     news_intel_cors_allow_origins,
     news_intel_expose_error_detail_to_client,
     news_intel_is_production,
+    news_intel_public_web_auth_enabled,
     news_intel_rate_limit_per_minute,
     news_intel_security_middleware_enabled,
     news_intel_trusted_hosts,
@@ -94,6 +96,7 @@ from domains.intelligence_hub.routes import router as intelligence_hub_router
 from domains.news_aggregation.routes import router as news_aggregation_router
 from domains.politics.routes import router as politics_router
 from domains.storyline_management.routes import router as storyline_management_router
+from domains.public_auth import public_auth_router
 from domains.system_monitoring.routes import router as system_monitoring_router
 from domains.user_management.routes.user_management import router as user_management_router
 
@@ -108,6 +111,7 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager"""
     # Startup
     logger.info("Starting News Intelligence System v5.0")
+    db_config = None
     if news_intel_is_production():
         logger.info(
             "NEWS_INTEL_ENV=production — see docs/SECURITY_OPERATIONS.md for CORS, hosts, and OpenAPI"
@@ -123,6 +127,19 @@ async def lifespan(app: FastAPI):
                 )
         except Exception as e:
             logger.debug("demo readonly env log skipped: %s", e)
+        try:
+            if news_intel_public_web_auth_enabled():
+                if not news_intel_auth_jwt_secret():
+                    logger.error(
+                        "NEWS_INTEL_PUBLIC_WEB_AUTH is enabled but NEWS_INTEL_JWT_SECRET "
+                        "(or JWT_SECRET) is empty — refusing to start."
+                    )
+                    sys.exit(1)
+                logger.info("NEWS_INTEL_PUBLIC_WEB_AUTH enabled — guest/admin session RBAC active")
+        except SystemExit:
+            raise
+        except Exception as e:
+            logger.debug("public web auth startup log skipped: %s", e)
         if not news_intel_cors_allow_origins():
             logger.warning(
                 "NEWS_INTEL_CORS_ORIGINS is empty: browsers on another origin cannot call the API with CORS. "
@@ -265,8 +282,99 @@ async def lifespan(app: FastAPI):
         logger.error("❌ Failed to initialize Finance Orchestrator: %s", e)
         app.state.finance_orchestrator = None
 
-    # Orchestrator coordinator (collection + processing governor, importance, loop: assess/plan/execute/learn)
-    # Runs in its own background thread to avoid blocking the main uvicorn event loop
+    # Start automation manager in background thread (before OrchestratorCoordinator)
+    try:
+        from services.automation_manager import AutomationManager
+        from services.ml_processing_service import MLProcessingService
+        import services.automation_manager as _automation_module
+
+        automation = AutomationManager(db_config)
+
+        def start_automation():
+            import asyncio
+            from concurrent.futures import ThreadPoolExecutor
+
+            loop = asyncio.new_event_loop()
+            loop.set_default_executor(ThreadPoolExecutor(max_workers=2))
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(automation.start())
+            except Exception as exc:
+                logger.error(
+                    "Automation manager background thread exited: %s",
+                    exc,
+                    exc_info=True,
+                )
+                app.state.automation = None
+                _automation_module.automation_manager = None
+
+        automation_thread = threading.Thread(target=start_automation, daemon=True)
+        automation_thread.start()
+
+        logger.info("Automation manager started in background thread")
+
+        app.state.automation = automation
+        app.state.automation_thread = automation_thread
+        _automation_module.automation_manager = automation
+        automation.set_finance_orchestrator_getter(
+            lambda: getattr(app.state, "finance_orchestrator", None)
+        )
+
+        try:
+            ml_processing_service = MLProcessingService()
+            ml_processing_service.start_processing()
+            logger.info("✅ ML Processing Service started automatically")
+            app.state.ml_processing = ml_processing_service
+        except Exception as e:
+            logger.error(f"❌ Failed to start ML Processing Service: {e}")
+
+        try:
+            from domains.content_analysis.services.topic_extraction_queue_worker import (
+                TopicExtractionQueueWorker,
+            )
+            from shared.database.connection import get_db_connection
+
+            def start_queue_workers_background():
+                import asyncio
+
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+                async def start_workers():
+                    from shared.domain_registry import pipeline_url_schema_pairs
+
+                    for _domain_key, schema in pipeline_url_schema_pairs():
+                        try:
+                            worker = TopicExtractionQueueWorker(get_db_connection, schema=schema)
+                            asyncio.create_task(worker.start())
+                            logger.info(
+                                f"✅ Started topic extraction queue worker for {_domain_key} ({schema})"
+                            )
+                        except Exception as e:
+                            logger.error(f"❌ Failed to start queue worker for {_domain_key}: {e}")
+
+                    while True:
+                        await asyncio.sleep(60)
+
+                loop.run_until_complete(start_workers())
+
+            queue_worker_thread = threading.Thread(
+                target=start_queue_workers_background, daemon=True
+            )
+            queue_worker_thread.start()
+            app.state.queue_worker_thread = queue_worker_thread
+            logger.info("✅ Topic extraction queue workers started automatically in background")
+        except Exception as e:
+            logger.error(f"❌ Failed to start topic extraction queue workers: {e}")
+    except Exception as e:
+        logger.error(f"Failed to start automation manager: {e}")
+        app.state.automation = None
+        app.state.automation_thread = None
+        import services.automation_manager as _automation_module
+
+        _automation_module.automation_manager = None
+
+    # Orchestrator coordinator — after automation so get_automation() is populated on boot
     try:
         from collectors.rss_collector import collect_rss_feeds
         from services.orchestrator_coordinator import OrchestratorCoordinator
@@ -302,110 +410,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("❌ Failed to start Orchestrator coordinator: %s", e, exc_info=True)
         app.state.orchestrator_coordinator = None
+        app.state.coordinator_thread = None
 
-    # Start automation manager in background thread
-    try:
-        from services.automation_manager import AutomationManager
-        from services.ml_processing_service import MLProcessingService
+    async def _automation_watchdog():
+        import services.automation_manager as _watch_automation_module
 
-        automation = AutomationManager(db_config)
+        while True:
+            await asyncio.sleep(60)
+            thread = getattr(app.state, "automation_thread", None)
+            if thread and not thread.is_alive():
+                logger.critical("Automation thread died — clearing automation state")
+                app.state.automation = None
+                _watch_automation_module.automation_manager = None
 
-        # Start automation in background thread with limited default executor
-        def start_automation():
-            import asyncio
-            from concurrent.futures import ThreadPoolExecutor
-
-            loop = asyncio.new_event_loop()
-            loop.set_default_executor(ThreadPoolExecutor(max_workers=2))
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(automation.start())
-            except Exception as exc:
-                logger.error(
-                    "Automation manager background thread exited: %s",
-                    exc,
-                    exc_info=True,
-                )
-
-        automation_thread = threading.Thread(target=start_automation, daemon=True)
-        automation_thread.start()
-
-        logger.info("Automation manager started in background thread")
-
-        # Store automation manager for shutdown
-        app.state.automation = automation
-        app.state.automation_thread = automation_thread
-        # Single process-wide reference so get_automation_manager() returns the *running* instance
-        # (not a lazy second AutomationManager that never started — breaks Monitor activity merge).
-        import services.automation_manager as _automation_module
-
-        _automation_module.automation_manager = automation
-        # Idle-time research topic refinement: automation can submit low-priority analysis tasks
-        automation.set_finance_orchestrator_getter(
-            lambda: getattr(app.state, "finance_orchestrator", None)
-        )
-
-        # Start ML processing service
-        try:
-            ml_processing_service = MLProcessingService()
-            ml_processing_service.start_processing()
-            logger.info("✅ ML Processing Service started automatically")
-            app.state.ml_processing = ml_processing_service
-        except Exception as e:
-            logger.error(f"❌ Failed to start ML Processing Service: {e}")
-
-        # Start topic extraction queue workers for all domains
-        try:
-            from domains.content_analysis.services.topic_extraction_queue_worker import (
-                TopicExtractionQueueWorker,
-            )
-            from shared.database.connection import get_db_connection
-
-            def start_queue_workers_background():
-                """Start queue workers in background thread"""
-                import asyncio
-
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
-                async def start_workers():
-                    """Start queue workers for all active domains"""
-                    from shared.domain_registry import pipeline_url_schema_pairs
-
-                    workers = []
-                    for _domain_key, schema in pipeline_url_schema_pairs():
-                        try:
-                            worker = TopicExtractionQueueWorker(get_db_connection, schema=schema)
-                            workers.append(worker)
-                            # Start worker in background task
-                            asyncio.create_task(worker.start())
-                            logger.info(f"✅ Started topic extraction queue worker for {_domain_key} ({schema})")
-                        except Exception as e:
-                            logger.error(f"❌ Failed to start queue worker for {_domain_key}: {e}")
-
-                    # Keep workers running
-                    while True:
-                        await asyncio.sleep(60)  # Check every minute
-
-                loop.run_until_complete(start_workers())
-
-            # Start queue workers in background thread
-            queue_worker_thread = threading.Thread(
-                target=start_queue_workers_background, daemon=True
-            )
-            queue_worker_thread.start()
-            app.state.queue_worker_thread = queue_worker_thread
-            logger.info("✅ Topic extraction queue workers started automatically in background")
-        except Exception as e:
-            logger.error(f"❌ Failed to start topic extraction queue workers: {e}")
-    except Exception as e:
-        logger.error(f"Failed to start automation manager: {e}")
-        # Continue without automation if it fails
-        app.state.automation = None
-        app.state.automation_thread = None
-        import services.automation_manager as _automation_module
-
-        _automation_module.automation_manager = None
+    app.state.automation_watchdog_task = asyncio.create_task(_automation_watchdog())
 
     # Start Route Supervisor
     try:
@@ -518,43 +536,110 @@ async def lifespan(app: FastAPI):
         app.state.consolidation_thread = None
         app.state.consolidation_stop_event = None
 
-    # Start Newsroom Orchestrator v6 (optional, feature-flagged)
+    # Start Newsroom Orchestrator (optional — requires orchestration/ package + env flag)
+    newsroom_env_enabled = os.getenv("NEWSROOM_ORCHESTRATOR_ENABLED", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     try:
-        from orchestration.base import NewsroomOrchestrator
-        from orchestration.config import load_newsroom_config
-        from shared.database.connection import get_db_connection
-
-        newsroom_config = load_newsroom_config()
-        if newsroom_config.get("enabled"):
-            newsroom_orchestrator = NewsroomOrchestrator(
-                get_db_connection=get_db_connection, config=newsroom_config
-            )
-            from orchestration.handlers import register_default_handlers
-
-            register_default_handlers(newsroom_orchestrator)
-
-            def run_newsroom():
-                newsroom_orchestrator.start()
-
-            newsroom_thread = threading.Thread(
-                target=run_newsroom, daemon=True, name="NewsroomOrchestrator"
-            )
-            newsroom_thread.start()
-            app.state.newsroom_orchestrator = newsroom_orchestrator
-            app.state.newsroom_orchestrator_thread = newsroom_thread
-            logger.info("✅ Newsroom Orchestrator v6 started")
-        else:
+        if not newsroom_env_enabled:
             app.state.newsroom_orchestrator = None
             app.state.newsroom_orchestrator_thread = None
             logger.info(
-                "Newsroom Orchestrator disabled (enabled=false or NEWSROOM_ORCHESTRATOR_ENABLED not set)"
+                "Newsroom Orchestrator disabled (set NEWSROOM_ORCHESTRATOR_ENABLED=true to enable)"
             )
+        else:
+            from orchestration.base import NewsroomOrchestrator
+            from orchestration.config import load_newsroom_config
+            from shared.database.connection import get_db_connection
+
+            newsroom_config = load_newsroom_config()
+            if newsroom_config.get("enabled"):
+                newsroom_orchestrator = NewsroomOrchestrator(
+                    get_db_connection=get_db_connection, config=newsroom_config
+                )
+                from orchestration.handlers import register_default_handlers
+
+                register_default_handlers(newsroom_orchestrator)
+
+                def run_newsroom():
+                    newsroom_orchestrator.start()
+
+                newsroom_thread = threading.Thread(
+                    target=run_newsroom, daemon=True, name="NewsroomOrchestrator"
+                )
+                newsroom_thread.start()
+                app.state.newsroom_orchestrator = newsroom_orchestrator
+                app.state.newsroom_orchestrator_thread = newsroom_thread
+                logger.info("✅ Newsroom Orchestrator started")
+            else:
+                app.state.newsroom_orchestrator = None
+                app.state.newsroom_orchestrator_thread = None
+                logger.info("Newsroom Orchestrator disabled (newsroom.yaml enabled=false)")
     except Exception as e:
         logger.error(f"❌ Failed to start Newsroom Orchestrator: {e}")
         app.state.newsroom_orchestrator = None
         app.state.newsroom_orchestrator_thread = None
 
+    # Start pipeline monitoring service
+    try:
+        from services.pipeline_monitoring_service import start_pipeline_monitoring
+
+        start_pipeline_monitoring()
+        logger.info("✅ Pipeline monitoring service started")
+    except Exception as e:
+        logger.error(f"❌ Failed to start pipeline monitoring service: {e}")
+
+    import json
+
+    boot_summary = {
+        "database": "ok" if db_config else "missing",
+        "finance_orchestrator": "ok" if getattr(app.state, "finance_orchestrator", None) else "off",
+        "automation": "starting"
+        if getattr(app.state, "automation_thread", None)
+        and app.state.automation_thread.is_alive()
+        else "off",
+        "coordinator": "ok" if getattr(app.state, "coordinator_thread", None) else "off",
+        "route_supervisor": "ok" if getattr(app.state, "route_supervisor", None) else "off",
+        "health_monitor": "ok" if getattr(app.state, "health_monitor", None) else "off",
+        "newsroom": "ok" if getattr(app.state, "newsroom_orchestrator", None) else "off",
+        "pipeline_monitoring": "ok",
+    }
+    logger.info("BOOT_SUMMARY %s", json.dumps(boot_summary, sort_keys=True))
+
+    async def _backlog_prewarm_loop():
+        """Keep backlog_metrics cache warm so Monitor pending fetches avoid cold COUNT storms."""
+        from services.backlog_metrics import get_all_pending_counts
+
+        # Let pools and automation finish boot before the first COUNT sweep.
+        await asyncio.sleep(120)
+        while True:
+            try:
+                await asyncio.to_thread(get_all_pending_counts)
+            except Exception as exc:
+                logger.debug("backlog pre-warm skipped: %s", exc)
+            await asyncio.sleep(60)
+
+    app.state.backlog_prewarm_task = asyncio.create_task(_backlog_prewarm_loop())
+
     yield
+
+    prewarm = getattr(app.state, "backlog_prewarm_task", None)
+    if prewarm and not prewarm.done():
+        prewarm.cancel()
+        try:
+            await prewarm
+        except asyncio.CancelledError:
+            pass
+
+    watchdog = getattr(app.state, "automation_watchdog_task", None)
+    if watchdog and not watchdog.done():
+        watchdog.cancel()
+        try:
+            await watchdog
+        except asyncio.CancelledError:
+            pass
 
     # Shutdown
     logger.info("Shutting down News Intelligence System v5.0")
@@ -744,7 +829,28 @@ app = FastAPI(
 )
 
 # Add request tracking and standardized API logging
-REQUEST_TIMEOUT_SECONDS = 30  # hard ceiling for any single request
+REQUEST_TIMEOUT_SECONDS = 30  # default ceiling; Monitor heavy routes get longer budgets below
+
+
+def _request_timeout_seconds(request: Request) -> float:
+    """Per-path timeout budget (Monitor SQL can exceed 30s under load)."""
+    path = (request.url.path or "").rstrip("/")
+    qs = str(request.url.query or "").lower()
+    if path.endswith("/processing_progress"):
+        if "include_pending_metrics=true" in qs:
+            return 300.0
+        return 90.0
+    if path.endswith("/backlog_status"):
+        return 120.0
+    if path.endswith("/pipeline_status"):
+        return 120.0
+    if path.endswith("/database/connections"):
+        return 60.0
+    if path.endswith("/sql_explorer/schema"):
+        return 60.0
+    if path.endswith("/sql_explorer/query"):
+        return 120.0
+    return float(REQUEST_TIMEOUT_SECONDS)
 
 
 @app.middleware("http")
@@ -759,22 +865,29 @@ async def request_tracker_middleware(request: Request, call_next):
     request.state.request_id = request_id
     record_request(path=request.url.path or "")
     start = time.perf_counter()
+    timeout_sec = _request_timeout_seconds(request)
 
     try:
         response = await asyncio.wait_for(
             call_next(request),
-            timeout=REQUEST_TIMEOUT_SECONDS,
+            timeout=timeout_sec,
         )
     except asyncio.TimeoutError:
         duration_ms = (time.perf_counter() - start) * 1000
         path = request.url.path or "/"
-        logger.warning("Request timed out after %.0fms: %s %s", duration_ms, request.method, path)
+        logger.warning(
+            "Request timed out after %.0fms (limit %.0fs): %s %s",
+            duration_ms,
+            timeout_sec,
+            request.method,
+            path,
+        )
         response = JSONResponse(
             status_code=504,
             content={
                 "success": False,
                 "data": None,
-                "message": f"Request timed out after {REQUEST_TIMEOUT_SECONDS}s",
+                "message": f"Request timed out after {int(timeout_sec)}s",
                 "timestamp": datetime.now().isoformat(),
             },
         )
@@ -818,6 +931,11 @@ if news_intel_security_middleware_enabled():
         rate_limit_per_minute=news_intel_rate_limit_per_minute(),
     )
 
+# Guest vs admin RBAC (demo middleware is outermost — runs first; auth sits inside read-only demo layer).
+from shared.middleware.public_web_auth import PublicWebAuthRbacMiddleware  # noqa: E402
+
+app.add_middleware(PublicWebAuthRbacMiddleware)
+
 # Public demo read-only (outermost): block mutations when Host matches NEWS_INTEL_DEMO_HOSTS
 from shared.middleware.demo_readonly import DemoReadOnlyMiddleware  # noqa: E402
 
@@ -846,6 +964,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 
 # Include domain routers
+app.include_router(public_auth_router)
 app.include_router(news_aggregation_router)
 app.include_router(politics_router)
 app.include_router(content_analysis_router)
@@ -859,19 +978,41 @@ app.include_router(system_monitoring_router)
 
 @app.get("/api/public/demo_config")
 async def public_demo_config(request: Request):
-    """Expose whether this request's Host is in read-only demo mode (for SPA UX)."""
+    """Expose demo read-only host flag + optional public web auth shape (for SPA UX)."""
     from shared.middleware.demo_readonly import should_apply_demo_readonly
+    from shared.middleware.public_web_auth import attach_public_web_auth_state
 
+    attach_public_web_auth_state(request)
     readonly = should_apply_demo_readonly(request)
+    auth_on = news_intel_public_web_auth_enabled()
+    role = getattr(request.state, "ni_role", "admin")
+    authenticated = getattr(request.state, "ni_authenticated", False)
+    username = getattr(request.state, "ni_username", None)
     return {
         "success": True,
         "data": {
             "readonly": readonly,
-            "hint": "When true, mutating API methods are disabled for this host (see docs/PUBLIC_DEPLOYMENT.md).",
+            "auth_enabled": auth_on,
+            "role": role if auth_on else "admin",
+            "authenticated": authenticated if auth_on else False,
+            "username": username if authenticated else None,
+            "hint": "readonly=demo host mutations blocked; auth_enabled=guest vs admin RBAC (see docs/PUBLIC_DEPLOYMENT.md).",
         },
         "message": "ok",
         "timestamp": datetime.now().isoformat(),
     }
+
+
+@app.get("/api/ping")
+async def api_ping():
+    """Lightweight liveness probe — no DB/GPU/psutil work (use /api/system_monitoring/health for depth)."""
+    return {"ok": True, "timestamp": datetime.now().isoformat()}
+
+
+@app.get("/api/public/cellular_ping")
+async def public_cellular_ping():
+    """Plain-text probe for mobile networks (some users mistake JSON health as a blank page)."""
+    return PlainTextResponse("ni_ok\n", media_type="text/plain")
 
 
 # Root endpoint

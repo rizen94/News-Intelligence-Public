@@ -9,10 +9,11 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
+from fastapi.responses import StreamingResponse
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, Field
 from services.deep_content_synthesis import get_synthesis_service
-from shared.domain_registry import DOMAIN_PATH_PATTERN
+from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,30 @@ class StorylineSynthesisResponse(BaseModel):
 # =============================================================================
 
 
+@router.get("/{domain}/synthesis/storyline/{storyline_id}/stream")
+async def stream_storyline_synthesis(
+    storyline_id: int = Path(..., gt=0),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+    depth: str = Query("comprehensive"),
+):
+    """
+    Stream the synthesis lead section as plain text (Ollama stream=true).
+    Optional fast path when ``?stream=true`` is used from the UI; full POST synthesis unchanged.
+    """
+    try:
+        service = get_synthesis_service()
+        prompt = service.build_storyline_stream_prompt(domain, storyline_id, depth=depth)
+        return StreamingResponse(
+            service.iter_stream_llm_content(prompt, max_tokens=800),
+            media_type="text/plain; charset=utf-8",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error("Storyline synthesis stream error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/{domain}/synthesis/storyline/{storyline_id}", response_model=dict[str, Any])
 async def synthesize_storyline(
     storyline_id: int = Path(..., gt=0),
@@ -85,6 +110,7 @@ async def synthesize_storyline(
     - Event timeline
 
     The output is suitable for publication as an informative article.
+    For streaming preview, use GET ``/{domain}/synthesis/storyline/{id}/stream``.
     """
     try:
         service = get_synthesis_service()
@@ -421,7 +447,7 @@ async def check_synthesis_quality(
         service = get_synthesis_service()
 
         # Get basic info
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         storyline, articles = service._fetch_storyline_with_articles(schema, storyline_id)
 
         if not storyline:
@@ -500,7 +526,7 @@ async def synthesize_mega_storyline(
     """
     try:
         service = get_synthesis_service()
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         # Fetch mega-storyline and its children
         conn = service.get_db_connection()

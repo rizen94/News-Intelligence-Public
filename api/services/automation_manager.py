@@ -556,7 +556,7 @@ def _env_int(name: str, default: int, minimum: int = 1) -> int:
 
 
 # Cap concurrent Ollama/GPU tasks. Scale up when you have GPU/CPU headroom.
-MAX_CONCURRENT_OLLAMA_TASKS = _env_int("MAX_CONCURRENT_OLLAMA_TASKS", 12)
+MAX_CONCURRENT_OLLAMA_TASKS = _env_int("MAX_CONCURRENT_OLLAMA_TASKS", 6)
 AUTOMATION_MAX_CONCURRENT_TASKS = _env_int("AUTOMATION_MAX_CONCURRENT_TASKS", 12)
 AUTOMATION_EXECUTOR_MAX_WORKERS = _env_int("AUTOMATION_EXECUTOR_MAX_WORKERS", 6)
 

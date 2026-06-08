@@ -13,7 +13,8 @@
  * other write-heavy routes — see `AppNav` filter and guarded routes below.
  * Product display notes (incorporation candidate): docs/archive/planning_incubator/WEB_PRODUCT_DISPLAY_PLAN.md
  */
-import React, { useEffect } from 'react';
+import React, { Suspense, useEffect } from 'react';
+import { Box, CircularProgress } from '@mui/material';
 import {
   BrowserRouter as Router,
   Routes,
@@ -35,40 +36,47 @@ import './utils/featureTestHelper';
 
 import MainLayout from './layout/MainLayout';
 import { getDefaultDomainKey } from './utils/domainHelper';
-import Dashboard from './pages/Dashboard/Dashboard';
-import DiscoverPage from './pages/Discover/DiscoverPage';
-import ContextDetailPage from './pages/Discover/ContextDetailPage';
-import InvestigatePage from './pages/Investigate/InvestigatePage';
-import EventDetailPage from './pages/Investigate/EventDetailPage';
-import EntityDetailPage from './pages/Investigate/EntityDetailPage';
-import EntitiesListPage from './pages/Investigate/EntitiesListPage';
-import SearchPage from './pages/Investigate/SearchPage';
-import ProcessedDocumentsPage from './pages/Investigate/ProcessedDocumentsPage';
-import ProcessedDocumentDetailPage from './pages/Investigate/ProcessedDocumentDetailPage';
-import NarrativeThreadsPage from './pages/Investigate/NarrativeThreadsPage';
-import EntityDossierPage from './pages/Investigate/EntityDossierPage';
-import MonitorPage from './pages/Monitor/MonitorPage';
-import SqlExplorerPage from './pages/Monitor/SqlExplorerPage';
-import AnalyzePage from './pages/Analyze/AnalyzePage';
-import AuditChecklistPage from './pages/Audit/AuditChecklistPage';
-import CommodityDashboard from './pages/Finance/CommodityDashboard';
-import FinancialAnalysis from './pages/Finance/FinancialAnalysis';
-import FinancialAnalysisResult from './pages/Finance/FinancialAnalysisResult';
-import TaskTraceViewer from './pages/Finance/TaskTraceViewer';
-import Storylines from './pages/Storylines/Storylines';
-import StorylineDetail from './pages/Storylines/StorylineDetail';
-import StorylineDiscovery from './pages/Storylines/StorylineDiscovery';
-import StorylineReviewQueue from './pages/Storylines/StorylineReviewQueue';
-import SynthesizedView from './pages/Storylines/SynthesizedView';
-import StoryTimeline from './pages/StoryTimeline/StoryTimeline';
-import Articles from './pages/Articles/Articles';
-import ArticleDetail from './pages/Articles/ArticleDetail';
-import ArticleDeduplicationManager from './pages/Articles/ArticleDeduplicationManager';
-import Briefings from './pages/Briefings/Briefings';
-import RSSFeeds from './pages/RSSFeeds/RSSFeeds';
-import Topics from './pages/Topics/Topics';
-import Watchlist from './pages/Watchlist/Watchlist';
-import Events from './pages/Events/Events';
+
+const PageFallback = () => (
+  <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+    <CircularProgress size={32} />
+  </Box>
+);
+
+const Dashboard = React.lazy(() => import('./pages/Dashboard/Dashboard'));
+const DiscoverPage = React.lazy(() => import('./pages/Discover/DiscoverPage'));
+const ContextDetailPage = React.lazy(() => import('./pages/Discover/ContextDetailPage'));
+const InvestigatePage = React.lazy(() => import('./pages/Investigate/InvestigatePage'));
+const EventDetailPage = React.lazy(() => import('./pages/Investigate/EventDetailPage'));
+const EntityDetailPage = React.lazy(() => import('./pages/Investigate/EntityDetailPage'));
+const EntitiesListPage = React.lazy(() => import('./pages/Investigate/EntitiesListPage'));
+const SearchPage = React.lazy(() => import('./pages/Investigate/SearchPage'));
+const ProcessedDocumentsPage = React.lazy(() => import('./pages/Investigate/ProcessedDocumentsPage'));
+const ProcessedDocumentDetailPage = React.lazy(() => import('./pages/Investigate/ProcessedDocumentDetailPage'));
+const NarrativeThreadsPage = React.lazy(() => import('./pages/Investigate/NarrativeThreadsPage'));
+const EntityDossierPage = React.lazy(() => import('./pages/Investigate/EntityDossierPage'));
+const MonitorPage = React.lazy(() => import('./pages/Monitor/MonitorPage'));
+const SqlExplorerPage = React.lazy(() => import('./pages/Monitor/SqlExplorerPage'));
+const AnalyzePage = React.lazy(() => import('./pages/Analyze/AnalyzePage'));
+const AuditChecklistPage = React.lazy(() => import('./pages/Audit/AuditChecklistPage'));
+const CommodityDashboard = React.lazy(() => import('./pages/Finance/CommodityDashboard'));
+const FinancialAnalysis = React.lazy(() => import('./pages/Finance/FinancialAnalysis'));
+const FinancialAnalysisResult = React.lazy(() => import('./pages/Finance/FinancialAnalysisResult'));
+const TaskTraceViewer = React.lazy(() => import('./pages/Finance/TaskTraceViewer'));
+const Storylines = React.lazy(() => import('./pages/Storylines/Storylines'));
+const StorylineDetail = React.lazy(() => import('./pages/Storylines/StorylineDetail'));
+const StorylineDiscovery = React.lazy(() => import('./pages/Storylines/StorylineDiscovery'));
+const StorylineReviewQueue = React.lazy(() => import('./pages/Storylines/StorylineReviewQueue'));
+const SynthesizedView = React.lazy(() => import('./pages/Storylines/SynthesizedView'));
+const StoryTimeline = React.lazy(() => import('./pages/StoryTimeline/StoryTimeline'));
+const Articles = React.lazy(() => import('./pages/Articles/Articles'));
+const ArticleDetail = React.lazy(() => import('./pages/Articles/ArticleDetail'));
+const ArticleDeduplicationManager = React.lazy(() => import('./pages/Articles/ArticleDeduplicationManager'));
+const Briefings = React.lazy(() => import('./pages/Briefings/Briefings'));
+const RSSFeeds = React.lazy(() => import('./pages/RSSFeeds/RSSFeeds'));
+const Topics = React.lazy(() => import('./pages/Topics/Topics'));
+const Watchlist = React.lazy(() => import('./pages/Watchlist/Watchlist'));
+const Events = React.lazy(() => import('./pages/Events/Events'));
 
 const theme = createTheme({
   palette: {
@@ -101,6 +109,7 @@ function App() {
           <PublicDemoProvider>
             <Router>
               <div className='App'>
+                <Suspense fallback={<PageFallback />}>
                 <Routes>
                 <Route
                   path='/'
@@ -278,6 +287,7 @@ function App() {
                   element={<Navigate to={defaultDomainPath} replace />}
                 />
               </Routes>
+                </Suspense>
             </div>
             </Router>
           </PublicDemoProvider>
