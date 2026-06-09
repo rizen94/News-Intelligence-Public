@@ -2640,6 +2640,73 @@ def list_canonical_entities(
 
 
 # ---------------------------------------------------------------------------
+# NRI integration (read nri.* + proxy :8010)
+# ---------------------------------------------------------------------------
+
+@router.get("/nri/health", response_model=dict)
+def nri_health() -> dict:
+    from services.nri_integration_service import get_nri_health
+    return get_nri_health()
+
+
+@router.get("/nri/resolved_mentions", response_model=dict)
+def nri_resolved_mentions(
+    domain_key: str | None = Query(None),
+    status: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    from services.nri_integration_service import list_resolved_mentions
+    return list_resolved_mentions(domain_key=domain_key, status=status, limit=limit, offset=offset)
+
+
+@router.get("/nri/parked", response_model=dict)
+def nri_parked(
+    domain_key: str | None = Query(None),
+    review_status: str | None = Query("open"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    from services.nri_integration_service import list_parked_resolution
+    return list_parked_resolution(
+        domain_key=domain_key, review_status=review_status, limit=limit, offset=offset,
+    )
+
+
+@router.patch("/nri/parked/{parked_id}", response_model=dict)
+def nri_review_parked(parked_id: int, body: dict = Body(...)) -> dict:
+    from services.nri_integration_service import review_parked
+    return review_parked(
+        parked_id,
+        review_status=str(body.get("review_status", "reviewed")),
+        candidate_ftm_id=body.get("candidate_ftm_id"),
+    )
+
+
+@router.get("/nri/entity_bridge/{entity_profile_id}", response_model=dict)
+def nri_entity_bridge(entity_profile_id: int) -> dict:
+    from services.nri_integration_service import get_entity_bridge
+    return get_entity_bridge(entity_profile_id)
+
+
+@router.get("/nri/hypotheses", response_model=dict)
+def nri_hypotheses(
+    status: str | None = Query(None),
+    ftm_id: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    from services.nri_integration_service import list_hypotheses
+    return list_hypotheses(status=status, ftm_id=ftm_id, limit=limit, offset=offset)
+
+
+@router.get("/nri/hypotheses/{hyp_id}", response_model=dict)
+def nri_hypothesis_detail(hyp_id: str) -> dict:
+    from services.nri_integration_service import get_hypothesis
+    return get_hypothesis(hyp_id)
+
+
+# ---------------------------------------------------------------------------
 # Entity position tracking endpoints (T2.2)
 # ---------------------------------------------------------------------------
 

@@ -36,6 +36,7 @@ import {
   contextCentricApi,
   type EntitySynthesis,
   type EntityProfile,
+  type NriEntityBridge,
 } from '@/services/api/contextCentric';
 import { useDomain } from '@/contexts/DomainContext';
 import { isValidDomain, type DomainKey } from '@/utils/domainHelper';
@@ -96,6 +97,7 @@ export default function EntityDossierPage() {
     domain && isValidDomain(domain) ? (domain as DomainKey) : domainFromContext;
   const [synthesis, setSynthesis] = useState<EntitySynthesis | null>(null);
   const [profile, setProfile] = useState<EntityProfile | null>(null);
+  const [bridge, setBridge] = useState<NriEntityBridge | null>(null);
   const [loading, setLoading] = useState(true);
   const [compiling, setCompiling] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -133,6 +135,12 @@ export default function EntityDossierPage() {
             p.canonical_entity_id === resolvedId && p.domain_key === domainKey
         );
         setProfile(match ?? null);
+        if (match?.id) {
+          const b = await contextCentricApi.getNriEntityBridge(match.id);
+          setBridge(b?.bridge ?? null);
+        } else {
+          setBridge(null);
+        }
       }
     } catch (e) {
       setError((e as Error)?.message ?? 'Failed to load entity data');
@@ -274,6 +282,15 @@ export default function EntityDossierPage() {
                     variant='outlined'
                   />
                   <Chip label={domainKey} size='small' variant='outlined' />
+                  {bridge && (
+                    <Chip
+                      label={`FtM ${bridge.ftm_id.slice(0, 12)}…`}
+                      size='small'
+                      color='secondary'
+                      variant='outlined'
+                      title={bridge.caption ?? bridge.ftm_id}
+                    />
+                  )}
                   {entity.aliases?.length > 0 && (
                     <Typography variant='caption' color='text.secondary'>
                       aka {entity.aliases.slice(0, 3).join(', ')}

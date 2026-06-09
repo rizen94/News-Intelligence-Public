@@ -54,6 +54,8 @@ const SearchPage = React.lazy(() => import('./pages/Investigate/SearchPage'));
 const ProcessedDocumentsPage = React.lazy(() => import('./pages/Investigate/ProcessedDocumentsPage'));
 const ProcessedDocumentDetailPage = React.lazy(() => import('./pages/Investigate/ProcessedDocumentDetailPage'));
 const NarrativeThreadsPage = React.lazy(() => import('./pages/Investigate/NarrativeThreadsPage'));
+const EntityResolutionPage = React.lazy(() => import('./pages/Investigate/EntityResolutionPage'));
+const HypothesesPage = React.lazy(() => import('./pages/Investigate/HypothesesPage'));
 const EntityDossierPage = React.lazy(() => import('./pages/Investigate/EntityDossierPage'));
 const MonitorPage = React.lazy(() => import('./pages/Monitor/MonitorPage'));
 const SqlExplorerPage = React.lazy(() => import('./pages/Monitor/SqlExplorerPage'));
@@ -212,6 +214,14 @@ function App() {
                   <Route
                     path='investigate/narrative-threads'
                     element={<NarrativeThreadsPage />}
+                  />
+                  <Route
+                    path='investigate/entity-resolution'
+                    element={<EntityResolutionPage />}
+                  />
+                  <Route
+                    path='investigate/hypotheses'
+                    element={<HypothesesPage />}
                   />
                   <Route
                     path='monitor'

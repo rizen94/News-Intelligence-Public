@@ -159,6 +159,20 @@ export default function InvestigatePage() {
           >
             Narrative threads
           </Button>
+          <Button
+            variant='outlined'
+            size='small'
+            onClick={() => navigate(`/${domain}/investigate/entity-resolution`)}
+          >
+            Entity resolution (NRI)
+          </Button>
+          <Button
+            variant='outlined'
+            size='small'
+            onClick={() => navigate(`/${domain}/investigate/hypotheses`)}
+          >
+            Hypotheses
+          </Button>
         </Box>
       </Box>
 

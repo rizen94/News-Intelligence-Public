@@ -219,6 +219,59 @@ export interface CanonicalEntity {
   updated_at?: string | null;
 }
 
+export interface NriResolvedMention {
+  id: number;
+  context_id: number;
+  mention_text: string;
+  entity_profile_id: number | null;
+  ftm_id: string | null;
+  match_score: number | null;
+  match_tier: number | null;
+  status: string;
+  resolved_at: string | null;
+  domain_key: string | null;
+  canonical_name: string | null;
+}
+
+export interface NriParkedResolution {
+  id: number;
+  context_id: number;
+  mention_text: string;
+  candidate_ftm_id: string | null;
+  match_score: number | null;
+  reason: string | null;
+  parked_at: string | null;
+  review_status: string | null;
+  domain_key: string | null;
+  canonical_name: string | null;
+}
+
+export interface NriEntityBridge {
+  entity_profile_id: number;
+  ftm_id: string;
+  bridge_score: number | null;
+  bridged_at: string | null;
+  caption: string | null;
+  schema_name: string | null;
+  dataset: string | null;
+  anchors: Record<string, string> | null;
+}
+
+export interface NriHypothesis {
+  hyp_id: string;
+  claim?: string | null;
+  status?: string | null;
+  confidence?: number | null;
+  test_status?: string | null;
+  subject_ftm_id?: string | null;
+  iteration_introduced?: number | null;
+}
+
+export interface NriHypothesisDetail extends NriHypothesis {
+  body?: string;
+  path?: string;
+}
+
 /** Entity position / stance on a topic. */
 export interface EntityPosition {
   id: number;
@@ -996,6 +1049,107 @@ export const contextCentricApi = {
       return response.data;
     } catch (error) {
       return handleError('Failed to fetch entity positions', error);
+    }
+  },
+
+  // NRI integration
+  async getNriHealth(): Promise<Record<string, unknown>> {
+    try {
+      const response = await getApi().get<Record<string, unknown>>(apiPath('/api/nri/health'), contextCentricConfig());
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to fetch NRI health', error);
+    }
+  },
+
+  async getNriResolvedMentions(params?: {
+    domain_key?: string;
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ success: boolean; items: NriResolvedMention[]; limit: number; offset: number }> {
+    try {
+      const response = await getApi().get<{ success: boolean; items: NriResolvedMention[]; limit: number; offset: number }>(
+        apiPath('/api/nri/resolved_mentions'),
+        { ...contextCentricConfig(), params: params ?? {} },
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to fetch NRI resolved mentions', error);
+    }
+  },
+
+  async getNriParked(params?: {
+    domain_key?: string;
+    review_status?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ success: boolean; items: NriParkedResolution[]; limit: number; offset: number }> {
+    try {
+      const response = await getApi().get<{ success: boolean; items: NriParkedResolution[]; limit: number; offset: number }>(
+        apiPath('/api/nri/parked'),
+        { ...contextCentricConfig(), params: params ?? {} },
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to fetch NRI parked mentions', error);
+    }
+  },
+
+  async reviewNriParked(
+    parkedId: number,
+    body: { review_status: string; candidate_ftm_id?: string },
+  ): Promise<Record<string, unknown>> {
+    try {
+      const response = await getApi().patch<Record<string, unknown>>(
+        apiPath(`/api/nri/parked/${parkedId}`),
+        body,
+        contextCentricConfig(),
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to review parked mention', error);
+    }
+  },
+
+  async getNriEntityBridge(entityProfileId: number): Promise<{ success: boolean; bridge: NriEntityBridge | null }> {
+    try {
+      const response = await getApi().get<{ success: boolean; bridge: NriEntityBridge | null }>(
+        apiPath(`/api/nri/entity_bridge/${entityProfileId}`),
+        contextCentricConfig(),
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to fetch NRI entity bridge', error);
+    }
+  },
+
+  async getNriHypotheses(params?: {
+    status?: string;
+    ftm_id?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: NriHypothesis[]; total: number; limit: number; offset: number }> {
+    try {
+      const response = await getApi().get<{ items: NriHypothesis[]; total: number; limit: number; offset: number }>(
+        apiPath('/api/nri/hypotheses'),
+        { ...contextCentricConfig(), params: params ?? {} },
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to fetch NRI hypotheses', error);
+    }
+  },
+
+  async getNriHypothesis(hypId: string): Promise<NriHypothesisDetail> {
+    try {
+      const response = await getApi().get<NriHypothesisDetail>(
+        apiPath(`/api/nri/hypotheses/${hypId}`),
+        contextCentricConfig(),
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to fetch NRI hypothesis', error);
     }
   },
 };

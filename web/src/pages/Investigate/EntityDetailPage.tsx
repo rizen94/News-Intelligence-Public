@@ -12,12 +12,14 @@ import {
   Box,
   Skeleton,
   Stack,
+  Chip,
 } from '@mui/material';
 import ArrowBack from '@mui/icons-material/ArrowBack';
 import AutoAwesome from '@mui/icons-material/AutoAwesome';
 import {
   contextCentricApi,
   type EntityProfile,
+  type NriEntityBridge,
 } from '@/services/api/contextCentric';
 import OrchestratorTagsEditor from '@/components/shared/OrchestratorTagsEditor/OrchestratorTagsEditor';
 
@@ -30,6 +32,7 @@ export default function EntityDetailPage() {
   const { domain, id } = useParams<{ domain: string; id: string }>();
   const navigate = useNavigate();
   const [profile, setProfile] = useState<EntityProfile | null>(null);
+  const [bridge, setBridge] = useState<NriEntityBridge | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -40,10 +43,15 @@ export default function EntityDetailPage() {
       return;
     }
     let cancelled = false;
-    contextCentricApi
-      .getEntityProfile(numId)
-      .then(p => {
-        if (!cancelled) setProfile(p);
+    Promise.all([
+      contextCentricApi.getEntityProfile(numId),
+      contextCentricApi.getNriEntityBridge(numId),
+    ])
+      .then(([p, b]) => {
+        if (!cancelled) {
+          setProfile(p);
+          setBridge(b?.bridge ?? null);
+        }
       })
       .catch(() => {
         if (!cancelled) setProfile(null);
@@ -92,6 +100,26 @@ export default function EntityDetailPage() {
             subheader={profile.domain_key}
           />
           <CardContent>
+            {bridge && (
+              <Box sx={{ mb: 2 }}>
+                <Typography variant='subtitle2' gutterBottom>
+                  Identity spine (NRI)
+                </Typography>
+                <Stack direction='row' spacing={1} flexWrap='wrap' useFlexGap>
+                  <Chip label={`FtM: ${bridge.ftm_id}`} size='small' color='primary' variant='outlined' />
+                  {bridge.caption && <Chip label={bridge.caption} size='small' />}
+                  {bridge.bridge_score != null && (
+                    <Chip label={`score ${bridge.bridge_score.toFixed(3)}`} size='small' />
+                  )}
+                  <Button
+                    size='small'
+                    onClick={() => navigate(`/${domain}/investigate/entity-resolution`)}
+                  >
+                    NRI queue
+                  </Button>
+                </Stack>
+              </Box>
+            )}
             <Box sx={{ mb: 2 }}>
               <OrchestratorTagsEditor
                 tags={
