@@ -1,0 +1,66 @@
+# Single scheduler manifest — owner, enabled, notes.
+# Env gates: AUTOMATION_DISABLED_SCHEDULES, schedulers.yaml enabled flag.
+
+schedulers:
+  automation_manager:
+    owner: automation_manager
+    interval_seconds: 5
+    enabled: true
+    note: Primary processing scheduler (all phases)
+
+  orchestrator_coordinator:
+    owner: orchestrator_coordinator
+    interval_seconds: 60
+    enabled: true
+    note: Collection cadence + finance interest; processing nudge off via pipeline_conductor
+
+  newsplatform_secondary:
+    owner: systemd
+    unit: newsplatform-secondary.service
+    enabled: true
+    note: RSS ingest ~10min when schedule allows
+
+  widow_db_adjacent_cron:
+    owner: cron
+    file: infrastructure/widow-db-adjacent.cron
+    interval: "*/15 * * * *"
+    enabled: true
+    jobs:
+      - name: context_sync
+        script_flag: --context-sync
+        note: AUTHORITATIVE on Widow when in AUTOMATION_DISABLED_SCHEDULES for automation
+      - name: entity_profile_sync
+        script_flag: --entity-profile-sync
+      - name: pending_db_flush
+        script_flag: --pending-db-flush
+
+  nri_mention_resolver_timer:
+    owner: systemd
+    unit: nri-mention-resolver.timer
+    enabled: false
+    replaced_by: mention_resolution
+    note: Disabled after unification — use AutomationManager mention_resolution phase
+
+  nri_loop_timer:
+    owner: systemd
+    unit: nri-loop.timer
+    enabled: false
+    note: Shadow loop; default off via NRI_LOOP_ENABLED
+
+  nri_api:
+    owner: systemd
+    unit: nri-api.service
+    enabled: false
+    replaced_by: news-intelligence-api-public
+    note: Retired after nri_core in-process routes
+
+# context_sync split-brain resolution: cron owns sync on Widow prod (see widow-db_adjacent)
+
+consolidation:
+  interval_seconds: 3600
+  startup_delay_seconds: 60
+  rotation:
+    - storylines
+    - entities
+    - investigations
+    - events
