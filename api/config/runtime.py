@@ -141,6 +141,23 @@ def ollama_dual_host_routing_enabled() -> bool:
     return bool(get_runtime_config()["ollama_dual_host_routing_enabled"])
 
 
+def validate_runtime_config() -> list[str]:
+    """Return human-readable config problems (empty list = OK)."""
+    cfg = get_runtime_config()
+    issues: list[str] = []
+    if not cfg["db_name"]:
+        issues.append("DB_NAME is empty")
+    if not cfg["db_user"]:
+        issues.append("DB_USER is empty")
+    if not cfg["db_password"]:
+        issues.append("DB_PASSWORD is empty")
+    if int(cfg["db_port"]) <= 0:
+        issues.append("DB_PORT must be positive")
+    if not str(cfg["ollama_host"]).startswith("http"):
+        issues.append("OLLAMA_HOST must be an http(s) URL")
+    return issues
+
+
 # Public env accessors — use these instead of os.environ in application code.
 def env_str(name: str, default: str = "") -> str:
     return _env(name, default)
