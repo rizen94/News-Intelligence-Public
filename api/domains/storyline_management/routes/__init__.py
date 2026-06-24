@@ -15,10 +15,8 @@ from fastapi import APIRouter
 
 from .storyline_assembly import router as assembly_router
 from .storyline_analysis import router as analysis_router
-from .storyline_articles import router as articles_router
-from .storyline_automation import router as automation_router
+from .storyline import main_router as storyline_router
 from .storyline_consolidation import router as consolidation_router
-from .storyline_crud import router as crud_router
 from .storyline_discovery import router as discovery_router
 from .storyline_evolution import router as evolution_router
 from .storyline_helpers import router as helpers_router

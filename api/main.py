@@ -20,6 +20,7 @@ LLM routing uses Ollama (see ``config.settings`` and ``shared.services.ollama_mo
 # Dump all thread tracebacks on SIGUSR1 for debugging hung processes
 import faulthandler
 import signal as _signal
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 faulthandler.enable()
 try:
@@ -95,7 +96,7 @@ from domains.intelligence_hub.routes import router as intelligence_hub_router
 # Import domain routers (consolidated — one per domain)
 from domains.news_aggregation.routes import router as news_aggregation_router
 from domains.politics.routes import router as politics_router
-from domains.storyline_management.routes import router as storyline_management_router
+from domains.storyline_management.routes.storyline import main_router as storyline_management_router
 from domains.public_auth import public_auth_router
 from domains.system_monitoring.routes import router as system_monitoring_router
 from domains.user_management.routes.user_management import router as user_management_router
@@ -226,61 +227,67 @@ async def lifespan(app: FastAPI):
     await init_llm(app)
 
     # Log finance embedding config (no heavy imports)
-    try:
-        from domains.finance.data.vector_store import get_embedding_collection_info
+    if not env_bool("NEWS_INTEL_KIT_MODE", False):
+        try:
+            from domains.finance.data.vector_store import get_embedding_collection_info
 
-        model, coll = get_embedding_collection_info()
-        logger.info(f"✅ Finance evidence: embedding={model}, collection={coll}")
-    except Exception as e:
-        logger.debug("Finance embedding config not logged: %s", e)
+            model, coll = get_embedding_collection_info()
+            logger.info(f"✅ Finance evidence: embedding={model}, collection={coll}")
+        except Exception as e:
+            logger.debug("Finance embedding config not logged: %s", e)
 
     # Initialize Finance Orchestrator (runs in its own background thread to avoid
     # blocking the main uvicorn event loop with sync DB/state operations)
-    try:
-        from domains.finance import data_sources, embedding, stats
-        from domains.finance import llm as finance_llm
-        from domains.finance.data import evidence_ledger, market_data_store, vector_store
-        from domains.finance.orchestrator import FinanceOrchestrator
-
-        app.state.finance_orchestrator = FinanceOrchestrator(
-            source_loader=data_sources,
-            market_data_store=market_data_store,
-            vector_store=vector_store,
-            evidence_ledger=evidence_ledger,
-            embedding_module=embedding,
-            stats_module=stats,
-            llm_wrapper=finance_llm,
-            cpu_concurrency=4,
-        )
-        logger.info("✅ Finance Orchestrator initialized")
-        if app.state.finance_orchestrator:
-
-            def _run_finance_background():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                fo = app.state.finance_orchestrator
-                fo._schedule_task = None
-                fo._queue_task = None
-
-                async def _start():
-                    fo._schedule_stop.clear()
-                    fo._schedule_task = asyncio.create_task(fo._schedule_loop())
-                    fo._queue_stop.clear()
-                    fo._queue_task = asyncio.create_task(fo._queue_loop())
-                    while True:
-                        await asyncio.sleep(60)
-
-                loop.run_until_complete(_start())
-
-            finance_bg_thread = threading.Thread(
-                target=_run_finance_background, daemon=True, name="FinanceScheduler"
-            )
-            finance_bg_thread.start()
-            app.state.finance_bg_thread = finance_bg_thread
-            logger.info("✅ Finance scheduler and queue worker started (background thread)")
-    except Exception as e:
-        logger.error("❌ Failed to initialize Finance Orchestrator: %s", e)
+    if env_bool("NEWS_INTEL_KIT_MODE", False):
         app.state.finance_orchestrator = None
+        app.state.finance_bg_thread = None
+        logger.info("Kit mode: Finance Orchestrator skipped")
+    else:
+        try:
+            from domains.finance import data_sources, embedding, stats
+            from domains.finance import llm as finance_llm
+            from domains.finance.data import evidence_ledger, market_data_store, vector_store
+            from domains.finance.orchestrator import FinanceOrchestrator
+
+            app.state.finance_orchestrator = FinanceOrchestrator(
+                source_loader=data_sources,
+                market_data_store=market_data_store,
+                vector_store=vector_store,
+                evidence_ledger=evidence_ledger,
+                embedding_module=embedding,
+                stats_module=stats,
+                llm_wrapper=finance_llm,
+                cpu_concurrency=4,
+            )
+            logger.info("✅ Finance Orchestrator initialized")
+            if app.state.finance_orchestrator:
+
+                def _run_finance_background():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    fo = app.state.finance_orchestrator
+                    fo._schedule_task = None
+                    fo._queue_task = None
+
+                    async def _start():
+                        fo._schedule_stop.clear()
+                        fo._schedule_task = asyncio.create_task(fo._schedule_loop())
+                        fo._queue_stop.clear()
+                        fo._queue_task = asyncio.create_task(fo._queue_loop())
+                        while True:
+                            await asyncio.sleep(60)
+
+                    loop.run_until_complete(_start())
+
+                finance_bg_thread = threading.Thread(
+                    target=_run_finance_background, daemon=True, name="FinanceScheduler"
+                )
+                finance_bg_thread.start()
+                app.state.finance_bg_thread = finance_bg_thread
+                logger.info("✅ Finance scheduler and queue worker started (background thread)")
+        except Exception as e:
+            logger.error("❌ Failed to initialize Finance Orchestrator: %s", e)
+            app.state.finance_orchestrator = None
 
     # Start automation manager in background thread (before OrchestratorCoordinator)
     try:
@@ -320,13 +327,17 @@ async def lifespan(app: FastAPI):
             lambda: getattr(app.state, "finance_orchestrator", None)
         )
 
-        try:
-            ml_processing_service = MLProcessingService()
-            ml_processing_service.start_processing()
-            logger.info("✅ ML Processing Service started automatically")
-            app.state.ml_processing = ml_processing_service
-        except Exception as e:
-            logger.error(f"❌ Failed to start ML Processing Service: {e}")
+        if not env_bool("NEWS_INTEL_KIT_MODE", False):
+            try:
+                ml_processing_service = MLProcessingService()
+                ml_processing_service.start_processing()
+                logger.info("✅ ML Processing Service started automatically")
+                app.state.ml_processing = ml_processing_service
+            except Exception as e:
+                logger.error(f"❌ Failed to start ML Processing Service: {e}")
+        else:
+            app.state.ml_processing = None
+            logger.info("Kit mode: ML Processing Service skipped")
 
         try:
             from domains.content_analysis.services.topic_extraction_queue_worker import (
@@ -453,7 +464,7 @@ async def lifespan(app: FastAPI):
     try:
         from services.health_monitor_orchestrator import get_health_monitor
 
-        base_url = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+        base_url = env_str("API_BASE_URL", "http://127.0.0.1:8000")
         health_monitor = get_health_monitor(base_url=base_url)
 
         def _run_health_monitor():
@@ -537,7 +548,7 @@ async def lifespan(app: FastAPI):
         app.state.consolidation_stop_event = None
 
     # Start Newsroom Orchestrator (optional — requires orchestration/ package + env flag)
-    newsroom_env_enabled = os.getenv("NEWSROOM_ORCHESTRATOR_ENABLED", "").lower() in (
+    newsroom_env_enabled = env_str("NEWSROOM_ORCHESTRATOR_ENABLED", "").lower() in (
         "1",
         "true",
         "yes",
