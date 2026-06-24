@@ -35,41 +35,13 @@ router = APIRouter(
 )
 
 
+
 @router.get("/health")
 async def health_check():
-    """Health check for News Aggregation domain"""
-    try:
-        # Check database connection (UI pool — same lane as page loads)
-        conn = get_ui_db_connection()
-        if not conn:
-            return {
-                "success": False,
-                "domain": "news_aggregation",
-                "status": "unhealthy",
-                "error": "Database connection failed",
-            }
+    """Health check for News Aggregation domain - delegates to centralized endpoint"""
+    from domain.health_check import get_domain_health_check
+    return await get_domain_health_check("news_aggregation")
 
-        # Check LLM service (1s timeout — don't block health when Ollama is busy)
-        llm_status = await llm_service.get_model_status(timeout_seconds=1.0)
-
-        conn.close()
-
-        return {
-            "success": True,
-            "domain": "news_aggregation",
-            "status": "healthy",
-            "llm_service": llm_status,
-            "timestamp": datetime.now().isoformat(),
-        }
-
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return {
-            "success": False,
-            "domain": "news_aggregation",
-            "status": "unhealthy",
-            "error": str(e),
-        }
 
 
 @router.get("/{domain}/rss_feeds")
@@ -158,12 +130,14 @@ async def get_domain_rss_feeds(domain: str = Path(..., pattern=DOMAIN_PATH_PATTE
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
 def _get_schema_for_domain(conn, domain: str):
     """Resolve schema_name from domain key. Raises HTTPException if invalid."""
     schema_name, _ = resolve_active_domain_schema(domain, conn=conn)
     if not schema_name:
         raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
     return schema_name
+
 
 
 @router.post("/{domain}/rss_feeds")
@@ -186,7 +160,7 @@ async def create_domain_rss_feed(
                 cur.execute(
                     f"""
                     SELECT id, feed_name, is_active FROM {schema_name}.rss_feeds WHERE feed_url = %s
-                """,
+                    """,
                     (feed_url,),
                 )
                 existing = cur.fetchone()
@@ -213,7 +187,7 @@ async def create_domain_rss_feed(
                     INSERT INTO {schema_name}.rss_feeds (feed_name, feed_url, is_active, fetch_interval_seconds, created_at)
                     VALUES (%s, %s, %s, %s, %s)
                     RETURNING id
-                """,
+                    """,
                     (
                         feed_name,
                         feed_url,
@@ -237,6 +211,7 @@ async def create_domain_rss_feed(
     except Exception as e:
         logger.error(f"Error creating RSS feed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @router.put("/{domain}/rss_feeds/{feed_id}")
@@ -305,6 +280,7 @@ async def update_domain_rss_feed(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
 @router.delete("/{domain}/rss_feeds/{feed_id}")
 async def delete_domain_rss_feed(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
@@ -339,6 +315,7 @@ async def delete_domain_rss_feed(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
 @router.post("/rss_feeds")
 async def create_rss_feed(feed_data: dict[str, Any] = Body(...)):
     """Create RSS feed (legacy). Prefer POST /{domain}/rss_feeds. Uses domain from body or defaults to politics."""
@@ -351,6 +328,7 @@ async def create_rss_feed(feed_data: dict[str, Any] = Body(...)):
         )
     # Delegate to domain-scoped create
     return await create_domain_rss_feed(domain=domain, feed_data=feed_data)
+
 
 
 @router.post("/{domain}/rss_feeds/collect_now")
@@ -392,6 +370,7 @@ async def collect_rss_feeds_now(domain: str = Path(..., pattern=DOMAIN_PATH_PATT
         }
 
 
+
 @router.post("/fetch_articles")
 async def fetch_articles_from_feeds(background_tasks: BackgroundTasks):
     """Trigger RSS collection for all domains (uses collect_rss_feeds; domain-scoped feeds)."""
@@ -413,6 +392,7 @@ async def fetch_articles_from_feeds(background_tasks: BackgroundTasks):
     }
 
 
+
 def _get_domain_articles_sync(
     domain: str,
     limit: int,
@@ -421,6 +401,7 @@ def _get_domain_articles_sync(
 ) -> dict:
     article_service = ArticleService(domain=domain)
     return article_service.get_articles(limit=limit, offset=offset, filters=filters)
+
 
 
 @router.get("/{domain}/articles")
@@ -501,6 +482,7 @@ async def get_domain_articles(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
 @router.get("/{domain}/articles/source_options")
 async def get_domain_article_source_options(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
@@ -517,6 +499,7 @@ async def get_domain_article_source_options(
     except Exception as e:
         logger.error(f"Error listing article sources for domain {domain}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @router.get("/{domain}/articles/{article_id}")
@@ -552,6 +535,7 @@ async def get_domain_article(
             f"Error fetching article {article_id} from domain {domain}: {e}", exc_info=True
         )
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @router.post("/{domain}/articles/{article_id}/fetch-full-content")
@@ -600,6 +584,7 @@ async def post_fetch_article_full_content(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
 @router.delete("/{domain}/articles/{article_id}")
 async def delete_domain_article(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
@@ -640,11 +625,14 @@ async def delete_domain_article(
 
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(
             f"Error deleting article {article_id} from domain {domain}: {e}", exc_info=True
         )
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @router.delete("/{domain}/articles")
@@ -693,6 +681,7 @@ async def delete_domain_articles_bulk(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
 # Legacy endpoint for backward compatibility (redirects to politics domain)
 @router.get("/articles/recent")
 async def get_recent_articles_legacy(
@@ -739,7 +728,7 @@ async def analyze_article_quality(article_id: int, background_tasks: BackgroundT
                     SELECT id, title, content, url, source_domain
                     FROM {schema}.articles
                     WHERE id = %s
-                """,
+                    """,
                     (article_id,),
                 )
 
@@ -886,7 +875,7 @@ async def process_article_quality(article: tuple):
                                 summary = %s,
                                 updated_at = %s
                             WHERE id = %s
-                        """,
+                            """,
                             (
                                 85,  # Placeholder quality score
                                 quality_analysis["summary"],
