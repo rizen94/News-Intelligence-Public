@@ -63,19 +63,15 @@ def _get_recent_finance_articles(
 ) -> list[dict[str, Any]]:
     """Fetch recent articles for the URL domain (e.g. ``finance``)."""
     try:
-        from domains.news_aggregation.services.article_service import ArticleService
+        from shared.services.article_query_service import get_recent_domain_articles
 
-        svc = ArticleService(domain=domain_key)
         published_after = datetime.now(timezone.utc) - timedelta(days=days)
-        res = svc.get_articles(
+        return get_recent_domain_articles(
+            domain_key,
+            published_after=published_after,
             limit=limit,
-            offset=0,
             include_content=False,
-            filters={"published_after": published_after},
         )
-        data = res.get("data") or {}
-        articles = data.get("articles") or []
-        return [dict(a) for a in articles]
     except Exception as e:
         logger.warning("_get_recent_finance_articles failed domain=%s: %s", domain_key, e)
         return []

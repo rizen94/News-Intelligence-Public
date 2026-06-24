@@ -4,6 +4,8 @@ from fastapi import APIRouter
 from .longitudinal import router as longitudinal_router
 from .content_synthesis import router as synthesis_router
 from .context_centric import router as context_centric_router
+from .entity_resolution import router as entity_resolution_router
+from .investigation import investigation_router
 from .cross_domain import router as cross_domain_router
 from .enrichment import router as enrichment_router
 from .intelligence_analysis import router as analysis_router
@@ -19,6 +21,8 @@ router.include_router(analysis_router)
 router.include_router(rag_router)
 router.include_router(synthesis_router)
 router.include_router(context_centric_router)
+router.include_router(entity_resolution_router)
+router.include_router(investigation_router)
 router.include_router(quality_router)
 router.include_router(cross_domain_router)
 router.include_router(products_router)

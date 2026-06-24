@@ -244,18 +244,16 @@ def get_shortlist(
         # 1) Finance-domain articles (RSS-derived) — FINANCE_PG_CONTENT_DOMAIN_KEY selects silo (default finance)
     try:
         from config.settings import finance_postgres_content_domain_key
-        from domains.news_aggregation.services.article_service import ArticleService
+        from shared.services.article_query_service import get_recent_domain_articles
 
         fin_dk = finance_postgres_content_domain_key()
-        article_svc = ArticleService(domain=fin_dk)
         published_after = datetime.now(timezone.utc) - timedelta(hours=hours)
-        res = article_svc.get_articles(
+        articles = get_recent_domain_articles(
+            fin_dk,
+            published_after=published_after,
             limit=150,
-            offset=0,
             include_content=True,
-            filters={"published_after": published_after},
         )
-        articles = (res.get("data") or {}).get("articles") or []
         for a in articles:
             title = (a.get("title") or "")[:500]
             content = a.get("content") or a.get("summary") or ""

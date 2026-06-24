@@ -28,6 +28,7 @@ from shared.services.domain_aware_service import (
 )
 from shared.services.pipeline_trace_writer import log_pipeline_trace as _log_pipeline_trace
 from shared.services.response_cache import cached_response, cached_response_sync
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 # Reserve dedicated pool for monitoring/page-load endpoints in this module
 get_monitoring_db_connection = get_ui_db_connection
@@ -85,34 +86,38 @@ def _check_frontend_once() -> dict[str, Any]:
     """One-off frontend health check (e.g. when Route Supervisor has not run yet after reboot)."""
     import time
 
-    frontend_url = "http://localhost:3000"
-    start = time.perf_counter()
-    try:
-        import requests
+    import requests
 
-        r = requests.get(frontend_url, timeout=3, allow_redirects=False)
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        status = "healthy" if r.status_code == 200 else "unhealthy"
-        return {
-            "status": status,
-            "response_time_ms": round(elapsed_ms, 1),
-            "url": frontend_url,
-            "last_check": datetime.now().isoformat(),
-        }
-    except requests.exceptions.ConnectionError:
-        return {
-            "status": "unhealthy",
-            "error": "Cannot connect to frontend (is it running on port 3000?)",
-            "url": frontend_url,
-            "last_check": datetime.now().isoformat(),
-        }
-    except Exception as e:
-        return {
-            "status": "unknown",
-            "error": str(e)[:80],
-            "url": frontend_url,
-            "last_check": datetime.now().isoformat(),
-        }
+    # Widow prod serves SPA via nginx on :80; dev uses Vite on :3000.
+    candidates: list[tuple[str, float]] = [
+        ("http://127.0.0.1", 1.5),
+        ("http://localhost:3000", 1.0),
+    ]
+    last_error: str | None = None
+    for frontend_url, req_timeout in candidates:
+        start = time.perf_counter()
+        try:
+            r = requests.get(frontend_url, timeout=req_timeout, allow_redirects=True)
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            status = "healthy" if r.status_code < 400 else "unhealthy"
+            return {
+                "status": status,
+                "response_time_ms": round(elapsed_ms, 1),
+                "url": frontend_url,
+                "last_check": datetime.now().isoformat(),
+            }
+        except requests.exceptions.ConnectionError:
+            last_error = f"Cannot connect to frontend at {frontend_url}"
+            continue
+        except Exception as e:
+            last_error = str(e)[:80]
+            continue
+    return {
+        "status": "unhealthy",
+        "error": last_error or "Cannot connect to frontend",
+        "url": candidates[-1][0],
+        "last_check": datetime.now().isoformat(),
+    }
 
 
 def _get_gpu_metrics() -> dict[str, Any]:
@@ -353,12 +358,18 @@ def _safe_get_automation_status(automation: Any | None, timeout: float = 2.0) ->
     return {}
 
 
-def _synthesize_current_activities_from_automation(automation: Any | None) -> list[dict[str, Any]]:
+def _synthesize_current_activities_from_automation(
+    automation: Any | None,
+    *,
+    automation_status: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """
     When the in-memory activity feed is empty (multi-worker mismatch, missed add_current, etc.),
     derive rows from live AutomationManager counters.
     """
-    st = _safe_get_automation_status(automation, timeout=2.0)
+    st = automation_status
+    if st is None:
+        st = _safe_get_automation_status(automation, timeout=2.0)
     if not st:
         return []
     active = st.get("active_tasks_by_phase") or {}
@@ -390,6 +401,7 @@ def _merge_current_activities_with_run_counts(
     current: list[dict[str, Any]],
     *,
     automation: Any | None = None,
+    automation_status: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """
     One row per automation phase (task_name), with running_instances from AutomationManager
@@ -397,7 +409,9 @@ def _merge_current_activities_with_run_counts(
     """
     active_by_phase: dict[str, int] = {}
     try:
-        st = _safe_get_automation_status(automation, timeout=2.0)
+        st = automation_status
+        if st is None:
+            st = _safe_get_automation_status(automation, timeout=2.0)
         active_by_phase = dict(st.get("active_tasks_by_phase") or {})
     except Exception:
         pass
@@ -575,10 +589,15 @@ def _enrich_current_activities_with_run_estimates(
 
 
 MONITOR_OVERVIEW_AUTOMATION_HISTORY_TIMEOUT = 2.0
+MONITOR_OVERVIEW_HANDLER_TIMEOUT = 12.0
 
 
-def _get_processing_history_for_monitor() -> dict[str, Any] | None:
-    st = _safe_get_automation_status(None, timeout=MONITOR_OVERVIEW_AUTOMATION_HISTORY_TIMEOUT)
+def _get_processing_history_for_monitor(
+    automation_status: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    st = automation_status
+    if st is None:
+        st = _safe_get_automation_status(None, timeout=MONITOR_OVERVIEW_AUTOMATION_HISTORY_TIMEOUT)
     if not st:
         return None
     metrics = st.get("metrics") or {}
@@ -586,49 +605,57 @@ def _get_processing_history_for_monitor() -> dict[str, Any] | None:
     return hist if isinstance(hist, dict) else None
 
 
-def _build_monitoring_overview_sync(request: Request) -> dict[str, Any]:
-    """Build overview payload (runs in thread pool; must stay bounded)."""
-    connections: dict[str, Any] = {"api": "ok"}
-    db_status = "unknown"
-    try:
-        import concurrent.futures
-
-        def _overview_db_probe() -> str:
-            result = _probe_db_health_fast()
-            return "healthy" if result == "healthy" else "unhealthy"
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            fut = ex.submit(_overview_db_probe)
-            try:
-                db_status = fut.result(timeout=2.5)
-            except concurrent.futures.TimeoutError:
-                db_status = "timeout"
-    except Exception:
-        db_status = "unhealthy"
-    connections["database"] = db_status
-
-    webserver: dict[str, Any] = {}
+def _build_webserver_status_for_overview() -> dict[str, Any]:
     try:
         from shared.services.route_supervisor import get_route_supervisor
 
         supervisor = get_route_supervisor()
         if supervisor.frontend_health:
             f = supervisor.frontend_health
-            webserver = {
+            return {
                 "status": f.status.value if hasattr(f.status, "value") else str(f.status),
                 "response_time_ms": getattr(f, "response_time_ms", None),
                 "api_connection": getattr(f, "api_connection", None),
                 "url": getattr(f, "url", None),
                 "last_check": f.last_check.isoformat() if getattr(f, "last_check", None) else None,
             }
-        else:
-            webserver = _check_frontend_once()
+        return _check_frontend_once()
     except Exception as e:
-        webserver = {"status": "unknown", "error": str(e)[:80]}
+        return {"status": "unknown", "error": str(e)[:80]}
+
+
+def _build_monitoring_overview_sync(request: Request) -> dict[str, Any]:
+    """Build overview payload (runs in thread pool; must stay bounded)."""
+    import concurrent.futures
+
+    connections: dict[str, Any] = {"api": "ok"}
+    db_status = "unknown"
+    webserver: dict[str, Any] = {}
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+            db_fut = ex.submit(_probe_db_health_fast)
+            web_fut = ex.submit(_build_webserver_status_for_overview)
+            try:
+                result = db_fut.result(timeout=2.5)
+                db_status = "healthy" if result == "healthy" else "unhealthy"
+            except concurrent.futures.TimeoutError:
+                db_status = "timeout"
+            except Exception:
+                db_status = "unhealthy"
+            try:
+                webserver = web_fut.result(timeout=2.0)
+            except concurrent.futures.TimeoutError:
+                webserver = {"status": "unknown", "error": "frontend_probe_timeout"}
+            except Exception as e:
+                webserver = {"status": "unknown", "error": str(e)[:80]}
+    except Exception:
+        db_status = "unhealthy"
+    connections["database"] = db_status
     connections["webserver"] = webserver
 
     activities: dict[str, Any] = {}
     live_automation = getattr(request.app.state, "automation", None)
+    automation_status = _safe_get_automation_status(live_automation, timeout=2.0)
     try:
         from services.activity_feed_service import get_activity_feed
 
@@ -637,17 +664,22 @@ def _build_monitoring_overview_sync(request: Request) -> dict[str, Any]:
         if not isinstance(cur, list):
             cur = []
         if not cur:
-            cur = _synthesize_current_activities_from_automation(live_automation)
+            cur = _synthesize_current_activities_from_automation(
+                live_automation,
+                automation_status=automation_status,
+            )
         if cur:
             try:
                 merged = _merge_current_activities_with_run_counts(
-                    cur, automation=live_automation
+                    cur,
+                    automation=live_automation,
+                    automation_status=automation_status,
                 )
             except Exception as e:
                 logger.debug("Activity feed merge: %s", e)
                 merged = cur
             try:
-                hist = _get_processing_history_for_monitor()
+                hist = _get_processing_history_for_monitor(automation_status)
                 merged = _enrich_current_activities_with_run_estimates(
                     merged,
                     processing_history=hist,
@@ -660,11 +692,16 @@ def _build_monitoring_overview_sync(request: Request) -> dict[str, Any]:
             activities = {**activities, "current": []}
     except Exception as e:
         logger.debug("Activity feed: %s", e)
-        syn = _synthesize_current_activities_from_automation(live_automation)
+        syn = _synthesize_current_activities_from_automation(
+            live_automation,
+            automation_status=automation_status,
+        )
         if syn:
             try:
                 syn = _merge_current_activities_with_run_counts(
-                    syn, automation=live_automation
+                    syn,
+                    automation=live_automation,
+                    automation_status=automation_status,
                 )
             except Exception:
                 pass
@@ -687,10 +724,13 @@ async def get_monitoring_overview(request: Request):
     try:
         return await asyncio.wait_for(
             asyncio.to_thread(_build_monitoring_overview_sync, request),
-            timeout=8.0,
+            timeout=MONITOR_OVERVIEW_HANDLER_TIMEOUT,
         )
     except asyncio.TimeoutError:
-        logger.warning("monitoring/overview timed out after 8s")
+        logger.warning(
+            "monitoring/overview timed out after %.0fs",
+            MONITOR_OVERVIEW_HANDLER_TIMEOUT,
+        )
         return {
             "success": False,
             "degraded": True,
@@ -2688,6 +2728,7 @@ def execute_pipeline_orchestration():
         try:
             from shared.database.connection import get_db_connection
 
+            # Cross-domain: pipeline trace orchestration invokes topic extraction for monitoring.
             from domains.content_analysis.services.advanced_topic_extractor import (
                 AdvancedTopicExtractor,
             )
@@ -2838,7 +2879,7 @@ async def cron_heartbeat(request: Request, body: dict[str, Any] = Body(default_f
 
     Body (optional): ``{"phase": "cron_rss", "detail": "6am run ok"}`` — phase defaults to ``cron_rss``.
     """
-    expected = (os.environ.get("CRON_HEARTBEAT_KEY") or "").strip()
+    expected = (env_str("CRON_HEARTBEAT_KEY") or "").strip()
     if not expected:
         raise HTTPException(
             status_code=501,

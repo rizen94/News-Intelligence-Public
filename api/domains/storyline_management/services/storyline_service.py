@@ -15,6 +15,7 @@ from psycopg2.extras import Json
 from shared.database.connection import get_db_connection
 from shared.domain_registry import resolve_domain_schema
 from shared.services.domain_aware_service import validate_domain
+from shared.storyline_article_counts import sync_counts_update_sql
 
 from ..models.storyline_models import Storyline, StorylineArticle
 from ..schemas.storyline_schemas import StorylineCreateRequest, StorylineUpdateRequest
@@ -95,10 +96,11 @@ class StorylineService:
                             cur.execute(
                                 f"""
                                 UPDATE {self.schema}.storylines
-                                SET article_count = article_count + %s, updated_at = %s
+                                SET {sync_counts_update_sql(self.schema)},
+                                updated_at = %s
                                 WHERE id = %s
                             """,
-                                (article_count, datetime.now(), storyline_id),
+                                (storyline_id, storyline_id, datetime.now(), storyline_id),
                             )
                             
                         # Update storyline details if needed
@@ -149,10 +151,11 @@ class StorylineService:
                             cur.execute(
                                 f"""
                                 UPDATE {self.schema}.storylines
-                                SET article_count = %s, updated_at = %s
+                                SET {sync_counts_update_sql(self.schema)},
+                                updated_at = %s
                                 WHERE id = %s
                             """,
-                                (article_count, datetime.now(), storyline_id),
+                                (storyline_id, storyline_id, datetime.now(), storyline_id),
                             )
                         
                         conn.commit()
@@ -299,14 +302,11 @@ class StorylineService:
                         cur.execute(
                             f"""
                             UPDATE {self.schema}.storylines
-                            SET article_count = (
-                                SELECT COUNT(*) FROM {self.schema}.storyline_articles 
-                                WHERE storyline_id = %s
-                            ),
+                            SET {sync_counts_update_sql(self.schema)},
                             updated_at = %s
                             WHERE id = %s
                         """,
-                            (storyline_id, datetime.now(), storyline_id),
+                            (storyline_id, storyline_id, datetime.now(), storyline_id),
                         )
                         
                         conn.commit()
@@ -527,7 +527,10 @@ class StorylineService:
                     # Get paginated results
                     query = f"""
                         SELECT s.id, s.title, s.description, s.created_at, s.updated_at,
-                               s.status, s.article_count, s.quality_score,
+                               s.status,
+                               (SELECT COUNT(*)::int FROM {self.schema}.storyline_articles sa0
+                                WHERE sa0.storyline_id = s.id) AS article_count,
+                               s.quality_score,
                                (SELECT MAX(sa.added_at) FROM {self.schema}.storyline_articles sa
                                 WHERE sa.storyline_id = s.id) AS last_article_added_at
                         FROM {self.schema}.storylines s
@@ -644,9 +647,7 @@ class StorylineService:
         Delegates to RAGAnalysisService.perform_comprehensive_analysis.
         """
         try:
-            from domains.storyline_management.services.rag_analysis_service import (
-                RAGAnalysisService,
-            )
+            from .rag_analysis_service import RAGAnalysisService
 
             svc = RAGAnalysisService(domain=self.domain)
             result = await svc.perform_comprehensive_analysis(storyline_id)

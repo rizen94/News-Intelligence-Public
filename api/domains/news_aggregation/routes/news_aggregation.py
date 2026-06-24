@@ -39,8 +39,8 @@ router = APIRouter(
 @router.get("/health")
 async def health_check():
     """Health check for News Aggregation domain - delegates to centralized endpoint"""
-    from domain.health_check import get_domain_health_check
-    return await get_domain_health_check("news_aggregation")
+    from domains.system_monitoring.routes.domain_health_check import get_domain_health_check
+    return get_domain_health_check("news_aggregation")
 
 
 
@@ -317,17 +317,14 @@ async def delete_domain_rss_feed(
 
 
 @router.post("/rss_feeds")
-async def create_rss_feed(feed_data: dict[str, Any] = Body(...)):
-    """Create RSS feed (legacy). Prefer POST /{domain}/rss_feeds. Uses domain from body or defaults to politics."""
-    active = get_active_domain_keys()
-    domain = feed_data.get("domain") or (active[0] if active else first_active_domain_key())
-    if not is_valid_domain_key(domain):
-        raise HTTPException(
-            status_code=400,
-            detail=f"domain must be an active domain key ({', '.join(active)})",
-        )
-    # Delegate to domain-scoped create
-    return await create_domain_rss_feed(domain=domain, feed_data=feed_data)
+async def create_rss_feed_legacy(feed_data: dict[str, Any] = Body(...)):
+    """Legacy endpoint — use POST /api/{domain}/rss_feeds instead."""
+    from shared.api_deprecation import deprecated_gone_response
+
+    return deprecated_gone_response(
+        "This endpoint has been deprecated. Use /api/{domain}/rss_feeds instead.",
+        documentation="See API documentation for domain-specific RSS feed endpoints",
+    )
 
 
 
@@ -372,24 +369,14 @@ async def collect_rss_feeds_now(domain: str = Path(..., pattern=DOMAIN_PATH_PATT
 
 
 @router.post("/fetch_articles")
-async def fetch_articles_from_feeds(background_tasks: BackgroundTasks):
-    """Trigger RSS collection for all domains (uses collect_rss_feeds; domain-scoped feeds)."""
+async def fetch_articles_from_feeds_legacy(background_tasks: BackgroundTasks):
+    """Legacy endpoint — use POST /api/{domain}/rss_feeds/collect_now instead."""
+    from shared.api_deprecation import deprecated_gone_response
 
-    def _run_collect():
-        try:
-            from collectors.rss_collector import collect_rss_feeds
-
-            return collect_rss_feeds()
-        except Exception as e:
-            logger.error("collect_rss_feeds failed: %s", e)
-            return None
-
-    background_tasks.add_task(_run_collect)
-    return {
-        "success": True,
-        "message": "RSS collection started for all domains (collect_rss_feeds)",
-        "timestamp": datetime.now().isoformat(),
-    }
+    return deprecated_gone_response(
+        "This endpoint has been deprecated. Use /api/{domain}/rss_feeds/collect_now instead.",
+        documentation="See API documentation for domain-specific RSS collection endpoints",
+    )
 
 
 
@@ -682,7 +669,6 @@ async def delete_domain_articles_bulk(
 
 
 
-# Legacy endpoint for backward compatibility (redirects to politics domain)
 @router.get("/articles/recent")
 async def get_recent_articles_legacy(
     limit: int = 50,
@@ -693,19 +679,12 @@ async def get_recent_articles_legacy(
     source_domain: str | None = None,
     sort: str | None = None,
 ):
-    """
-    Legacy endpoint - redirects to politics domain.
-    Use /api/{domain}/articles instead.
-    """
-    # Redirect to first active domain (legacy path)
-    return await get_domain_articles(
-        domain=first_active_domain_key(),
-        limit=limit,
-        offset=offset if offset is not None else ((page - 1) * limit if page else 0),
-        hours=hours,
-        search=search,
-        source_domain=source_domain,
-        processing_status=None,
+    """Legacy endpoint — use GET /api/{domain}/articles instead."""
+    from shared.api_deprecation import deprecated_gone_response
+
+    return deprecated_gone_response(
+        "This endpoint has been deprecated. Use /api/{domain}/articles instead.",
+        documentation="See API documentation for domain-specific article endpoints",
     )
 
 
