@@ -61,13 +61,17 @@ MODELS = {
     "topic_extraction": OLLAMA_MODEL_PRIMARY,
 }
 
-# Ollama hosts for dual-GPU routing across machines
-# Widow (local): Handles smaller models (8B, 12B, etc.) for quick tasks
-# popOS (remote): RTX5090 handles large 70B model for heavy summarization
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-# popOS machine with RTX5090 - 192.168.93.99 is the default IP
-OLLAMA_POP_OS_HOST = os.environ.get("OLLAMA_POP_OS_HOST", "http://192.168.93.99:11434")
-OLLAMA_TIMEOUT = 300
+# Ollama hosts — canonical values from config.runtime (SSOT for host URLs)
+from config.runtime import (
+    ollama_dual_host_routing_enabled as OLLAMA_DUAL_HOST_ROUTING_ENABLED,
+    ollama_host as _runtime_ollama_host,
+    ollama_pop_os_host as _runtime_ollama_pop_os_host,
+    ollama_timeout_seconds as _runtime_ollama_timeout,
+)
+
+OLLAMA_HOST = _runtime_ollama_host()
+OLLAMA_POP_OS_HOST = _runtime_ollama_pop_os_host()
+OLLAMA_TIMEOUT = _runtime_ollama_timeout()
 
 # --- Ollama invocation policy (see shared/services/ollama_model_caller.py) ---
 # Background batches with prompts at least this many chars may use the secondary model (e.g. Mistral-Nemo 12B).
@@ -306,6 +310,30 @@ def topic_clustering_iterative_refinement_enabled() -> bool:
         "true",
         "yes",
     )
+
+
+def topic_clustering_batch_size() -> int:
+    try:
+        n = int(os.environ.get("TOPIC_CLUSTERING_BATCH_SIZE", "20"))
+    except ValueError:
+        n = 20
+    return max(5, min(200, n))
+
+
+def topic_clustering_concurrency() -> int:
+    try:
+        n = int(os.environ.get("TOPIC_CLUSTERING_CONCURRENCY", "5"))
+    except ValueError:
+        n = 5
+    return max(1, min(20, n))
+
+
+def topic_fast_match_min_score() -> float:
+    try:
+        n = float(os.environ.get("TOPIC_FAST_MATCH_MIN_SCORE", "0.62"))
+    except ValueError:
+        n = 0.62
+    return min(0.99, max(0.35, n))
 
 
 def news_intel_public_web_auth_enabled() -> bool:
