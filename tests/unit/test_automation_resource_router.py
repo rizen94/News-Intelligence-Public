@@ -134,9 +134,12 @@ def test_per_phase_execute_cap_zero_for_nightly_sequential(monkeypatch):
 
 def test_skip_redundant_claim_extraction_when_drain_pipeline_saturated(monkeypatch):
     monkeypatch.setenv("CLAIM_EXTRACTION_DRAIN", "true")
+    monkeypatch.delenv("AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES", raising=False)
     monkeypatch.setattr(am, "AUTOMATION_PER_PHASE_CONCURRENT_CAP", 2)
     mgr = AutomationManager(get_db_config())
     mgr._running_tasks_by_phase["claim_extraction"] = 2
+    mgr._scheduled_queue_depth_by_phase["claim_extraction"] = 0
+    mgr._requested_queue_depth_by_phase["claim_extraction"] = 0
     assert mgr._should_skip_redundant_phase_request("claim_extraction") is True
     assert (
         mgr._should_skip_redundant_phase_request(
@@ -145,6 +148,8 @@ def test_skip_redundant_claim_extraction_when_drain_pipeline_saturated(monkeypat
         is False
     )
     mgr._running_tasks_by_phase["claim_extraction"] = 1
+    mgr._scheduled_queue_depth_by_phase["claim_extraction"] = 0
+    mgr._requested_queue_depth_by_phase["claim_extraction"] = 0
     assert mgr._should_skip_redundant_phase_request("claim_extraction") is False
 
 

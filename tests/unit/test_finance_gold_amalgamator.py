@@ -62,8 +62,14 @@ def test_fetch_all_mocked(monkeypatch):
             ]
         )
 
-    monkeypatch.setattr("domains.finance.gold_sources.freegoldapi.fetch", mock_freegoldapi)
-    monkeypatch.setattr("domains.finance.gold_sources.fred_gold.fetch", mock_fred)
+    monkeypatch.setattr(
+        "domains.finance.gold_amalgamator.SOURCES",
+        [
+            ("fred_iq12260", mock_fred, "Export price index"),
+            ("metals_dev", lambda start=None, end=None: DataResult.ok([]), "USD/toz historical"),
+            ("freegoldapi", mock_freegoldapi, "USD/oz spot"),
+        ],
+    )
 
     results = fetch_all(start="2024-01-01", end="2024-01-01", store=True)
 

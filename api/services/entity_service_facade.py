@@ -82,3 +82,63 @@ def get_entity_positions(domain_key: str, entity_id: int, *, limit: int = 50) ->
     from services.entity_position_tracker_service import get_entity_positions as _get
 
     return _get(domain_key, entity_id, limit=limit)
+
+
+def extract_positions_for_entity(
+    domain_key: str,
+    entity_id: int,
+    *,
+    max_articles: int = 10,
+) -> dict[str, Any]:
+    from services.entity_position_tracker_service import extract_positions_for_entity as _extract
+
+    return _extract(domain_key, entity_id, max_articles=max_articles)
+
+
+def run_position_tracker_batch(
+    *,
+    domain_key: str | None = None,
+    min_mentions: int = 5,
+    max_entities: int = 10,
+    max_articles_per_entity: int = 25,
+) -> dict[str, Any]:
+    from services.entity_position_tracker_service import run_position_tracker_batch as _batch
+
+    return _batch(
+        domain_key=domain_key,
+        min_mentions=min_mentions,
+        max_entities=max_entities,
+        max_articles_per_entity=max_articles_per_entity,
+    )
+
+
+def auto_merge_high_confidence(
+    domain_key: str,
+    *,
+    min_confidence: float = 0.9,
+) -> dict[str, Any]:
+    from services.entity_resolution_service import auto_merge_high_confidence as _auto
+
+    return _auto(domain_key, min_confidence=min_confidence)
+
+
+def link_cross_domain_entities(
+    *,
+    min_confidence: float = 0.8,
+    limit: int = 100,
+) -> dict[str, Any]:
+    from services.entity_resolution_service import link_cross_domain_entities as _link
+
+    return _link(min_confidence=min_confidence, limit=limit)
+
+
+def schema_for_domain(domain_key: str) -> str:
+    from services.entity_resolution_service import _schema_for_domain
+
+    return _schema_for_domain(domain_key)
+
+
+def run_enrichment_batch(*, limit: int = 20) -> int:
+    from services.entity_enrichment_service import run_enrichment_batch as _batch
+
+    return _batch(limit=limit)

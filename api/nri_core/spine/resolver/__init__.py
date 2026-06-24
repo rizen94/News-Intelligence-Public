@@ -1,0 +1,1 @@
+"""Nomenklatura resolver integration."""

@@ -50,10 +50,7 @@ def sync_entity_profiles(domain_key: str | None = Query(None, description="Sync 
             return {"success": False, "error": "entity_profile_sync task is disabled in context_centric config"}
     except Exception:
         pass
-    from services.entity_profile_sync_service import (
-        backfill_entity_canonical,
-        sync_domain_entity_profiles,
-    )
+    from services.entity_service_facade import sync_entity_profiles as _sync_profiles
 
     domains = [domain_key] if domain_key else list(get_active_domain_keys())
     if domain_key and not is_valid_domain_key(domain_key):
@@ -66,16 +63,12 @@ def sync_entity_profiles(domain_key: str | None = Query(None, description="Sync 
     result: dict[str, int] = {}
     for d in domains:
         try:
-            backfilled = backfill_entity_canonical(d)
-            backfill_counts[d] = backfilled
-        except Exception as e:
-            logger.warning(f"backfill_entity_canonical {d}: {e}")
-            backfill_counts[d] = 0
-        try:
-            created = sync_domain_entity_profiles(d)
-            result[d] = created
+            out = _sync_profiles(d)
+            backfill_counts[d] = out.get("canonical_backfilled", 0)
+            result[d] = out.get("profiles_created", 0)
         except Exception as e:
             logger.warning(f"sync_entity_profiles {d}: {e}")
+            backfill_counts[d] = 0
             result[d] = -1
     return {"success": True, "created_by_domain": result, "canonical_backfilled": backfill_counts}
 @router.post("/context_centric/run_entity_enrichment", response_model=dict)
@@ -86,7 +79,7 @@ def run_entity_enrichment(limit: int = Query(20, ge=1, le=50, description="Max p
     See docs/RAG_ENHANCEMENT_ROADMAP.md.
     """
     try:
-        from services.entity_enrichment_service import run_enrichment_batch
+        from services.entity_service_facade import run_enrichment_batch
         updated = run_enrichment_batch(limit=limit)
         return {"success": True, "updated": updated}
     except Exception as e:
@@ -400,7 +393,7 @@ def resolve_entity(
     if not entity_name:
         raise HTTPException(status_code=400, detail="entity_name required")
 
-    from services.entity_resolution_service import resolve_with_candidates
+    from services.entity_service_facade import resolve_with_candidates
     result = resolve_with_candidates(domain_key, entity_name, entity_type, limit=10)
     return {"success": True, **result}
 
@@ -413,7 +406,7 @@ def populate_entity_aliases(
     """
     Batch-populate entity_canonical.aliases from article_entities mention variants.
     """
-    from services.entity_resolution_service import populate_aliases_from_mentions
+    from services.entity_service_facade import populate_aliases as populate_aliases_from_mentions
 
     domains = [domain_key] if domain_key else list(get_active_domain_keys())
     results = {}
@@ -432,7 +425,7 @@ def get_merge_candidates(
     Find pairs of canonical entities that likely refer to the same real-world entity.
     Returns candidates with confidence scores and match reasons.
     """
-    from services.entity_resolution_service import find_merge_candidates
+    from services.entity_service_facade import find_merge_candidates
     return find_merge_candidates(domain_key, min_confidence=min_confidence, limit=limit)
 
 
@@ -450,7 +443,7 @@ def merge_entities(
     if not all([domain_key, keep_id, merge_id]):
         raise HTTPException(status_code=400, detail="domain_key, keep_id, and merge_id required")
 
-    from services.entity_resolution_service import merge_canonical_entities
+    from services.entity_service_facade import merge_canonical as merge_canonical_entities
     return merge_canonical_entities(domain_key, keep_id=keep_id, merge_id=merge_id)
 
 
@@ -464,7 +457,7 @@ def auto_merge_entities(
     Keeps the primary (full) name and merges variants into it (variants become aliases).
     Use min_confidence=0.6 to consolidate last-name and variant matches (e.g. Trump, Donald J Trump, King Trump).
     """
-    from services.entity_resolution_service import auto_merge_high_confidence
+    from services.entity_service_facade import auto_merge_high_confidence
 
     domains = [domain_key] if domain_key else list(get_active_domain_keys())
     results = {}
@@ -482,7 +475,7 @@ def cross_domain_link_entities(
     Find the same entity across domain schemas (politics, finance, science-tech)
     and create cross_domain_same_entity relationships.
     """
-    from services.entity_resolution_service import link_cross_domain_entities
+    from services.entity_service_facade import link_cross_domain_entities
     return link_cross_domain_entities(min_confidence=min_confidence, limit=limit)
 
 
@@ -495,7 +488,7 @@ def run_entity_resolution_batch(
     Run a full entity resolution cycle: populate aliases, auto-merge duplicates,
     link cross-domain entities. Suitable for scheduled or manual trigger.
     """
-    from services.entity_resolution_service import run_resolution_batch
+    from services.entity_service_facade import run_resolution_batch
     return run_resolution_batch(
         auto_merge_confidence=auto_merge_confidence,
         cross_domain_confidence=cross_domain_confidence,
@@ -512,7 +505,7 @@ def list_canonical_entities(
     offset: int = Query(0, ge=0),
 ) -> dict:
     """List canonical entities with alias info and mention counts."""
-    from services.entity_resolution_service import _schema_for_domain
+    from services.entity_service_facade import schema_for_domain as _schema_for_domain
 
     schema = _schema_for_domain(domain_key)
     conn = get_db_connection()
@@ -595,7 +588,7 @@ def get_entity_positions(
     limit: int = Query(50, ge=1, le=200),
 ) -> dict:
     """Get stored positions (stances, votes, statements) for a canonical entity."""
-    from services.entity_position_tracker_service import get_entity_positions as _get
+    from services.entity_service_facade import get_entity_positions as _get
     return _get(domain_key, entity_id, limit=limit)
 
 
@@ -609,7 +602,7 @@ def extract_entity_positions(
     if not domain_key or not entity_id:
         raise HTTPException(status_code=400, detail="domain_key and entity_id required")
 
-    from services.entity_position_tracker_service import extract_positions_for_entity
+    from services.entity_service_facade import extract_positions_for_entity
     return extract_positions_for_entity(
         domain_key, entity_id,
         max_articles=body.get("max_articles", 20),
@@ -626,7 +619,7 @@ def run_position_tracker_batch(
     Batch-extract positions for top entities by mention count.
     Suitable for manual trigger or scheduled runs.
     """
-    from services.entity_position_tracker_service import run_position_tracker_batch as _batch
+    from services.entity_service_facade import run_position_tracker_batch as _batch
     return _batch(
         domain_key=domain_key,
         min_mentions=min_mentions,
