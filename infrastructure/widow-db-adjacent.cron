@@ -1,7 +1,7 @@
-# Widow: DB-adjacent jobs (no FastAPI). Install:
-#   sudo cp infrastructure/widow-db-adjacent.cron /etc/cron.d/news-intelligence-widow-db
-#   sudo sed -i 's|/opt/news-intelligence|/opt/news-intelligence|g' /etc/cron.d/news-intelligence-widow-db
-#   sudo chmod 644 /etc/cron.d/news-intelligence-widow-db
+# Widow: DB-adjacent jobs (no FastAPI). Install ONCE only:
+#   sudo cp infrastructure/widow-db-adjacent.cron /etc/cron.d/widow-db-adjacent
+#   sudo chmod 644 /etc/cron.d/widow-db-adjacent
+# Do NOT also install as news-intelligence-widow-db or newsplatform-db-adjacent (duplicates).
 #
 # On the main GPU host .env set:
 #   AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE=true
@@ -12,8 +12,11 @@
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
 
-# Every 15 minutes: contexts + entity profile map + replay spill file (replace pete + path if needed)
-*/15 * * * * pete cd /opt/news-intelligence && PYTHONPATH=api /opt/news-intelligence/.venv/bin/python api/scripts/run_widow_db_adjacent.py --context-sync --entity-profile-sync --pending-db-flush >> /opt/news-intelligence/logs/widow_db_adjacent.log 2>&1
+# Every 15 minutes: contexts + entity profile map + replay spill file (flock skips if prior run still active)
+*/15 * * * * pete flock -n /tmp/widow-db-adjacent-sync.lock -c "cd /opt/news-intelligence && PYTHONPATH=api /opt/news-intelligence/.venv/bin/python api/scripts/run_widow_db_adjacent.py --context-sync --entity-profile-sync --pending-db-flush >> /opt/news-intelligence/logs/widow_db_adjacent.log 2>&1"
 
 # Every 5 minutes: terminate idle-in-transaction sessions older than 5 min (pool leak recovery)
-*/5 * * * * pete cd /opt/news-intelligence && PYTHONPATH=api /opt/news-intelligence/.venv/bin/python api/scripts/run_widow_db_adjacent.py --terminate-idle-in-tx --idle-in-tx-minutes 5 >> /opt/news-intelligence/logs/widow_db_adjacent.log 2>&1
+*/5 * * * * pete flock -n /tmp/widow-db-adjacent-idle-tx.lock -c "cd /opt/news-intelligence && PYTHONPATH=api /opt/news-intelligence/.venv/bin/python api/scripts/run_widow_db_adjacent.py --terminate-idle-in-tx --idle-in-tx-minutes 5 >> /opt/news-intelligence/logs/widow_db_adjacent.log 2>&1"
+
+# Weekly: reconcile denormalized metrics + database health thresholds (Sunday 04:00 UTC)
+0 4 * * 0 pete flock -n /tmp/widow-db-reconcile.lock -c "cd /opt/news-intelligence && set -a && . /opt/news-intelligence/.env && set +a && PYTHONPATH=api /opt/news-intelligence/.venv/bin/python api/scripts/repair_denormalized_metrics.py --all >> /opt/news-intelligence/logs/widow_db_reconcile.log 2>&1 && PYTHONPATH=api /opt/news-intelligence/.venv/bin/python api/scripts/verify_database_health.py >> /opt/news-intelligence/logs/widow_db_reconcile.log 2>&1 && PYTHONPATH=api /opt/news-intelligence/.venv/bin/python api/scripts/refresh_topic_index_matviews.py >> /opt/news-intelligence/logs/widow_db_reconcile.log 2>&1 && PYTHONPATH=api /opt/news-intelligence/.venv/bin/python api/scripts/run_topic_cluster_merge_batch.py --apply >> /opt/news-intelligence/logs/widow_db_reconcile.log 2>&1"

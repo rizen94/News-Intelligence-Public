@@ -180,22 +180,86 @@ Keep each section content concise. If relationships are not clear, return empty 
         return False
 
 
+def sql_entity_profile_upstream_cleared_exists() -> str:
+    """SQL EXISTS fragment: profile has a mention tied to upstream-cleared article + context."""
+    from shared.domain_registry import pipeline_url_schema_pairs
+    from shared.pipeline_pass_marker import sql_article_pass_cleared, sql_context_pass_cleared
+
+    ctx_cleared = sql_context_pass_cleared("claim_extraction", "c")
+    branches: list[str] = []
+    try:
+        from shared.pipeline_resource_policy import intake_extraction_suppressed
+
+        entity_phase = (
+            "unified_intake_extraction"
+            if intake_extraction_suppressed()
+            else "entity_extraction"
+        )
+    except Exception:
+        entity_phase = "entity_extraction"
+    for domain_key, schema_name in pipeline_url_schema_pairs():
+        art_cleared = sql_article_pass_cleared(entity_phase, "a")
+        dk = domain_key.replace("'", "''")
+        branches.append(
+            f"""(
+                ep.domain_key = '{dk}'
+                AND EXISTS (
+                    SELECT 1 FROM {schema_name}.articles a
+                    WHERE a.id = atc.article_id
+                      AND ({art_cleared})
+                )
+            )"""
+        )
+    if not branches:
+        return "FALSE"
+    domain_branch_sql = " OR ".join(branches)
+    return f"""EXISTS (
+        SELECT 1 FROM intelligence.context_entity_mentions cem
+        JOIN intelligence.article_to_context atc
+          ON atc.context_id = cem.context_id AND atc.domain_key = ep.domain_key
+        JOIN intelligence.contexts c ON c.id = atc.context_id
+        WHERE cem.entity_profile_id = ep.id
+          AND ({ctx_cleared})
+          AND ({domain_branch_sql})
+    )"""
+
+
+def _entity_profile_upstream_gate_enabled() -> bool:
+    from config.runtime import env_str
+
+    return env_str("ENTITY_PROFILE_BUILD_UPSTREAM_GATE", "true").lower() in ("1", "true", "yes")
+
+
 def get_entity_profile_ids_to_build(limit: int = 20) -> list[int]:
-    """Return entity_profile IDs that should be (re)built: either sections empty or not updated recently."""
+    """Return buildable profile IDs: pipeline-active domains with context mentions."""
+    from shared.pipeline_domain_sql import pipeline_domain_any_sql
+
     conn = get_db_connection()
     if not conn:
         return []
+    domain_sql, domain_keys = pipeline_domain_any_sql("ep.domain_key")
+    if not domain_keys:
+        return []
+    upstream_sql = ""
+    if _entity_profile_upstream_gate_enabled():
+        upstream_sql = f" AND {sql_entity_profile_upstream_cleared_exists()} "
     try:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT ep.id FROM intelligence.entity_profiles ep
-                WHERE ep.sections = '[]'::jsonb OR ep.sections IS NULL
-                   OR ep.updated_at < NOW() - INTERVAL '7 days'
+                WHERE {domain_sql}
+                  AND (ep.sections = '[]'::jsonb OR ep.sections IS NULL
+                       OR ep.updated_at < NOW() - INTERVAL '7 days')
+                  AND EXISTS (
+                      SELECT 1 FROM intelligence.context_entity_mentions cem
+                      WHERE cem.entity_profile_id = ep.id
+                  )
+                  {upstream_sql}
                 ORDER BY ep.updated_at ASC NULLS FIRST
                 LIMIT %s
                 """,
-                (limit,),
+                (domain_keys, limit),
             )
             return [r[0] for r in cur.fetchall()]
     finally:

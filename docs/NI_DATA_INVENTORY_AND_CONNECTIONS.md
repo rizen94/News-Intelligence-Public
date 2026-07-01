@@ -208,6 +208,8 @@ Parallel from contexts:
 
 **Orphan contexts (MemPalace audit baseline, May 2026):** ~73k total without `article_to_context` — predominantly **`pdf_section`** (~58k, expected) plus legacy domain_key buckets after politics_2/finance_2 consolidation.
 
+**Contexts without claims (June 2026, ~145k total contexts):** ~122k have at least one `extracted_claims` row. The remaining ~23k are mostly **terminal inventory** — `claim_extraction` already ran and recorded an outcome (`parsed_empty`, pass marker, or text too short). Only **~300–500** rows match automation backlog (`actionable_no_claims` in `get_context_claim_backlog_stats()`). Monitor **`backlog_status`** and **`processing_progress`** use actionable counts for queue depth and steady-state; `total_no_claims` in `backlog_breakdown` is completeness/diagnostics only.
+
 ### 5.2 Entity connection model
 
 ```mermaid
@@ -341,7 +343,7 @@ For a **development plan** focused on connecting data points, distinct events, a
 
 1. **Unified entity view** — Join `entity_profiles` + per-domain `entity_canonical` + `story_entity_index` + fact counts; expose “coverage score” per entity.
 2. **Event reconciliation layer** — Map `tracked_events.id` ↔ `chronological_events` clusters ↔ storyline IDs (view or service, even before schema merge).
-3. **Bridge completeness dashboard** — articles without contexts, contexts without claims, claims without resolvable subjects (extend Monitor).
+3. **Bridge completeness dashboard** — articles without contexts, contexts without **actionable** claims (not terminal no-claim inventory), claims without resolvable subjects (extend Monitor).
 4. **Subject gap workflow** — UI/ops on `claim_subject_gap_catalog` to seed `entity_profiles` and unblock `claims_to_facts`.
 
 ### 10.2 Medium-term (schema-light)

@@ -16,6 +16,7 @@ from typing import Any
 import requests
 
 from config.settings import FRED_API_KEY, FRED_RATE_LIMIT_PER_MINUTE
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +113,7 @@ def fetch_series_vintage(
 
 def default_longitudinal_series() -> list[str]:
     """Core macro series for MVP arcs (resource_geopolitics + tensions)."""
-    raw = os.environ.get(
+    raw = env_str(
         "LONGITUDINAL_MACRO_SERIES_IDS",
         "DCOILWTICO,DTWEXBGS,FEDFUNDS,UNRATE,CPIAUCSL,GEPUCURRENT,GPRHICU,GPRTOT",
     )

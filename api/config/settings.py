@@ -208,9 +208,18 @@ def news_intel_security_middleware_enabled() -> bool:
 
 def news_intel_rate_limit_per_minute() -> int:
     try:
-        return max(1, int(os.environ.get("NEWS_INTEL_RATE_LIMIT_PER_MINUTE", "120")))
+        return max(1, int(os.environ.get("NEWS_INTEL_RATE_LIMIT_PER_MINUTE", "300")))
     except ValueError:
-        return 120
+        return 300
+
+
+def news_intel_rate_limit_exempt_private_lan() -> bool:
+    """Homelab: PopOS Caddy → Widow shares one proxy IP; exempt RFC1918/loopback from per-IP cap."""
+    return os.environ.get("NEWS_INTEL_RATE_LIMIT_EXEMPT_PRIVATE_LAN", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
 
 def get_rss_ingest_excluded_domain_keys() -> frozenset[str]:
@@ -334,6 +343,86 @@ def topic_fast_match_min_score() -> float:
     except ValueError:
         n = 0.62
     return min(0.99, max(0.35, n))
+
+
+def unified_intake_extraction_enabled() -> bool:
+    """When true, unified intake is the only scheduled intake extract path."""
+    raw = os.environ.get("UNIFIED_INTAKE_EXTRACTION_ENABLED", "true").strip().lower()
+    if raw in ("0", "false", "no"):
+        return False
+    if raw in ("1", "true", "yes"):
+        return True
+    return True
+
+
+def legacy_intake_extraction_enabled() -> bool:
+    """Explicit rollback: run legacy per-phase intake instead of unified."""
+    return os.environ.get("LEGACY_INTAKE_EXTRACTION_ENABLED", "").lower() in ("1", "true", "yes")
+
+
+def unified_intake_legacy_aware_backlog_enabled() -> bool:
+    """Skip LLM for articles already satisfied by legacy intake; backfill pass marker only."""
+    raw = os.environ.get("UNIFIED_INTAKE_LEGACY_AWARE_BACKLOG", "true").strip().lower()
+    return raw not in ("0", "false", "no")
+
+
+def fast_ner_enabled() -> bool:
+    return os.environ.get("FAST_NER_ENABLED", "true").lower() in ("1", "true", "yes")
+
+
+def fast_ner_backend() -> str:
+    """spacy | gliner | both | auto (spacy then gliner if available)."""
+    raw = (os.environ.get("FAST_NER_BACKEND", "both") or "both").strip().lower()
+    if raw in ("spacy", "gliner", "both", "auto"):
+        return raw
+    return "both"
+
+
+def fast_ner_max_chars() -> int:
+    try:
+        return max(2000, min(100_000, int(os.environ.get("FAST_NER_MAX_CHARS", "24000"))))
+    except ValueError:
+        return 24000
+
+
+def fast_ner_gliner_labels() -> list[str]:
+    raw = os.environ.get(
+        "FAST_NER_GLINER_LABELS",
+        "person,organization,company,location,country,event,law,product",
+    )
+    return [x.strip() for x in raw.split(",") if x.strip()]
+
+
+def context_chunking_enabled() -> bool:
+    return os.environ.get("CONTEXT_CHUNKING_ENABLED", "true").lower() in ("1", "true", "yes")
+
+
+def context_chunk_min_chars() -> int:
+    try:
+        return max(4000, int(os.environ.get("CONTEXT_CHUNK_MIN_CHARS", "12000")))
+    except ValueError:
+        return 12000
+
+
+def context_chunk_size_tokens() -> int:
+    try:
+        return max(256, min(4096, int(os.environ.get("CONTEXT_CHUNK_SIZE_TOKENS", "1024"))))
+    except ValueError:
+        return 1024
+
+
+def context_chunk_overlap_tokens() -> int:
+    try:
+        return max(0, min(512, int(os.environ.get("CONTEXT_CHUNK_OVERLAP_TOKENS", "128"))))
+    except ValueError:
+        return 128
+
+
+def context_chunk_max_chunks() -> int:
+    try:
+        return max(1, min(12, int(os.environ.get("CONTEXT_CHUNK_MAX_CHUNKS", "4"))))
+    except ValueError:
+        return 4
 
 
 def news_intel_public_web_auth_enabled() -> bool:

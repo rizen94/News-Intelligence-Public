@@ -11,7 +11,7 @@
 3. **[SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md)** — routes, services, and data flow; stakeholder-style overview (archived): [_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md](_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md).
 4. **[DATA_FLOW_ARCHITECTURE.md](DATA_FLOW_ARCHITECTURE.md)** — intelligence cascade (article → contexts → claims → storylines → editorial).
 5. **[SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md)** — API routes and web areas (long but authoritative).
-6. **[PIPELINE_AND_ORDER_OF_OPERATIONS.md](PIPELINE_AND_ORDER_OF_OPERATIONS.md)** — automation phases and dependencies (follow-along with code).
+6. **[PIPELINE_AND_AUTOMATION.md](PIPELINE_AND_AUTOMATION.md)** — automation phases and dependencies (follow-along with code).
 
 ---
 
@@ -22,7 +22,7 @@
 | [`api/main.py`](../api/main.py) | FastAPI app: lifespan, middleware, mounts all domain routers. |
 | [`api/domains/`](../api/domains/) | **Domain-driven** packages: each has `routes/` (HTTP) and often `services/`. |
 | [`api/services/`](../api/services/) | Cross-cutting services: **AutomationManager**, collectors, orchestration helpers. |
-| [`api/shared/`](../api/shared/) | DB pool, LLM helpers, logging, GPU metrics, migration path helpers. |
+| [`api/shared/`](../api/shared/) | DB pool, LLM helpers, pipeline runners, intake backlog SQL, fast NER, context chunking. |
 | [`api/config/`](../api/config/) | Settings, paths, orchestrator YAML, domain onboarding YAML. |
 | [`api/database/migrations/`](../api/database/migrations/) | Active SQL migrations; older files under `archive/historical/`. |
 | [`web/src/`](../web/src/) | React SPA: `App.tsx`, `layout/`, `pages/`, `services/api/`. |
@@ -37,9 +37,12 @@
 |-------|---------|--------|
 | HTTP entry | `api/main.py` | Router include order; `lifespan` starts background automation. |
 | Database | `api/shared/database/connection.py` | **Only** supported way to connect (pools + `get_db_config`). |
-| Background pipeline | `api/services/automation_manager.py` | v8 **collection_cycle** + scheduled phases; large file — use [PIPELINE_AND_ORDER_OF_OPERATIONS.md](PIPELINE_AND_ORDER_OF_OPERATIONS.md) first. |
+| Background pipeline | `api/services/automation_manager.py` | v8 **collection_cycle** + scheduled phases; large file — use [PIPELINE_AND_AUTOMATION.md](PIPELINE_AND_AUTOMATION.md) first. |
 | RSS / ingestion | `api/collectors/`, `api/services/rss/` | Feed fetch, article writes per domain schema. |
 | Context bridge | `api/services/context_processor_service.py` | Domain articles → `intelligence.contexts`. |
+| **Unified intake** | `api/services/unified_intake_extraction_service.py`, `api/shared/unified_intake_extraction_runner.py`, `api/shared/unified_intake_backlog.py` | Batched LLM intake (default prod path); legacy-aware backlog + backfill. |
+| Fast NER / chunking | `api/shared/fast_ner_lane.py`, `api/shared/context_chunking.py` | spaCy + GLiNER pre-pass; semantic multi-chunk contexts. |
+| Dual-lane GPU routing | `api/shared/bulk_catchup_llm_routing.py`, `api/shared/automation_llm_routing.py` | PopOS GPU + Widow CPU extraction lanes (`AUTOMATION_DUAL_LANE=true`). |
 | Storylines API | `api/domains/storyline_management/routes/` | Aggregated in `routes/__init__.py` (pattern for other domains). |
 | Intelligence API | `api/domains/intelligence_hub/routes/`, `context_centric` | Cross-domain entities, events, synthesis. |
 | Finance | `api/domains/finance/` | Orchestrator-backed market/evidence flows + SQLite/Chroma under `data/finance/`. |
@@ -66,7 +69,7 @@ Each domain typically mirrors this idea:
 - `routes/` — FastAPI routers (mounted under `/api/...` — see each router’s `prefix`).
 - `services/` — business logic used by routes or automation.
 
-Shared cross-domain schema lives in PostgreSQL **`intelligence`**; per-domain content in schemas **`politics`**, **`finance`**, **`science_tech`** (URL key `science-tech`).
+Shared cross-domain schema lives in PostgreSQL **`intelligence`**; per-domain content in **`legal`**, **`medicine`**, **`artificial_intelligence`**, **`politics`**, **`finance`** (see `public.domains`). **`science_tech` retired** (migration 212).
 
 ---
 
@@ -80,6 +83,9 @@ Shared cross-domain schema lives in PostgreSQL **`intelligence`**; per-domain co
 | `api/scripts/provision_domain.py` | New silo: preflight, SQL, optional **`seed_feed_urls`** → `{schema}.rss_feeds`. |
 | `api/scripts/seed_domain_rss_from_yaml.py` | Backfill **`rss_feeds`** from YAML **`seed_feed_urls`**. |
 | `api/scripts/init_domain_yaml_from_template.py` | Create **`{domain_key}.yaml`** from **`_template.example.yaml`**. |
+| `api/scripts/backfill_unified_intake_pass_from_legacy.py` | Marker-only unified pass backfill for legacy-complete articles (no LLM). |
+| `api/scripts/diagnose_unified_intake_backlog_detail.py` | Actionable vs inventory unified backlog breakdown. |
+| `scripts/run_remaining_catchup_popos.sh` | Off-hours GPU catch-up on PopOS (unified burn-down + profile/story phases). |
 
 ---
 

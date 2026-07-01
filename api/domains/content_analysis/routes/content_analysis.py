@@ -14,6 +14,7 @@ from domains.content_analysis.services.topic_filter_rules import (
 )
 from domains.content_analysis.services.topic_merge_suggestions import get_merge_suggestions
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
+from shared.article_text_metrics import word_count_sql_expr
 from shared.database.connection import get_db_connection, get_ui_db_connection_context
 from shared.domain_registry import (
     DOMAIN_PATH_PATTERN,
@@ -171,33 +172,6 @@ def _get_articles_sync(
     }
 
 
-@router.get("/articles")
-async def get_articles(
-    limit: int = 20,
-    offset: int = 0,
-    status: str | None = None,
-    domain: str | None = Query(
-        None,
-        description="Optional domain URL key (see domain registry). Omit to aggregate all active silos.",
-    ),
-):
-    """Get articles with optional filtering (domain-scoped or all domains)."""
-    try:
-        try:
-            schema = parse_optional_domain_to_schema(domain)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-
-        return await asyncio.to_thread(_get_articles_sync, limit, offset, status, schema)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching articles: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/articles/{article_id}/analyze")
 async def analyze_article(article_id: int, background_tasks: BackgroundTasks):
     """Comprehensive article analysis using LLM"""
     try:
@@ -1290,19 +1264,18 @@ async def convert_topic_to_storyline(
                         continue
 
                 # Update article count and ensure priority/processing status are set
+                from shared.storyline_article_counts import sync_counts_update_sql
+
                 cur.execute(
                     f"""
                     UPDATE {schema}.storylines
-                    SET article_count = (
-                        SELECT COUNT(*) FROM {schema}.storyline_articles
-                        WHERE storyline_id = %s
-                    ),
+                    SET {sync_counts_update_sql(schema)},
                     priority = 10,
                     ml_processing_status = 'pending',
                     updated_at = %s
                     WHERE id = %s
                 """,
-                    (storyline_id, datetime.now(), storyline_id),
+                    (storyline_id, storyline_id, datetime.now(), storyline_id),
                 )
 
                 conn.commit()
@@ -2468,201 +2441,3 @@ async def process_article_clustering(
         raise
 
 
-@router.get("/articles/{article_id}")
-async def get_individual_article(article_id: int):
-    """Get a specific article by ID"""
-    try:
-        schema = resolve_article_id_to_schema(article_id)
-        if not schema:
-            raise HTTPException(status_code=404, detail="Article not found")
-
-        conn = get_db_connection()
-        if not conn:
-            raise HTTPException(status_code=500, detail="Database connection failed")
-
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    SELECT id, title, url, content, summary, source_domain,
-                           published_at, word_count, processing_status,
-                           created_at, updated_at
-                    FROM {schema}.articles
-                    WHERE id = %s
-                """,
-                    (article_id,),
-                )
-
-                row = cur.fetchone()
-                if not row:
-                    raise HTTPException(status_code=404, detail="Article not found")
-
-                article = {
-                    "id": row[0],
-                    "title": row[1],
-                    "url": row[2],
-                    "content": row[3],
-                    "summary": row[4],
-                    "source_domain": row[5],
-                    "published_at": row[6].isoformat() if row[6] else None,
-                    "word_count": row[7],
-                    "processing_status": row[8],
-                    "created_at": row[9].isoformat() if row[9] else None,
-                    "updated_at": row[10].isoformat() if row[10] else None,
-                }
-
-                return {"success": True, "data": article, "timestamp": datetime.now().isoformat()}
-
-        finally:
-            conn.close()
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching article {article_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# Background task for comprehensive storyline processing
-async def process_new_storyline_comprehensive(domain: str, storyline_id: int, schema: str):
-    """
-    Process a newly created storyline with comprehensive LLM analysis.
-    Generates summary, timeline, and full breakdown.
-    """
-    try:
-        from domains.storyline_management.routes.storyline_management import (
-            process_storyline_rag_analysis,
-        )
-        from domains.storyline_management.services.storyline_service import StorylineService
-        from shared.database.connection import get_db_connection
-
-        logger.info(
-            f"Starting comprehensive processing for storyline {storyline_id} (domain: {domain})"
-        )
-
-        storyline_service = StorylineService(domain=domain)
-
-        conn_check = get_db_connection()
-        skip_summary = False
-        if conn_check:
-            try:
-                with conn_check.cursor() as cur:
-                    cur.execute(
-                        f"""
-                        SELECT COALESCE(LENGTH(TRIM(analysis_summary)), 0)
-                        FROM {schema}.storylines WHERE id = %s
-                        """,
-                        (storyline_id,),
-                    )
-                    row = cur.fetchone()
-                    if row and int(row[0] or 0) >= 100:
-                        skip_summary = True
-            finally:
-                conn_check.close()
-
-        if not skip_summary:
-            logger.info(f"Generating comprehensive summary for storyline {storyline_id}")
-            summary_result = await storyline_service.generate_storyline_summary(storyline_id)
-
-            if summary_result.get("success"):
-                logger.info(f"✅ Generated comprehensive summary for storyline {storyline_id}")
-            else:
-                logger.warning(
-                    f"Summary generation returned: {summary_result.get('error', 'Unknown error')}"
-                )
-        else:
-            logger.info(
-                "Skipping duplicate summary LLM for storyline %s (analysis_summary already populated)",
-                storyline_id,
-            )
-
-        # Step 2: Extract timeline events from articles
-        conn = get_db_connection()
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute(f"SET search_path TO {schema}, public")
-
-                    # Get storyline and articles
-                    cur.execute(
-                        f"""
-                        SELECT s.title, s.description, s.analysis_summary
-                        FROM {schema}.storylines s
-                        WHERE s.id = %s
-                    """,
-                        (storyline_id,),
-                    )
-
-                    storyline = cur.fetchone()
-                    if storyline:
-                        cur.execute(
-                            f"""
-                            SELECT a.id, a.title, a.content, a.summary, a.published_at, a.source_domain, a.url
-                            FROM {schema}.articles a
-                            JOIN {schema}.storyline_articles sa ON a.id = sa.article_id
-                            WHERE sa.storyline_id = %s
-                            ORDER BY a.published_at ASC
-                        """,
-                            (storyline_id,),
-                        )
-
-                        articles = cur.fetchall()
-
-                        if articles:
-                            # Trigger RAG analysis which includes timeline extraction
-                            await process_storyline_rag_analysis(
-                                domain, storyline_id, storyline, articles
-                            )
-                            logger.info(
-                                f"✅ Triggered RAG analysis and timeline extraction for storyline {storyline_id}"
-                            )
-            finally:
-                conn.close()
-
-        # Step 3: Update processing status
-        conn = get_db_connection()
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute(f"SET search_path TO {schema}, public")
-                    cur.execute(
-                        f"""
-                        UPDATE {schema}.storylines
-                        SET ml_processing_status = 'completed',
-                            updated_at = %s
-                        WHERE id = %s
-                    """,
-                        (datetime.now(), storyline_id),
-                    )
-                    conn.commit()
-                    logger.info(
-                        f"✅ Completed comprehensive processing for storyline {storyline_id}"
-                    )
-            finally:
-                conn.close()
-
-    except Exception as e:
-        logger.error(f"Error in comprehensive storyline processing for {storyline_id}: {e}")
-        logger.exception("Full traceback:")
-
-        # Update status to indicate error (but don't mark as failed - let it retry)
-        try:
-            conn = get_db_connection()
-            if conn:
-                try:
-                    with conn.cursor() as cur:
-                        cur.execute(f"SET search_path TO {schema}, public")
-                        cur.execute(
-                            f"""
-                            UPDATE {schema}.storylines
-                            SET ml_processing_status = 'pending',
-                                updated_at = %s
-                            WHERE id = %s
-                        """,
-                            (datetime.now(), storyline_id),
-                        )
-                        conn.commit()
-                finally:
-                    conn.close()
-        except Exception as update_error:
-            logger.error(f"Error updating storyline status after processing error: {update_error}")

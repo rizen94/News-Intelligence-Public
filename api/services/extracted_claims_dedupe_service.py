@@ -14,6 +14,7 @@ import os
 from typing import Any
 
 from shared.database.connection import get_db_connection
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -117,11 +118,11 @@ def run_dedupe_cycle() -> dict[str, Any]:
       EXTRACTED_CLAIMS_DEDUPE_MAX_BATCHES (default 5, 0 = unlimited until empty)
     """
     try:
-        batch = int(os.environ.get("EXTRACTED_CLAIMS_DEDUPE_BATCH_SIZE", "8000"))
+        batch = int(env_str("EXTRACTED_CLAIMS_DEDUPE_BATCH_SIZE", "8000"))
     except ValueError:
         batch = 8000
     try:
-        max_batches = int(os.environ.get("EXTRACTED_CLAIMS_DEDUPE_MAX_BATCHES", "5"))
+        max_batches = int(env_str("EXTRACTED_CLAIMS_DEDUPE_MAX_BATCHES", "5"))
     except ValueError:
         max_batches = 5
 

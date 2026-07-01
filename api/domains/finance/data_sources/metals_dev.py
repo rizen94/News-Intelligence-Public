@@ -9,6 +9,7 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta, timezone
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 try:
     from config.logging_config import get_component_logger
@@ -31,8 +32,8 @@ CACHE_TTL_AUTHORITY = 3600
 
 # Simple monthly budget tracking for free-tier usage.
 USAGE_FILE = FINANCE_DATA_DIR / "metals_dev_usage.json"
-METALS_DEV_MONTHLY_QUOTA = int(os.environ.get("METALS_DEV_MONTHLY_QUOTA", "100"))
-_tracked_metals_env = os.environ.get("METALS_DEV_TRACKED_METALS", "gold,silver,platinum")
+METALS_DEV_MONTHLY_QUOTA = int(env_str("METALS_DEV_MONTHLY_QUOTA", "100"))
+_tracked_metals_env = env_str("METALS_DEV_TRACKED_METALS", "gold,silver,platinum")
 TRACKED_METALS = [m.strip().lower() for m in _tracked_metals_env.split(",") if m.strip()]
 
 

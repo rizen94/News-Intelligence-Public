@@ -14,6 +14,7 @@ from typing import Any
 
 from shared.database.connection import get_db_connection_context, get_ui_db_connection_context
 from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ def _format_vector(vec: list[float]) -> str:
 
 def _embeddings_should_yield() -> bool:
     """Skip embedding when claim extraction backlog is high (pipeline priority)."""
-    threshold = int(os.environ.get("EMBEDDINGS_YIELD_CLAIM_BACKLOG", "5000"))
+    threshold = int(env_str("EMBEDDINGS_YIELD_CLAIM_BACKLOG", "5000"))
     try:
         from services.claim_extraction_service import get_context_claim_backlog_stats
 
@@ -141,7 +142,7 @@ def _fetch_wikipedia_summary(title: str) -> dict[str, Any] | None:
 
     import requests
 
-    base = (os.environ.get("KIWIX_WIKIPEDIA_REST_URL") or "").strip().rstrip("/")
+    base = (env_str("KIWIX_WIKIPEDIA_REST_URL") or "").strip().rstrip("/")
     api_base = base or "https://en.wikipedia.org/api/rest_v1"
     url = f"{api_base}/page/summary/{quote(title.replace(' ', '_'))}"
     try:
@@ -166,7 +167,7 @@ def _embed_wikipedia_topics(cur, *, limit: int) -> tuple[int, int]:
     """Embed Wikipedia summaries for reference-event titles not yet chunked."""
     import os
 
-    vintage_raw = (os.environ.get("KIWIX_ZIM_VINTAGE_DATE") or "").strip()
+    vintage_raw = (env_str("KIWIX_ZIM_VINTAGE_DATE") or "").strip()
     vintage_date = None
     if vintage_raw:
         try:
@@ -346,10 +347,10 @@ def run_embeddings_worker_batch(
             "skipped": 0,
         }
 
-    limit = batch_limit or int(os.environ.get("EMBEDDINGS_WORKER_BATCH_LIMIT", "50"))
-    ref_limit = int(os.environ.get("EMBEDDINGS_REFERENCE_EVENT_BATCH_LIMIT", "20"))
-    wiki_limit = int(os.environ.get("EMBEDDINGS_WIKIPEDIA_BATCH_LIMIT", "10"))
-    ctx_limit = int(os.environ.get("EMBEDDINGS_CONTEXT_BATCH_LIMIT", "30"))
+    limit = batch_limit or int(env_str("EMBEDDINGS_WORKER_BATCH_LIMIT", "50"))
+    ref_limit = int(env_str("EMBEDDINGS_REFERENCE_EVENT_BATCH_LIMIT", "20"))
+    wiki_limit = int(env_str("EMBEDDINGS_WIKIPEDIA_BATCH_LIMIT", "10"))
+    ctx_limit = int(env_str("EMBEDDINGS_CONTEXT_BATCH_LIMIT", "30"))
     domains = domain_keys or list(get_pipeline_active_domain_keys())
     embedded = 0
     ref_embedded = 0

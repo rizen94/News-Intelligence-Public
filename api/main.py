@@ -85,6 +85,7 @@ from config.settings import (
     news_intel_expose_error_detail_to_client,
     news_intel_is_production,
     news_intel_public_web_auth_enabled,
+    news_intel_rate_limit_exempt_private_lan,
     news_intel_rate_limit_per_minute,
     news_intel_security_middleware_enabled,
     news_intel_trusted_hosts,
@@ -96,7 +97,7 @@ from domains.intelligence_hub.routes import router as intelligence_hub_router
 # Import domain routers (consolidated — one per domain)
 from domains.news_aggregation.routes import router as news_aggregation_router
 from domains.politics.routes import router as politics_router
-from domains.storyline_management.routes.storyline import main_router as storyline_management_router
+from domains.storyline_management.routes import router as storyline_management_router
 from domains.public_auth import public_auth_router
 from domains.system_monitoring.routes import router as system_monitoring_router
 from domains.user_management.routes.user_management import router as user_management_router
@@ -205,6 +206,29 @@ async def lifespan(app: FastAPI):
             )
     except Exception as e:
         logger.error(f"❌ Database initialization error: {e}")
+
+    # Warm Monitor processing_progress cache (cold build can exceed 30s client timeout).
+    try:
+        import threading
+
+        def _warm_monitor_processing_pulse_cache() -> None:
+            try:
+                from domains.system_monitoring.routes.resource_dashboard import (
+                    _refresh_processing_progress_fast_cache,
+                )
+
+                _refresh_processing_progress_fast_cache((False, True))
+                logger.info("Monitor processing_progress cache warmed")
+            except Exception as warm_exc:
+                logger.debug("processing_progress cache warm skipped: %s", warm_exc)
+
+        threading.Thread(
+            target=_warm_monitor_processing_pulse_cache,
+            name="monitor-pulse-cache-warm",
+            daemon=True,
+        ).start()
+    except Exception as e:
+        logger.debug("monitor cache warm thread skipped: %s", e)
 
     # Initialize LLM service
     async def init_llm(app: FastAPI) -> None:
@@ -339,44 +363,53 @@ async def lifespan(app: FastAPI):
             app.state.ml_processing = None
             logger.info("Kit mode: ML Processing Service skipped")
 
-        try:
-            from domains.content_analysis.services.topic_extraction_queue_worker import (
-                TopicExtractionQueueWorker,
+        if env_bool("NEWS_INTEL_DISABLE_TOPIC_QUEUE_WORKERS", False):
+            logger.info(
+                "Topic extraction queue workers disabled (NEWS_INTEL_DISABLE_TOPIC_QUEUE_WORKERS=true)"
             )
-            from shared.database.connection import get_db_connection
+        else:
+            try:
+                from domains.content_analysis.services.topic_extraction_queue_worker import (
+                    TopicExtractionQueueWorker,
+                )
+                from shared.database.connection import get_db_connection
 
-            def start_queue_workers_background():
-                import asyncio
+                def start_queue_workers_background():
+                    import asyncio
 
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
 
-                async def start_workers():
-                    from shared.domain_registry import pipeline_url_schema_pairs
+                    async def start_workers():
+                        from shared.domain_registry import pipeline_url_schema_pairs
 
-                    for _domain_key, schema in pipeline_url_schema_pairs():
-                        try:
-                            worker = TopicExtractionQueueWorker(get_db_connection, schema=schema)
-                            asyncio.create_task(worker.start())
-                            logger.info(
-                                f"✅ Started topic extraction queue worker for {_domain_key} ({schema})"
-                            )
-                        except Exception as e:
-                            logger.error(f"❌ Failed to start queue worker for {_domain_key}: {e}")
+                        for _domain_key, schema in pipeline_url_schema_pairs():
+                            try:
+                                worker = TopicExtractionQueueWorker(get_db_connection, schema=schema)
+                                asyncio.create_task(worker.start())
+                                logger.info(
+                                    f"✅ Started topic extraction queue worker for {_domain_key} ({schema})"
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"❌ Failed to start queue worker for {_domain_key}: {e}"
+                                )
 
-                    while True:
-                        await asyncio.sleep(60)
+                        while True:
+                            await asyncio.sleep(60)
 
-                loop.run_until_complete(start_workers())
+                    loop.run_until_complete(start_workers())
 
-            queue_worker_thread = threading.Thread(
-                target=start_queue_workers_background, daemon=True
-            )
-            queue_worker_thread.start()
-            app.state.queue_worker_thread = queue_worker_thread
-            logger.info("✅ Topic extraction queue workers started automatically in background")
-        except Exception as e:
-            logger.error(f"❌ Failed to start topic extraction queue workers: {e}")
+                queue_worker_thread = threading.Thread(
+                    target=start_queue_workers_background, daemon=True
+                )
+                queue_worker_thread.start()
+                app.state.queue_worker_thread = queue_worker_thread
+                logger.info(
+                    "✅ Topic extraction queue workers started automatically in background"
+                )
+            except Exception as e:
+                logger.error(f"❌ Failed to start topic extraction queue workers: {e}")
     except Exception as e:
         logger.error(f"Failed to start automation manager: {e}")
         app.state.automation = None
@@ -940,6 +973,7 @@ if news_intel_security_middleware_enabled():
     app.add_middleware(
         SecurityMiddleware,
         rate_limit_per_minute=news_intel_rate_limit_per_minute(),
+        exempt_private_lan=news_intel_rate_limit_exempt_private_lan(),
     )
 
 # Guest vs admin RBAC (demo middleware is outermost — runs first; auth sits inside read-only demo layer).

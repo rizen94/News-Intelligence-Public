@@ -181,19 +181,26 @@ export const monitoringApi = {
   },
 
   /**
-   * Processing pulse (throughput + phase run history). Pending row counts are optional: when false,
-   * skips heavy backlog_metrics queries (avoids nginx/proxy "Network Error" under load). Use
-   * backlog_status for full queue ETAs, or pass includePendingMetrics true when proxy timeouts allow.
+   * Processing pulse (throughput + phase run history). Pending row counts:
+   * - useBacklogSnapshot (default true): fast precomputed index (~15 min refresh)
+   * - includePendingMetrics true: live heavy backlog_metrics SQL
    */
-  async getProcessingProgress(options?: { includePendingMetrics?: boolean }) {
+  async getProcessingProgress(options?: {
+    includePendingMetrics?: boolean;
+    useBacklogSnapshot?: boolean;
+  }) {
     const includePendingMetrics = options?.includePendingMetrics === true;
+    const useBacklogSnapshot =
+      !includePendingMetrics && options?.useBacklogSnapshot !== false;
     try {
       const response = await getApi().get(
         '/api/system_monitoring/processing_progress',
         {
-          params: { include_pending_metrics: includePendingMetrics },
-          // Light response ~seconds; with pending metrics can be minutes — keep headroom for cold DB.
-          timeout: includePendingMetrics ? 300000 : 30000,
+          params: {
+            include_pending_metrics: includePendingMetrics,
+            use_backlog_snapshot: useBacklogSnapshot,
+          },
+          timeout: includePendingMetrics ? 300000 : 120000,
         }
       );
       return response.data;
@@ -752,6 +759,23 @@ export const monitoringApi = {
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch finance market data', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  async getCreditSpread(
+    params: { days?: number; view?: 'fred' | 'etf' } = {},
+    domain?: string
+  ) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(
+        `/api/${domainKey}/finance/credit-spread`,
+        { params }
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch credit spread data', error as Error);
       return { success: false, error: (error as any).message };
     }
   },

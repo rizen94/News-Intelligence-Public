@@ -38,14 +38,21 @@ def main() -> int:
         action="store_true",
         help="Rename known bad mega titles (e.g. Ongoing: Apy) and refresh counts",
     )
+    parser.add_argument(
+        "--reconcile-all-counts",
+        action="store_true",
+        help="Reconcile article_count/total_articles for all non-merged storylines from storyline_articles",
+    )
     args = parser.parse_args()
 
     domains = args.domain or list(get_pipeline_active_domain_keys())
     svc = get_consolidation_service()
     total_folded = 0
     total_refreshed = 0
+    total_reconciled = 0
 
     from services.storyline_consolidation_service import _schema_for_domain
+    from shared.storyline_article_counts import reconcile_all_storyline_counts
 
     for domain_key in domains:
         schema = _schema_for_domain(domain_key)
@@ -99,6 +106,26 @@ def main() -> int:
                     for (mega_id,) in cur.fetchall():
                         svc._refresh_mega_counts_from_db(cur, schema, int(mega_id))
                         total_refreshed += 1
+                if args.reconcile_all_counts and not args.dry_run:
+                    total_reconciled += reconcile_all_storyline_counts(cur, schema)
+                elif args.reconcile_all_counts and args.dry_run:
+                    cur.execute(
+                        f"""
+                        SELECT COUNT(*)::int FROM {schema}.storylines s
+                        WHERE s.merged_into_id IS NULL
+                          AND (
+                            s.article_count IS DISTINCT FROM (
+                                SELECT COUNT(*)::int FROM {schema}.storyline_articles sa
+                                WHERE sa.storyline_id = s.id
+                            )
+                            OR s.total_articles IS DISTINCT FROM (
+                                SELECT COUNT(*)::int FROM {schema}.storyline_articles sa
+                                WHERE sa.storyline_id = s.id
+                            )
+                          )
+                        """
+                    )
+                    total_reconciled += int(cur.fetchone()[0] or 0)
                 if args.fix_bad_titles:
                     cur.execute(
                         f"""
@@ -141,9 +168,10 @@ def main() -> int:
             conn.close()
 
     logger.info(
-        "Done. folded_duplicate_megas=%s refreshed_megas=%s dry_run=%s",
+        "Done. folded_duplicate_megas=%s refreshed_megas=%s reconciled_storylines=%s dry_run=%s",
         total_folded,
         total_refreshed,
+        total_reconciled,
         args.dry_run,
     )
     return 0

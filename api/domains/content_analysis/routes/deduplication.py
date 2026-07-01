@@ -3,6 +3,8 @@ Unified Deduplication API Endpoints
 Provides API endpoints for detecting and managing duplicates for both RSS feeds and articles
 """
 
+import logging
+
 from fastapi import APIRouter
 
 # Routers for feeds and articles

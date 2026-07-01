@@ -20,15 +20,21 @@ from shared.services.ollama_model_caller import get_ollama_model_caller
 from shared.services.ollama_model_policy import InvocationKind
 
 from services.entity_relational_expansion_service import expand_relational_entity_async
-from services.entity_resolution_service import _add_alias, resolve_to_canonical
+from services.entity_resolution_service import _add_alias, resolve_to_canonical, resolve_to_canonical_on_cursor
 from services.wikipedia_knowledge_service import lookup_entity
+from shared.fast_ner_lane import extract_fast_entities, format_ner_hints_for_prompt, merge_entity_dicts
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
 
+def _bulk_catchup_entity_fast_path() -> bool:
+    return env_str("BULK_CATCHUP_ACTIVE", "").lower() in ("1", "true", "yes")
+
+
 def _max_entities_per_llm_type() -> int:
     try:
-        return max(5, min(80, int(os.environ.get("ENTITY_EXTRACTION_MAX_PER_TYPE", "50"))))
+        return max(5, min(80, int(env_str("ENTITY_EXTRACTION_MAX_PER_TYPE", "50"))))
     except ValueError:
         return 50
 
@@ -38,7 +44,7 @@ def _entity_extraction_strict_resolve_domain_keys() -> frozenset[str]:
     For these URL domain keys, resolve mentions only to existing ``entity_canonical`` rows (no new rows).
     Unmatched extractions are skipped — use with seeded catalogs (``seed_world_entities_from_yaml``).
     """
-    raw = os.environ.get("ENTITY_EXTRACTION_RESOLVE_STRICT_DOMAIN_KEYS", "").strip()
+    raw = env_str("ENTITY_EXTRACTION_RESOLVE_STRICT_DOMAIN_KEYS", "").strip()
     if not raw:
         return frozenset()
     return frozenset(x.strip().lower().replace("_", "-") for x in raw.split(",") if x.strip())
@@ -138,9 +144,13 @@ class ArticleEntityExtractionService:
             logger.debug(f"Article {article_id}: text too short for entity extraction")
             return {"success": False, "reason": "text_too_short", "counts": {}}
 
+        fast_entities = extract_fast_entities(title, content)
+
         try:
-            raw = await self._call_llm(combined, title)
+            raw = await self._call_llm(combined, title, ner_hints=format_ner_hints_for_prompt(fast_entities))
             parsed, parse_ok = self._parse_response(raw, title)
+            if fast_entities:
+                parsed = merge_entity_dicts(parsed, fast_entities)
             logger.info(
                 "entity_extraction_parsed article_id=%s schema=%s parse_ok=%s",
                 article_id,
@@ -165,9 +175,10 @@ class ArticleEntityExtractionService:
             logger.error(f"Entity extraction failed for article {article_id}: {e}")
             return {"success": False, "error": str(e), "counts": {}}
 
-    async def _call_llm(self, text: str, headline: str) -> str:
+    async def _call_llm(self, text: str, headline: str, *, ner_hints: str = "") -> str:
+        hint_block = f"\n{ner_hints}\n" if ner_hints else ""
         prompt = f"""Extract structured entities from this news article. Use BOTH the headline and body.
-
+{hint_block}
 Headline: "{headline}"
 
 Full text:
@@ -203,6 +214,125 @@ Rules:
             approx_prompt_chars=len(prompt),
         )
         return (result.text or "") if result is not None else ""
+
+    async def extract_entities_batch(
+        self,
+        articles: list[dict[str, Any]],
+    ) -> dict[int, dict[str, Any]]:
+        """
+        Extract entities from multiple articles in one LLM call.
+
+        Each item: article_id, title, content, schema
+        Returns article_id -> result dict (same shape as extract_and_store).
+        """
+        if not articles:
+            return {}
+
+        blocks: list[str] = []
+        valid: list[dict[str, Any]] = []
+        for art in articles:
+            aid = int(art["article_id"])
+            title = art.get("title") or ""
+            content = art.get("content") or ""
+            combined = f"{title}\n\n{content}"[:8000]
+            if len(combined.strip()) < 50:
+                continue
+            blocks.append(f"=== ARTICLE {aid} ===\nHeadline: {title}\n\n{combined}")
+            valid.append(art)
+
+        if not blocks:
+            return {}
+
+        prompt = f"""Extract structured entities from {len(blocks)} news articles below.
+Return ONE JSON object mapping each article_id (string) to an entity object with the same fields as a single-article extraction.
+
+Per-article entity object fields:
+{{
+  "people": [{{"name": "Full Name", "confidence": 0.9, "in_headline": true}}],
+  "organizations": [{{"name": "Org Name", "confidence": 0.85, "in_headline": false}}],
+  "subjects": [{{"name": "Theme", "confidence": 0.8, "in_headline": false}}],
+  "recurring_events": [{{"name": "Hearing / Summit", "confidence": 0.85, "in_headline": true}}],
+  "dates": [{{"raw": "March 15", "normalized_iso": "2024-03-15", "type": "absolute"}}],
+  "times": [{{"raw": "3:00 PM EST", "normalized": "15:00", "timezone": "EST"}}],
+  "countries": [{{"name": "Country", "iso_code": "US", "in_headline": false}}],
+  "keywords": [{{"keyword": "term", "type": "subject", "in_headline": false}}]
+}}
+
+Example: {{"12345": {{"people": [], "organizations": [], "subjects": [], "recurring_events": [], "dates": [], "times": [], "countries": [], "keywords": []}}}}
+
+Articles:
+{chr(10).join(blocks)}
+
+Return ONLY valid JSON. Use empty arrays when a type has no entities. No placeholder names.
+"""
+        try:
+            result = await self._caller.generate(
+                prompt,
+                kind=InvocationKind.STRUCTURED_EXTRACTION,
+                approx_prompt_chars=len(prompt),
+            )
+            raw = (result.text or "") if result is not None else ""
+        except Exception as e:
+            logger.error("Batch entity extraction LLM failed: %s", e)
+            return {}
+
+        parsed_by_id = self._parse_batch_entity_response(raw)
+        out: dict[int, dict[str, Any]] = {}
+        for art in valid:
+            aid = int(art["article_id"])
+            schema = art.get("schema") or "politics"
+            title = art.get("title") or ""
+            content = art.get("content") or ""
+            entity_obj = parsed_by_id.get(aid)
+            if not entity_obj:
+                out[aid] = {"success": True, "counts": {}, "events": 0}
+                continue
+            parsed, parse_ok = self._parse_response(json.dumps(entity_obj), title)
+            if not parse_ok:
+                out[aid] = {"success": False, "reason": "parse_failed", "counts": {}}
+                continue
+            conn = get_db_connection()
+            if not conn:
+                out[aid] = {"success": False, "error": "db_connection_failed", "counts": {}}
+                continue
+            try:
+                counts = await self._store_all(conn, aid, schema, parsed, title, content)
+                conn.commit()
+                out[aid] = {"success": True, "counts": counts}
+            except Exception as e:
+                conn.rollback()
+                logger.error("Batch entity storage failed article %s: %s", aid, e)
+                out[aid] = {"success": False, "error": str(e), "counts": {}}
+            finally:
+                conn.close()
+        return out
+
+    def _parse_batch_entity_response(self, raw: str) -> dict[int, dict]:
+        text = (raw or "").strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1]
+        if text.endswith("```"):
+            text = text.rsplit("```", 1)[0]
+        text = text.strip()
+        start = text.find("{")
+        end = text.rfind("}")
+        if start < 0 or end <= start:
+            return {}
+        try:
+            parsed = json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        out: dict[int, dict] = {}
+        for k, v in parsed.items():
+            try:
+                aid = int(k)
+                if isinstance(v, dict):
+                    out[aid] = v
+            except (TypeError, ValueError):
+                pass
+        return out
 
     async def _relational_llm_invoke(self, prompt: str) -> str:
         """Small LLM pass for relational person phrases (policy: STRUCTURED_EXTRACTION)."""
@@ -286,6 +416,7 @@ Rules:
             # 1. article_entities (people, orgs, subjects, recurring_events) with canonical resolution
             canonical_ids_used = set()
             cap = _max_entities_per_llm_type()
+            bulk_fast = _bulk_catchup_entity_fast_path()
             for entity_type, key in [
                 ("person", "people"),
                 ("organization", "organizations"),
@@ -302,7 +433,7 @@ Rules:
                     # Resolve relational phrases (e.g. "Zohran Mamdani's wife") to real name via LLM
                     name_to_use = name
                     original_phrase = None
-                    if entity_type == "person":
+                    if entity_type == "person" and not bulk_fast:
                         try:
                             name_to_use, original_phrase = await expand_relational_entity_async(
                                 name, entity_type, self._relational_llm_invoke, timeout_seconds=8.0
@@ -311,12 +442,22 @@ Rules:
                             logger.debug("Relational expansion skip for %s: %s", name, e)
                     mention = "headline" if _item_in_headline(item) else "body"
                     conf = _item_conf(item)
-                    canonical_id = resolve_to_canonical(
-                        domain_key_resolve,
-                        name_to_use,
-                        entity_type,
-                        create_if_missing=create_missing,
-                    )
+                    if bulk_fast:
+                        canonical_id = resolve_to_canonical_on_cursor(
+                            cur,
+                            schema,
+                            domain_key_resolve,
+                            name_to_use,
+                            entity_type,
+                            create_if_missing=create_missing,
+                        )
+                    else:
+                        canonical_id = resolve_to_canonical(
+                            domain_key_resolve,
+                            name_to_use,
+                            entity_type,
+                            create_if_missing=create_missing,
+                        )
                     if not canonical_id and strict_dk and dk_for_strict in strict_dk:
                         continue
                     row_entity_type = entity_type
@@ -358,7 +499,7 @@ Rules:
 
            # 1b. Auto-populate entity_canonical.description from local Wikipedia if missing
             #     Only attempt for entities with wiki_status='pending' (avoids re-querying failures)
-            if canonical_ids_used:
+            if canonical_ids_used and not bulk_fast:
                 cur.execute(
                     f"""
                     SELECT id, canonical_name FROM {schema}.entity_canonical

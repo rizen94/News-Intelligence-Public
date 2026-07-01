@@ -11,11 +11,13 @@ import logging
 import os
 
 from shared.database.connection import get_db_connection
+from shared.database.db_availability import schema_has_table
 from shared.domain_registry import resolve_domain_schema
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
-_FACT_LOG_STALE_BACKLOG = int(os.environ.get("STORY_ENHANCEMENT_FACT_LOG_STALE_BACKLOG", "10000"))
+_FACT_LOG_STALE_BACKLOG = int(env_str("STORY_ENHANCEMENT_FACT_LOG_STALE_BACKLOG", "10000"))
 
 
 def _schema_for_domain(domain_key: str) -> str:
@@ -148,12 +150,18 @@ def _process_one_fact_change(
                     canonical_name = r[0]
         except Exception as e:
             logger.debug("entity_canonical lookup %s: %s", schema, e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
     name = (canonical_name or "").strip()
     if not name:
         return 0
     # Find storylines: story_entity_index by entity_name (try domain schema then public)
     storyline_ids: set[int] = set()
     for try_schema in (schema, "public"):
+        if not schema_has_table(try_schema, "story_entity_index"):
+            continue
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -166,8 +174,11 @@ def _process_one_fact_change(
                 for (sid,) in cur.fetchall():
                     storyline_ids.add(sid)
         except Exception as e:
-            if "does not exist" not in str(e).lower():
-                logger.debug("story_entity_index %s: %s", try_schema, e)
+            logger.debug("story_entity_index %s: %s", try_schema, e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
     if not storyline_ids:
         return 0
     # Priority from change_type (could later use fact confidence)
@@ -188,6 +199,10 @@ def _process_one_fact_change(
                 enqueued += cur.rowcount
             except Exception as e:
                 logger.debug("story_update_queue insert skip: %s", e)
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
     return enqueued
 
 

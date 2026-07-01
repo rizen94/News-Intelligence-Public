@@ -8,6 +8,7 @@ from typing import Any
 
 from shared.database.connection import get_ui_db_connection_context
 from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 
 def list_entities_missing_wikidata_qid(
@@ -46,7 +47,7 @@ def wikidata_qid_required_for_domain(domain_key: str) -> bool:
 
     required = {
         s.strip()
-        for s in (os.environ.get("WIKIDATA_QID_REQUIRED_DOMAIN_KEYS") or "").split(",")
+        for s in (env_str("WIKIDATA_QID_REQUIRED_DOMAIN_KEYS") or "").split(",")
         if s.strip()
     }
     return domain_key in required

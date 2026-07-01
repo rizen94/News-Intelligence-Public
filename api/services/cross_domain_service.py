@@ -14,12 +14,12 @@ from shared.database.connection import get_db_connection
 logger = logging.getLogger(__name__)
 
 
+from shared.pipeline_domain_sql import normalize_legacy_domain_key
+
+
 def _norm_tracked_domain_key(d: str) -> str:
     """Normalize legacy tokens so they match ``get_pipeline_active_domain_keys()`` hyphen keys."""
-    x = str(d).lower().strip().replace("_", "-")
-    if x in ("science-tech", "sciencetech", "science tech"):
-        return "artificial-intelligence"
-    return x
+    return normalize_legacy_domain_key(d)
 
 
 def _entity_profile_ids_from_row(val: Any) -> set[int]:

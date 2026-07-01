@@ -21,6 +21,7 @@ from shared.domain_registry import (
 )
 from shared.services.ollama_model_caller import get_ollama_model_caller
 from shared.services.ollama_model_policy import InvocationKind
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ def _claims_to_facts_check_merged_source_ids() -> bool:
     Optional extra dedupe gate for merged source_claim_ids in versioned_facts metadata.
     Disabled by default for throughput; this JSONB membership check can be expensive at scale.
     """
-    return os.environ.get("CLAIMS_TO_FACTS_CHECK_MERGED_SOURCE_IDS", "").lower() in (
+    return env_str("CLAIMS_TO_FACTS_CHECK_MERGED_SOURCE_IDS", "").lower() in (
         "1",
         "true",
         "yes",
@@ -117,7 +118,7 @@ def _claim_extraction_strict_seeded_domain_keys() -> frozenset[str]:
     Optional allowlist of domains where claim subjects must match existing canonical/profile names
     before insertion into extracted_claims.
     """
-    raw = os.environ.get("CLAIM_EXTRACTION_REQUIRE_SEEDED_DOMAIN_KEYS", "").strip()
+    raw = env_str("CLAIM_EXTRACTION_REQUIRE_SEEDED_DOMAIN_KEYS", "").strip()
     if not raw:
         return frozenset()
     return frozenset(x.strip().lower() for x in raw.split(",") if x.strip())
@@ -155,7 +156,7 @@ def _subject_matches_seeded_pool(cur, domain_key: str, subject_text: str) -> boo
 def claim_extraction_min_text_len() -> int:
     """Matches backlog_metrics._claim_extraction_min_text_length (title+body gate)."""
     try:
-        n = int(os.environ.get("CLAIM_EXTRACTION_MIN_TEXT_LEN", "80"))
+        n = int(env_str("CLAIM_EXTRACTION_MIN_TEXT_LEN", "80"))
     except (TypeError, ValueError):
         n = 80
     return max(40, min(n, 2000))
@@ -168,7 +169,7 @@ def claim_pipeline_max_fetch() -> int:
     (memory and lock duration grow with batch size).
     """
     try:
-        n = int(os.environ.get("CLAIM_PIPELINE_MAX_FETCH", "500000"))
+        n = int(env_str("CLAIM_PIPELINE_MAX_FETCH", "500000"))
     except ValueError:
         n = 500_000
     return max(1, n)
@@ -177,7 +178,7 @@ def claim_pipeline_max_fetch() -> int:
 def get_claim_extraction_batch_limit() -> int:
     """Contexts per claim_extraction invocation. <=0 means use claim_pipeline_max_fetch()."""
     try:
-        n = int(os.environ.get("CLAIM_EXTRACTION_BATCH_LIMIT", "4000"))
+        n = int(env_str("CLAIM_EXTRACTION_BATCH_LIMIT", "4000"))
     except ValueError:
         n = 4000
     if n <= 0:
@@ -197,7 +198,7 @@ def get_claim_extraction_parallel() -> int:
     """
     batch = get_claim_extraction_batch_limit()
     try:
-        n = int(os.environ.get("CLAIM_EXTRACTION_PARALLEL", "48"))
+        n = int(env_str("CLAIM_EXTRACTION_PARALLEL", "48"))
     except ValueError:
         n = 48
     if n <= 0:
@@ -205,7 +206,7 @@ def get_claim_extraction_parallel() -> int:
     else:
         n = max(1, n)
     try:
-        daytime_max = int(os.environ.get("CLAIM_EXTRACTION_PARALLEL_DAYTIME_MAX", "0") or 0)
+        daytime_max = int(env_str("CLAIM_EXTRACTION_PARALLEL_DAYTIME_MAX", "0") or 0)
         if daytime_max > 0:
             from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
 
@@ -219,7 +220,7 @@ def get_claim_extraction_parallel() -> int:
 def get_claims_to_facts_batch_limit() -> int:
     """Max extracted_claims rows attempted per promote_claims_to_versioned_facts call. <=0 → claim_pipeline_max_fetch()."""
     try:
-        n = int(os.environ.get("CLAIMS_TO_FACTS_BATCH_LIMIT", "10000"))
+        n = int(env_str("CLAIMS_TO_FACTS_BATCH_LIMIT", "10000"))
     except ValueError:
         n = 10_000
     if n <= 0:
@@ -229,7 +230,7 @@ def get_claims_to_facts_batch_limit() -> int:
 
 def get_claims_to_facts_min_confidence() -> float:
     try:
-        return float(os.environ.get("CLAIMS_TO_FACTS_MIN_CONFIDENCE", "0.75"))
+        return float(env_str("CLAIMS_TO_FACTS_MIN_CONFIDENCE", "0.75"))
     except ValueError:
         return 0.75
 
@@ -242,7 +243,7 @@ def get_nightly_claims_to_facts_batch_limit() -> int:
     ``CLAIMS_TO_FACTS_BATCH_LIMIT`` (via ``get_claims_to_facts_batch_limit()``) so night matches day.
     Set explicitly to cap a single nightly batch smaller than daytime if needed.
     """
-    raw = os.environ.get("NIGHTLY_CLAIMS_TO_FACTS_BATCH_LIMIT", "").strip()
+    raw = env_str("NIGHTLY_CLAIMS_TO_FACTS_BATCH_LIMIT", "").strip()
     if not raw:
         return get_claims_to_facts_batch_limit()
     try:
@@ -254,7 +255,7 @@ def get_nightly_claims_to_facts_batch_limit() -> int:
 
 def claims_to_facts_drain_enabled() -> bool:
     """Daytime automation: loop promote batches until idle or a guard trips (default on). Nightly sequential uses one batch per outer loop."""
-    return os.environ.get("CLAIMS_TO_FACTS_DRAIN", "true").lower() not in (
+    return env_str("CLAIMS_TO_FACTS_DRAIN", "true").lower() not in (
         "0",
         "false",
         "no",
@@ -264,7 +265,7 @@ def claims_to_facts_drain_enabled() -> bool:
 
 def _claims_to_facts_drain_max_batches() -> int:
     try:
-        n = int(os.environ.get("CLAIMS_TO_FACTS_DRAIN_MAX_BATCHES", "0"))
+        n = int(env_str("CLAIMS_TO_FACTS_DRAIN_MAX_BATCHES", "0"))
     except ValueError:
         n = 0
     return max(0, n)
@@ -272,16 +273,16 @@ def _claims_to_facts_drain_max_batches() -> int:
 
 def _claims_to_facts_drain_max_seconds() -> float:
     try:
-        x = float(os.environ.get("CLAIMS_TO_FACTS_DRAIN_MAX_SECONDS", "0") or 0)
+        x = float(env_str("CLAIMS_TO_FACTS_DRAIN_MAX_SECONDS", "900") or 0)
     except ValueError:
-        x = 0.0
+        x = 900.0
     return max(0.0, x)
 
 
 def _claims_to_facts_drain_max_zero_promote_batches() -> int:
     """Stop after N consecutive batches with candidates but zero promotions (unresolved / stuck)."""
     try:
-        n = int(os.environ.get("CLAIMS_TO_FACTS_DRAIN_MAX_ZERO_PROMOTE_BATCHES", "5"))
+        n = int(env_str("CLAIMS_TO_FACTS_DRAIN_MAX_ZERO_PROMOTE_BATCHES", "5"))
     except ValueError:
         n = 5
     return max(1, n)
@@ -466,7 +467,7 @@ def get_claims_to_facts_backlog_count_mode() -> str:
     ``batch_candidate``: count all SQL batch candidates (confidence + not in versioned_facts + gap ignore + generic),
     matching promote's row set before per-row resolution (can be very large).
     """
-    raw = os.environ.get("CLAIMS_TO_FACTS_BACKLOG_COUNT_MODE", "promotable_hint").strip().lower()
+    raw = env_str("CLAIMS_TO_FACTS_BACKLOG_COUNT_MODE", "promotable_hint").strip().lower()
     if raw in ("batch_candidate", "candidate", "candidates", "all", "all_candidates"):
         return "batch_candidate"
     return "promotable_hint"
@@ -522,6 +523,120 @@ def _parse_claims_response(raw: str) -> list[tuple[str, str, str, float]]:
     return out
 
 
+def insert_parsed_claims_for_context(
+    context_id: int,
+    claims_raw: list[dict],
+    *,
+    context_domain_key: str | None = None,
+    cred_mult: float = 1.0,
+) -> int:
+    """Insert pre-parsed claim dicts for a context; record pass marker. Returns insert count."""
+    claims = []
+    for item in claims_raw or []:
+        if not isinstance(item, dict):
+            continue
+        s = (item.get("subject") or item.get("subject_text") or "").strip()
+        p = (item.get("predicate") or item.get("predicate_text") or "").strip()
+        o = (item.get("object") or item.get("object_text") or "").strip()
+        try:
+            c = float(item.get("confidence", 0.8))
+        except (TypeError, ValueError):
+            c = 0.8
+        if s and p:
+            claims.append((s[:2000], p[:500], o[:2000] if o else None, max(0.0, min(1.0, c))))
+
+    if not claims:
+        try:
+            from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_context_phase_pass
+
+            if phase_backlog_uses_pass_marker("claim_extraction"):
+                from shared.pipeline_pass_marker import TERMINAL_PROCESSED_EMPTY_LEGITIMATE
+
+                record_context_phase_pass(
+                    context_id,
+                    "claim_extraction",
+                    "parsed_empty",
+                    terminal_state=TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
+                )
+        except Exception:
+            pass
+        return 0
+
+    conn = get_db_connection()
+    if not conn:
+        return 0
+    inserted = 0
+    skipped_generic = 0
+    skipped_unseeded = 0
+    strict_domains = _claim_extraction_strict_seeded_domain_keys()
+    strict_seeded = bool(context_domain_key and context_domain_key in strict_domains)
+    cred_mult = max(0.0, min(1.0, float(cred_mult)))
+    try:
+        with conn.cursor() as cur:
+            for subject_text, predicate_text, object_text, confidence in claims:
+                try:
+                    if _is_overly_generic_subject(subject_text):
+                        skipped_generic += 1
+                        continue
+                    if strict_seeded and not _subject_matches_seeded_pool(
+                        cur, str(context_domain_key), subject_text
+                    ):
+                        skipped_unseeded += 1
+                        continue
+                    adj_conf = max(0.0, min(1.0, float(confidence) * cred_mult))
+                    cur.execute(
+                        """
+                        INSERT INTO intelligence.extracted_claims
+                        (context_id, subject_text, predicate_text, object_text, confidence)
+                        VALUES (%s, %s, %s, %s, %s)
+                        """,
+                        (context_id, subject_text, predicate_text, object_text, adj_conf),
+                    )
+                    inserted += 1
+                except Exception as e:
+                    logger.debug("Claim insert skip: %s", e)
+        conn.commit()
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.warning("Claim insert failed for context %s: %s", context_id, e)
+        return 0
+    finally:
+        conn.close()
+
+    if skipped_generic > 0 or skipped_unseeded > 0:
+        logger.info(
+            "claim_insert_filters context_id=%s domain=%s skipped_generic=%s skipped_unseeded=%s",
+            context_id,
+            context_domain_key,
+            skipped_generic,
+            skipped_unseeded,
+        )
+    try:
+        from shared.pipeline_pass_marker import (
+            infer_claim_extraction_terminal,
+            phase_backlog_uses_pass_marker,
+            record_context_phase_pass,
+        )
+
+        if phase_backlog_uses_pass_marker("claim_extraction"):
+            terminal, outcome = infer_claim_extraction_terminal(
+                inserted=inserted,
+                outcome_hint="no_claims_after_filters",
+            )
+            record_context_phase_pass(
+                context_id,
+                "claim_extraction",
+                outcome,
+                terminal_state=terminal,
+            )
+    except Exception:
+        pass
+    return inserted
+
+
 async def extract_claims_for_context(context_id: int) -> int:
     """
     Fetch context content, call LLM to extract claims (subject/predicate/object), insert into extracted_claims.
@@ -562,7 +677,14 @@ async def extract_claims_for_context(context_id: int) -> int:
             from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_context_phase_pass
 
             if phase_backlog_uses_pass_marker("claim_extraction"):
-                record_context_phase_pass(context_id, "claim_extraction", "skipped_short_text")
+                from shared.pipeline_pass_marker import TERMINAL_PROCESSED_EMPTY_LEGITIMATE
+
+                record_context_phase_pass(
+                    context_id,
+                    "claim_extraction",
+                    "skipped_short_text",
+                    terminal_state=TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
+                )
         except Exception:
             pass
         return 0
@@ -606,7 +728,14 @@ Keep each subject under ~80 characters when possible."""
             from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_context_phase_pass
 
             if phase_backlog_uses_pass_marker("claim_extraction"):
-                record_context_phase_pass(context_id, "claim_extraction", "parsed_empty")
+                from shared.pipeline_pass_marker import TERMINAL_PROCESSED_EMPTY_LEGITIMATE
+
+                record_context_phase_pass(
+                    context_id,
+                    "claim_extraction",
+                    "parsed_empty",
+                    terminal_state=TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
+                )
         except Exception:
             pass
         return 0
@@ -669,12 +798,18 @@ Keep each subject under ~80 characters when possible."""
         from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_context_phase_pass
 
         if phase_backlog_uses_pass_marker("claim_extraction"):
-            if inserted > 0:
-                record_context_phase_pass(context_id, "claim_extraction", "claims_inserted")
-            else:
-                record_context_phase_pass(
-                    context_id, "claim_extraction", "no_claims_after_filters"
-                )
+            from shared.pipeline_pass_marker import infer_claim_extraction_terminal
+
+            terminal, outcome = infer_claim_extraction_terminal(
+                inserted=inserted,
+                outcome_hint="no_claims_after_filters",
+            )
+            record_context_phase_pass(
+                context_id,
+                "claim_extraction",
+                outcome,
+                terminal_state=terminal,
+            )
     except Exception:
         pass
     return inserted
@@ -723,7 +858,8 @@ def get_context_claim_backlog_stats() -> dict[str, int]:
     """
     Break down contexts without extracted_claims for Monitor vs automation alignment.
 
-    - total_no_claims: any context with zero claim rows (legacy Monitor metric)
+    - total_no_claims: any context with zero claim rows (terminal inventory / completeness;
+      includes pass-markered outcomes — not automation backlog)
     - actionable_no_claims: matches backlog_metrics / claim_extraction batch selection
     - passed_no_claims: has pass marker outcome no_claims_after_filters, still no claims
     - text_too_short: no claims and below min text length
@@ -813,7 +949,7 @@ async def run_claim_extraction_batch(limit: int | None = None) -> ClaimExtractio
         return ClaimExtractionBatchResult(0, 0)
     parallel = get_claim_extraction_parallel()
     try:
-        chunk_sz = int(os.environ.get("CLAIM_EXTRACTION_INTERNAL_CHUNK", "0"))
+        chunk_sz = int(env_str("CLAIM_EXTRACTION_INTERNAL_CHUNK", "0"))
     except ValueError:
         chunk_sz = 0
     if chunk_sz <= 0:
@@ -855,7 +991,7 @@ async def run_claim_extraction_batch(limit: int | None = None) -> ClaimExtractio
 
 def _claim_extraction_drain_max_batches() -> int:
     try:
-        n = int(os.environ.get("CLAIM_EXTRACTION_DRAIN_MAX_BATCHES", "0"))
+        n = int(env_str("CLAIM_EXTRACTION_DRAIN_MAX_BATCHES", "0"))
     except ValueError:
         n = 0
     return max(0, n)
@@ -863,16 +999,16 @@ def _claim_extraction_drain_max_batches() -> int:
 
 def _claim_extraction_drain_max_seconds() -> float:
     try:
-        x = float(os.environ.get("CLAIM_EXTRACTION_DRAIN_MAX_SECONDS", "0") or 0)
+        x = float(env_str("CLAIM_EXTRACTION_DRAIN_MAX_SECONDS", "900") or 0)
     except ValueError:
-        x = 0.0
+        x = 900.0
     return max(0.0, x)
 
 
 def _claim_extraction_drain_max_zero_claim_batches() -> int:
     """Stop drain after this many consecutive batches with contexts but 0 claims inserted (stuck / all filtered)."""
     try:
-        n = int(os.environ.get("CLAIM_EXTRACTION_DRAIN_MAX_ZERO_CLAIM_BATCHES", "3"))
+        n = int(env_str("CLAIM_EXTRACTION_DRAIN_MAX_ZERO_CLAIM_BATCHES", "3"))
     except ValueError:
         n = 3
     return max(1, n)
@@ -880,12 +1016,21 @@ def _claim_extraction_drain_max_zero_claim_batches() -> int:
 
 def claim_extraction_drain_enabled() -> bool:
     """Single automation task loops batches until idle (default). Set CLAIM_EXTRACTION_DRAIN=false for one batch only."""
-    return os.environ.get("CLAIM_EXTRACTION_DRAIN", "true").lower() not in (
+    return env_str("CLAIM_EXTRACTION_DRAIN", "true").lower() not in (
         "0",
         "false",
         "no",
         "off",
     )
+
+
+def _claim_drain_enforce_nightly_window() -> bool:
+    """Bulk/sprint catch-up may drain claims outside the nightly schedule window."""
+    if env_str("BULK_CATCHUP_ACTIVE", "").lower() in ("1", "true", "yes"):
+        return False
+    if env_str("BACKLOG_SPRINT_ACTIVE", "").lower() in ("1", "true", "yes"):
+        return False
+    return True
 
 
 def _persist_claim_extraction_batch_run(started: datetime, finished: datetime) -> None:
@@ -898,9 +1043,23 @@ def _persist_claim_extraction_batch_run(started: datetime, finished: datetime) -
         logger.debug("claim_extraction batch history persist failed: %s", e)
 
 
+def _automation_claim_batch_limit() -> int | None:
+    """Smaller batch for scheduled automation (drain loops until idle within wall budget)."""
+    if env_str("BULK_CATCHUP_ACTIVE", "").lower() in ("1", "true", "yes"):
+        return None
+    if env_str("BACKLOG_SPRINT_ACTIVE", "").lower() in ("1", "true", "yes"):
+        return None
+    try:
+        n = int(env_str("AUTOMATION_CLAIM_EXTRACTION_BATCH_LIMIT", "64"))
+    except ValueError:
+        n = 64
+    return max(1, n) if n > 0 else None
+
+
 async def drain_claim_extraction_for_automation_task(
     *,
     nightly_limit: int | None = None,
+    on_batch_complete=None,
 ) -> tuple[int, int]:
     """
     Run claim extraction until no contexts remain without extracted_claims rows, or a guard trips.
@@ -912,6 +1071,9 @@ async def drain_claim_extraction_for_automation_task(
     Returns (total_claims_inserted, batch_count).
     """
     lim = int(nightly_limit) if nightly_limit is not None else None
+    auto_lim = _automation_claim_batch_limit()
+    if lim is None and auto_lim is not None:
+        lim = auto_lim
     max_batches = _claim_extraction_drain_max_batches()
     max_sec = _claim_extraction_drain_max_seconds()
     max_zero = _claim_extraction_drain_max_zero_claim_batches()
@@ -927,12 +1089,24 @@ async def drain_claim_extraction_for_automation_task(
                 max_batches,
             )
             break
-        if max_sec > 0 and (time.monotonic() - t0) >= max_sec:
+        elapsed = time.monotonic() - t0
+        if max_sec > 0 and elapsed >= max_sec:
             logger.info(
                 "claim_extraction drain stopping: CLAIM_EXTRACTION_DRAIN_MAX_SECONDS=%s",
                 max_sec,
             )
             break
+        if nightly_limit is not None and _claim_drain_enforce_nightly_window():
+            try:
+                from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
+
+                if not in_nightly_pipeline_window_est():
+                    logger.info(
+                        "claim_extraction drain stopping: nightly pipeline window ended"
+                    )
+                    break
+            except Exception:
+                pass
 
         batch_started = datetime.now(timezone.utc)
         res = await run_claim_extraction_batch(limit=lim)
@@ -940,6 +1114,8 @@ async def drain_claim_extraction_for_automation_task(
         await asyncio.to_thread(_persist_claim_extraction_batch_run, batch_started, batch_finished)
         batches += 1
         total_claims += res.claims_inserted
+        if on_batch_complete is not None:
+            await on_batch_complete(batches, res)
 
         if res.contexts_processed == 0:
             break
@@ -1008,7 +1184,7 @@ def _map_predicate_to_fact_type(predicate: str) -> str:
 
 def _claims_to_facts_chunk_size() -> int:
     try:
-        return max(10, min(500, int(os.environ.get("CLAIMS_TO_FACTS_CHUNK_SIZE", "50"))))
+        return max(10, min(500, int(env_str("CLAIMS_TO_FACTS_CHUNK_SIZE", "50"))))
     except (TypeError, ValueError):
         return 50
 
@@ -1514,8 +1690,8 @@ def _pg_trgm_available(cur) -> bool:
 
 
 def _trgm_subject_threshold(norm_lower: str) -> float:
-    short = float(os.environ.get("CLAIM_RESOLVE_TRGM_THRESHOLD_SHORT", "0.52"))
-    long_t = float(os.environ.get("CLAIM_RESOLVE_TRGM_THRESHOLD_LONG", "0.40"))
+    short = float(env_str("CLAIM_RESOLVE_TRGM_THRESHOLD_SHORT", "0.52"))
+    long_t = float(env_str("CLAIM_RESOLVE_TRGM_THRESHOLD_LONG", "0.40"))
     return short if len(norm_lower) <= 6 else long_t
 
 
@@ -1848,7 +2024,7 @@ def _resolve_claim_to_entity_profile(
 
             if slen >= 3:
                 try:
-                    cap = int(os.environ.get("CLAIM_RESOLVE_SUBSTRING_MAX_CANON_LEN", "120"))
+                    cap = int(env_str("CLAIM_RESOLVE_SUBSTRING_MAX_CANON_LEN", "120"))
                 except ValueError:
                     cap = 120
                 max_canon = min(cap, max(48, slen + 36))

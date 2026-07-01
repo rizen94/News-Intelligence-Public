@@ -882,9 +882,40 @@ class MetadataEnrichmentService:
                 return False
             detected_language = await self._detect_language(text)
             categories = await self._extract_categories(text)
-            sentiment_score = await self._calculate_sentiment(text)
-            article_placeholder = {"content": text, "language": detected_language}
-            quality_score = await self._calculate_quality_score(article_placeholder, text)
+            skip_scores = False
+            try:
+                from shared.pipeline_resource_policy import intake_extraction_suppressed
+                from shared.pipeline_pass_marker import CLEARED_TERMINAL_STATES
+
+                if intake_extraction_suppressed():
+                    from shared.database.connection import get_db_connection
+
+                    _chk = get_db_connection()
+                    if _chk:
+                        try:
+                            with _chk.cursor() as _cur:
+                                _cur.execute(
+                                    f"""
+                                    SELECT metadata->'pipeline'->'unified_intake_extraction'->>'last_terminal_state'
+                                    FROM {schema}.articles WHERE id = %s
+                                    """,
+                                    (article_id,),
+                                )
+                                _row = _cur.fetchone()
+                                if _row and (_row[0] or "") in CLEARED_TERMINAL_STATES:
+                                    skip_scores = True
+                        finally:
+                            _chk.close()
+            except Exception:
+                pass
+            sentiment_score = 0.5
+            quality_score = 0.5
+            if not skip_scores:
+                sentiment_score = await self._calculate_sentiment(text)
+                article_placeholder = {"content": text, "language": detected_language}
+                quality_score = await self._calculate_quality_score(article_placeholder, text)
+            else:
+                article_placeholder = {"content": text, "language": detected_language}
             from shared.database.connection import get_db_connection
 
             conn = get_db_connection()
@@ -892,36 +923,65 @@ class MetadataEnrichmentService:
                 return False
             try:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        f"""
-                        UPDATE {schema}.articles
-                        SET quality_score = %s, sentiment_score = %s,
-                            categories = %s::jsonb,
-                            metadata = COALESCE(metadata, '{{}}'::jsonb)
-                              || '{{"enrichment_done": true}}'::jsonb
-                              || jsonb_build_object(
-                                  'pipeline',
-                                  COALESCE(metadata->'pipeline', '{{}}'::jsonb)
+                    if skip_scores:
+                        cur.execute(
+                            f"""
+                            UPDATE {schema}.articles
+                            SET categories = %s::jsonb,
+                                metadata = COALESCE(metadata, '{{}}'::jsonb)
+                                  || '{{"enrichment_done": true}}'::jsonb
                                   || jsonb_build_object(
-                                      'metadata_enrichment',
-                                      COALESCE(metadata->'pipeline'->'metadata_enrichment', '{{}}'::jsonb)
+                                      'pipeline',
+                                      COALESCE(metadata->'pipeline', '{{}}'::jsonb)
                                       || jsonb_build_object(
-                                          'last_pass_at', to_jsonb(%s::text),
-                                          'last_outcome', to_jsonb(%s::text)
+                                          'metadata_enrichment',
+                                          COALESCE(metadata->'pipeline'->'metadata_enrichment', '{{}}'::jsonb)
+                                          || jsonb_build_object(
+                                              'last_pass_at', to_jsonb(%s::text),
+                                              'last_outcome', to_jsonb(%s::text)
+                                          )
                                       )
                                   )
-                              )
-                        WHERE id = %s
-                        """,
-                        (
-                            quality_score,
-                            sentiment_score,
-                            json.dumps(categories),
-                            datetime.now(timezone.utc).isoformat(),
-                            "enriched",
-                            article_id,
-                        ),
-                    )
+                            WHERE id = %s
+                            """,
+                            (
+                                json.dumps(categories),
+                                datetime.now(timezone.utc).isoformat(),
+                                "enriched",
+                                article_id,
+                            ),
+                        )
+                    else:
+                        cur.execute(
+                            f"""
+                            UPDATE {schema}.articles
+                            SET quality_score = %s, sentiment_score = %s,
+                                categories = %s::jsonb,
+                                metadata = COALESCE(metadata, '{{}}'::jsonb)
+                                  || '{{"enrichment_done": true}}'::jsonb
+                                  || jsonb_build_object(
+                                      'pipeline',
+                                      COALESCE(metadata->'pipeline', '{{}}'::jsonb)
+                                      || jsonb_build_object(
+                                          'metadata_enrichment',
+                                          COALESCE(metadata->'pipeline'->'metadata_enrichment', '{{}}'::jsonb)
+                                          || jsonb_build_object(
+                                              'last_pass_at', to_jsonb(%s::text),
+                                              'last_outcome', to_jsonb(%s::text)
+                                          )
+                                      )
+                                  )
+                            WHERE id = %s
+                            """,
+                            (
+                                quality_score,
+                                sentiment_score,
+                                json.dumps(categories),
+                                datetime.now(timezone.utc).isoformat(),
+                                "enriched",
+                                article_id,
+                            ),
+                        )
                 conn.commit()
                 return True
             finally:

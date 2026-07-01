@@ -38,6 +38,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +48,13 @@ EMBED_MODEL = "nomic-embed-text"
 
 def _dedup_env_float(name: str, default: float) -> float:
     try:
-        return float(os.environ.get(name, str(default)))
+        return float(env_str(name, str(default)))
     except (TypeError, ValueError):
         return default
 
 
 def _dedup_env_int(name: str, default: int) -> int:
-    raw = os.environ.get(name)
+    raw = env_str(name)
     if raw is None or str(raw).strip() == "":
         return default
     try:
@@ -318,7 +319,7 @@ class EventDeduplicationService:
             skip_margin_if_ge = _dedup_skip_margin_if_sim_ge()
             borderline_sim = _dedup_borderline_sim()
             borderline_sec = _dedup_borderline_max_seconds()
-            temporal_on = os.environ.get("EVENT_DEDUP_DISABLE_TEMPORAL_BORDERLINE", "").lower() not in (
+            temporal_on = env_str("EVENT_DEDUP_DISABLE_TEMPORAL_BORDERLINE", "").lower() not in (
                 "1",
                 "true",
                 "yes",

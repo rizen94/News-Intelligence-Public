@@ -16,11 +16,12 @@ import json
 import logging
 import os
 from typing import Any
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MIN_CONFIDENCE_FOR_AUTO = float(
-    os.environ.get("GRAPH_CONNECTION_AUTO_MERGE_MIN", "0.72") or 0.72
+    env_str("GRAPH_CONNECTION_AUTO_MERGE_MIN", "0.72") or 0.72
 )
 
 
@@ -584,3 +585,96 @@ def finalize_entity_merges_in_queue(domain_key: str, pairs: list[tuple[int, int]
             conn.close()
         except Exception:
             pass
+
+
+def bfs_graph_neighbors(
+    *,
+    seed_kind: str,
+    seed_id: int,
+    max_depth: int = 2,
+    max_nodes: int = 50,
+    domain_key: str | None = None,
+) -> dict[str, Any]:
+    """
+    Bounded BFS over intelligence.graph_connection_links for Investigate shell expansion.
+    """
+    from collections import deque
+
+    from shared.database.connection import get_db_connection_context
+
+    seed_kind = (seed_kind or "").strip().lower()
+    if not seed_kind or seed_id <= 0:
+        return {"success": False, "error": "seed_kind and seed_id required"}
+    max_depth = max(1, min(5, int(max_depth)))
+    max_nodes = max(5, min(200, int(max_nodes)))
+
+    visited: set[tuple[str, int]] = {(seed_kind, int(seed_id))}
+    frontier: deque[tuple[str, int, int]] = deque([(seed_kind, int(seed_id), 0)])
+    edges: list[dict[str, Any]] = []
+    nodes: list[dict[str, Any]] = [
+        {"kind": seed_kind, "id": int(seed_id), "depth": 0}
+    ]
+
+    with get_db_connection_context() as conn:
+        with conn.cursor() as cur:
+            while frontier and len(visited) < max_nodes:
+                kind, obj_id, depth = frontier.popleft()
+                if depth >= max_depth:
+                    continue
+                cur.execute(
+                    """
+                    SELECT id, left_kind, left_id, right_kind, right_id,
+                           link_role, confidence, domain_key, source_proposal_id
+                    FROM intelligence.graph_connection_links
+                    WHERE (left_kind = %s AND left_id = %s)
+                       OR (right_kind = %s AND right_id = %s)
+                    LIMIT 80
+                    """,
+                    (kind, obj_id, kind, obj_id),
+                )
+                for row in cur.fetchall():
+                    (
+                        link_id,
+                        lk,
+                        li,
+                        rk,
+                        ri,
+                        role,
+                        conf,
+                        dk,
+                        prop_id,
+                    ) = row
+                    edges.append(
+                        {
+                            "id": int(link_id),
+                            "left_kind": lk,
+                            "left_id": int(li),
+                            "right_kind": rk,
+                            "right_id": int(ri),
+                            "link_role": role,
+                            "confidence": conf,
+                            "domain_key": dk,
+                            "source_proposal_id": prop_id,
+                        }
+                    )
+                    for nk, nid in ((lk, li), (rk, ri)):
+                        key = (str(nk), int(nid))
+                        if key in visited:
+                            continue
+                        if domain_key and dk and str(dk) != domain_key:
+                            continue
+                        visited.add(key)
+                        nodes.append({"kind": key[0], "id": key[1], "depth": depth + 1})
+                        frontier.append((key[0], key[1], depth + 1))
+                        if len(visited) >= max_nodes:
+                            break
+
+    return {
+        "success": True,
+        "seed": {"kind": seed_kind, "id": int(seed_id)},
+        "max_depth": max_depth,
+        "node_count": len(nodes),
+        "edge_count": len(edges),
+        "nodes": nodes,
+        "edges": edges,
+    }

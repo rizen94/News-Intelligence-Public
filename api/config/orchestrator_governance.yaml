@@ -30,7 +30,27 @@ entity_tracking:
 # Phase 2 T2.3: quality thresholds for prioritization
 quality_thresholds:
   min_quality_score: 0.5
-  min_importance_for_processing: 0.3
+  min_importance_for_processing: 0.45
+
+# Signal-first article lanes — see docs/SIGNAL_FIRST_OPS.md and shared/article_signal_gate.py
+signal_first:
+  article_signal_enabled: false
+  article_signal_full_min_quality: 0.45
+  article_signal_trending_top_n: 15
+  target_full_llm_ratio_min: 0.15
+  target_full_llm_ratio_max: 0.35
+
+# RSS feed warn-then-auto silencing — see services/rss_feed_health_service.py
+rss_feed_health:
+  enabled: false
+  dry_run: true
+  min_quality: 0.45
+  zero_yield_days: 14
+  low_signal_days: 30
+  low_signal_min_articles: 10
+  fetch_failure_consecutive: 5
+  review_cycles: 3
+  grace_days: 21
 
 # Source credibility tiers — wired by shared.services.source_credibility_service
 # Consumers: RSS collector (quality_score scaling + articles.metadata.source_credibility),
@@ -170,11 +190,9 @@ collection:
       topic: edgar
 
 processing:
-  batch_size: 10
-  max_concurrent: 3
-  context_window_days: 7
-  # Phase intervals (seconds). Governor uses these for recommend_next_processing.
-  # Aligned with production batch design (docs/BATCH_PROCESSING_DESIGN.md).
+  # Phase intervals (seconds). YAML overrides merge with full pipeline registry from
+  # pipeline_conductor_service.get_effective_processing_phases() (all ANALYSIS_PIPELINE_STEPS).
+  # ProcessingGovernor nudges when orchestrator_processing_nudge_enabled: true.
   phases:
     topic_clustering:
       interval_seconds: 300
@@ -230,7 +248,76 @@ analysis_pipeline:
 # are determined by current workload (backlog/pending), not fixed intervals. Collection is throttled when
 # downstream backlog is high so collection → processing → synthesis completes before more RSS. See
 # automation_manager.py USE_WORKLOAD_DRIVEN_ORDER, WORKLOAD_MIN_COOLDOWN, COLLECTION_THROTTLE_PENDING_THRESHOLD.
-workload_driven_scheduling: true
+# Duration harmony (measured run time vs cooldown, gap-fill idle workers): docs/PIPELINE_ORCHESTRATION_HARMONY.md
+# Full knob map + conflicts: docs/PIPELINE_TUNING_REGISTRY.md
+# Env overrides these keys when set (see pipeline_batch_drain / pipeline_orchestration_harmony).
+pipeline_orchestration_harmony:
+  gap_fill_enabled: true
+  use_measured_duration: true
+  cooldown_fraction: 0.35
+  entity_extraction_run_budget_seconds: 900
+  ml_processing_run_budget_seconds: 900
+  sentiment_analysis_run_budget_seconds: 900
+  claim_extraction_drain_max_seconds: 900
+
+# Pipeline conductor — roles of the three schedulers (AutomationManager, OrchestratorCoordinator, external).
+# Env overrides:
+#   PIPELINE_CONDUCTOR_AUTOMATION_PRIMARY — default true (AutomationManager owns processing)
+#   PIPELINE_CONDUCTOR_ORCHESTRATOR_NUDGE — default true (coordinator gap-fill + post-collection kickoff)
+pipeline_conductor:
+  automation_primary: true
+  orchestrator_processing_nudge_enabled: true
+  orchestrator_post_collection_kickoff_enabled: true
+  post_collection_phases:
+    - content_enrichment
+    - context_sync
+  orchestrator_collection_enabled: true
+  workload_driven_scheduling: true
+  external_schedulers:
+    - name: nri_mention_resolve
+      host: widow
+      interval_seconds: 300
+      budget_env: NRI_MENTION_RESOLVE_BUDGET_SECONDS
+      note: "CEM mention resolution — in-process via api/nri_core (mention_resolution phase)"
 
 collection_cycle:
   interval_seconds: 7200  # 2 hours (used when idle; when work exists, cooldown applies)
+
+rss_feed_health:
+  interval_seconds: 86400  # nightly; warn-then-auto silencing after collection
+  note: "AutomationManager rss_feed_health phase; dry-run until RSS_FEED_SILENCE_DRY_RUN=false"
+
+# Post-spine assembly — programmatic link graph + editorial room (June 2026)
+# Retired phases remain in code; scheduling suppressed via POST_SPINE_RETIRED_PHASES + AUTOMATION_DISABLED_SCHEDULES.
+post_spine_assembly:
+  assembly_pipeline_mode: shadow  # shadow | ordered | legacy — env ASSEMBLY_PIPELINE_MODE
+  editorial_room_loop_enabled: true
+  link_indexer_on_spine_tail: true
+  retired_scheduled_phases:
+    - proactive_detection
+    - storyline_discovery
+    - narrative_thread_build
+    - pattern_recognition
+    - pattern_matching
+    - relationship_extraction
+    - editorial_briefing_generation
+    - editorial_document_generation
+    - arc_report_generation
+    - daily_briefing_synthesis
+    - digest_generation
+    - storyline_synthesis
+    - rag_enhancement
+    - storyline_enrichment
+    - storyline_processing
+    - investigation_report_refresh
+    - story_enhancement
+    - event_coherence_review
+    - timeline_generation
+    - entity_position_tracker
+  core_products:
+    - storylines
+    - tracked_events
+    - entity_dossiers
+  vault_editorial_paths:
+    connections: "25_Connections/"
+    investigations: "20_Investigations/"

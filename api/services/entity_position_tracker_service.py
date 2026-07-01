@@ -417,7 +417,11 @@ def get_entity_positions(
     entity_id: int,
     limit: int = 50,
 ) -> dict[str, Any]:
-    """Retrieve stored positions for an entity."""
+    """Retrieve stored positions for an entity.
+
+    ``entity_id`` is ``{domain}.entity_canonical.id`` — not ``entity_profiles.id``.
+    To reach FtM bridges, join via ``entity_profiles.canonical_entity_id``.
+    """
     conn = get_db_connection()
     if not conn:
         return {"success": False, "positions": [], "error": "Database connection failed"}

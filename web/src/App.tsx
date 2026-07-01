@@ -8,13 +8,12 @@
  * API calls: `apiConnectionManager` sets base URL and domain for `/api/{domain}/...`
  * and global `/api/...` routes (see docs/WEB_API_CONNECTIONS.md).
  *
- * Layout: Hero status bar + sidebar (Discover, Investigate, Monitor, Analyze).
+ * Layout: Hero status bar + sidebar IA (Overview, Corpus, Stories, Signals, Investigate, Arcs, Outputs, Finance, Operations).
  * Public demo: `PublicDemoProvider` + `DemoRouteGuard` hide watchlist, ops, and
  * other write-heavy routes — see `AppNav` filter and guarded routes below.
- * Product display notes (incorporation candidate): docs/archive/planning_incubator/WEB_PRODUCT_DISPLAY_PLAN.md
  */
 import React, { Suspense, useEffect } from 'react';
-import { Box, CircularProgress } from '@mui/material';
+import { Box, CircularProgress, Typography } from '@mui/material';
 import {
   BrowserRouter as Router,
   Routes,
@@ -55,13 +54,22 @@ const ProcessedDocumentsPage = React.lazy(() => import('./pages/Investigate/Proc
 const ProcessedDocumentDetailPage = React.lazy(() => import('./pages/Investigate/ProcessedDocumentDetailPage'));
 const NarrativeThreadsPage = React.lazy(() => import('./pages/Investigate/NarrativeThreadsPage'));
 const EntityResolutionPage = React.lazy(() => import('./pages/Investigate/EntityResolutionPage'));
+const SpineBrowserPage = React.lazy(() => import('./pages/Investigate/SpineBrowserPage'));
 const HypothesesPage = React.lazy(() => import('./pages/Investigate/HypothesesPage'));
 const EntityDossierPage = React.lazy(() => import('./pages/Investigate/EntityDossierPage'));
+const ArcCatalogPage = React.lazy(() => import('./pages/Arcs/ArcCatalogPage'));
+const ArcSpinePage = React.lazy(() => import('./pages/Arcs/ArcSpinePage'));
+const ArcHeatmapPage = React.lazy(() => import('./pages/Arcs/ArcHeatmapPage'));
+const ArcWeeklyBriefsPage = React.lazy(() => import('./pages/Arcs/ArcWeeklyBriefsPage'));
+const InvestigationOpsPage = React.lazy(() => import('./pages/Operations/InvestigationOpsPage'));
 const MonitorPage = React.lazy(() => import('./pages/Monitor/MonitorPage'));
 const SqlExplorerPage = React.lazy(() => import('./pages/Monitor/SqlExplorerPage'));
-const AnalyzePage = React.lazy(() => import('./pages/Analyze/AnalyzePage'));
+const MLProcessing = React.lazy(() => import('./pages/MLProcessing/MLProcessing'));
 const AuditChecklistPage = React.lazy(() => import('./pages/Audit/AuditChecklistPage'));
 const CommodityDashboard = React.lazy(() => import('./pages/Finance/CommodityDashboard'));
+const CreditSpreadDashboard = React.lazy(
+  () => import('./pages/Finance/CreditSpreadDashboard')
+);
 const FinancialAnalysis = React.lazy(() => import('./pages/Finance/FinancialAnalysis'));
 const FinancialAnalysisResult = React.lazy(() => import('./pages/Finance/FinancialAnalysisResult'));
 const TaskTraceViewer = React.lazy(() => import('./pages/Finance/TaskTraceViewer'));
@@ -79,6 +87,20 @@ const RSSFeeds = React.lazy(() => import('./pages/RSSFeeds/RSSFeeds'));
 const Topics = React.lazy(() => import('./pages/Topics/Topics'));
 const Watchlist = React.lazy(() => import('./pages/Watchlist/Watchlist'));
 const Events = React.lazy(() => import('./pages/Events/Events'));
+
+function FinanceTracePlaceholder() {
+  return (
+    <Box sx={{ p: 3 }}>
+      <Typography variant='h6' gutterBottom>
+        Task trace
+      </Typography>
+      <Typography color='text.secondary'>
+        Open a completed analysis task to view its trace at{' '}
+        <code>/trace/:taskId</code>.
+      </Typography>
+    </Box>
+  );
+}
 
 const theme = createTheme({
   palette: {
@@ -134,7 +156,6 @@ function App() {
                       </DemoRouteGuard>
                     }
                   />
-                  {/* Static segments before :id — otherwise "discovery" / "synthesized" match as storyline ids */}
                   <Route
                     path='storylines/discovery'
                     element={
@@ -167,6 +188,10 @@ function App() {
                     path='report'
                     element={<Navigate to='../briefings' replace />}
                   />
+                  <Route path='arcs' element={<ArcCatalogPage />} />
+                  <Route path='arcs/reports' element={<ArcWeeklyBriefsPage />} />
+                  <Route path='arcs/:arcId/spine' element={<ArcSpinePage />} />
+                  <Route path='arcs/:arcId/heatmap' element={<ArcHeatmapPage />} />
                   <Route
                     path='rss_feeds'
                     element={
@@ -220,6 +245,10 @@ function App() {
                     element={<EntityResolutionPage />}
                   />
                   <Route
+                    path='investigate/spine-browser'
+                    element={<SpineBrowserPage />}
+                  />
+                  <Route
                     path='investigate/hypotheses'
                     element={<HypothesesPage />}
                   />
@@ -248,10 +277,26 @@ function App() {
                     }
                   />
                   <Route
-                    path='analyze'
+                    path='operations/investigation-ops'
                     element={
                       <DemoRouteGuard>
-                        <AnalyzePage />
+                        <InvestigationOpsPage />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='operations/nri-ops'
+                    element={
+                      <DemoRouteGuard>
+                        <InvestigationOpsPage />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='operations/llm-activity'
+                    element={
+                      <DemoRouteGuard>
+                        <MLProcessing />
                       </DemoRouteGuard>
                     }
                   />
@@ -272,6 +317,14 @@ function App() {
                     }
                   />
                   <Route
+                    path='trace'
+                    element={
+                      <DemoRouteGuard>
+                        <FinanceTracePlaceholder />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
                     path='trace/:taskId'
                     element={
                       <DemoRouteGuard>
@@ -288,6 +341,14 @@ function App() {
                     element={
                       <DemoRouteGuard>
                         <CommodityDashboard />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='credit-spread'
+                    element={
+                      <DemoRouteGuard>
+                        <CreditSpreadDashboard />
                       </DemoRouteGuard>
                     }
                   />

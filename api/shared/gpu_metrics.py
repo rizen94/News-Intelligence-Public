@@ -7,11 +7,12 @@ import logging
 import os
 import subprocess
 from typing import Any
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
 def _env_int(name: str, default: int, minimum: int = 1) -> int:
-    raw = os.environ.get(name)
+    raw = env_str(name)
     if raw is None:
         return default
     try:

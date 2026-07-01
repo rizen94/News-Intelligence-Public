@@ -16,10 +16,11 @@ from psycopg2.extras import RealDictCursor
 from shared.database.connection import get_db_connection
 
 from .base import BaseRAGService
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
-_USE_PGVECTOR = os.environ.get("NI_RAG_USE_PGVECTOR", "true").lower() in ("1", "true", "yes")
+_USE_PGVECTOR = env_str("NI_RAG_USE_PGVECTOR", "true").lower() in ("1", "true", "yes")
 
 
 def _parse_json_column(val: Any, expected_type: type) -> Any:
@@ -63,12 +64,12 @@ class RAGRetrievalModule:
 
         def _fenv(key: str, default: str) -> float:
             try:
-                return float(os.environ.get(key, default))
+                return float(env_str(key, default))
             except (TypeError, ValueError):
                 return float(default)
 
         def _int_env(key: str, default: int) -> int:
-            raw = os.environ.get(key)
+            raw = env_str(key)
             if raw is None or str(raw).strip() == "":
                 return default
             try:

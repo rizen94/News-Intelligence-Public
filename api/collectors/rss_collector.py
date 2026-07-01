@@ -4,6 +4,7 @@ RSS Feed Collector for News Intelligence System v5.0
 Collects articles from RSS feeds with advanced deduplication.
 Excludes sports, entertainment, and pop culture content.
 """
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 import hashlib
 import json
@@ -21,6 +22,8 @@ from urllib3.util.retry import Retry
 import psycopg2
 import psycopg2.errors
 
+from shared.article_text_metrics import compute_word_count
+
 
 def _utc_aware(dt):
     """Return a timezone-aware datetime in UTC. Feed and DB datetimes may be naive or aware."""
@@ -31,7 +34,7 @@ def _utc_aware(dt):
     return dt.astimezone(timezone.utc)
 
 
-def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=None):
+def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=None, feed_id: int | None = None):
     """
     Insert into {schema}.articles with provenance columns when present.
     insert_vals: title, url, content, summary, published_at, created_at, source_domain,
@@ -41,6 +44,12 @@ def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=
     created_at = insert_vals[5]
     event_date = published_at or created_at
     ingestion_date = created_at
+    word_count = compute_word_count(insert_vals[2])
+    feed_cols = ""
+    feed_vals: tuple = ()
+    if feed_id is not None:
+        feed_cols = ", rss_feed_id, feed_id"
+        feed_vals = (feed_id, feed_id)
 
     if cred_meta:
         try:
@@ -49,30 +58,22 @@ def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=
                 INSERT INTO {schema_name}.articles
                 (title, url, content, summary, published_at, created_at, source_domain,
                  quality_score, bias_score, enrichment_status, enrichment_attempts, metadata,
-                 event_date, ingestion_date)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+                 word_count, event_date, ingestion_date{feed_cols})
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s{', %s, %s' if feed_id is not None else ''})
                 RETURNING id
                 """,
                 (
                     *insert_vals,
                     json.dumps({"source_credibility": cred_meta}),
+                    word_count,
                     event_date,
                     ingestion_date,
+                    *feed_vals,
                 ),
             )
             return
         except psycopg2.errors.UndefinedColumn:
-            cur.execute(
-                f"""
-                INSERT INTO {schema_name}.articles
-                (title, url, content, summary, published_at, created_at, source_domain,
-                 quality_score, bias_score, enrichment_status, enrichment_attempts, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
-                RETURNING id
-                """,
-                (*insert_vals, json.dumps({"source_credibility": cred_meta})),
-            )
-            return
+            pass
 
     try:
         cur.execute(
@@ -80,11 +81,11 @@ def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=
             INSERT INTO {schema_name}.articles
             (title, url, content, summary, published_at, created_at, source_domain,
              quality_score, bias_score, enrichment_status, enrichment_attempts,
-             event_date, ingestion_date)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             word_count, event_date, ingestion_date{feed_cols})
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s{', %s, %s' if feed_id is not None else ''})
             RETURNING id
             """,
-            (*insert_vals, event_date, ingestion_date),
+            (*insert_vals, word_count, event_date, ingestion_date, *feed_vals),
         )
     except psycopg2.errors.UndefinedColumn:
         cur.execute(
@@ -96,6 +97,63 @@ def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=
             RETURNING id
             """,
             insert_vals,
+        )
+
+
+def _update_feed_fetch_stats(
+    cur,
+    schema_name: str,
+    feed_id: int,
+    *,
+    success: bool,
+    articles_saved: int = 0,
+    error_message: str | None = None,
+) -> None:
+    """Update rss_feeds reliability columns after a fetch attempt."""
+    if success:
+        empty_inc = 0 if articles_saved > 0 else 1
+        cur.execute(
+            f"""
+            UPDATE {schema_name}.rss_feeds
+            SET last_fetched_at = NOW(),
+                last_success = NOW(),
+                last_error_message = NULL,
+                status = CASE WHEN status = 'warning' THEN status ELSE 'active' END,
+                success_rate = LEAST(1.0, COALESCE(success_rate, 0.5) * 0.85 + 0.15),
+                reliability_score = LEAST(1.0, COALESCE(reliability_score, 0.5) * 0.9 + 0.1),
+                filters = COALESCE(filters, '{{}}'::jsonb)
+                    || jsonb_build_object(
+                        'last_fetch_articles_saved', %s,
+                        'consecutive_empty_fetches',
+                        CASE WHEN %s > 0 THEN 0
+                             ELSE COALESCE((filters->>'consecutive_empty_fetches')::int, 0) + %s
+                        END
+                    ),
+                updated_at = NOW()
+            WHERE id = %s
+            """,
+            (articles_saved, articles_saved, empty_inc, feed_id),
+        )
+    else:
+        err = (error_message or "fetch failed")[:500]
+        cur.execute(
+            f"""
+            UPDATE {schema_name}.rss_feeds
+            SET last_fetched_at = NOW(),
+                last_error_message = %s,
+                status = CASE WHEN is_active THEN 'warning' ELSE status END,
+                success_rate = GREATEST(0.0, COALESCE(success_rate, 0.5) * 0.7),
+                reliability_score = GREATEST(0.0, COALESCE(reliability_score, 0.5) * 0.8),
+                filters = COALESCE(filters, '{{}}'::jsonb)
+                    || jsonb_build_object(
+                        'consecutive_empty_fetches',
+                        COALESCE((filters->>'consecutive_empty_fetches')::int, 0) + 1,
+                        'last_fetch_error', %s
+                    ),
+                updated_at = NOW()
+            WHERE id = %s
+            """,
+            (err, err, feed_id),
         )
 
 
@@ -372,7 +430,7 @@ _rss_http_session: requests.Session | None = None
 
 
 def _rss_http_user_agent() -> str:
-    return os.environ.get(
+    return env_str(
         "RSS_HTTP_USER_AGENT",
         "NewsIntelligence/1.0 (+https://github.com/news-intelligence)",
     )
@@ -400,7 +458,7 @@ def _get_rss_http_session() -> requests.Session:
 
 def _rss_fetch_timeout() -> int:
     try:
-        return max(5, int(os.environ.get("RSS_TIMEOUT", "30").strip() or "30"))
+        return max(5, int(env_str("RSS_TIMEOUT", "30").strip() or "30"))
     except ValueError:
         return 30
 
@@ -421,7 +479,7 @@ def _rss_fulltext_fetch_threshold() -> int:
     the feed already carries content:encoded. Override: RSS_FULLTEXT_FETCH_THRESHOLD_CHARS.
     """
     try:
-        return max(200, int(os.environ.get("RSS_FULLTEXT_FETCH_THRESHOLD_CHARS", "900")))
+        return max(200, int(env_str("RSS_FULLTEXT_FETCH_THRESHOLD_CHARS", "900")))
     except ValueError:
         return 900
 
@@ -429,7 +487,7 @@ def _rss_fulltext_fetch_threshold() -> int:
 def _rss_should_fetch_fulltext(body: str | None, url: str | None) -> bool:
     if not url or not str(url).strip():
         return False
-    if os.environ.get("RSS_ALWAYS_FETCH_FULLTEXT", "").strip().lower() in ("1", "true", "yes"):
+    if env_str("RSS_ALWAYS_FETCH_FULLTEXT", "").strip().lower() in ("1", "true", "yes"):
         return True
     return _rss_plain_text_len(body) < _rss_fulltext_fetch_threshold()
 
@@ -524,7 +582,7 @@ def fetch_and_parse_rss(feed_url: str):
     if (
         len(entries) == 0
         and "html" in ct
-        and os.environ.get("RSS_HTML_FEED_DISCOVERY", "").lower() in ("1", "true", "yes")
+        and env_str("RSS_HTML_FEED_DISCOVERY", "").lower() in ("1", "true", "yes")
     ):
         try:
             text = r.text
@@ -556,7 +614,7 @@ def fetch_and_parse_rss(feed_url: str):
 def _rss_max_entries_per_feed() -> int:
     """Cap items processed per feed per run (env RSS_MAX_ENTRIES_PER_FEED, default 100, clamped 1–500)."""
     try:
-        n = int(os.environ.get("RSS_MAX_ENTRIES_PER_FEED", "100").strip() or "100")
+        n = int(env_str("RSS_MAX_ENTRIES_PER_FEED", "100").strip() or "100")
     except ValueError:
         n = 100
     return max(1, min(n, 500))
@@ -1855,6 +1913,7 @@ def collect_rss_feeds() -> int:
                                     bias_score = (raw_bias + 1) / 2 if raw_bias is not None else 0.5
                                     bias_score = max(0.0, min(1.0, bias_score))
                                     quality_score = max(0.0, min(1.0, quality_score))
+                                    store_wc = compute_word_count(store_content)
                                     if cred_meta:
                                         try:
                                             feed_cur.execute(
@@ -1862,6 +1921,7 @@ def collect_rss_feeds() -> int:
                                                 UPDATE {schema_name}.articles SET
                                                 title = %s, content = %s, summary = %s, published_at = %s,
                                                 source_domain = %s, quality_score = %s, bias_score = %s,
+                                                word_count = %s,
                                                 metadata = COALESCE(metadata, '{{}}'::jsonb) || %s::jsonb,
                                                 updated_at = NOW()
                                                 WHERE id = %s
@@ -1874,6 +1934,7 @@ def collect_rss_feeds() -> int:
                                                     feed_name,
                                                     quality_score,
                                                     bias_score,
+                                                    store_wc,
                                                     json.dumps({"source_credibility": cred_meta}),
                                                     existing_id,
                                                 ),
@@ -1883,7 +1944,8 @@ def collect_rss_feeds() -> int:
                                                 f"""
                                                 UPDATE {schema_name}.articles SET
                                                 title = %s, content = %s, summary = %s, published_at = %s,
-                                                source_domain = %s, quality_score = %s, bias_score = %s, updated_at = NOW()
+                                                source_domain = %s, quality_score = %s, bias_score = %s,
+                                                word_count = %s, updated_at = NOW()
                                                 WHERE id = %s
                                                 """,
                                                 (
@@ -1894,6 +1956,7 @@ def collect_rss_feeds() -> int:
                                                     feed_name,
                                                     quality_score,
                                                     bias_score,
+                                                    store_wc,
                                                     existing_id,
                                                 ),
                                             )
@@ -1902,7 +1965,8 @@ def collect_rss_feeds() -> int:
                                             f"""
                                             UPDATE {schema_name}.articles SET
                                             title = %s, content = %s, summary = %s, published_at = %s,
-                                            source_domain = %s, quality_score = %s, bias_score = %s, updated_at = NOW()
+                                            source_domain = %s, quality_score = %s, bias_score = %s,
+                                            word_count = %s, updated_at = NOW()
                                             WHERE id = %s
                                             """,
                                             (
@@ -1913,6 +1977,7 @@ def collect_rss_feeds() -> int:
                                                 feed_name,
                                                 quality_score,
                                                 bias_score,
+                                                store_wc,
                                                 existing_id,
                                             ),
                                         )
@@ -2025,7 +2090,11 @@ def collect_rss_feeds() -> int:
                                 enrichment_attempts,
                             )
                             _insert_domain_article(
-                                feed_cur, schema_name, insert_vals, cred_meta=cred_meta or None
+                                feed_cur,
+                                schema_name,
+                                insert_vals,
+                                cred_meta=cred_meta or None,
+                                feed_id=feed_id,
                             )
 
                             result = feed_cur.fetchone()
@@ -2076,14 +2145,13 @@ def collect_rss_feeds() -> int:
                             _rss_entry_savepoint_rollback(feed_cur, feed_conn)
                             continue
 
-                    # Update feed timestamp
-                    feed_cur.execute(
-                        f"""
-                        UPDATE {schema_name}.rss_feeds
-                        SET last_fetched_at = NOW()
-                        WHERE id = %s
-                    """,
-                        (feed_id,),
+                    # Update feed fetch stats
+                    _update_feed_fetch_stats(
+                        feed_cur,
+                        schema_name,
+                        feed_id,
+                        success=True,
+                        articles_saved=articles_added + articles_updated,
                     )
 
                     feed_conn.commit()
@@ -2129,7 +2197,17 @@ def collect_rss_feeds() -> int:
 
                 except TimeoutError:
                     logger.error(f"⏱️ Timeout processing feed: {feed_name}")
-                    feed_conn.rollback()
+                    try:
+                        _update_feed_fetch_stats(
+                            feed_cur,
+                            schema_name,
+                            feed_id,
+                            success=False,
+                            error_message="Timeout",
+                        )
+                        feed_conn.commit()
+                    except Exception:
+                        feed_conn.rollback()
                     _rss_log("error", err="Timeout")
                     return {
                         "articles_added": 0,
@@ -2140,7 +2218,17 @@ def collect_rss_feeds() -> int:
                     }
                 except Exception as e:
                     logger.error(f"❌ Error processing feed {feed_name}: {e}")
-                    feed_conn.rollback()
+                    try:
+                        _update_feed_fetch_stats(
+                            feed_cur,
+                            schema_name,
+                            feed_id,
+                            success=False,
+                            error_message=str(e),
+                        )
+                        feed_conn.commit()
+                    except Exception:
+                        feed_conn.rollback()
                     _rss_log("error", err=str(e))
                     return {
                         "articles_added": 0,

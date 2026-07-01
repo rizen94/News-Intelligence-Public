@@ -63,6 +63,32 @@ import { usePinnedThreads } from '@/hooks/usePinnedThreads';
 
 /** Poll interval for full Monitor refresh (overview + pipeline + processing pulse together). */
 const POLL_INTERVAL_MS = 15000;
+/** Snapshot index refreshes server-side every ~15m; allow reuse until then + buffer. */
+const PENDING_METRICS_MAX_AGE_MS = 16 * 60 * 1000;
+
+type PhaseRow = {
+  phase_name?: string;
+  pending_records?: number | null;
+  pending_first_pass?: number | null;
+  pending_retry?: number | null;
+  intake_first_pass?: number | null;
+  [key: string]: unknown;
+};
+
+/** Sort automation phases by first-pass queue (desc), then total pending, then name. */
+function sortPhasesByPending<T extends PhaseRow>(phases: T[]): T[] {
+  return [...phases].sort((a, b) => {
+    const fa = Number(a.pending_first_pass ?? a.pending_records ?? 0);
+    const fb = Number(b.pending_first_pass ?? b.pending_records ?? 0);
+    if (fb !== fa) return fb - fa;
+    const pa = Number(a.pending_records ?? 0);
+    const pb = Number(b.pending_records ?? 0);
+    if (pb !== pa) return pb - pa;
+    const na = String(a.phase_name ?? '');
+    const nb = String(b.phase_name ?? '');
+    return na.localeCompare(nb);
+  });
+}
 
 function timeAgo(iso: string): string {
   const d = new Date(iso);
@@ -112,6 +138,14 @@ type ProcessingPulseDimension = {
   id?: string;
   label?: string;
   backlog?: number | null;
+  /** Contexts→claims only: terminal no-claim inventory vs actionable queue. */
+  backlog_breakdown?: {
+    total_no_claims?: number;
+    actionable_no_claims?: number;
+    passed_no_claims_after_filters?: number;
+    text_too_short_no_claims?: number;
+  } | null;
+  backlog_note?: string;
   last_1h?: number;
   last_24h?: number;
   last_7d?: number;
@@ -121,6 +155,13 @@ type ProcessingPulsePhase = {
   phase_name?: string;
   /** DB-backed count of records not yet processed for this phase (pending queue). */
   pending_records?: number;
+  /** Never cleared / first-time work for this phase. */
+  pending_first_pass?: number;
+  /** Attempted but needs another pass (retry / reprocess). */
+  pending_retry?: number;
+  /** First-pass items within intake window (fresh RSS backlog). */
+  intake_first_pass?: number;
+  work_queue_metric_kind?: string;
   /** ceil(unprocessed ÷ rows_per_run); null if no row-batch model. How many phase runs to drain the queue. */
   batches_to_drain?: number | null;
   /** Modeled rows consumed per scheduled run (not measured from history). */
@@ -158,7 +199,9 @@ type ProcessingPulseState = {
   data?: {
     generated_at_utc?: string;
     pending_metrics_included?: boolean;
+    dimension_throughput_included?: boolean;
     pending_metrics_as_of_utc?: string;
+    intake_window_hours?: number;
     operator_metrics?: Record<string, unknown>;
     reporting_definitions?: Record<string, string>;
     dimensions?: ProcessingPulseDimension[];
@@ -179,10 +222,23 @@ type ProcessingPulseState = {
 function mergeProcessingPulseWithCachedPending(
   fast: ProcessingPulseState,
   cached: ProcessingPulseState | null
-): ProcessingPulseState {
-  if (!fast?.data) return fast;
-  if (fast.data.pending_metrics_included) return fast;
-  if (!cached?.data?.pending_metrics_included) return fast;
+): { pulse: ProcessingPulseState; pendingStale: boolean } {
+  if (!fast?.data) return { pulse: fast, pendingStale: false };
+  if (fast.data.pending_metrics_included) {
+    const phases = sortPhasesByPending(
+      fast.data.phase_dashboard ?? fast.data.phases ?? []
+    );
+    return {
+      pulse: {
+        ...fast,
+        data: { ...fast.data, phase_dashboard: phases, phases },
+      },
+      pendingStale: false,
+    };
+  }
+  if (!cached?.data?.pending_metrics_included) {
+    return { pulse: fast, pendingStale: true };
+  }
 
   const cachedPhases = cached.data.phase_dashboard ?? cached.data.phases ?? [];
   const cachedByPhase = new Map(
@@ -190,33 +246,101 @@ function mergeProcessingPulseWithCachedPending(
       .filter(p => typeof p.phase_name === 'string' && p.phase_name.length > 0)
       .map(p => [p.phase_name as string, p])
   );
-  if (cachedByPhase.size === 0) return fast;
+  if (cachedByPhase.size === 0) {
+    return { pulse: fast, pendingStale: true };
+  }
+
+  const asOf =
+    cached.data.pending_metrics_as_of_utc ?? cached.data.generated_at_utc;
+  let pendingStale = false;
+  if (asOf) {
+    const age = Date.now() - new Date(asOf).getTime();
+    if (!Number.isFinite(age) || age > PENDING_METRICS_MAX_AGE_MS) {
+      pendingStale = true;
+    }
+  } else {
+    pendingStale = true;
+  }
 
   const fastPhases = fast.data.phase_dashboard ?? fast.data.phases ?? [];
-  const mergedPhases = fastPhases.map(p => {
+  for (const p of fastPhases) {
     const name = p.phase_name;
-    if (!name) return p;
+    if (!name) continue;
     const c = cachedByPhase.get(name);
-    if (!c) return p;
-    return {
-      ...p,
-      pending_records: c.pending_records,
-      estimated_batch_per_run: c.estimated_batch_per_run,
-      batches_to_drain: c.batches_to_drain,
-    };
-  });
+    if (!c) continue;
+    if ((p.runs_1h ?? 0) > (c.runs_1h ?? 0)) {
+      pendingStale = true;
+      break;
+    }
+  }
+
+  if (pendingStale) {
+    return { pulse: fast, pendingStale: true };
+  }
+
+  // #region agent log
+  try {
+    const ui = fastPhases.find(p => p.phase_name === 'unified_intake_extraction');
+    const cached = cachedPhases.find(p => p.phase_name === 'unified_intake_extraction');
+    if (ui || cached) {
+      fetch('http://127.0.0.1:7678/ingest/79eeed92-cd4a-41d4-872f-8f142138548b', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'e7d0f8' },
+        body: JSON.stringify({
+          sessionId: 'e7d0f8',
+          runId: 'pre-fix',
+          hypothesisId: 'H3',
+          location: 'MonitorPage.tsx:mergeProcessingPulseWithCachedPending',
+          message: 'pulse_merge_state',
+          data: {
+            pendingStale,
+            fast_runs_1h: ui?.runs_1h,
+            cached_runs_1h: cached?.runs_1h,
+            fast_pending: ui?.pending_records,
+            cached_pending: cached?.pending_records,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+    }
+  } catch {
+    /* ignore */
+  }
+  // #endregion
+
+  const mergedPhases = sortPhasesByPending(
+    fastPhases.map(p => {
+      const name = p.phase_name;
+      if (!name) return p;
+      const c = cachedByPhase.get(name);
+      if (!c) return p;
+      return {
+        ...p,
+        pending_records: c.pending_records,
+        pending_first_pass: c.pending_first_pass,
+        pending_retry: c.pending_retry,
+        intake_first_pass: c.intake_first_pass,
+        work_queue_metric_kind: c.work_queue_metric_kind,
+        estimated_batch_per_run: c.estimated_batch_per_run,
+        batches_to_drain: c.batches_to_drain,
+      };
+    })
+  );
 
   return {
-    ...fast,
-    data: {
-      ...fast.data,
-      phase_dashboard: mergedPhases,
-      phases: mergedPhases,
-      pending_metrics_included: true,
-      pending_metrics_as_of_utc:
-        cached.data.pending_metrics_as_of_utc ?? cached.data.generated_at_utc,
-      operator_metrics: cached.data.operator_metrics ?? fast.data.operator_metrics,
+    pulse: {
+      ...fast,
+      data: {
+        ...fast.data,
+        phase_dashboard: mergedPhases,
+        phases: mergedPhases,
+        pending_metrics_included: true,
+        pending_metrics_as_of_utc:
+          cached.data.pending_metrics_as_of_utc ?? cached.data.generated_at_utc,
+        operator_metrics: cached.data.operator_metrics ?? fast.data.operator_metrics,
+      },
     },
+    pendingStale: false,
   };
 }
 
@@ -263,6 +387,7 @@ export default function MonitorPage() {
   const [pinStorylineInput, setPinStorylineInput] = useState('');
   const [overview, setOverview] = useState<{
     success?: boolean;
+    degraded?: boolean;
     connections?: Record<string, unknown>;
     activities?: {
       current?: Array<Record<string, unknown>>;
@@ -311,32 +436,136 @@ export default function MonitorPage() {
     return ov;
   }, []);
 
+  const [pendingMetricsLoading, setPendingMetricsLoading] = useState(false);
+
+  /** Snapshot-backed pending counts (fast); use includePendingMetrics for live SQL refresh. */
+  const fetchPendingMetrics = useCallback(async (live = false) => {
+    setPendingMetricsLoading(true);
+    try {
+      const pulse = await apiService.getProcessingProgress(
+        live
+          ? { includePendingMetrics: true }
+          : { useBacklogSnapshot: true }
+      );
+      if (pulse?.success && pulse.data) {
+        setProcessingPulse(prev => {
+          const fastPhases =
+            prev?.data?.phase_dashboard ?? prev?.data?.phases ?? [];
+          const fullPhases = pulse.data?.phase_dashboard ?? pulse.data?.phases ?? [];
+          if (fastPhases.length === 0 || fullPhases.length === 0) {
+            const phases = sortPhasesByPending(fullPhases.length ? fullPhases : fastPhases);
+            return {
+              ...pulse,
+              data: {
+                ...pulse.data,
+                phase_dashboard: phases,
+                phases,
+                pending_metrics_as_of_utc:
+                  pulse.data.pending_metrics_as_of_utc ?? pulse.data.generated_at_utc,
+              },
+            };
+          }
+          type PhaseRow = NonNullable<
+            ProcessingPulseState['data']
+          >['phase_dashboard'][number];
+          const fullByPhase = new Map<string, PhaseRow>(
+            fullPhases
+              .filter((p): p is PhaseRow => Boolean(p.phase_name))
+              .map(p => [p.phase_name as string, p])
+          );
+          const mergedPhases = sortPhasesByPending(
+            fastPhases.map(p => {
+              const name = p.phase_name;
+              if (!name) return p;
+              const row = fullByPhase.get(name);
+              if (!row) return p;
+              return {
+                ...p,
+                pending_records: row.pending_records,
+                pending_first_pass: row.pending_first_pass,
+                pending_retry: row.pending_retry,
+                intake_first_pass: row.intake_first_pass,
+                work_queue_metric_kind: row.work_queue_metric_kind,
+                estimated_batch_per_run: row.estimated_batch_per_run,
+                batches_to_drain: row.batches_to_drain,
+              };
+            })
+          );
+          return {
+            ...pulse,
+            data: {
+              ...pulse.data,
+              phase_dashboard: mergedPhases,
+              phases: mergedPhases,
+              pending_metrics_included: true,
+              pending_metrics_as_of_utc:
+                pulse.data.pending_metrics_as_of_utc ?? pulse.data.generated_at_utc,
+            },
+          };
+        });
+      }
+    } catch {
+      /* getProcessingProgress returns { success: false } on failure */
+    } finally {
+      setPendingMetricsLoading(false);
+    }
+  }, []);
+
   /** Heavy panels: pipeline, pulse, GPU, automation — orchestrator/CC from ShellStatusContext. */
   const refreshHeavyPanels = useCallback(async () => {
-    const results = await Promise.allSettled([
+    // Pipeline/automation first — single-worker API can queue behind a cold processing_progress build.
+    const pipelineResult = await Promise.allSettled([
       apiService.getPipelineStatus(),
-      apiService.getProcessingProgress({ includePendingMetrics: false }),
-      apiService.getGpuMetricHistory(72),
       apiService.getAutomationStatus().catch(() => null),
     ]);
+    const pulseGpuResults = await Promise.allSettled([
+      apiService.getProcessingProgress({ useBacklogSnapshot: true }),
+      apiService.getGpuMetricHistory(72),
+    ]);
+    const results = [...pipelineResult, ...pulseGpuResults];
     const settledErr = (r: PromiseSettledResult<unknown>, label: string) =>
       r.status === 'rejected'
         ? { success: false as const, error: `${label}: ${(r.reason as Error)?.message ?? 'failed'}` }
         : null;
     const pipe =
       results[0].status === 'fulfilled' ? results[0].value : settledErr(results[0], 'pipeline_status');
+    const autoEnvelope = results[1].status === 'fulfilled' ? results[1].value : null;
     const pulse =
-      results[1].status === 'fulfilled' ? results[1].value : settledErr(results[1], 'processing_progress');
-    const gpuH = results[2].status === 'fulfilled' ? results[2].value : null;
-    const autoEnvelope = results[3].status === 'fulfilled' ? results[3].value : null;
+      results[2].status === 'fulfilled' ? results[2].value : settledErr(results[2], 'processing_progress');
+    const gpuH = results[3].status === 'fulfilled' ? results[3].value : null;
+    // #region agent log
+    fetch('http://127.0.0.1:7678/ingest/79eeed92-cd4a-41d4-872f-8f142138548b', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'e7d0f8' },
+      body: JSON.stringify({
+        sessionId: 'e7d0f8',
+        location: 'MonitorPage.tsx:refreshHeavyPanels',
+        message: 'heavy_panels_settled',
+        data: {
+          pipelineOk: Boolean(pipe && typeof pipe === 'object' && (pipe as { success?: boolean }).success),
+          pipelineStatus: (pipe as { data?: { pipeline_status?: string } })?.data?.pipeline_status,
+          pulseOk: Boolean(pulse && typeof pulse === 'object' && (pulse as { success?: boolean }).success),
+          pulseError: (pulse as { error?: string })?.error,
+        },
+        timestamp: Date.now(),
+        hypothesisId: 'H1-H3',
+      }),
+    }).catch(() => {});
+    // #endregion
     setPipeline(pipe ?? null);
     if (pulse && typeof pulse === 'object' && 'success' in pulse) {
-      setProcessingPulse(prev =>
-        mergeProcessingPulseWithCachedPending(
+      setProcessingPulse(prev => {
+        const { pulse: merged, pendingStale } = mergeProcessingPulseWithCachedPending(
           pulse as ProcessingPulseState,
           prev
-        )
-      );
+        );
+        if (pendingStale) {
+          queueMicrotask(() => {
+            void fetchPendingMetrics();
+          });
+        }
+        return merged;
+      });
     } else {
       setProcessingPulse(pulse ?? null);
     }
@@ -354,32 +583,14 @@ export default function MonitorPage() {
       } | null
     )?.data;
     setPipelineArticleSelection(autoData?.pipeline_article_selection ?? null);
-  }, []);
+  }, [fetchPendingMetrics]);
 
-  const [pendingMetricsLoading, setPendingMetricsLoading] = useState(false);
-
-  /** Heavy backlog_metrics pass — populates phase pending_records / runs-to-clear columns. */
-  const fetchPendingMetrics = useCallback(async () => {
-    setPendingMetricsLoading(true);
-    try {
-      const pulse = await apiService.getProcessingProgress({
-        includePendingMetrics: true,
-      });
-      if (pulse?.success && pulse.data) {
-        setProcessingPulse({
-          ...pulse,
-          data: {
-            ...pulse.data,
-            pending_metrics_as_of_utc: pulse.data.generated_at_utc,
-          },
-        });
-      }
-    } catch {
-      /* getProcessingProgress returns { success: false } on failure */
-    } finally {
-      setPendingMetricsLoading(false);
-    }
-  }, []);
+  /** Full monitor refresh after manual phase trigger (overview + heavy + pending metrics). */
+  const refreshMonitor = useCallback(async () => {
+    await refreshOverview();
+    void refreshHeavyPanels();
+    void fetchPendingMetrics();
+  }, [refreshOverview, refreshHeavyPanels, fetchPendingMetrics]);
 
   const lastCollectionTimes = useMemo(() => {
     const raw = orchCollection?.last_collection_times as
@@ -442,8 +653,8 @@ export default function MonitorPage() {
               await refreshOverview();
               void refreshHeavyPanels();
               pollTick += 1;
-              // Refresh queue depths ~every minute (backlog SQL is heavy for every 15s poll).
-              if (pollTick % 4 === 0) void fetchPendingMetrics();
+              // Refresh queue depths ~every 30s (backlog SQL is heavy for every 15s poll).
+              if (pollTick % 2 === 0) void fetchPendingMetrics();
             } catch {
               /* monitoring APIs usually return { success: false }; guard anyway */
             }
@@ -557,6 +768,8 @@ export default function MonitorPage() {
 
   const overviewLoadFailed =
     !initialLoad && overview != null && overview.success === false;
+  const overviewDegraded =
+    !initialLoad && overview != null && overview.degraded === true;
 
   const statusChip = (status: string | undefined, label: string) => {
     if (status === 'not_loaded') {
@@ -755,6 +968,12 @@ export default function MonitorPage() {
         <Alert severity='error' sx={{ mb: 2 }}>
           Could not load monitoring overview (health + activity). The API may be down,
           blocked by a proxy, or timing out.{' '}
+          <strong>{String((overview?.error as string) || '').slice(0, 200)}</strong>
+        </Alert>
+      )}
+      {overviewDegraded && !overviewLoadFailed && (overview?.error as string) && (
+        <Alert severity='warning' sx={{ mb: 2 }}>
+          Monitoring overview loaded with reduced detail (API was slow under load).{' '}
           <strong>{String((overview?.error as string) || '').slice(0, 200)}</strong>
         </Alert>
       )}
@@ -1013,6 +1232,11 @@ export default function MonitorPage() {
         <CardContent sx={{ py: 1.5 }}>
           {processingPulse?.success && processingPulse.data ? (
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {processingPulse.data.warming === true && (
+                <Alert severity='info' sx={{ py: 0.5 }}>
+                  Processing pulse snapshot is building — phase table fills on the next refresh (~15s).
+                </Alert>
+              )}
               {processingPulse.data.pending_metrics_included === false && (
                 <Alert severity='info' sx={{ py: 0.5 }}>
                   {pendingMetricsLoading ? (
@@ -1023,17 +1247,27 @@ export default function MonitorPage() {
                     <>
                       Per-phase <strong>unprocessed rows</strong> are not loaded yet (fast path
                       refresh). Throughput chips and run counts still reflect the last 7 days. Queue
-                      depths load in the background and refresh ~every minute.
+                      depths refresh automatically every ~30s or after phase runs.
                     </>
                   )}
+                </Alert>
+              )}
+              {processingPulse.data.dimension_throughput_included === false && (
+                <Alert severity='info' sx={{ py: 0.5 }}>
+                  Dimension throughput chips omitted on this fast refresh (heavy SQL). Phase queue
+                  and run history are current; dimension counts refresh on full backlog load.
                 </Alert>
               )}
               {processingPulse.data.pending_metrics_included === true &&
                 processingPulse.data.pending_metrics_as_of_utc && (
                   <Typography variant='caption' color='text.secondary'>
                     Queue depths as of{' '}
-                    {shortLocalDateTime(processingPulse.data.pending_metrics_as_of_utc)} — throughput
-                    and run counts update every 15s
+                    {shortLocalDateTime(processingPulse.data.pending_metrics_as_of_utc)} — first-pass /
+                    retry / intake columns refresh with the ~15m snapshot index
+                    {processingPulse.data.intake_window_hours != null
+                      ? ` (intake window ${processingPulse.data.intake_window_hours}h)`
+                      : ''}
+                    ; throughput and run counts update every 15s
                   </Typography>
                 )}
               <Typography variant='caption' color='text.secondary'>
@@ -1053,8 +1287,21 @@ export default function MonitorPage() {
                       d.last_1h ?? 0,
                       d.last_24h ?? 0
                     );
+                    const inv =
+                      d.id === 'contexts_claimed' &&
+                      d.backlog_breakdown?.total_no_claims != null &&
+                      (d.backlog_breakdown.total_no_claims ?? 0) >
+                        (d.backlog ?? 0)
+                        ? ` · ${formatPulseCount(d.backlog_breakdown.total_no_claims)} terminal (no claims, already processed)`
+                        : '';
                     const bl =
-                      d.backlog != null ? `backlog ${formatPulseCount(d.backlog)} · ` : '';
+                      d.backlog != null
+                        ? `queue ${formatPulseCount(d.backlog)}${inv} · `
+                        : '';
+                    const titleExtra =
+                      d.id === 'contexts_claimed' && d.backlog_note
+                        ? `\n\n${d.backlog_note}`
+                        : '';
                     return (
                       <Chip
                         key={d.id || i}
@@ -1073,7 +1320,7 @@ export default function MonitorPage() {
                           },
                         }}
                         label={`${t.sym} ${d.label || d.id} · 1h ${formatPulseCount(d.last_1h)} · 24h ${formatPulseCount(d.last_24h)} · 7d ${formatPulseCount(d.last_7d)}`}
-                        title={`${t.title}\n${d.label}\n${bl}1h ${d.last_1h ?? '—'} · 24h ${d.last_24h ?? '—'} · 7d ${d.last_7d ?? '—'}`}
+                        title={`${t.title}\n${d.label}\n${bl}1h ${d.last_1h ?? '—'} · 24h ${d.last_24h ?? '—'} · 7d ${d.last_7d ?? '—'}${titleExtra}`}
                       />
                     );
                   })}
@@ -1082,7 +1329,8 @@ export default function MonitorPage() {
               <Divider />
               <Box>
                 <Typography variant='caption' color='text.secondary' sx={{ display: 'block', mb: 0.75 }}>
-                  Data-plane row backlogs (same SQL family as backlog ETAs)
+                  Actionable queue depths (contexts→claims excludes pass-markered terminal rows; see
+                  ticker tooltip for inventory)
                 </Typography>
                 <Table size='small' sx={{ '& td': { py: 0.5 } }}>
                   <TableHead>
@@ -1119,8 +1367,8 @@ export default function MonitorPage() {
               <Divider />
               <Box>
                 <Typography variant='caption' color='text.secondary' sx={{ display: 'block', mb: 0.75 }}>
-                  Automation phases — unprocessed DB rows, modeled rows per run, estimated runs to clear the
-                  queue; then pass/fail when the phase completes
+                  Automation phases — total queue, first-time work, retries, and fresh intake; modeled
+                  rows per run and estimated runs to clear; then pass/fail when the phase completes
                 </Typography>
                 <Table size='small' sx={{ '& td': { py: 0.5 } }}>
                   <TableHead>
@@ -1128,9 +1376,27 @@ export default function MonitorPage() {
                       <TableCell>Phase</TableCell>
                       <TableCell
                         align='right'
-                        title='Count of database records not yet processed for this phase (pending queue)'
+                        title='Total eligible pending work (scheduler queue depth)'
                       >
-                        Unprocessed rows
+                        Total queue
+                      </TableCell>
+                      <TableCell
+                        align='right'
+                        title='Never successfully cleared — grows with intake, shrinks as automation catches up'
+                      >
+                        First pass
+                      </TableCell>
+                      <TableCell
+                        align='right'
+                        title='Attempted but needs another pass (failed / legacy false-clear)'
+                      >
+                        Retry
+                      </TableCell>
+                      <TableCell
+                        align='right'
+                        title='First-pass items created within the intake window (default 72h)'
+                      >
+                        New intake
                       </TableCell>
                       <TableCell
                         align='right'
@@ -1155,10 +1421,10 @@ export default function MonitorPage() {
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {(
+                    {sortPhasesByPending(
                       processingPulse.data.phase_dashboard ??
-                      processingPulse.data.phases ??
-                      []
+                        processingPulse.data.phases ??
+                        []
                     )
                       .slice(0, 40)
                       .map(p => (
@@ -1166,6 +1432,41 @@ export default function MonitorPage() {
                           <TableCell>{p.phase_name}</TableCell>
                           <TableCell align='right'>
                             {formatPulseCount(p.pending_records ?? 0)}
+                          </TableCell>
+                          <TableCell align='right'>
+                            {(p.pending_first_pass ?? p.pending_records ?? 0) > 0 ? (
+                              <Typography
+                                component='span'
+                                variant='body2'
+                                color={
+                                  (p.intake_first_pass ?? 0) > 0 ? 'info.main' : 'text.primary'
+                                }
+                              >
+                                {formatPulseCount(
+                                  p.pending_first_pass ?? p.pending_records ?? 0
+                                )}
+                              </Typography>
+                            ) : (
+                              formatPulseCount(0)
+                            )}
+                          </TableCell>
+                          <TableCell align='right'>
+                            {(p.pending_retry ?? 0) > 0 ? (
+                              <Typography component='span' variant='body2' color='warning.main'>
+                                {formatPulseCount(p.pending_retry ?? 0)}
+                              </Typography>
+                            ) : (
+                              formatPulseCount(0)
+                            )}
+                          </TableCell>
+                          <TableCell align='right'>
+                            {(p.intake_first_pass ?? 0) > 0 ? (
+                              <Typography component='span' variant='body2' color='info.main'>
+                                {formatPulseCount(p.intake_first_pass ?? 0)}
+                              </Typography>
+                            ) : (
+                              formatPulseCount(0)
+                            )}
                           </TableCell>
                           <TableCell align='right'>
                             {formatPulseCount(p.estimated_batch_per_run ?? 0)}
@@ -1220,7 +1521,7 @@ export default function MonitorPage() {
                 {(processingPulse.data.phase_dashboard ?? processingPulse.data.phases ?? [])
                   .length > 40 && (
                   <Typography variant='caption' color='text.secondary' sx={{ mt: 0.5, display: 'block' }}>
-                    Showing 40 rows sorted by pending+backlog, then 7d runs.
+                    Showing 40 rows sorted by first-pass queue, then total pending.
                   </Typography>
                 )}
               </Box>

@@ -10,6 +10,7 @@ from typing import Any
 
 from shared.database.connection import get_db_connection
 from shared.domain_registry import resolve_domain_schema
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -225,7 +226,7 @@ def update_story_state(
         if metadata.get("historical_fact_count", 0) > 0:
             import os
 
-            if os.environ.get("STORY_STATE_FACT_CHANGE_REFINEMENT", "0").strip().lower() in (
+            if env_str("STORY_STATE_FACT_CHANGE_REFINEMENT", "0").strip().lower() in (
                 "1",
                 "true",
                 "yes",

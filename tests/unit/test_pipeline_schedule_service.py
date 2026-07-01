@@ -64,6 +64,16 @@ class TestPipelineWindows:
         assert not automation_phase_allowed("claim_extraction", now_local=quiet)
         assert not automation_phase_allowed("collection_cycle", now_local=quiet)
 
+    def test_automation_phase_allowed_severe_backlog_in_quiet(self, monkeypatch):
+        monkeypatch.setenv("AUTOMATION_BACKLOG_SEVERE_THRESHOLD", "25000")
+        quiet = _et(2026, 5, 18, 20)
+        assert automation_phase_allowed(
+            "topic_clustering", now_local=quiet, pending_count=30000
+        )
+        assert not automation_phase_allowed(
+            "topic_clustering", now_local=quiet, pending_count=1000
+        )
+
     def test_automation_phase_allowed_weekday_daytime(self, monkeypatch):
         daytime = _et(2026, 5, 18, 11)
         assert automation_phase_allowed("claim_extraction", now_local=daytime)
@@ -84,3 +94,11 @@ class TestPipelineWindows:
         assert info["active_window"] == "weekday_daytime"
         assert "rss_collection_allowed" in info
         assert info["rss_collection_allowed"] is True
+
+    def test_quiet_hours_disabled_allows_weekend_automation(self, monkeypatch):
+        monkeypatch.setenv("PIPELINE_QUIET_HOURS_DISABLED", "true")
+        saturday = _et(2026, 5, 16, 10)
+        assert not in_pipeline_quiet_window(saturday)
+        assert active_pipeline_window(saturday) == "weekday_daytime"
+        assert automation_phase_allowed("claim_extraction", now_local=saturday)
+        assert rss_collection_allowed(now_local=saturday)

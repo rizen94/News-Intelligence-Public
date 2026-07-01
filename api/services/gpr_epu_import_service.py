@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from services.macro_series_service import upsert_macro_observations
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +59,8 @@ def _parse_monthly_csv(
 
 
 def import_gpr_epu_from_config() -> dict[str, Any]:
-    gpr_path = Path(os.environ.get("GPR_CSV_PATH", str(_DEFAULT_GPR)))
-    epu_path = Path(os.environ.get("EPU_CSV_PATH", str(_DEFAULT_EPU)))
+    gpr_path = Path(env_str("GPR_CSV_PATH", str(_DEFAULT_GPR)))
+    epu_path = Path(env_str("EPU_CSV_PATH", str(_DEFAULT_EPU)))
     gpr_rows = _parse_monthly_csv(gpr_path, series_id="GPRTOT", value_col="GPR", source="gpr_csv")
     epu_rows = _parse_monthly_csv(epu_path, series_id="GEPUCURRENT", value_col="EPU", source="epu_csv")
     n = upsert_macro_observations(gpr_rows + epu_rows)

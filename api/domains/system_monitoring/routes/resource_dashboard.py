@@ -10,6 +10,8 @@ import asyncio
 import logging
 import os
 import subprocess
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -20,6 +22,7 @@ from fastapi import APIRouter, HTTPException, Query
 from shared.gpu_metrics import fetch_gpu_metric_hourly_buckets
 from shared.database.connection import get_ui_db_connection as get_db_connection
 from shared.services.response_cache import cached_response, cached_response_sync
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -348,14 +351,12 @@ def get_backlog_status() -> dict[str, Any]:
                 context_backlog = context_backlog_breakdown.get("actionable_no_claims", 0)
             except Exception:
                 context_backlog_breakdown = {}
-                cur.execute(
-                    """
-                    SELECT COUNT(*) FROM intelligence.contexts c
-                    LEFT JOIN intelligence.extracted_claims ec ON ec.context_id = c.id
-                    WHERE ec.id IS NULL
-                    """
-                )
-                context_backlog = cur.fetchone()[0] or 0
+                try:
+                    from services.backlog_metrics import _count_claim_extraction_backlog
+
+                    context_backlog = int(_count_claim_extraction_backlog() or 0)
+                except Exception:
+                    context_backlog = 0
             cur.execute(
                 """
                 SELECT
@@ -762,7 +763,7 @@ def get_backlog_status() -> dict[str, Any]:
 
     pipeline_alerts: list[str] = []
     try:
-        art_alert = int(os.environ.get("NEWS_INTEL_ALERT_ARTICLE_BACKLOG", "2000"))
+        art_alert = int(env_str("NEWS_INTEL_ALERT_ARTICLE_BACKLOG", "2000"))
     except ValueError:
         art_alert = 2000
     if article_backlog > art_alert:
@@ -770,7 +771,7 @@ def get_backlog_status() -> dict[str, Any]:
             f"article_enrichment_backlog_high:{article_backlog}>{art_alert}"
         )
     try:
-        ctx_alert = int(os.environ.get("NEWS_INTEL_ALERT_CONTEXT_BACKLOG", "500"))
+        ctx_alert = int(env_str("NEWS_INTEL_ALERT_CONTEXT_BACKLOG", "500"))
     except ValueError:
         ctx_alert = 500
     if context_backlog > ctx_alert:
@@ -790,6 +791,16 @@ def get_backlog_status() -> dict[str, Any]:
     except Exception as ex:
         automation_backlog_clear = False
         automation_backlog_nonzero.append(f"backlog_metrics_unavailable:{str(ex)[:120]}")
+
+    try:
+        from services.backlog_metrics import get_all_pending_counts
+        from services.backlog_trend_service import backlog_trend_alert, record_daily_snapshot
+
+        _pending_snap = get_all_pending_counts()
+        record_daily_snapshot(_pending_snap)
+        pipeline_alerts.extend(backlog_trend_alert(_pending_snap))
+    except Exception:
+        pass
 
     nightly_catchup: dict[str, Any] = {}
     pipeline_schedule: dict[str, Any] = {}
@@ -827,6 +838,21 @@ def get_backlog_status() -> dict[str, Any]:
         recent_fail = sum(
             1 for r in nightly_recent_runs if r.get("success") is False
         )
+        phase_heartbeats: list[dict[str, Any]] = []
+        stalled_phase_names: list[str] = []
+        try:
+            from services.pipeline_phase_heartbeat_service import (
+                list_phase_heartbeats,
+                stalled_phases,
+            )
+
+            phase_heartbeats = list_phase_heartbeats()
+            stalled_phase_names = stalled_phases()
+            for sp in stalled_phase_names:
+                pipeline_alerts.append(f"phase_stalled:{sp}")
+        except Exception:
+            pass
+
         nightly_catchup = {
             "window": window_info,
             "sequential_phase_order": seq_phases,
@@ -839,6 +865,8 @@ def get_backlog_status() -> dict[str, Any]:
                 "success": recent_ok,
                 "failure": recent_fail,
             },
+            "phase_heartbeats": phase_heartbeats,
+            "stalled_phases": stalled_phase_names,
         }
     except Exception as ex:
         nightly_catchup = {"error": str(ex)[:200]}
@@ -887,11 +915,35 @@ def get_backlog_status() -> dict[str, Any]:
     except Exception:
         ollama_models_payload = {}
 
+    try:
+        from services.backlog_metrics import get_data_quality_metrics
+
+        data_quality = get_data_quality_metrics()
+    except Exception:
+        data_quality = {}
+
+    rss_feed_health_metrics: dict[str, int] = {}
+    signal_lane_metrics: dict[str, int] = {}
+    try:
+        from services.rss_feed_health_service import get_feed_health_monitor_counts
+
+        rss_feed_health_metrics = get_feed_health_monitor_counts()
+    except Exception:
+        pass
+    try:
+        from services.phase_work_queue_metrics import get_signal_lane_counts_24h
+
+        signal_lane_metrics = get_signal_lane_counts_24h()
+    except Exception:
+        pass
+
     return {
         "success": True,
         "data": {
             "workload_window_days": BACKLOG_WORKLOAD_WINDOW_DAYS,
             "pipeline_alerts": pipeline_alerts,
+            "rss_feed_health": rss_feed_health_metrics,
+            "signal_lane_metrics": signal_lane_metrics,
             "ollama_models": ollama_models_payload,
             "steady_state": {
                 "ok": steady_ok,
@@ -944,7 +996,7 @@ def get_backlog_status() -> dict[str, Any]:
                 "total": context_total,
                 "backlog": context_backlog,
                 "backlog_breakdown": context_backlog_breakdown,
-                "backlog_note": "backlog = actionable_no_claims (matches claim_extraction automation); see backlog_breakdown.total_no_claims for Monitor legacy count",
+                "backlog_note": "backlog = actionable_no_claims (matches claim_extraction automation); backlog_breakdown.total_no_claims is terminal inventory, not work to do",
                 "per_hour": round(context_claims_per_hour, 2),
                 "per_hour_source": context_claims_per_hour_source,
                 "processed_last_1h": contexts_claim_extracted_last_1h,
@@ -1001,6 +1053,7 @@ def get_backlog_status() -> dict[str, Any]:
             "overall_eta_utc": eta_overall,
             "overall_iterations_to_baseline": overall_iterations,
             "cycle_hours": 2,
+            "data_quality": data_quality,
         },
     }
 
@@ -1250,7 +1303,7 @@ def _get_remote_disk_and_processes_via_ssh(
     Run df and ps on remote host via SSH; return same shape as _get_local_disk_and_processes.
     Requires passwordless SSH (e.g. key-based) from API host to host. See docs/MONITORING_SSH_SETUP.md.
     """
-    user = ssh_user or os.environ.get("MONITORING_SSH_USER") or os.environ.get("USER", "newsapp")
+    user = ssh_user or env_str("MONITORING_SSH_USER") or env_str("USER", "newsapp")
     target = f"{user}@{host}"
     result = {
         "disk": None,
@@ -1439,7 +1492,7 @@ async def get_devices():
     """
     config = _load_monitoring_config()
     devices_config = config.get("devices") or []
-    project_path = os.environ.get("PROJECT_ROOT") or os.getcwd()
+    project_path = env_str("PROJECT_ROOT") or os.getcwd()
     loop = asyncio.get_event_loop()
     timeout = config.get("ssh_timeout_seconds") or DEFAULT_SSH_TIMEOUT_SECONDS
 
@@ -1492,7 +1545,7 @@ async def get_devices():
                 )
             elif host:
                 # SSH-based disk/process fetch (passwordless keys required)
-                ssh_user = dev.get("ssh_user") or os.environ.get("MONITORING_SSH_USER")
+                ssh_user = dev.get("ssh_user") or env_str("MONITORING_SSH_USER")
                 project_path_remote = dev.get("project_path_remote")
                 try:
                     data = await loop.run_in_executor(
@@ -1595,20 +1648,168 @@ def _build_processing_progress_response(
     *,
     include_hourly_tick_rows: bool,
     include_pending_metrics: bool,
+    use_backlog_snapshot: bool = False,
+    include_dimension_throughput: bool = True,
 ) -> dict[str, Any]:
     from .processing_progress import compute_processing_progress_response
+
+    pending_source: str = "none"
+    if include_pending_metrics:
+        pending_source = "live"
+    elif use_backlog_snapshot:
+        pending_source = "snapshot"
 
     out = compute_processing_progress_response(
         include_hourly_tick_rows=include_hourly_tick_rows,
         include_pending_metrics=include_pending_metrics,
+        include_dimension_throughput=include_dimension_throughput,
+        pending_metrics_source=pending_source,  # type: ignore[arg-type]
     )
     if out.get("success") and isinstance(out.get("data"), dict):
         out["data"]["workload_window_days_note"] = BACKLOG_WORKLOAD_WINDOW_DAYS
     return out
 
 
+_PROCESSING_PROGRESS_FAST_TTL_SEC = 120
+_processing_progress_fast_cache: dict[tuple[bool, bool], dict[str, Any]] = {}
+_processing_progress_fast_lock = threading.Lock()
+_processing_progress_fast_cond = threading.Condition(_processing_progress_fast_lock)
+_processing_progress_fast_inflight: set[tuple[bool, bool]] = set()
+
+
+def _refresh_processing_progress_fast_cache(key: tuple[bool, bool]) -> None:
+    """Background rebuild after stale-while-revalidate handoff."""
+    include_hourly_tick_rows, use_backlog_snapshot = key
+    with _processing_progress_fast_cond:
+        if key in _processing_progress_fast_inflight:
+            return
+        _processing_progress_fast_inflight.add(key)
+    result: dict[str, Any] = {"success": False, "data": None}
+    try:
+        result = _build_processing_progress_response(
+            include_hourly_tick_rows=include_hourly_tick_rows,
+            include_pending_metrics=False,
+            use_backlog_snapshot=use_backlog_snapshot,
+            include_dimension_throughput=False,
+        )
+    except Exception as exc:
+        logger.exception("processing_progress background refresh failed: %s", exc)
+    finally:
+        with _processing_progress_fast_cond:
+            _processing_progress_fast_inflight.discard(key)
+            if result.get("success"):
+                _processing_progress_fast_cache[key] = {
+                    "value": result,
+                    "timestamp": time.time(),
+                }
+            _processing_progress_fast_cond.notify_all()
+    try:
+        from shared.monitor_pulse_debug import monitor_pulse_debug
+
+        monitor_pulse_debug(
+            "resource_dashboard.py:_refresh_processing_progress_fast_cache",
+            "processing_progress_cache_refreshed",
+            {
+                "key": list(key),
+                "success": bool(result.get("success")),
+            },
+            hypothesis_id="H2",
+            run_id="post-fix",
+        )
+    except Exception:
+        pass
+
+
+def _processing_progress_warming_response() -> dict[str, Any]:
+    """Immediate Monitor-safe payload while the full pulse snapshot builds."""
+    return {
+        "success": True,
+        "data": {
+            "degraded": True,
+            "warming": True,
+            "phase_dashboard": [],
+            "phases": [],
+            "dimensions": [],
+            "dimension_throughput_included": False,
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        },
+    }
+
+
+def _kick_processing_progress_refresh(key: tuple[bool, bool]) -> bool:
+    """Start background rebuild if not already running. Returns True when kicked."""
+    threading.Thread(
+        target=_refresh_processing_progress_fast_cache,
+        args=(key,),
+        name=f"pp-cache-refresh-{key}",
+        daemon=True,
+    ).start()
+    with _processing_progress_fast_cond:
+        return key in _processing_progress_fast_inflight
+
+
+def _get_processing_progress_fast(
+    include_hourly_tick_rows: bool,
+    use_backlog_snapshot: bool,
+) -> dict[str, Any]:
+    """Cached fast path: fresh hit, stale-while-revalidate, or immediate warming stub."""
+    key = (include_hourly_tick_rows, use_backlog_snapshot)
+    now = time.time()
+    with _processing_progress_fast_cond:
+        cached = _processing_progress_fast_cache.get(key)
+        cache_age_sec = (now - cached["timestamp"]) if cached else None
+        if cached and cache_age_sec is not None and cache_age_sec < _PROCESSING_PROGRESS_FAST_TTL_SEC:
+            try:
+                from shared.monitor_pulse_debug import monitor_pulse_debug
+
+                monitor_pulse_debug(
+                    "resource_dashboard.py:_get_processing_progress_fast",
+                    "processing_progress_cache_hit",
+                    {"key": list(key), "cache_age_sec": round(cache_age_sec, 2)},
+                    hypothesis_id="H2",
+                )
+            except Exception:
+                pass
+            return cached["value"]
+        stale_value = cached["value"] if cached else None
+
+    if stale_value is not None:
+        kicked = _kick_processing_progress_refresh(key)
+        try:
+            from shared.monitor_pulse_debug import monitor_pulse_debug
+
+            monitor_pulse_debug(
+                "resource_dashboard.py:_get_processing_progress_fast",
+                "processing_progress_stale_served",
+                {
+                    "key": list(key),
+                    "cache_age_sec": round(cache_age_sec or 0, 2),
+                    "refresh_kicked": kicked,
+                },
+                hypothesis_id="H2",
+                run_id="post-fix",
+            )
+        except Exception:
+            pass
+        return stale_value
+
+    kicked = _kick_processing_progress_refresh(key)
+    try:
+        from shared.monitor_pulse_debug import monitor_pulse_debug
+
+        monitor_pulse_debug(
+            "resource_dashboard.py:_get_processing_progress_fast",
+            "processing_progress_warming_stub",
+            {"key": list(key), "refresh_kicked": kicked},
+            hypothesis_id="H2",
+            run_id="post-fix",
+        )
+    except Exception:
+        pass
+    return _processing_progress_warming_response()
+
+
 @router.get("/processing_progress")
-@cached_response_sync(ttl=90)
 def get_processing_progress(
     include_hourly_tick_rows: bool = Query(
         False,
@@ -1620,9 +1821,16 @@ def get_processing_progress(
     include_pending_metrics: bool = Query(
         False,
         description=(
-            "When false (default), omit backlog_metrics (heavy per-phase DB counts). "
-            "Throughput + run history remain; use backlog_status for full queues. "
+            "When false (default), omit live backlog_metrics SQL. "
+            "Use use_backlog_snapshot=true (default) for precomputed pending counts. "
             "Set true only when reverse-proxy read timeouts allow (can exceed 120s on large DBs)."
+        ),
+    ),
+    use_backlog_snapshot: bool = Query(
+        True,
+        description=(
+            "When true and include_pending_metrics is false, merge pending row counts from "
+            "monitor_backlog_snapshot (refreshed every ~15 minutes). Fast Monitor page load."
         ),
     ),
 ) -> dict[str, Any]:
@@ -1632,9 +1840,16 @@ def get_processing_progress(
     and mounted here so the path is always ``/api/system_monitoring/processing_progress``.
     """
     try:
-        return _build_processing_progress_response(
-            include_hourly_tick_rows=include_hourly_tick_rows,
-            include_pending_metrics=include_pending_metrics,
+        if include_pending_metrics:
+            # Full queue depths: never HTTP-cache (backlog_metrics has its own short TTL).
+            return _build_processing_progress_response(
+                include_hourly_tick_rows=include_hourly_tick_rows,
+                include_pending_metrics=True,
+                use_backlog_snapshot=False,
+            )
+        return _get_processing_progress_fast(
+            include_hourly_tick_rows,
+            use_backlog_snapshot,
         )
     except Exception as e:
         logger.exception("processing_progress route failed: %s", e)

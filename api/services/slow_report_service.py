@@ -28,16 +28,17 @@ from services.citation_marker_service import (
     rewrite_citation_markers,
 )
 from services.embeddings_worker_service import search_embedding_chunks
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
-_MIN_CITATION_DENSITY = float(os.environ.get("SLOW_REPORT_MIN_CITATION_DENSITY", "0.08"))
-_REJECT_ON_FAIL = os.environ.get("SLOW_REPORT_REJECT_ON_VALIDATION_FAIL", "true").lower() in (
+_MIN_CITATION_DENSITY = float(env_str("SLOW_REPORT_MIN_CITATION_DENSITY", "0.08"))
+_REJECT_ON_FAIL = env_str("SLOW_REPORT_REJECT_ON_VALIDATION_FAIL", "true").lower() in (
     "1",
     "true",
     "yes",
 )
-_SKIP_RETRIEVAL = os.environ.get("SLOW_REPORT_SKIP_RETRIEVAL", "false").lower() in ("1", "true", "yes")
+_SKIP_RETRIEVAL = env_str("SLOW_REPORT_SKIP_RETRIEVAL", "false").lower() in ("1", "true", "yes")
 
 
 def _register_citation(

@@ -21,16 +21,18 @@ import {
   List,
   ListItem,
   ListItemText,
+  Stack,
 } from '@mui/material';
 import { Link as RouterLink } from 'react-router-dom';
 import ArrowBack from '@mui/icons-material/ArrowBack';
 import OpenInNew from '@mui/icons-material/OpenInNew';
-import { contextCentricApi, type Context } from '@/services/api/contextCentric';
+import { contextCentricApi, type Context, type NriContextIntelMention, type ExtractedClaim } from '@/services/api/contextCentric';
 import OrchestratorTagsEditor from '@/components/shared/OrchestratorTagsEditor/OrchestratorTagsEditor';
 import ProvenancePanel, {
   contextProvenanceRows,
 } from '@/components/ProvenancePanel/ProvenancePanel';
 import ContextGroupingFeedbackCard from '@/components/ContextGroupingFeedback/ContextGroupingFeedbackCard';
+import { UiBadge } from '@/components/ui';
 
 interface LinkedArticle {
   id: number;
@@ -133,6 +135,8 @@ export default function ContextDetailPage() {
   const [context, setContext] = useState<ContextWithArticle | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [intelMentions, setIntelMentions] = useState<NriContextIntelMention[]>([]);
+  const [intelClaims, setIntelClaims] = useState<ExtractedClaim[]>([]);
 
   useEffect(() => {
     if (!id) return;
@@ -155,6 +159,20 @@ export default function ContextDetailPage() {
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
+      });
+    contextCentricApi
+      .getNriContextIntel(numId, 80)
+      .then(data => {
+        if (!cancelled && data?.success) {
+          setIntelMentions(data.mentions ?? []);
+          setIntelClaims(data.claims ?? []);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setIntelMentions([]);
+          setIntelClaims([]);
+        }
       });
     return () => {
       cancelled = true;
@@ -452,6 +470,53 @@ export default function ContextDetailPage() {
                     );
                   }}
                 />
+              </CardContent>
+            </Card>
+          )}
+
+          {(intelMentions.length > 0 || intelClaims.length > 0) && (
+            <Card variant='outlined'>
+              <CardHeader
+                title='Entities & claims'
+                subheader='NRI resolution + extracted predicates in this context'
+                titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
+              />
+              <Divider />
+              <CardContent>
+                {intelMentions.length > 0 && (
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant='subtitle2' gutterBottom>
+                      Resolved mentions
+                    </Typography>
+                    <Stack direction='row' flexWrap='wrap' gap={1} sx={{ mb: 1 }}>
+                      {intelMentions
+                        .filter(m => m.status === 'auto_linked')
+                        .slice(0, 12)
+                        .map(m => (
+                          <UiBadge
+                            key={m.id}
+                            label={`${m.mention_text}${m.ftm_caption ? ` → ${m.ftm_caption}` : ''}`}
+                          />
+                        ))}
+                    </Stack>
+                  </Box>
+                )}
+                {intelClaims.length > 0 && (
+                  <List dense disablePadding>
+                    {intelClaims.slice(0, 20).map(c => (
+                      <ListItem key={c.id} disablePadding sx={{ py: 0.5 }}>
+                        <ListItemText
+                          primary={`${c.subject_text ?? '—'} ${c.predicate_text ?? ''} ${c.object_text ?? ''}`.trim()}
+                          secondary={
+                            c.confidence != null
+                              ? `confidence ${(c.confidence * 100).toFixed(0)}%`
+                              : undefined
+                          }
+                        />
+                      </ListItem>
+                    ))}
+                  </List>
+                )}
               </CardContent>
             </Card>
           )}

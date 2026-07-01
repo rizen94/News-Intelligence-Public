@@ -873,9 +873,14 @@ const Storylines: React.FC = () => {
         mb={3}
       >
         <Box display='flex' alignItems='center' gap={2}>
-          <Typography variant='h4' component='h1' sx={{ fontWeight: 'bold' }}>
-            Storylines
-          </Typography>
+          <Box>
+            <Typography variant='h4' component='h1' sx={{ fontWeight: 'bold' }}>
+              Storylines
+            </Typography>
+            <Typography variant='body2' color='text.secondary'>
+              Domain story clusters — articles linked over time
+            </Typography>
+          </Box>
           <Chip
             label={formatDomainLabel(domain)}
             size='small'

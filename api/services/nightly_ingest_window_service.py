@@ -38,11 +38,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from shared.domain_registry import get_active_domain_keys
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +64,7 @@ _DEFAULT_NIGHTLY_INGEST_ALLOW = (
 
 def nightly_unified_pipeline_enabled() -> bool:
     """When false, the 02:00–07:00 (or ALL_DAY) unified drain never runs; daytime automation handles work."""
-    return os.environ.get("NIGHTLY_UNIFIED_PIPELINE_ENABLED", "true").lower() not in (
+    return env_str("NIGHTLY_UNIFIED_PIPELINE_ENABLED", "true").lower() not in (
         "0",
         "false",
         "no",
@@ -72,14 +74,13 @@ def nightly_unified_pipeline_enabled() -> bool:
 
 def _nightly_pipeline_all_day_enabled() -> bool:
     """When true, unified nightly pipeline window is treated as 24h (temporary backlog catch-up)."""
-    return os.environ.get("NIGHTLY_PIPELINE_ALL_DAY", "").lower() in (
+    return env_str("NIGHTLY_PIPELINE_ALL_DAY", "").lower() in (
         "1",
         "true",
         "yes",
     )
 
 DEFAULT_NIGHTLY_SEQUENTIAL_PHASES: tuple[str, ...] = (
-    # Backlog-first ordering: prioritize claims pipeline throughput before broad metadata passes.
     "claim_extraction",
     "claims_to_facts",
     "extracted_claims_dedupe",
@@ -93,40 +94,28 @@ DEFAULT_NIGHTLY_SEQUENTIAL_PHASES: tuple[str, ...] = (
     "document_processing",
     "sentiment_analysis",
     "quality_scoring",
-    "investigation_report_refresh",
     "entity_profile_build",
-    "pattern_recognition",
-    "pattern_matching",
     "entity_enrichment",
-    "proactive_detection",
-    "storyline_discovery",
     "storyline_assembly",
     "storyline_automation",
-    "storyline_processing",
-    "storyline_enrichment",
-    "rag_enhancement",
-    "timeline_generation",
     "fact_verification",
     "event_extraction",
     "event_deduplication",
-    "event_coherence_review",
     "cross_domain_synthesis",
     "entity_dossier_compile",
     "entity_organizer",
     "graph_connection_distillation",
-    "storyline_synthesis",
-    "narrative_thread_build",
-    "story_enhancement",
     "story_continuation",
     "watchlist_alerts",
+    "mention_resolution",
 )
 
 
 def nightly_automation_tz() -> ZoneInfo:
     tz_name = (
-        os.environ.get("NIGHTLY_PIPELINE_TZ")
-        or os.environ.get("NIGHTLY_INGEST_TZ")
-        or os.environ.get("NIGHTLY_GPU_REFINEMENT_TZ")
+        env_str("NIGHTLY_PIPELINE_TZ")
+        or env_str("NIGHTLY_INGEST_TZ")
+        or env_str("NIGHTLY_GPU_REFINEMENT_TZ")
         or "America/New_York"
     ).strip() or "America/New_York"
     try:
@@ -156,20 +145,20 @@ def nightly_pipeline_window_info() -> dict[str, Any]:
     start_h = nightly_start_hour()
     end_h = nightly_end_hour()
     all_day = _nightly_pipeline_all_day_enabled()
-    exclusive = os.environ.get("NIGHTLY_PIPELINE_EXCLUSIVE", "true").lower() in (
+    exclusive = env_str("NIGHTLY_PIPELINE_EXCLUSIVE", "true").lower() in (
         "1",
         "true",
         "yes",
     )
     ingest_exclusive = nightly_ingest_exclusive_automation_enabled()
     enrich_start = int(
-        os.environ.get(
+        env_str(
             "NIGHTLY_ENRICHMENT_CONTEXT_START_HOUR",
             str(nightly_start_hour()),
         )
     )
     enrich_end = int(
-        os.environ.get(
+        env_str(
             "NIGHTLY_ENRICHMENT_CONTEXT_END_HOUR",
             str(nightly_end_hour()),
         )
@@ -243,8 +232,8 @@ def in_nightly_enrichment_context_window_est() -> bool:
     from services.pipeline_schedule_service import nightly_end_hour, nightly_start_hour, pipeline_schedule_tz
 
     zi = pipeline_schedule_tz()
-    start_h = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_START_HOUR", str(nightly_start_hour())))
-    end_h = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_END_HOUR", str(nightly_end_hour())))
+    start_h = int(env_str("NIGHTLY_ENRICHMENT_CONTEXT_START_HOUR", str(nightly_start_hour())))
+    end_h = int(env_str("NIGHTLY_ENRICHMENT_CONTEXT_END_HOUR", str(nightly_end_hour())))
     now_local = datetime.now(zi)
     start = now_local.replace(hour=start_h, minute=0, second=0, microsecond=0)
     end = now_local.replace(hour=end_h, minute=0, second=0, microsecond=0)
@@ -252,7 +241,7 @@ def in_nightly_enrichment_context_window_est() -> bool:
 
 
 def nightly_ingest_exclusive_automation_enabled() -> bool:
-    return os.environ.get("NIGHTLY_INGEST_EXCLUSIVE_AUTOMATION", "0").lower() in (
+    return env_str("NIGHTLY_INGEST_EXCLUSIVE_AUTOMATION", "0").lower() in (
         "1",
         "true",
         "yes",
@@ -260,7 +249,7 @@ def nightly_ingest_exclusive_automation_enabled() -> bool:
 
 
 def _ingest_allowlist() -> frozenset[str]:
-    raw = os.environ.get("NIGHTLY_INGEST_ALLOW", _DEFAULT_NIGHTLY_INGEST_ALLOW)
+    raw = env_str("NIGHTLY_INGEST_ALLOW", _DEFAULT_NIGHTLY_INGEST_ALLOW)
     return frozenset(x.strip() for x in raw.split(",") if x.strip())
 
 
@@ -274,12 +263,12 @@ def _phase_loop_cap(phase_name: str, default_max_loops: int) -> int:
     Env format:
     NIGHTLY_SEQUENTIAL_PHASE_LOOP_CAPS="claim_extraction:12,claims_to_facts:10,event_tracking:4"
     """
-    raw = os.environ.get(
+    raw = env_str(
         "NIGHTLY_SEQUENTIAL_PHASE_LOOP_CAPS",
         (
             "claim_extraction:18,claims_to_facts:24,"
             "extracted_claims_dedupe:8,claim_subject_gap_refresh:6,"
-            "entity_extraction:8,event_tracking:10,topic_clustering:10,"
+            "entity_extraction:12,event_tracking:10,topic_clustering:10,"
             "entity_profile_sync:6,entity_profile_build:6,"
             "event_extraction:6,proactive_detection:4,storyline_discovery:4"
         ),
@@ -306,9 +295,29 @@ def _phase_loop_cap(phase_name: str, default_max_loops: int) -> int:
 
 
 def _nightly_sequential_phase_list() -> list[str]:
-    raw = os.environ.get("NIGHTLY_SEQUENTIAL_PHASES", "").strip()
+    raw = env_str("NIGHTLY_SEQUENTIAL_PHASES", "").strip()
     if raw:
         return [x.strip() for x in raw.split(",") if x.strip()]
+    try:
+        from shared.spine_phase_order import intake_fusion_enabled, spine_phases_for_nightly_prefix
+
+        if intake_fusion_enabled():
+            prefix = spine_phases_for_nightly_prefix()
+            try:
+                from shared.assembly_phase_order import (
+                    assembly_pipeline_ordered_active,
+                    assembly_phases_for_nightly_suffix,
+                )
+
+                if assembly_pipeline_ordered_active():
+                    tail = list(assembly_phases_for_nightly_suffix())
+                    return list(prefix) + tail
+            except Exception:
+                pass
+            tail = [p for p in DEFAULT_NIGHTLY_SEQUENTIAL_PHASES if p not in prefix]
+            return list(prefix) + tail
+    except Exception:
+        pass
     return list(DEFAULT_NIGHTLY_SEQUENTIAL_PHASES)
 
 
@@ -337,9 +346,9 @@ async def _maybe_nightly_kickoff_rss(
     """At most one RSS collection per local calendar day during the active window."""
     global _nightly_kickoff_rss_local_date
 
-    if os.environ.get("NIGHTLY_PIPELINE_KICKOFF_RSS", "1").lower() not in ("1", "true", "yes"):
+    if env_str("NIGHTLY_PIPELINE_KICKOFF_RSS", "1").lower() not in ("1", "true", "yes"):
         return
-    if os.environ.get("AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE", "").lower() in (
+    if env_str("AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE", "").lower() in (
         "1",
         "true",
         "yes",
@@ -463,11 +472,11 @@ async def run_nightly_unified_pipeline_drain(
     except Exception:
         context_sync_enabled = True
 
-    enrich_bs = int(os.environ.get("NIGHTLY_ENRICHMENT_BATCH_SIZE", "80"))
-    sync_limit = int(os.environ.get("NIGHTLY_CONTEXT_SYNC_LIMIT_PER_DOMAIN", "200"))
-    max_enrich_loops = int(os.environ.get("NIGHTLY_ENRICHMENT_MAX_LOOPS", "2000"))
-    max_sync_loops = int(os.environ.get("NIGHTLY_CONTEXT_SYNC_MAX_LOOPS", "2000"))
-    max_seq_backlog_loops = int(os.environ.get("NIGHTLY_SEQUENTIAL_PHASE_MAX_LOOPS", "2000"))
+    enrich_bs = int(env_str("NIGHTLY_ENRICHMENT_BATCH_SIZE", "80"))
+    sync_limit = int(env_str("NIGHTLY_CONTEXT_SYNC_LIMIT_PER_DOMAIN", "200"))
+    max_enrich_loops = int(env_str("NIGHTLY_ENRICHMENT_MAX_LOOPS", "2000"))
+    max_sync_loops = int(env_str("NIGHTLY_CONTEXT_SYNC_MAX_LOOPS", "2000"))
+    max_seq_backlog_loops = int(env_str("NIGHTLY_SEQUENTIAL_PHASE_MAX_LOOPS", "2000"))
     sequential_phases = _nightly_sequential_phase_list()
 
     async with _nightly_ingest_lock:
@@ -483,6 +492,7 @@ async def run_nightly_unified_pipeline_drain(
         loop = asyncio.get_event_loop()
 
         while window_active():
+            cycle_t0 = time.monotonic()
             await _maybe_nightly_kickoff_rss(loop, window_active, stats)
 
             invalidate_backlog_metrics_cache()
@@ -632,6 +642,26 @@ async def run_nightly_unified_pipeline_drain(
                 if force_outside_window
                 else "window_ended"
             )
+
+    try:
+        from services.pipeline_phase_heartbeat_service import record_phase_heartbeat
+
+        record_phase_heartbeat(
+            "nightly_enrichment_context",
+            scheduler_path="nightly_unified",
+            success=stats.get("stopped_reason") not in ("pending_counts_error",),
+            items_processed=int(stats.get("contexts_created") or 0)
+            + int(stats.get("enrichment_articles") or 0)
+            + int(stats.get("sequential_phase_runs") or 0),
+            detail={
+                "stopped_reason": stats.get("stopped_reason"),
+                "outer_cycles": stats.get("outer_cycles"),
+                "context_sync_rounds": stats.get("context_sync_rounds"),
+                "sequential_by_phase": stats.get("sequential_by_phase"),
+            },
+        )
+    except Exception:
+        pass
 
     return stats
 

@@ -72,7 +72,7 @@
 |-----------|----------|----------|------|
 | **API + AutomationManager** | `uvicorn` / `news-intelligence-api-public.service` | Always on | All phases except disabled list |
 | **newsplatform-secondary** | systemd | Every 10 min | RSS when not in quiet window |
-| **widow-db-adjacent** | `/etc/cron.d/news-intelligence-widow-db` | `*/15 * * * *` | context_sync, entity_profile_sync, pending_db_flush |
+| **widow-db-adjacent** | `/etc/cron.d/widow-db-adjacent` | `*/15 * * * *` | context_sync, entity_profile_sync, pending_db_flush |
 | **log archive** | user crontab | Daily 05:00 | `archive_logs_to_nas.sh` |
 | **DB backup** | user crontab | Sun 04:30 | `db_backup_weekly_retained.sh` |
 | **nightly_enrichment_context** | AutomationManager | 02:00–07:00 EST window | Unified enrichment + context drain |
@@ -228,8 +228,95 @@ ollama list
 
 ---
 
+## Bulk catch-up (one-time historical drain)
+
+Use when steady automation cannot close a large backlog (false pass markers reconciled, pool healthy).
+
+**Warning:** `--force` bypasses quiet-hour gating. Run off-peak; monitor pool and NRI watermark lag.
+
+```bash
+cd /opt/news-intelligence
+
+# 1. Baseline
+DEBUG_RUN_ID=baseline-before PYTHONPATH=api python3 api/scripts/diagnose_pipeline_pathways.py \
+  | tee docs/pipeline_repair/baseline-$(date +%Y%m%d)-before.json
+
+# 2. Reconcile false pass markers (dry-run first)
+PYTHONPATH=api python3 api/scripts/reconcile_false_pass_markers.py --dry-run --phase all
+PYTHONPATH=api python3 api/scripts/reconcile_false_pass_markers.py --phase all --limit 50000
+
+# 3. Apply migration 235 (phase heartbeats) if not applied
+PYTHONPATH=api python3 api/scripts/apply_migrations.py  # or psql -f api/database/migrations/235_*.sql
+
+# 3b. Pause competing NI/NRI work (RSS, cron sync, AutomationManager phases, NRI mention resolver)
+bash scripts/pause_for_bulk_catchup.sh
+sudo systemctl restart news-intelligence-api-public
+
+# 4. Bulk catch-up (checkpoint: data/bulk_catchup_state.json)
+# Script auto-loads .env (DB_HOST=127.0.0.1 DB_PORT=6432). Use .venv/bin/python on Widow.
+# bulk_catchup.py also writes data/bulk_catchup_competition_pause.json if not already set.
+PYTHONPATH=api .venv/bin/python3 api/scripts/bulk_catchup.py --dry-run
+# Widow 1080 only (slow, avoid 503 — keep parallel ≤2):
+BULK_ENTITY_PARALLEL=2 OLLAMA_GPU_CONCURRENCY=2 \
+  PYTHONPATH=api .venv/bin/python3 api/scripts/bulk_catchup.py --force --no-use-popos-gpu
+
+# PopOS RTX 5090 offload (recommended for entity extraction throughput):
+BULK_ENTITY_EXTRACTION_PER_DOMAIN=500 BULK_ENTITY_PARALLEL=4 BULK_NRI_MENTION_BATCH_PAUSE=3 \
+  BULK_EXTRACTION_MODEL=llama3.1:8b \
+  PYTHONPATH=api .venv/bin/python3 api/scripts/bulk_catchup.py --force --use-popos-gpu
+# Optional: on PopOS run `ollama pull qwen2.5:7b` then BULK_EXTRACTION_MODEL=qwen2.5:7b
+
+# 5. Embeddings + storylines (after entity/claim phases)
+PYTHONPATH=api python3 api/scripts/backfill_embedding_chunks.py --limit 200 --loops 50
+PYTHONPATH=api python3 api/scripts/run_storyline_discovery_catchup.py
+
+# 6. After snapshot
+DEBUG_RUN_ID=baseline-after PYTHONPATH=api python3 api/scripts/diagnose_pipeline_pathways.py \
+  | tee docs/pipeline_repair/baseline-$(date +%Y%m%d)-after.json
+
+# 7. Resume normal NI/NRI scheduling
+bash scripts/resume_after_bulk_catchup.sh
+sudo systemctl restart news-intelligence-api-public
+
+# Monitor in another terminal:
+scripts/bulk_status.sh
+scripts/bulk_status.sh --watch 60   # refresh every 60s
+```
+
+Env tunables: `BULK_CONTEXT_SYNC_LIMIT`, `BULK_ENTITY_EXTRACTION_PER_DOMAIN`, `BULK_CLAIM_LIMIT`, `BULK_NRI_MENTION_BATCH_PAUSE`, `BULK_STEADY_STATE_FLOOR` (default 50).
+
+Steady-state defaults (post bulk): `ENTITY_EXTRACTION_ARTICLES_PER_DOMAIN=40`, nightly `entity_extraction:12` in `NIGHTLY_SEQUENTIAL_PHASE_LOOP_CAPS`.
+
+### Topic clustering catch-up (migrations 242–243)
+
+Automation now writes **`topic_clusters` only** (legacy `topics` is read-only). Apply migrations, then drain backlog:
+
+```bash
+cd /opt/news-intelligence && set -a && . .env && set +a
+
+# Migrations: trgm indexes + mv_topic_index
+PYTHONPATH=api .venv/bin/python3 api/scripts/apply_migrations.py
+
+# Recommended catch-up env (also in .env):
+# TOPIC_CLUSTERING_BATCH_SIZE=50 TOPIC_CLUSTERING_CONCURRENCY=5 TOPIC_FAST_MATCH_MIN_SCORE=0.62
+
+PYTHONPATH=api .venv/bin/python3 api/scripts/catchup_topic_clustering.py --dry-run
+PYTHONPATH=api .venv/bin/python3 api/scripts/catchup_topic_clustering.py --batch-size 50 --concurrency 5
+
+# Weekly (cron): refresh matview + auto-merge high-confidence duplicates
+PYTHONPATH=api .venv/bin/python3 api/scripts/refresh_topic_index_matviews.py
+PYTHONPATH=api .venv/bin/python3 api/scripts/run_topic_cluster_merge_batch.py --dry-run
+PYTHONPATH=api .venv/bin/python3 api/scripts/run_topic_cluster_merge_batch.py --apply
+```
+
+Verify: pending pass-marker backlog trending below 2k; no new rows in `{schema}.topics` after deploy timestamp.
+
+---
+
 ## Related
 
+- [DATABASE_DATA_QUALITY_AUDIT_2026-06.md](DATABASE_DATA_QUALITY_AUDIT_2026-06.md) — denormalized column repair runbook
 - [WIDOW_BOOT_RESILIENCE.md](WIDOW_BOOT_RESILIENCE.md) — reboot / systemd runbook
+- [pipeline_repair/ROOT_CAUSE_REPORT.md](pipeline_repair/ROOT_CAUSE_REPORT.md) — June 2026 audit
 - [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) — hosts & GPU
 - HomeLab [PUBLIC_HTTPS_ROUTING.md](../../HomeLab-AI-Stack/docs/PUBLIC_HTTPS_ROUTING.md)

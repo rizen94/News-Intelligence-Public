@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ def strict_enrichment_cutoff_utc() -> datetime | None:
     If ``STRICT_ARTICLE_ENRICHMENT_GATES_SINCE`` is set to a valid ISO-8601 datetime,
     articles at or after this instant use stricter enrichment gates. Unset = legacy only.
     """
-    raw = os.getenv("STRICT_ARTICLE_ENRICHMENT_GATES_SINCE", "").strip()
+    raw = env_str("STRICT_ARTICLE_ENRICHMENT_GATES_SINCE", "").strip()
     if not raw:
         return None
     s = raw.replace("Z", "+00:00")

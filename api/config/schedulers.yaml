@@ -12,7 +12,7 @@ schedulers:
     owner: orchestrator_coordinator
     interval_seconds: 60
     enabled: true
-    note: Collection cadence + finance interest; processing nudge off via pipeline_conductor
+    note: Collection cadence + finance interest; processing nudge + post-RSS kickoff via pipeline_conductor
 
   newsplatform_secondary:
     owner: systemd
@@ -34,6 +34,17 @@ schedulers:
       - name: pending_db_flush
         script_flag: --pending-db-flush
 
+  widow_tracking_discovery_cron:
+    owner: cron
+    file: infrastructure/widow-tracking-discovery.cron
+    interval: "0 6 * * 1,4"
+    enabled: true
+    note: Headless tracking discovery loop — demoted proactive_detection/storyline_discovery phases
+    jobs:
+      - name: tracking_discovery_loop
+        script: api/scripts/run_tracking_discovery_loop.py
+        note: API discovery → vault candidates → promotion_bridge → storyline_assembly stubs
+
   nri_mention_resolver_timer:
     owner: systemd
     unit: nri-mention-resolver.timer
@@ -53,6 +64,12 @@ schedulers:
     enabled: false
     replaced_by: news-intelligence-api-public
     note: Retired after nri_core in-process routes
+
+  rss_feed_health:
+    owner: automation_manager
+    interval_seconds: 86400
+    enabled: true
+    note: Nightly feed yield review; warn-then-auto silencing (RSS_FEED_SILENCE_* env)
 
 # context_sync split-brain resolution: cron owns sync on Widow prod (see widow-db_adjacent)
 

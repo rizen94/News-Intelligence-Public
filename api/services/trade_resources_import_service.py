@@ -15,6 +15,7 @@ from typing import Any
 import requests
 
 from services.macro_series_service import upsert_macro_observations
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ def fetch_eia_series(
     frequency: str = "daily",
     length: int = 500,
 ) -> list[dict[str, Any]]:
-    api_key = (os.environ.get("EIA_API_KEY") or "").strip()
+    api_key = (env_str("EIA_API_KEY") or "").strip()
     if not api_key:
         logger.info("EIA_API_KEY unset — skip EIA import")
         return []
@@ -102,7 +103,7 @@ def fetch_federal_register_energy_notices(*, limit: int = 50) -> list[dict[str, 
 
 
 def run_trade_resources_import() -> dict[str, Any]:
-    if os.environ.get("TRADE_RESOURCES_IMPORT_ENABLED", "false").lower() not in ("1", "true", "yes"):
+    if env_str("TRADE_RESOURCES_IMPORT_ENABLED", "false").lower() not in ("1", "true", "yes"):
         return {"success": True, "skipped": True, "reason": "TRADE_RESOURCES_IMPORT_ENABLED off"}
     eia_rows = fetch_eia_series("WTI_SPOT", route="petroleum/pri/spt/data")
     fed_rows = fetch_federal_register_energy_notices()

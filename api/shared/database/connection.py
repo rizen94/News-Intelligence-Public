@@ -38,6 +38,7 @@ from psycopg2.extras import RealDictCursor
 from typing import Optional, Dict, Any, Generator
 import threading
 from contextlib import contextmanager
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -133,10 +134,10 @@ def get_db_config() -> Dict[str, Any]:
     **Backup / rollback only:** NAS Postgres reached via SSH tunnel to ``localhost:5433``
     (``DB_HOST=localhost``, ``DB_PORT=5433``). Use for rare restore scenarios — not for daily API use.
     """
-    db_host = os.getenv("DB_HOST", "192.168.93.101")
-    db_port_str = os.getenv("DB_PORT", "5432")
+    db_host = env_str("DB_HOST", "192.168.93.101")
+    db_port_str = env_str("DB_PORT", "5432")
     db_port = int(db_port_str)
-    db_name = os.getenv("DB_NAME", "news_intel")
+    db_name = env_str("DB_NAME", "news_intel")
     
     # NAS tunnel mode: localhost:5433 requires tunnel to be running
     if db_host in ["localhost", "127.0.0.1", "::1"] and db_port == 5433:
@@ -154,18 +155,18 @@ def get_db_config() -> Dict[str, Any]:
     else:
         logger.info("Using direct connection to database: %s:%s", db_host, db_port)
     
-    connect_timeout = int(os.getenv("DB_CONNECT_TIMEOUT", "5"))
+    connect_timeout = int(env_str("DB_CONNECT_TIMEOUT", "5"))
     # Statement timeout: applied to every pool connection. Planned long work (migrations, backfills)
     # must run with a separate connection and SET statement_timeout = 0 at session start.
     # Default 2 min so automation phases and batch jobs don't get killed early; use
     # DB_STATEMENT_TIMEOUT_MS=300000 (5 min) or 0 (disable) in .env if needed.
-    statement_timeout_ms = int(os.getenv("DB_STATEMENT_TIMEOUT_MS", "120000"))
+    statement_timeout_ms = int(env_str("DB_STATEMENT_TIMEOUT_MS", "120000"))
     return {
         "host": db_host,
         "port": str(db_port),
         "database": db_name,
-        "user": os.getenv("DB_USER", "newsapp"),
-        "password": os.getenv("DB_PASSWORD", ""),
+        "user": env_str("DB_USER", "newsapp"),
+        "password": env_str("DB_PASSWORD", ""),
         "connect_timeout": connect_timeout,
         "statement_timeout_ms": statement_timeout_ms,
     }
@@ -192,21 +193,21 @@ def get_db_connect_kwargs() -> Dict[str, Any]:
 def _pool_sizes(pool_kind: str) -> tuple[int, int]:
     """Return (minconn, maxconn) for worker, ui, or health pool."""
     # Backward-compatible: DB_POOL_MIN/DB_POOL_MAX when DB_POOL_WORKER_* unset
-    legacy_min = int(os.getenv("DB_POOL_MIN", "2"))
-    legacy_max = int(os.getenv("DB_POOL_MAX", "20"))
+    legacy_min = int(env_str("DB_POOL_MIN", "2"))
+    legacy_max = int(env_str("DB_POOL_MAX", "20"))
     if pool_kind == "ui":
-        minconn = int(os.getenv("DB_POOL_UI_MIN", "2"))
-        maxconn = int(os.getenv("DB_POOL_UI_MAX", "16"))
+        minconn = int(env_str("DB_POOL_UI_MIN", "2"))
+        maxconn = int(env_str("DB_POOL_UI_MAX", "16"))
     elif pool_kind == "health":
-        minconn = max(1, int(os.getenv("DB_POOL_HEALTH_MIN", "1")))
-        maxconn = int(os.getenv("DB_POOL_HEALTH_MAX", "2"))
+        minconn = max(1, int(env_str("DB_POOL_HEALTH_MIN", "1")))
+        maxconn = int(env_str("DB_POOL_HEALTH_MAX", "4"))
     else:
-        minconn = int(os.getenv("DB_POOL_WORKER_MIN", str(max(legacy_min, 2))))
-        if os.getenv("DB_POOL_WORKER_MAX") is not None:
-            maxconn = int(os.getenv("DB_POOL_WORKER_MAX", "28"))
+        minconn = int(env_str("DB_POOL_WORKER_MIN", str(max(legacy_min, 2))))
+        if env_str("DB_POOL_WORKER_MAX") is not None:
+            maxconn = int(env_str("DB_POOL_WORKER_MAX", "28"))
         else:
             # Default worker max when DB_POOL_WORKER_MAX unset: higher for parallel automation (tune vs Postgres max_connections).
-            maxconn = int(os.getenv("DB_POOL_MAX", "28"))
+            maxconn = int(env_str("DB_POOL_MAX", "28"))
     maxconn = max(minconn, min(maxconn, 100))
     return minconn, maxconn
 
@@ -231,7 +232,7 @@ def _init_pool(pool_kind: str = "worker") -> pool.ThreadedConnectionPool:
         minconn, maxconn = _pool_sizes(pool_kind)
         if pool_kind == "health":
             try:
-                health_ms = int(os.getenv("DB_HEALTH_STATEMENT_TIMEOUT_MS", "5000"))
+                health_ms = int(env_str("DB_HEALTH_STATEMENT_TIMEOUT_MS", "5000"))
             except ValueError:
                 health_ms = 5000
             options = f"-c statement_timeout={health_ms}"
@@ -289,7 +290,7 @@ def _validate_connection(conn) -> bool:
 
 def _direct_fallback_allowed() -> bool:
     """When false, pool exhaustion fails fast instead of opening unaccounted direct sessions."""
-    raw = os.getenv("DB_ALLOW_DIRECT_FALLBACK", "true").strip().lower()
+    raw = env_str("DB_ALLOW_DIRECT_FALLBACK", "true").strip().lower()
     return raw not in ("0", "false", "no", "off")
 
 
@@ -332,7 +333,7 @@ def get_db_connection(use_reserved: bool = False):
         else "DB_WORKER_GETCONN_TIMEOUT_SECONDS"
     )
     default_timeout = "3" if pool_kind == "ui" else "30"
-    timeout_raw = os.getenv(timeout_env, os.getenv("DB_GETCONN_TIMEOUT_SECONDS", default_timeout))
+    timeout_raw = env_str(timeout_env, env_str("DB_GETCONN_TIMEOUT_SECONDS", default_timeout))
     try:
         timeout_sec = int(timeout_raw)
     except ValueError:
@@ -426,7 +427,7 @@ def get_health_db_connection():
     Default checkout timeout 2 s (``DB_HEALTH_GETCONN_TIMEOUT_SECONDS``).
     """
     pool_kind = "health"
-    timeout_raw = os.getenv("DB_HEALTH_GETCONN_TIMEOUT_SECONDS", "2")
+    timeout_raw = env_str("DB_HEALTH_GETCONN_TIMEOUT_SECONDS", "2")
     try:
         timeout_sec = int(timeout_raw)
     except ValueError:
@@ -452,7 +453,7 @@ def get_health_db_connection():
     try:
         kwargs = get_db_connect_kwargs()
         try:
-            health_ms = int(os.getenv("DB_HEALTH_STATEMENT_TIMEOUT_MS", "5000"))
+            health_ms = int(env_str("DB_HEALTH_STATEMENT_TIMEOUT_MS", "5000"))
         except ValueError:
             health_ms = 5000
         kwargs["options"] = f"-c statement_timeout={health_ms}"
@@ -559,7 +560,7 @@ def probe_database_server_reachable(connect_timeout: Optional[int] = None) -> bo
             kwargs["connect_timeout"] = int(connect_timeout)
         else:
             try:
-                probe_sec = int(os.getenv("DB_AUTOMATION_PROBE_CONNECT_TIMEOUT", "4"))
+                probe_sec = int(env_str("DB_AUTOMATION_PROBE_CONNECT_TIMEOUT", "4"))
             except ValueError:
                 probe_sec = 4
             kwargs["connect_timeout"] = min(probe_sec, int(kwargs.get("connect_timeout", 5) or 5))
@@ -621,8 +622,8 @@ def _init_sqlalchemy():
         )
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
-        sa_pool_size = int(os.getenv("DB_POOL_SA_SIZE", "3"))
-        sa_max_overflow = int(os.getenv("DB_POOL_SA_OVERFLOW", "8"))
+        sa_pool_size = int(env_str("DB_POOL_SA_SIZE", "3"))
+        sa_max_overflow = int(env_str("DB_POOL_SA_OVERFLOW", "8"))
         sa_pool_size = min(sa_pool_size, 10)
         sa_max_overflow = min(sa_max_overflow, 20)
         _sqlalchemy_engine = create_engine(

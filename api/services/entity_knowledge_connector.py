@@ -16,6 +16,7 @@ Usage:
 
 import logging
 from typing import Any
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,7 @@ def _resolve_knowledge_graph(name: str) -> dict[str, Any] | None:
 
         from modules.ml.rag_external_services import KnowledgeGraphService
 
-        api_key = os.environ.get("KG_API_KEY") or os.environ.get("GOOGLE_KNOWLEDGE_GRAPH_API_KEY")
+        api_key = env_str("KG_API_KEY") or env_str("GOOGLE_KNOWLEDGE_GRAPH_API_KEY")
         if not api_key or api_key in ("your_kg_api_key_here", ""):
             return None
         kg = KnowledgeGraphService(api_key)

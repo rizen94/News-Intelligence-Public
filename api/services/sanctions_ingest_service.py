@@ -18,6 +18,7 @@ from typing import Any
 import requests
 
 from shared.database.connection import get_db_connection_context
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -246,7 +247,7 @@ def _resolve_entity_qids(cur, names: list[str]) -> list[str]:
 
 
 def run_sanctions_refresh(*, limit: int = 500) -> dict[str, Any]:
-    if os.environ.get("SANCTIONS_INGEST_ENABLED", "false").lower() not in ("1", "true", "yes"):
+    if env_str("SANCTIONS_INGEST_ENABLED", "false").lower() not in ("1", "true", "yes"):
         return {"success": True, "skipped": True, "reason": "SANCTIONS_INGEST_ENABLED off"}
     all_rows: list[dict[str, Any]] = []
     sources: dict[str, int] = {}
@@ -258,7 +259,7 @@ def run_sanctions_refresh(*, limit: int = 500) -> dict[str, Any]:
     except Exception as e:
         logger.warning("OFAC sanctions fetch failed: %s", e)
 
-    if os.environ.get("SANCTIONS_EU_UN_ENABLED", "true").lower() in ("1", "true", "yes"):
+    if env_str("SANCTIONS_EU_UN_ENABLED", "true").lower() in ("1", "true", "yes"):
         try:
             eu_resp = requests.get(EU_FSF_XML, timeout=120)
             eu_resp.raise_for_status()

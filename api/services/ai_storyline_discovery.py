@@ -47,6 +47,7 @@ from services.storyline_coherence_guardrails import (
 )
 from shared.domain_registry import first_active_domain_key, resolve_domain_schema
 from shared.pipeline_pass_marker import bulk_record_article_phase_pass, phase_backlog_uses_pass_marker
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +60,10 @@ def _schema_from_domain_key(domain: str) -> str:
     return resolve_domain_schema(d)
 
 # Configuration
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_URL = env_str("OLLAMA_URL", "http://localhost:11434")
 # Use dedicated embedding model for better quality and speed
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
-ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "llama3.1:8b")
+EMBEDDING_MODEL = env_str("EMBEDDING_MODEL", "nomic-embed-text")
+ANALYSIS_MODEL = env_str("ANALYSIS_MODEL", "llama3.1:8b")
 
 # Thresholds
 SIMILARITY_THRESHOLD = 0.70  # Slightly lower to catch more connections
@@ -83,8 +84,8 @@ SAME_WEEK_HOURS = 168  # Within 7 days = same week
 MAX_EMBEDDING_WORKERS = 8  # Concurrent embedding requests
 
 # Articles loaded per discovery run (newest first). O(n²) similarity — increase only with RAM headroom.
-STORYLINE_DISCOVERY_ARTICLE_LIMIT = int(os.getenv("STORYLINE_DISCOVERY_ARTICLE_LIMIT", "10000"))
-STORYLINE_DISCOVERY_PDF_CONTEXT_LIMIT = int(os.getenv("STORYLINE_DISCOVERY_PDF_CONTEXT_LIMIT", "500"))
+STORYLINE_DISCOVERY_ARTICLE_LIMIT = int(env_str("STORYLINE_DISCOVERY_ARTICLE_LIMIT", "10000"))
+STORYLINE_DISCOVERY_PDF_CONTEXT_LIMIT = int(env_str("STORYLINE_DISCOVERY_PDF_CONTEXT_LIMIT", "500"))
 
 
 @dataclass

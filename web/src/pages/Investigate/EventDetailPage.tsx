@@ -50,10 +50,18 @@ const EVENT_TYPES = [
   'market_event',
 ];
 
+interface Development {
+  context_id?: number;
+  storyline_id?: number;
+  type?: string;
+  title?: string;
+  domain_key?: string;
+}
+
 interface Chronicle {
   id: number;
   update_date?: string | null;
-  developments?: { context_id?: number; type?: string }[] | null;
+  developments?: Development[] | null;
   analysis?: { summary?: string; context_count?: number } | null;
   predictions?: unknown[] | null;
   momentum_score?: number | null;
@@ -75,6 +83,7 @@ export default function EventDetailPage() {
   } | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
+  const [reportSavedNote, setReportSavedNote] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editForm, setEditForm] = useState<{
     event_type: string;
@@ -94,6 +103,16 @@ export default function EventDetailPage() {
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [chronicleRefreshing, setChronicleRefreshing] = useState(false);
+  const [reconciliation, setReconciliation] = useState<{
+    chronological_events?: Array<{
+      chronological_event_id: number;
+      event_title?: string | null;
+      event_date?: string | null;
+    }>;
+    storyline_refs?: Array<{ domain: string; storyline_id: number }>;
+    entity_overlap_score?: number;
+    confidence?: string;
+  } | null>(null);
   const [linkedEvents, setLinkedEvents] = useState<TrackedEvent[]>([]);
 
   const numId = id ? parseInt(id, 10) : NaN;
@@ -119,6 +138,14 @@ export default function EventDetailPage() {
         setReportError((err as Error)?.message ?? 'Failed to load event');
       })
       .finally(() => setLoading(false));
+    contextCentricApi
+      .getEventReconciliationForTracked(numId)
+      .then(r => {
+        if (r && (r as { found?: boolean }).found !== false) {
+          setReconciliation(r as typeof reconciliation);
+        }
+      })
+      .catch(() => setReconciliation(null));
   }, [id, numId]);
 
   const loadReport = useCallback(() => {
@@ -198,6 +225,7 @@ export default function EventDetailPage() {
     if (Number.isNaN(numId)) return;
     setReportLoading(true);
     setReportError(null);
+    setReportSavedNote(false);
     contextCentricApi
       .generateTrackedEventReport(numId)
       .then(r => {
@@ -207,6 +235,7 @@ export default function EventDetailPage() {
             generated_at: r.generated_at ?? null,
             context_count: r.context_count ?? 0,
           });
+          setReportSavedNote(true);
         } else {
           setReportError(r.error ?? 'Generation failed');
         }
@@ -440,6 +469,57 @@ export default function EventDetailPage() {
             </CardContent>
           </Card>
 
+          {reconciliation && (
+            <Card variant='outlined'>
+              <CardHeader
+                title='Event reconciliation'
+                subheader='Tracked event ↔ timeline atoms ↔ storylines'
+                titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
+              />
+              <CardContent sx={{ pt: 0 }}>
+                {(reconciliation.storyline_refs?.length ?? 0) > 0 && (
+                  <Typography variant='body2' sx={{ mb: 1 }}>
+                    Linked storylines:{' '}
+                    {reconciliation.storyline_refs?.map(r => (
+                      <Chip
+                        key={`${r.domain}-${r.storyline_id}`}
+                        label={`${r.domain} #${r.storyline_id}`}
+                        size='small'
+                        sx={{ mr: 0.5 }}
+                        onClick={() =>
+                          navigate(`/${r.domain}/storylines/${r.storyline_id}`)
+                        }
+                      />
+                    ))}
+                  </Typography>
+                )}
+                {(reconciliation.chronological_events?.length ?? 0) > 0 ? (
+                  <List dense disablePadding>
+                    {reconciliation.chronological_events?.map(ce => (
+                      <ListItemButton key={ce.chronological_event_id} disabled>
+                        <ListItemText
+                          primary={ce.event_title || `Atom #${ce.chronological_event_id}`}
+                          secondary={ce.event_date ?? undefined}
+                        />
+                      </ListItemButton>
+                    ))}
+                  </List>
+                ) : (
+                  <Typography variant='body2' color='text.secondary'>
+                    No related chronological timeline atoms in reconciliation window.
+                  </Typography>
+                )}
+                {reconciliation.confidence && (
+                  <Typography variant='caption' color='text.secondary' display='block' sx={{ mt: 1 }}>
+                    Confidence: {reconciliation.confidence}
+                    {reconciliation.entity_overlap_score != null &&
+                      ` · entity overlap ${reconciliation.entity_overlap_score}`}
+                  </Typography>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {linkedEvents.length > 0 && (
             <Card variant='outlined'>
               <CardHeader
@@ -542,27 +622,39 @@ export default function EventDetailPage() {
                             Related contexts ({devs.length})
                           </Typography>
                           <List dense disablePadding>
-                            {devs.map(
-                              d =>
-                                d.context_id != null && (
-                                  <ListItemButton
-                                    key={d.context_id}
-                                    onClick={() =>
-                                      navigate(
-                                        `/${domain}/discover/contexts/${d.context_id}`
-                                      )
-                                    }
-                                    sx={{ py: 0.5 }}
-                                  >
-                                    <ListItemText
-                                      primary={`Context #${d.context_id}`}
-                                      primaryTypographyProps={{
-                                        variant: 'body2',
-                                      }}
-                                    />
-                                  </ListItemButton>
-                                )
-                            )}
+                            {devs.map((d, idx) => {
+                              const devKey =
+                                d.context_id ?? d.storyline_id ?? `dev-${idx}`;
+                              const label =
+                                d.title ||
+                                (d.context_id != null
+                                  ? `Context #${d.context_id}`
+                                  : d.storyline_id != null
+                                    ? `Storyline #${d.storyline_id}`
+                                    : 'Related item');
+                              const devDomain = d.domain_key || domain;
+                              const href =
+                                d.context_id != null
+                                  ? `/${devDomain}/discover/contexts/${d.context_id}`
+                                  : d.storyline_id != null
+                                    ? `/${devDomain}/storylines/${d.storyline_id}`
+                                    : null;
+                              if (!href) return null;
+                              return (
+                                <ListItemButton
+                                  key={devKey}
+                                  onClick={() => navigate(href)}
+                                  sx={{ py: 0.5 }}
+                                >
+                                  <ListItemText
+                                    primary={label}
+                                    primaryTypographyProps={{
+                                      variant: 'body2',
+                                    }}
+                                  />
+                                </ListItemButton>
+                              );
+                            })}
                           </List>
                         </Box>
                       )}
@@ -605,6 +697,11 @@ export default function EventDetailPage() {
                   sx={{ mb: 2 }}
                 >
                   {reportError}
+                </Alert>
+              )}
+              {reportSavedNote && (
+                <Alert severity='success' sx={{ mb: 2 }}>
+                  Saved to reading history
                 </Alert>
               )}
               {reportLoading && (

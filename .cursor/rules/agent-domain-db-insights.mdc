@@ -1,0 +1,47 @@
+---
+description: Query News Intelligence per-domain insights via postgres-mcp (read-only SQL)
+alwaysApply: false
+---
+
+# Domain DB insights (local agents)
+
+When the user asks for **domain insights**, **silo status**, **storylines**, **topics**, or **entity intelligence** from the database:
+
+## Use MCP first
+
+1. **`postgres-mcp`** → `execute_sql` (SELECT only), `list_schemas`, `list_objects`, `get_object_details`
+2. Read **`docs/AGENT_DOMAIN_DB_INSIGHTS.md`** for validated query templates
+3. Resolve active domains from `public.domains` — never assume `science-tech`
+
+## Domain → schema
+
+| domain_key | schema |
+|------------|--------|
+| politics | `politics` |
+| finance | `finance` |
+| legal | `legal` |
+| medicine | `medicine` |
+| artificial-intelligence | `artificial_intelligence` |
+
+Per-domain: `{schema}.articles`, `.storylines`, `.topic_clusters`  
+Cross-domain: `intelligence.entity_profiles`, `intelligence.entity_dossiers`, `intelligence.investigation_*`
+
+## Rules
+
+- **SELECT only**; always **LIMIT** (≤50 default)
+- Qualify table names with schema
+- Default time window: **7 days** unless user specifies
+- **No `nri.*`** schema
+- Postgres = facts; **`obsidian-news-vault`** = investigation scratchpad only
+- Database is Widow **`news_intel`** via MCP — not Homelab `:15432`
+
+## Typical flow
+
+1. Snapshot all domains (article + storyline counts)
+2. Drill into requested domain(s): hot storylines, recent articles, top topic clusters, entity profiles
+3. Cross-domain entity query when topic spans silos
+4. Summarize with counts and concrete titles — do not dump raw SQL in chat unless asked
+
+## If MCP unavailable
+
+Check Homelab: `docker compose -f compose/mcp.yaml ps`, `NEWS_INTEL_DATABASE_URI` in `.env`, `./scripts/sync-agent-mcp.sh`, reload MCP in Cursor Settings.

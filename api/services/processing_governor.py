@@ -107,6 +107,7 @@ class ProcessingGovernor:
         resource_ok: bool,
         *,
         get_db_connection: Callable[[], Any] | None = None,
+        orchestrator_nudge: bool = False,
     ) -> dict[str, Any] | None:
         """
         Recommend one next processing action (phase, domain?, storyline_id?) or None.
@@ -116,19 +117,53 @@ class ProcessingGovernor:
         if not resource_ok:
             return None
         try:
-            from config.orchestrator_governance import get_orchestrator_governance_config
+            from services.pipeline_conductor_service import (
+                effective_governor_interval_seconds,
+                get_effective_processing_phases,
+                orchestrator_processing_nudge_enabled,
+                should_orchestrator_request_phase,
+            )
 
-            config = get_orchestrator_governance_config()
-            phases_cfg = (config.get("processing") or {}).get("phases") or {}
+            if not orchestrator_processing_nudge_enabled():
+                return None
+        except Exception as e:
+            logger.debug("ProcessingGovernor conductor check failed: %s", e)
+            return None
+        try:
+            phases_cfg = get_effective_processing_phases()
             if not phases_cfg:
                 return None
         except Exception as e:
             logger.debug("ProcessingGovernor recommend config failed: %s", e)
             return None
+
+        automation_status: dict[str, Any] = {}
+        automation_pending: dict[str, int] = {}
+        processing_history: dict[str, list[float]] = {}
+        disabled_schedule_names: list[str] | None = None
+        if self._get_automation:
+            try:
+                automation = self._get_automation()
+                if automation and hasattr(automation, "get_orchestrator_snapshot"):
+                    automation_status = automation.get_orchestrator_snapshot(
+                        include_pending=not orchestrator_nudge
+                    ) or {}
+                elif automation and hasattr(automation, "get_status"):
+                    automation_status = automation.get_status() or {}
+                if automation_status:
+                    automation_pending = dict(automation_status.get("pending_counts") or {})
+                    processing_history = (automation_status.get("metrics") or {}).get(
+                        "processing_history"
+                    ) or {}
+                if automation and hasattr(automation, "get_disabled_schedule_names"):
+                    disabled_schedule_names = automation.get_disabled_schedule_names()
+            except Exception as e:
+                logger.debug("ProcessingGovernor automation pending: %s", e)
+
         last_times = state.get("last_processing_times") or {}
         now = datetime.now(timezone.utc)
         user_guidance = {}
-        if get_db_connection:
+        if not orchestrator_nudge and get_db_connection:
             try:
                 from services.user_guidance_service import get_user_guidance
 
@@ -145,7 +180,22 @@ class ProcessingGovernor:
         for phase_name, phase_spec in phases_cfg.items():
             if not isinstance(phase_spec, dict):
                 continue
-            interval = int(phase_spec.get("interval_seconds") or 1200)
+            if not should_orchestrator_request_phase(
+                phase_name,
+                automation_status,
+                disabled_schedule_names=disabled_schedule_names,
+            ):
+                continue
+            base_interval = int(phase_spec.get("interval_seconds") or 1200)
+            est_duration = float(phase_spec.get("estimated_duration", 60) or 60)
+            pending_n = int(automation_pending.get(phase_name, 0) or 0)
+            interval = effective_governor_interval_seconds(
+                phase_name,
+                base_interval,
+                automation_pending=pending_n,
+                processing_history=processing_history,
+                estimated_duration=est_duration,
+            )
             scope = phase_spec.get("scope")
             if scope == "domain":
                 from shared.domain_registry import get_pipeline_schema_names_active
@@ -161,6 +211,9 @@ class ProcessingGovernor:
                         except (ValueError, TypeError):
                             pass
                     priority = 1.0
+                    pending_n = int(automation_pending.get(phase_name, 0) or 0)
+                    if pending_n > 0:
+                        priority += min(3.0, pending_n / 200.0)
                     candidates.append(
                         (
                             priority,
@@ -173,7 +226,7 @@ class ProcessingGovernor:
                             },
                         )
                     )
-            elif scope == "storyline":
+            elif scope == "storyline" and not orchestrator_nudge:
                 from services.user_guidance_service import compute_storyline_importance
 
                 for s in automation_storylines:
@@ -227,7 +280,11 @@ class ProcessingGovernor:
                         pass
                 candidates.append(
                     (
-                        1.0,
+                        1.0
+                        + min(
+                            3.0,
+                            int(automation_pending.get(phase_name, 0) or 0) / 200.0,
+                        ),
                         key,
                         {
                             "phase": phase_name,

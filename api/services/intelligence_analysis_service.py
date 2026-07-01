@@ -11,6 +11,7 @@ Features:
 
 import json
 from shared.domain_registry import resolve_domain_schema
+from shared.storyline_article_counts import storyline_article_count_subquery
 import logging
 import os
 import re
@@ -23,11 +24,12 @@ from typing import Any
 import numpy as np
 import requests
 from psycopg2.extras import RealDictCursor
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
 # Configuration
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_BASE_URL = env_str("OLLAMA_BASE_URL", "http://localhost:11434")
 EMBEDDING_MODEL = "nomic-embed-text"
 LLM_MODEL = "llama3.1:8b"
 MAX_CONTEXT_ARTICLES = 20
@@ -667,17 +669,19 @@ Historical context (2-3 sentences):"""
         anomalies = []
 
         # Get storylines with rapid growth
+        ac_sub = storyline_article_count_subquery(schema, "s")
         cur.execute(
             f"""
-            SELECT s.id, s.title, s.article_count,
-                   COUNT(sa.article_id) as recent_additions
+            SELECT s.id, s.title, {ac_sub} AS article_count,
+                   COUNT(sa.article_id) FILTER (WHERE a.created_at > %s) as recent_additions
             FROM {schema}.storylines s
             LEFT JOIN {schema}.storyline_articles sa ON s.id = sa.storyline_id
-            LEFT JOIN {schema}.articles a ON sa.article_id = a.id AND a.created_at > %s
-            GROUP BY s.id, s.title, s.article_count
-            HAVING COUNT(sa.article_id) > 5
+            LEFT JOIN {schema}.articles a ON sa.article_id = a.id
+            WHERE s.merged_into_id IS NULL
+            GROUP BY s.id, s.title
+            HAVING COUNT(sa.article_id) FILTER (WHERE a.created_at > %s) > 5
         """,
-            (cutoff,),
+            (cutoff, cutoff),
         )
 
         for row in cur.fetchall():

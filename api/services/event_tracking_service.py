@@ -13,6 +13,7 @@ from typing import Any, TypedDict
 from shared.services.llm_service import LLMService, ModelType
 
 from services.commodity_event_bridge import maybe_append_finance_domain_key
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -171,8 +172,8 @@ async def discover_events_from_contexts(
         max_age_days = event_tracking_max_age_days()
         min_len = event_tracking_min_content_len()
     except Exception:
-        max_age_days = int(os.environ.get("EVENT_TRACKING_MAX_AGE_DAYS", "14") or 14)
-        min_len = int(os.environ.get("EVENT_TRACKING_MIN_CONTENT_LEN", "180") or 180)
+        max_age_days = int(env_str("EVENT_TRACKING_MAX_AGE_DAYS", "14") or 14)
+        min_len = int(env_str("EVENT_TRACKING_MIN_CONTENT_LEN", "180") or 180)
 
     try:
         from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_context_pass_null
@@ -295,6 +296,7 @@ async def discover_events_from_contexts(
     context_ids_set = {r[0] for r in rows}
     context_dates = {r[0]: r[5] for r in rows}
     context_id_to_domain = {r[0]: r[3] for r in rows if r[3]}
+    context_id_to_title = {r[0]: r[1] for r in rows if r[1]}
 
     created_events = []
     conn = get_db_connection()
@@ -404,7 +406,15 @@ async def discover_events_from_contexts(
                 )
                 event_id = cur.fetchone()[0]
 
-                developments = [{"context_id": cid, "type": "initial"} for cid in valid_ids]
+                developments = [
+                    {
+                        "context_id": cid,
+                        "type": "initial",
+                        "title": context_id_to_title.get(cid),
+                        "domain_key": context_id_to_domain.get(cid),
+                    }
+                    for cid in valid_ids
+                ]
                 analysis = {"summary": summary, "context_count": len(valid_ids)}
 
                 cur.execute(

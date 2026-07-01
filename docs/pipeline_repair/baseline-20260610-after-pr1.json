@@ -1,0 +1,163 @@
+{
+  "ts": "2026-06-10T14:38:25.157498+00:00",
+  "automation_30d": {
+    "content_enrichment": {
+      "last_run": "2026-06-10 14:23:29.739251+00:00",
+      "success_count": 88
+    },
+    "nightly_enrichment_context": {
+      "last_run": "2026-06-02 04:06:10.804198+00:00",
+      "success_count": 20
+    },
+    "embeddings_worker": {
+      "last_run": "2026-06-10 14:29:42.866098+00:00",
+      "success_count": 66
+    },
+    "context_sync": {
+      "last_run": "2026-05-18 04:08:12.601473+00:00",
+      "success_count": 23
+    },
+    "collection_cycle": {
+      "last_run": "2026-06-10 14:17:12.909194+00:00",
+      "success_count": 349
+    },
+    "entity_extraction": {
+      "last_run": "2026-06-10 08:51:18.224386+00:00",
+      "success_count": 78
+    }
+  },
+  "widow_db_adjacent_log_tail": [
+    "2026-06-10 10:33:21 [INFO] Entity profile sync artificial-intelligence: context_entity_mentions rounds=3 updated_contexts\u22488634 (limit/round=10000)",
+    "2026-06-10 10:33:21 [INFO] Entity profile sync politics: 4 new mappings created",
+    "2026-06-10 10:35:02 [INFO] Using direct connection to database: 127.0.0.1:6432",
+    "2026-06-10 10:35:02 [INFO] Initializing ui DB pool: 127.0.0.1:6432/news_intel (pool 2-24, statement_timeout=120000ms)",
+    "2026-06-10 10:35:02 [INFO] ui DB pool initialized: 2-24 connections",
+    "2026-06-10 10:35:02 [INFO] Using direct connection to database: 127.0.0.1:6432",
+    "2026-06-10 10:35:02 [INFO] idle_in_tx_cleanup: terminated 0 session(s) older than 5 min",
+    "2026-06-10 10:37:26 [INFO] Context processor: backfill politics \u2014 6994 contexts got entity mentions"
+  ],
+  "context_gaps": {
+    "politics": {
+      "articles": 26201,
+      "url_matched": 20002,
+      "gap": 6199,
+      "recent_7d_unsynced": 211
+    },
+    "finance": {
+      "articles": 18112,
+      "url_matched": 15258,
+      "gap": 2854,
+      "recent_7d_unsynced": 239
+    }
+  },
+  "entity_extraction": {
+    "politics": {
+      "needs_processing": 25376,
+      "false_no_entities_stored": 0
+    },
+    "finance": {
+      "needs_processing": 17796,
+      "false_no_entities_stored": 0
+    },
+    "runs_14d": 37
+  },
+  "claim_outcomes": {
+    "claims_inserted": 43789,
+    "no_claims_after_filters": 6383,
+    "parsed_empty": 1875,
+    "None": 84
+  },
+  "embeddings_chunks": 0,
+  "storyline_orphans": {
+    "politics": {
+      "unlinked": 25971,
+      "pct": 99.1
+    },
+    "finance": {
+      "unlinked": 18002,
+      "pct": 99.4
+    }
+  },
+  "nri": {
+    "mention_resolver_watermark": 732522,
+    "max_context_entity_mention_id": 143408815,
+    "lag_ids": 142676293
+  },
+  "health_check_failures_24h": {
+    "connection pool exhausted": 55
+  },
+  "top_backlogs": [
+    [
+      "story_enhancement",
+      60286
+    ],
+    [
+      "topic_clustering",
+      52264
+    ],
+    [
+      "entity_dossier_compile",
+      40719
+    ],
+    [
+      "entity_profile_build",
+      34863
+    ],
+    [
+      "event_extraction",
+      25065
+    ],
+    [
+      "metadata_enrichment",
+      23199
+    ],
+    [
+      "entity_extraction",
+      18935
+    ],
+    [
+      "sentiment_analysis",
+      18140
+    ],
+    [
+      "event_tracking",
+      16196
+    ],
+    [
+      "claim_extraction",
+      9997
+    ],
+    [
+      "storyline_assembly",
+      6151
+    ],
+    [
+      "proactive_detection",
+      3102
+    ]
+  ],
+  "pending_entity_extraction": 18995,
+  "pending_context_sync": 27,
+  "pipeline_schedule": {
+    "timezone": "America/New_York",
+    "active_window": "weekday_daytime",
+    "in_nightly_heavy": false,
+    "in_weekday_daytime": true,
+    "in_quiet": false,
+    "nightly_window_local": "00:00\u201307:00",
+    "daytime_window_local": "Mon\u2013Fri 07:00\u201316:00",
+    "quiet_window_local": "Daily 16:00\u201300:00; Sat\u2013Sun 07:00\u201316:00",
+    "rss_collection_allowed": true,
+    "automation_allowed_except_essentials": true,
+    "quiet_allowed_phases": [
+      "health_check",
+      "pending_db_flush"
+    ],
+    "next_transition_local": "2026-06-10T16:00:00-04:00",
+    "next_window": "quiet",
+    "now_local": "2026-06-10T10:38:35.577180-04:00"
+  },
+  "phase_heartbeats": [],
+  "stalled_phases": [],
+  "steady_state_ok": false
+}

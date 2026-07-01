@@ -9,7 +9,8 @@
 | Setting | Value |
 |---------|-------|
 | Host | `localhost` on Widow; `192.168.93.101` from remote clients |
-| Port | `5432` |
+| Port (apps) | **`6432`** — PgBouncer (`DB_PORT` in prod `.env`) |
+| Port (admin) | **`5432`** — direct Postgres for migrations, `psql`, maintenance scripts |
 | Database | `news_intel` |
 | User | `newsapp` |
 | Password | Widow `configs/.env` (`DB_PASSWORD`) or `.db_password_widow` |
@@ -29,7 +30,7 @@ News Intelligence **owns** the `news_intel` database on Widow. HomeLab AI Stack 
 
 ## Schema layout
 
-- **Per-domain schemas:** `politics`, `finance`, `science_tech`, plus YAML-provisioned silos
+- **Per-domain schemas:** `legal`, `medicine`, `artificial_intelligence`, `politics`, `finance` (see `public.domains`). **`science_tech` retired** (migration 212).
 - **Global schemas:** `public`, `intelligence`, `pipeline` (and others per migrations)
 - **Migrations:** `api/database/migrations/` — see `api/database/migrations/README.md`
 - **Verification:** `PYTHONPATH=api uv run python api/scripts/verify_migrations_160_167.py`
@@ -39,7 +40,7 @@ Key tables (non-exhaustive):
 | Area | Tables |
 |------|--------|
 | Domains | `public.domains` |
-| Per-domain | `{schema}.articles`, `{schema}.storylines`, `{schema}.rss_feeds`, `{schema}.events` |
+| Per-domain | `{schema}.articles`, `{schema}.storylines`, `{schema}.topic_clusters`, `{schema}.article_topic_clusters`, `{schema}.rss_feeds`, `{schema}.events` |
 | Intelligence | `intelligence.entity_profiles`, `intelligence.versioned_facts`, `intelligence.content_refinement_queue` |
 | Automation | `public.automation_run_history` |
 | Pipeline | `pipeline_traces`, `pipeline_checkpoints` |
@@ -64,6 +65,10 @@ Rules:
 3. Total pool max across all processes must stay under PostgreSQL `max_connections`.
 
 See [PGBOUNCER_AND_CONNECTION_BUDGET.md](PGBOUNCER_AND_CONNECTION_BUDGET.md) and [CODING_STYLE_GUIDE.md](CODING_STYLE_GUIDE.md).
+
+---
+
+*Last verified: 2026-06-22 — [WIDOW_GROUND_TRUTH_2026-06-22.md](generated/WIDOW_GROUND_TRUTH_2026-06-22.md).*
 
 ---
 

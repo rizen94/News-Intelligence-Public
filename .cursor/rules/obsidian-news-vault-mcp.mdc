@@ -1,0 +1,28 @@
+---
+description: News Intelligence Obsidian vault MCP (obsidian-news-vault)
+alwaysApply: false
+globs:
+  - "**/*"
+---
+
+# Obsidian news vault MCP
+
+For **News Intelligence investigation** scratchpad notes, use MCP server **`obsidian-news-vault`** (not `obsidian-vault`).
+
+| Vault | MCP server | Root | Use |
+|-------|------------|------|-----|
+| News Intelligence newsroom | **`obsidian-news-vault`** | `/mnt/news-intelligence-vault` | Work queue, story briefs, investigation threads |
+| General NAS / TTRPG | `obsidian-vault` | `/mnt/obsidian-vault` | Campaign homebrew, personal notes |
+
+## Tools (exact names)
+
+- `vault_resolve_path`, `vault_read_note`, `vault_write_note`, `vault_append_note`, **`vault_delete_note`**
+- `vault_search_text`, `vault_list_markdown`, `vault_list_recent`, `vault_list_by_date`
+
+## Rules
+
+- Postgres (`postgres-mcp`) is canonical for facts; vault is workspace only.
+- Every note must anchor to `context_id`, `ftm_id`, or `claim_id` where applicable.
+- Self-correction: overwrite wrong notes or `vault_delete_note` abandoned drafts.
+
+Setup: `HomeLab-AI-Stack/docs/NEWS_VAULT_AGENT.md` — run `./scripts/sync-agent-mcp.sh` after MCP changes.

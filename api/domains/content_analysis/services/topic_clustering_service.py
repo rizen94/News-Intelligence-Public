@@ -3,16 +3,19 @@ Topic Clustering and Auto-Tagging Service with Iterative Learning
 Uses LLM to intelligently cluster articles by topic and learn from feedback
 """
 
+import asyncio
 import json
 import logging
 import os
 import re
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
 import httpx
 from config.settings import OLLAMA_HOST
 from psycopg2.extras import Json, RealDictCursor
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +35,12 @@ def default_batch_ollama_url() -> str:
     When dual-host routing is on, structured-extraction batch calls use the CPU Ollama endpoint
     (same family as ``STRUCTURED_EXTRACTION``). Otherwise ``OLLAMA_HOST`` (single server).
     """
-    if os.environ.get("OLLAMA_DUAL_HOST_ROUTING_ENABLED", "false").lower() in (
+    if env_str("OLLAMA_DUAL_HOST_ROUTING_ENABLED", "false").lower() in (
         "1",
         "true",
         "yes",
     ):
-        return os.environ.get("OLLAMA_CPU_HOST", OLLAMA_HOST).rstrip("/")
+        return env_str("OLLAMA_CPU_HOST", OLLAMA_HOST).rstrip("/")
     return OLLAMA_HOST.rstrip("/")
 
 
@@ -45,12 +48,12 @@ def default_gpu_batch_ollama_url() -> str:
     """
     GPU-heavy batch phases (topic clustering) use ``OLLAMA_GPU_HOST`` when dual-host routing is on.
     """
-    if os.environ.get("OLLAMA_DUAL_HOST_ROUTING_ENABLED", "false").lower() in (
+    if env_str("OLLAMA_DUAL_HOST_ROUTING_ENABLED", "false").lower() in (
         "1",
         "true",
         "yes",
     ):
-        return os.environ.get("OLLAMA_GPU_HOST", OLLAMA_HOST).rstrip("/")
+        return env_str("OLLAMA_GPU_HOST", OLLAMA_HOST).rstrip("/")
     return OLLAMA_HOST.rstrip("/")
 
 
@@ -82,7 +85,7 @@ class TopicClusteringService:
         self.schema = self._get_schema_name(domain)
         try:
             self.topic_auto_match_min_score = float(
-                os.environ.get("TOPIC_AUTO_MATCH_MIN_SCORE", "0.58")
+                env_str("TOPIC_AUTO_MATCH_MIN_SCORE", "0.58")
             )
         except ValueError:
             self.topic_auto_match_min_score = 0.58
@@ -235,8 +238,6 @@ class TopicClusteringService:
                     "artificial-intelligence",
                     "medicine",
                     "environment-climate",
-                    "science-tech",
-                    "sciencetech",
                 ):
                     category_choices = (
                         "technology, health, medicine, artificial_intelligence, biotechnology, genomics, "
@@ -331,256 +332,111 @@ JSON Response:"""
         toks = re.findall(r"[a-z0-9']+", topic_name.lower())
         return not (len(toks) == 1 and len(toks[0]) <= 4)
 
-    def _ensure_table_id_sequence(self, cur, table: str) -> None:
-        """Template silos often lack SERIAL on topics / article_topic_assignments."""
-        qualified = f"{self.schema}.{table}"
-        seq_name = f"{table}_id_seq"
-        cur.execute("SELECT pg_get_serial_sequence(%s, 'id')", (qualified,))
-        if cur.fetchone()[0]:
-            return
-        cur.execute(
-            f"""
-            CREATE SEQUENCE IF NOT EXISTS {self.schema}.{seq_name} AS integer
-            OWNED BY {qualified}.id
-            """
-        )
-        cur.execute(
-            f"""
-            ALTER TABLE {qualified}
-            ALTER COLUMN id SET DEFAULT nextval('{self.schema}.{seq_name}'::regclass)
-            """
-        )
-        cur.execute(f"SELECT COALESCE(MAX(id), 0) FROM {qualified}")
-        max_id = int(cur.fetchone()[0] or 0)
-        if max_id > 0:
-            cur.execute(f"SELECT setval('{self.schema}.{seq_name}', %s, true)", (max_id,))
-        else:
-            cur.execute(f"SELECT setval('{self.schema}.{seq_name}', 1, false)")
-        cur.connection.commit()
-        logger.info("Created %s.%s for schema %s (max_id=%s)", self.schema, seq_name, self.schema, max_id)
+    @staticmethod
+    def select_pending_article_ids(
+        cur,
+        schema: str,
+        *,
+        batch_size: int = 20,
+        use_pass_marker: bool = True,
+        iterative: bool = False,
+        confidence_threshold: float = 0.88,
+        low_confidence_threshold: float = 0.7,
+        signal_full_only: bool = True,
+    ) -> list[int]:
+        """Bounded backlog selection — LIMIT in SQL, no full-table fetch."""
+        from shared.pipeline_article_selection import sql_order_created_at
 
-    def _ensure_topics_id_sequence(self, cur) -> None:
-        self._ensure_table_id_sequence(cur, "topics")
-        self._ensure_table_id_sequence(cur, "article_topic_assignments")
+        signal_sql = ""
+        if signal_full_only:
+            try:
+                from shared.article_signal_gate import (
+                    article_signal_enabled,
+                    sql_article_signal_full_lane_filter,
+                )
 
-    def _fetch_similar_topic_candidates(self, cur, topic_name: str) -> list[tuple[int, str, Any]]:
-        """
-        Bounded candidate set: active topics whose name matches at least one significant token
-        from the proposed topic (aligned with merge_suggestions scoring).
-        """
-        words = [w for w in re.findall(r"[a-z0-9']+", topic_name.lower()) if len(w) >= 3][:8]
-        if not words:
-            s = topic_name.lower().strip()
-            if len(s) >= 2:
-                words = [s[:64]]
-            else:
-                return []
-        ors = " OR ".join(["lower(name) LIKE %s"] * len(words))
-        params = tuple(f"%{w}%" for w in words)
+                if article_signal_enabled():
+                    filt = sql_article_signal_full_lane_filter("a", schema)
+                    if filt:
+                        signal_sql = f" AND ({filt}) "
+            except Exception:
+                pass
+
+        age_order = sql_order_created_at()
+        if use_pass_marker and not iterative:
+            cur.execute(
+                f"""
+                SELECT a.id
+                FROM {schema}.articles a
+                WHERE a.content IS NOT NULL
+                  AND LENGTH(a.content) > 100
+                  AND (
+                    a.metadata->'pipeline'->'topic_clustering'->>'last_pass_at' IS NULL
+                    OR TRIM(COALESCE(a.metadata->'pipeline'->'topic_clustering'->>'last_pass_at', '')) = ''
+                  )
+                  {signal_sql}
+                ORDER BY a.created_at {age_order}
+                LIMIT %s
+                """,
+                (batch_size,),
+            )
+            return [int(r[0]) for r in cur.fetchall()]
+
         cur.execute(
             f"""
-            SELECT id, name, keywords
-            FROM {self.schema}.topics
-            WHERE status IS DISTINCT FROM 'merged'
-              AND ({ors})
-            LIMIT 400
+            WITH article_confidence AS (
+                SELECT
+                    a.id,
+                    COALESCE(AVG(atc.confidence_score), 0.0) AS avg_confidence,
+                    (a.metadata->'pipeline'->'topic_clustering'->>'last_pass_at') AS pass_at
+                FROM {schema}.articles a
+                LEFT JOIN {schema}.article_topic_clusters atc ON a.id = atc.article_id
+                WHERE a.content IS NOT NULL AND LENGTH(a.content) > 100
+                  {signal_sql}
+                GROUP BY a.id, pass_at
+            )
+            SELECT id
+            FROM article_confidence
+            WHERE avg_confidence < %s
+              AND (
+                pass_at IS NULL
+                OR TRIM(COALESCE(pass_at, '')) = ''
+                OR avg_confidence < %s
+              )
+            ORDER BY avg_confidence ASC, id ASC
+            LIMIT %s
             """,
-            params,
+            (confidence_threshold, low_confidence_threshold, batch_size),
         )
-        return [(int(r[0]), r[1], r[2]) for r in cur.fetchall() if r[1]]
+        return [int(r[0]) for r in cur.fetchall()]
 
     async def assign_topics_to_article(
         self, article_id: int, topics: list[dict[str, Any]]
     ) -> dict[str, Any]:
-        """
-        Assign topics to an article, creating new topics if needed
-
-        Args:
-            article_id: ID of the article
-            topics: List of topic dictionaries from extraction
-
-        Returns:
-            Dictionary with assignment results
-        """
-        from domains.content_analysis.services.topic_merge_suggestions import find_best_matching_topic
+        """Assign topics to an article via topic_clusters (legacy topics table is read-only)."""
+        from shared.topic_cluster_store import assign_topics_to_clusters
 
         conn = None
         try:
             conn = self._get_db_connection()
             cur = conn.cursor()
-            self._ensure_topics_id_sequence(cur)
-
-            assigned_topics = []
-            created_topics = []
-            matched_similarity: list[dict[str, Any]] = []
-
-            for topic_data in topics:
-                topic_name = topic_data.get("name", "").strip()
-                if not topic_name:
-                    continue
-
-                keywords_list = topic_data.get("keywords", [])
-                if not isinstance(keywords_list, list):
-                    keywords_list = []
-
-                assignment_method = "auto"
-                canonical_name = topic_name
-
-                cur.execute(
-                    f"""
-                    SELECT id, confidence_score, accuracy_score, name
-                    FROM {self.schema}.topics
-                    WHERE name = %s OR lower(trim(name)) = lower(trim(%s))
-                    LIMIT 1
-                    """,
-                    (topic_name, topic_name),
-                )
-                existing_topic = cur.fetchone()
-
-                if not existing_topic and self._allow_fuzzy_topic_match(topic_name):
-                    min_score = self.topic_auto_match_min_score
-                    toks = re.findall(r"[a-z0-9']+", topic_name.lower())
-                    if len(toks) == 1:
-                        min_score = max(min_score, 0.72)
-                    candidates = self._fetch_similar_topic_candidates(cur, topic_name)
-                    best = find_best_matching_topic(
-                        topic_name, keywords_list, candidates, min_score=min_score
-                    )
-                    if best:
-                        tid, cname, sim_score = best
-                        cur.execute(
-                            f"""
-                            SELECT id, confidence_score, accuracy_score, name
-                            FROM {self.schema}.topics
-                            WHERE id = %s
-                            """,
-                            (tid,),
-                        )
-                        existing_topic = cur.fetchone()
-                        if existing_topic:
-                            assignment_method = "auto_similarity"
-                            canonical_name = existing_topic[3] or cname
-                            matched_similarity.append(
-                                {
-                                    "llm_name": topic_name,
-                                    "canonical_name": canonical_name,
-                                    "score": round(sim_score, 3),
-                                }
-                            )
-                            logger.info(
-                                "Topic auto-match: %r → %r (score=%.2f)",
-                                topic_name,
-                                canonical_name,
-                                sim_score,
-                            )
-
-                if existing_topic:
-                    topic_id = existing_topic[0]
-                    existing_confidence = _float_confidence(existing_topic[1])
-                    canonical_name = existing_topic[3] or canonical_name
-                    new_confidence = _float_confidence(topic_data.get("confidence", 0.5))
-                    blended_confidence = (existing_confidence * 0.7) + (new_confidence * 0.3)
-                else:
-                    cur.execute(
-                        f"""
-                        INSERT INTO {self.schema}.topics (
-                            name, description, category, keywords,
-                            confidence_score, is_auto_generated, status
-                        )
-                        VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
-                        RETURNING id
-                    """,
-                        (
-                            topic_name,
-                            f"Auto-generated topic: {topic_name}",
-                            topic_data.get("category", "other"),
-                            Json(keywords_list),
-                            topic_data.get("confidence", 0.5),
-                            True,
-                            "active",
-                        ),
-                    )
-                    topic_id = cur.fetchone()[0]
-                    created_topics.append(topic_name)
-                    blended_confidence = _float_confidence(topic_data.get("confidence", 0.5))
-                    canonical_name = topic_name
-
-                cur.execute(
-                    f"""
-                    SELECT id FROM {self.schema}.article_topic_assignments
-                    WHERE article_id = %s AND topic_id = %s
-                """,
-                    (article_id, topic_id),
-                )
-
-                if cur.fetchone():
-                    cur.execute(
-                        f"""
-                        UPDATE {self.schema}.article_topic_assignments
-                        SET confidence_score = %s,
-                            relevance_score = %s,
-                            assignment_context = %s,
-                            assignment_method = %s,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE article_id = %s AND topic_id = %s
-                    """,
-                        (
-                            blended_confidence,
-                            _float_confidence(topic_data.get("confidence", 0.5)),
-                            Json(topic_data),
-                            assignment_method,
-                            article_id,
-                            topic_id,
-                        ),
-                    )
-                else:
-                    cur.execute(
-                        f"""
-                        INSERT INTO {self.schema}.article_topic_assignments (
-                            article_id, topic_id, confidence_score,
-                            relevance_score, assignment_method,
-                            assignment_context, model_version
-                        )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    """,
-                        (
-                            article_id,
-                            topic_id,
-                            blended_confidence,
-                            _float_confidence(topic_data.get("confidence", 0.5)),
-                            assignment_method,
-                            Json(topic_data),
-                            self.model_name,
-                        ),
-                    )
-
-                assigned_topics.append(
-                    {
-                        "topic_id": topic_id,
-                        "topic_name": canonical_name,
-                        "confidence": blended_confidence,
-                    }
-                )
-
+            result = assign_topics_to_clusters(
+                cur,
+                self.schema,
+                article_id,
+                topics,
+                min_match_score=self.topic_auto_match_min_score,
+            )
             cur.execute(
                 f"""
                 UPDATE {self.schema}.articles
                 SET updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s
-            """,
+                """,
                 (article_id,),
             )
-
             conn.commit()
-
-            return {
-                "success": True,
-                "article_id": article_id,
-                "assigned_topics": assigned_topics,
-                "created_topics": created_topics,
-                "matched_similarity": matched_similarity,
-                "total_assigned": len(assigned_topics),
-            }
+            return result
 
         except Exception as e:
             logger.error(f"Error assigning topics to article {article_id}: {e}")
@@ -594,63 +450,84 @@ JSON Response:"""
 
     async def process_article(self, article_id: int) -> dict[str, Any]:
         """
-        Process a single article: extract topics and assign them
-
-        Args:
-            article_id: ID of the article to process
-
-        Returns:
-            Dictionary with processing results
+        Process a single article: fast-lane match or LLM extract + cluster assignment.
         """
+        conn = None
         try:
+            from domains.content_analysis.services.topic_fast_match_service import apply_fast_match
+
             conn = self._get_db_connection()
             cur = conn.cursor(cursor_factory=RealDictCursor)
 
-            # Get article from this service's domain schema
             cur.execute(
                 f"""
                 SELECT id, title, content, excerpt, topics,
                        published_at, source_domain
                 FROM {self.schema}.articles
                 WHERE id = %s
-            """,
+                """,
                 (article_id,),
             )
-
             article = cur.fetchone()
             if not article:
                 return {"success": False, "error": "Article not found"}
 
             article_dict = dict(article)
 
-            # Extract topics using LLM
+            # Fast lane — keyword / entity / trgm match against topic_clusters
+            cur_plain = conn.cursor()
+            try:
+                fast_result = apply_fast_match(cur_plain, self.schema, article_id)
+                if fast_result and fast_result.get("total_assigned", 0) > 0:
+                    conn.commit()
+                    self.record_topic_clustering_pass(article_id, "fast_lane_matched")
+                    logger.info(
+                        "Fast-lane topic match for article %s: %s clusters",
+                        article_id,
+                        fast_result.get("total_assigned", 0),
+                    )
+                    return {**fast_result, "success": True, "fast_lane": True}
+                conn.rollback()
+            except Exception as e:
+                logger.debug("Fast-lane skipped for article %s: %s", article_id, e)
+                conn.rollback()
+            finally:
+                cur_plain.close()
+
             logger.info(
-                f"🔍 Extracting topics for article {article_id}: {article_dict.get('title', '')[:50]}"
+                "Extracting topics (LLM) for article %s: %s",
+                article_id,
+                (article_dict.get("title") or "")[:50],
             )
             extracted_topics = await self.extract_topics_from_article(article_dict)
 
             if not extracted_topics:
-                logger.warning(f"⚠️ No topics extracted for article {article_id}")
+                logger.warning("No topics extracted for article %s", article_id)
                 self.record_topic_clustering_pass(article_id, "no_topics_extracted")
                 return {
                     "success": True,
                     "article_id": article_id,
                     "assigned_topics": [],
                     "message": "No topics extracted",
+                    "fast_lane": False,
                 }
 
-            # Assign topics
+            cur.close()
+            conn.close()
+            conn = None
+
             assignment_result = await self.assign_topics_to_article(article_id, extracted_topics)
+            assignment_result["fast_lane"] = False
 
             logger.info(
-                f"✅ Processed article {article_id}: {assignment_result.get('total_assigned', 0)} topics assigned"
+                "Processed article %s: %s topic clusters assigned",
+                article_id,
+                assignment_result.get("total_assigned", 0),
             )
 
             if assignment_result.get("success"):
                 self.record_topic_clustering_pass(article_id, "topics_assigned")
             else:
-                # Without a pass marker, backlog + automation keep selecting this article forever
-                # (topics were extracted but assign_topics_to_article did not commit).
                 self.record_topic_clustering_pass(article_id, "assignment_failed")
 
             return assignment_result
@@ -670,24 +547,12 @@ JSON Response:"""
         feedback_notes: str = None,
         validated_by: str = None,
     ) -> dict[str, Any]:
-        """
-        Record feedback on a topic assignment for iterative learning
-
-        Args:
-            assignment_id: ID of the article_topic_assignment
-            is_correct: Whether the assignment was correct
-            feedback_notes: Optional feedback notes
-            validated_by: Who validated this (user ID or name)
-
-        Returns:
-            Dictionary with feedback recording results
-        """
+        """Record feedback on a legacy article_topic_assignment (read-only graph)."""
         conn = None
         try:
             conn = self._get_db_connection()
             cur = conn.cursor()
 
-            # Update assignment in domain schema
             cur.execute(
                 f"""
                 UPDATE {self.schema}.article_topic_assignments
@@ -708,11 +573,8 @@ JSON Response:"""
                 return {"success": False, "error": "Assignment not found"}
 
             topic_id = result[0]
-
-            # The trigger will automatically update topic accuracy
             conn.commit()
 
-            # Get updated topic metrics from domain schema
             cur.execute(
                 f"""
                 SELECT accuracy_score, confidence_score, review_count,
@@ -749,16 +611,7 @@ JSON Response:"""
     def get_topics_needing_review(
         self, threshold: float = 0.6, limit: int = 50
     ) -> list[dict[str, Any]]:
-        """
-        Get topics that need review based on accuracy
-
-        Args:
-            threshold: Accuracy threshold (topics below this need review)
-            limit: Maximum number of topics to return
-
-        Returns:
-            List of topic dictionaries needing review
-        """
+        """Legacy topics review helper (topics table is historical)."""
         conn = None
         try:
             conn = self._get_db_connection()
@@ -782,3 +635,51 @@ JSON Response:"""
             if conn:
                 cur.close()
                 conn.close()
+
+
+@dataclass
+class TopicClusterBatchResult:
+    processed: int = 0
+    failed: int = 0
+    fast_lane_hits: int = 0
+    llm_extractions: int = 0
+    topics_created: int = 0
+    topics_assigned: int = 0
+    errors: list[str] = field(default_factory=list)
+
+
+async def process_articles_batch(
+    service: TopicClusteringService,
+    article_ids: list[int],
+    *,
+    concurrency: int = 5,
+) -> TopicClusterBatchResult:
+    """Process articles in parallel with bounded concurrency."""
+    result = TopicClusterBatchResult()
+    if not article_ids:
+        return result
+
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def _one(aid: int) -> None:
+        async with sem:
+            try:
+                out = await service.process_article(aid)
+                if out.get("success"):
+                    result.processed += 1
+                    if out.get("fast_lane"):
+                        result.fast_lane_hits += 1
+                    else:
+                        result.llm_extractions += 1
+                    result.topics_created += len(out.get("created_topics", []))
+                    result.topics_assigned += int(out.get("total_assigned", 0) or 0)
+                else:
+                    result.failed += 1
+                    err = out.get("error") or "unknown"
+                    result.errors.append(f"{aid}: {err}")
+            except Exception as e:
+                result.failed += 1
+                result.errors.append(f"{aid}: {e}")
+
+    await asyncio.gather(*[_one(aid) for aid in article_ids])
+    return result

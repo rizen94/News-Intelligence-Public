@@ -19,6 +19,7 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ def _pause_state_path() -> Path:
 
 def article_selection_newest_first() -> bool:
     """True = LIFO (newest batches first); False = FIFO (oldest first). Default FIFO."""
-    raw = os.environ.get("PIPELINE_ARTICLE_SELECTION_ORDER", "fifo").strip().lower()
+    raw = env_str("PIPELINE_ARTICLE_SELECTION_ORDER", "fifo").strip().lower()
     if raw in ("lifo", "newest_first", "newest", "desc"):
         return True
     return False
@@ -43,7 +44,7 @@ def article_selection_newest_first() -> bool:
 
 def pipeline_article_selection_mode_report() -> dict[str, str]:
     """Resolved mode for logs, Monitor, or health payloads (env string may be empty)."""
-    raw = (os.environ.get("PIPELINE_ARTICLE_SELECTION_ORDER") or "fifo").strip()
+    raw = (env_str("PIPELINE_ARTICLE_SELECTION_ORDER") or "fifo").strip()
     if article_selection_newest_first():
         return {
             "order_env": raw or "lifo",
@@ -89,7 +90,7 @@ def _parse_iso_utc(s: str) -> datetime | None:
 
 
 def pipeline_backfill_mode_enabled() -> bool:
-    return os.environ.get("PIPELINE_BACKFILL_MODE", "").lower() in ("1", "true", "yes")
+    return env_str("PIPELINE_BACKFILL_MODE", "").lower() in ("1", "true", "yes")
 
 
 def _ensure_pause_until_from_file() -> datetime | None:
@@ -101,7 +102,7 @@ def _ensure_pause_until_from_file() -> datetime | None:
         logger.debug("backfill pause dir: %s", e)
         return None
 
-    raw_hours = os.environ.get("PIPELINE_BACKFILL_PAUSE_HOURS", "48").strip()
+    raw_hours = env_str("PIPELINE_BACKFILL_PAUSE_HOURS", "48").strip()
     try:
         hours = float(raw_hours)
     except ValueError:
@@ -137,7 +138,7 @@ def pipeline_backfill_collection_should_pause() -> bool:
     """
     if not pipeline_backfill_mode_enabled():
         return False
-    ex = os.environ.get("PIPELINE_BACKFILL_COLLECTION_RESUME_AT", "").strip()
+    ex = env_str("PIPELINE_BACKFILL_COLLECTION_RESUME_AT", "").strip()
     if ex:
         end = _parse_iso_utc(ex)
         if end is None:
@@ -156,7 +157,7 @@ def pipeline_backfill_status_line() -> str:
     if not pipeline_backfill_mode_enabled():
         return ""
     if pipeline_backfill_collection_should_pause():
-        ex = os.environ.get("PIPELINE_BACKFILL_COLLECTION_RESUME_AT", "").strip()
+        ex = env_str("PIPELINE_BACKFILL_COLLECTION_RESUME_AT", "").strip()
         end: datetime | None = _parse_iso_utc(ex) if ex else None
         if end is None:
             p = _pause_state_path()
@@ -175,7 +176,7 @@ def pipeline_backfill_status_line() -> str:
 
 def log_terminal_skip_stub_candidate(schema: str, article_id: int, phase_name: str) -> None:
     """Opt-in log when a phase hits terminal skip (possible stub row). No deletion."""
-    if os.environ.get("PIPELINE_LOG_STUB_PURGE_CANDIDATES", "").lower() not in ("1", "true", "yes"):
+    if env_str("PIPELINE_LOG_STUB_PURGE_CANDIDATES", "").lower() not in ("1", "true", "yes"):
         return
     logger.warning(
         "Terminal pipeline skip — stub review candidate: schema=%s article_id=%s phase=%s "

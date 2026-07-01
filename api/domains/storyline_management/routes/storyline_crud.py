@@ -11,6 +11,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from shared.database.connection import get_db_connection
 from shared.domain_registry import DOMAIN_PATH_PATTERN, pipeline_url_schema_pairs, resolve_domain_schema
+from shared.storyline_article_counts import storyline_article_count_subquery
 from shared.services.domain_aware_service import validate_domain
 
 from ..schemas.storyline_schemas import (
@@ -91,9 +92,10 @@ async def get_domain_storylines(
                 pages = math.ceil(total / page_size) if total > 0 else 0
 
                 # Get paginated results
+                ac_sub = storyline_article_count_subquery(schema)
                 query = f"""
                     SELECT s.id, s.title, s.description, s.created_at, s.updated_at,
-                           s.status, s.article_count, s.quality_score,
+                           s.status, {ac_sub} AS article_count, s.quality_score,
                            (SELECT MAX(sa.added_at) FROM {schema}.storyline_articles sa
                             WHERE sa.storyline_id = s.id) AS last_article_added_at,
                            s.last_refinement, s.last_automation_run
@@ -212,13 +214,14 @@ async def create_domain_storyline(
              try:
                  with conn.cursor() as cur:
                      schema = resolve_domain_schema(domain)
+                     ac_sub = storyline_article_count_subquery(schema, "s")
                      cur.execute(
                          f"""
-                         SELECT id, title, description, status, article_count,
-                                quality_score, analysis_summary, created_at, updated_at,
-                                last_evolution_at, evolution_count
-                         FROM {schema}.storylines
-                         WHERE id = %s
+                         SELECT s.id, s.title, s.description, s.status, {ac_sub} AS article_count,
+                                s.quality_score, s.analysis_summary, s.created_at, s.updated_at,
+                                s.last_evolution_at, s.evolution_count
+                         FROM {schema}.storylines s
+                         WHERE s.id = %s
                      """,
                          (data.get("id"),),
                      )
@@ -271,22 +274,24 @@ async def get_domain_storyline(
 
         try:
             with conn.cursor() as cur:
+                ac_sub = storyline_article_count_subquery(schema, "s")
                 # Get storyline details (include key_entities, ml_processing_status)
                 cur.execute(
                     f"""
-                    SELECT id, title, description, created_at, updated_at,
-                           status, analysis_summary, master_summary, quality_score, article_count,
-                           last_evolution_at, evolution_count, background_information,
-                           context_last_updated,
-                           COALESCE(ml_processing_status, 'completed') as ml_processing_status,
-                           editorial_document, document_version, document_status, last_refinement,
-                           key_entities,
-                           canonical_narrative, narrative_finisher_model, narrative_finisher_at,
-                           narrative_finisher_meta,
-                           timeline_narrative_chronological, timeline_narrative_briefing,
-                           timeline_narrative_chronological_at, timeline_narrative_briefing_at
-                    FROM {schema}.storylines
-                    WHERE id = %s
+                    SELECT s.id, s.title, s.description, s.created_at, s.updated_at,
+                           s.status, s.analysis_summary, s.master_summary, s.quality_score,
+                           {ac_sub} AS article_count,
+                           s.last_evolution_at, s.evolution_count, s.background_information,
+                           s.context_last_updated,
+                           COALESCE(s.ml_processing_status, 'completed') as ml_processing_status,
+                           s.editorial_document, s.document_version, s.document_status, s.last_refinement,
+                           s.key_entities,
+                           s.canonical_narrative, s.narrative_finisher_model, s.narrative_finisher_at,
+                           s.narrative_finisher_meta,
+                           s.timeline_narrative_chronological, s.timeline_narrative_briefing,
+                           s.timeline_narrative_chronological_at, s.timeline_narrative_briefing_at
+                    FROM {schema}.storylines s
+                    WHERE s.id = %s
                 """,
                     (storyline_id,),
                 )
@@ -445,7 +450,7 @@ async def get_domain_storyline(
                     title=storyline[1],
                     description=storyline[2],
                     status=storyline[5],
-                    article_count=storyline[9] or 0,
+                    article_count=len(articles),
                     quality_score=storyline[8],
                     analysis_summary=storyline[6],
                     master_summary=storyline[7] if len(storyline) > 7 else None,
@@ -547,13 +552,14 @@ async def update_domain_storyline(
                     conn.commit()
 
                 # Fetch updated storyline
+                ac_sub = storyline_article_count_subquery(schema, "s")
                 cur.execute(
                     f"""
-                    SELECT id, title, description, status, article_count,
-                           quality_score, analysis_summary, created_at, updated_at,
-                           last_evolution_at, evolution_count
-                    FROM {schema}.storylines
-                    WHERE id = %s
+                    SELECT s.id, s.title, s.description, s.status, {ac_sub} AS article_count,
+                           s.quality_score, s.analysis_summary, s.created_at, s.updated_at,
+                           s.last_evolution_at, s.evolution_count
+                    FROM {schema}.storylines s
+                    WHERE s.id = %s
                 """,
                     (storyline_id,),
                 )
@@ -592,7 +598,7 @@ async def update_domain_storyline(
 def _entity_profile_domain_keys_for_path(path_domain: str) -> list[str]:
     """Tokens that may appear in intelligence.entity_profiles.domain_key for this route domain."""
     if path_domain in ("science-tech", "science_tech"):
-        return ["artificial-intelligence", "science-tech", "science_tech"]
+        return ["artificial-intelligence"]
     return [path_domain]
 
 

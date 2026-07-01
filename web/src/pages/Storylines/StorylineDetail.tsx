@@ -63,6 +63,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 
 import apiService from '../../services/apiService';
+import { contextCentricApi } from '../../services/api/contextCentric';
 import StorylineManagementDialog from '../../components/StorylineManagementDialog';
 import StorylineAutomationDialog from '../../components/StorylineAutomationDialog';
 import ArticleSuggestionsDialog from '../../components/ArticleSuggestionsDialog';
@@ -129,6 +130,10 @@ const StorylineDetail = () => {
       link_reason: string;
     }>
   >([]);
+  const [eventReconciliation, setEventReconciliation] = useState<{
+    tracked_events?: Array<{ tracked_event_id: number; tracked_event_name?: string }>;
+    chronological_events?: Array<{ chronological_event_id: number; event_title?: string }>;
+  } | null>(null);
   const [showFullSynthesis, setShowFullSynthesis] = useState(false);
   const [detailDepth, setDetailDepth] = useState<
     'narrative' | 'structured' | 'raw'
@@ -263,6 +268,13 @@ const StorylineDetail = () => {
     if (id) {
       loadStoryline();
       const pollInterval = startProcessingPoll();
+      const sid = parseInt(id, 10);
+      if (!Number.isNaN(sid) && effectiveDomain) {
+        contextCentricApi
+          .getEventReconciliationForStoryline(effectiveDomain, sid)
+          .then(setEventReconciliation)
+          .catch(() => setEventReconciliation(null));
+      }
       return () => {
         mountedRef.current = false;
         if (pollInterval) clearInterval(pollInterval);
@@ -1176,6 +1188,40 @@ const StorylineDetail = () => {
                   {storyline.description}
                 </Typography>
               )}
+
+              {eventReconciliation &&
+                ((eventReconciliation.tracked_events?.length ?? 0) > 0 ||
+                  (eventReconciliation.chronological_events?.length ?? 0) > 0) && (
+                  <Paper variant='outlined' sx={{ p: 2, mb: 2, bgcolor: 'grey.50' }}>
+                    <Typography variant='subtitle2' fontWeight={600} sx={{ mb: 1 }}>
+                      Tracked event & timeline reconciliation
+                    </Typography>
+                    {(eventReconciliation.tracked_events?.length ?? 0) > 0 && (
+                      <Typography variant='body2' sx={{ mb: 1 }}>
+                        Tracked events:{' '}
+                        {eventReconciliation.tracked_events?.map(te => (
+                          <Chip
+                            key={te.tracked_event_id}
+                            label={te.tracked_event_name || `#${te.tracked_event_id}`}
+                            size='small'
+                            sx={{ mr: 0.5 }}
+                            onClick={() =>
+                              navigate(
+                                `/${effectiveDomain}/investigate/events/${te.tracked_event_id}`
+                              )
+                            }
+                          />
+                        ))}
+                      </Typography>
+                    )}
+                    {(eventReconciliation.chronological_events?.length ?? 0) > 0 && (
+                      <Typography variant='body2' color='text.secondary'>
+                        {eventReconciliation.chronological_events?.length} chronological
+                        timeline atoms linked to this storyline.
+                      </Typography>
+                    )}
+                  </Paper>
+                )}
 
               {articles.length > 0 && sourceCoverageRows.length > 0 && (
                 <Paper variant='outlined' sx={{ p: 2, mb: 2, bgcolor: 'grey.50' }}>

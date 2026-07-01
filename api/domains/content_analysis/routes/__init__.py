@@ -1,7 +1,7 @@
 # Content Analysis — consolidated router
 from fastapi import APIRouter
 
-from .article_deduplication import router as article_dedup_router
+from .deduplication import main_router as article_dedup_router
 from .content_analysis import router as content_router
 from .deduplication_api import router as deduplication_api_router
 from .llm_activity_monitoring import router as llm_activity_router

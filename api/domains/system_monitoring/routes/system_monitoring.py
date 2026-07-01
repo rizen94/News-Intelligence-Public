@@ -4,6 +4,7 @@ Handles system metrics, health monitoring, and alerts
 """
 
 import asyncio
+import concurrent.futures
 import logging
 import os
 import sys
@@ -33,10 +34,17 @@ from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_s
 # Reserve dedicated pool for monitoring/page-load endpoints in this module
 get_monitoring_db_connection = get_ui_db_connection
 
+# Isolated from the default asyncio thread pool so overview stays responsive under load.
+_MONITOR_OVERVIEW_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=2,
+    thread_name_prefix="monitor-overview",
+)
+
 logger = logging.getLogger(__name__)
 
 # Omit from Monitor phase timeline, run summary catalog, and merged current activity (orchestrator; ~daily).
 MONITOR_EXCLUDED_AUTOMATION_PHASES = frozenset({"nightly_enrichment_context"})
+MONITOR_STALE_ACTIVITY_GRACE_SECONDS = 180.0
 
 # Import filtering functions from RSS collector
 sys.path.insert(
@@ -341,7 +349,12 @@ def _safe_get_automation_status(automation: Any | None, timeout: float = 2.0) ->
 
     def _run():
         try:
-            result_queue.put(mgr.get_status())
+            # Never call full get_status() here — it runs heavy backlog DB queries and
+            # orphaned daemon threads from join timeouts would stampede the pool.
+            if hasattr(mgr, "get_orchestrator_snapshot"):
+                result_queue.put(mgr.get_orchestrator_snapshot(include_pending=False))
+            else:
+                result_queue.put(mgr.get_status())
         except Exception as e:
             logger.debug("_safe_get_automation_status: %s", e)
             result_queue.put({})
@@ -397,6 +410,25 @@ def _synthesize_current_activities_from_automation(
     return out
 
 
+def _activity_row_is_stale_ghost(
+    row: dict[str, Any],
+    active_by_phase: dict[str, int],
+    *,
+    grace_seconds: float = MONITOR_STALE_ACTIVITY_GRACE_SECONDS,
+) -> bool:
+    """True when feed still lists a phase but no worker is executing it (post-hang/orphan)."""
+    tn = row.get("task_name")
+    if not isinstance(tn, str) or not tn.strip():
+        return False
+    phase = tn.strip()
+    if int(active_by_phase.get(phase, 0) or 0) > 0:
+        return False
+    elapsed = _activity_started_elapsed_seconds(row.get("started_at"))
+    if elapsed is None:
+        return True
+    return elapsed > grace_seconds
+
+
 def _merge_current_activities_with_run_counts(
     current: list[dict[str, Any]],
     *,
@@ -430,8 +462,18 @@ def _merge_current_activities_with_run_counts(
             continue
         primary = max(items, key=lambda x: (x.get("started_at") or ""))
         row = dict(primary)
+        if _activity_row_is_stale_ghost(row, active_by_phase):
+            continue
         from_counter = int(active_by_phase.get(key, 0) or 0)
-        row["running_instances"] = max(from_counter, len(items), 1)
+        if from_counter > 0:
+            row["running_instances"] = max(from_counter, len(items))
+        else:
+            # Brief race after add_current before counter increments.
+            elapsed = _activity_started_elapsed_seconds(row.get("started_at"))
+            if elapsed is not None and elapsed <= MONITOR_STALE_ACTIVITY_GRACE_SECONDS:
+                row["running_instances"] = max(len(items), 1)
+            else:
+                continue
         merged.append(row)
 
     merged.sort(key=lambda x: x.get("started_at") or "", reverse=True)
@@ -589,7 +631,7 @@ def _enrich_current_activities_with_run_estimates(
 
 
 MONITOR_OVERVIEW_AUTOMATION_HISTORY_TIMEOUT = 2.0
-MONITOR_OVERVIEW_HANDLER_TIMEOUT = 12.0
+MONITOR_OVERVIEW_HANDLER_TIMEOUT = 20.0
 
 
 def _get_processing_history_for_monitor(
@@ -659,7 +701,18 @@ def _build_monitoring_overview_sync(request: Request) -> dict[str, Any]:
     try:
         from services.activity_feed_service import get_activity_feed
 
-        activities = get_activity_feed().get_snapshot(recent_limit=50)
+        feed = get_activity_feed()
+        try:
+            active_for_reconcile = dict(
+                (automation_status or {}).get("active_tasks_by_phase") or {}
+            )
+            feed.reconcile_stale_current(
+                active_for_reconcile,
+                grace_seconds=MONITOR_STALE_ACTIVITY_GRACE_SECONDS,
+            )
+        except Exception as e:
+            logger.debug("Activity feed reconcile: %s", e)
+        activities = feed.get_snapshot(recent_limit=50)
         cur = activities.get("current")
         if not isinstance(cur, list):
             cur = []
@@ -722,8 +775,13 @@ async def get_monitoring_overview(request: Request):
     Use for the monitoring UI that shows system health and "what the backend is doing".
     """
     try:
+        loop = asyncio.get_running_loop()
         return await asyncio.wait_for(
-            asyncio.to_thread(_build_monitoring_overview_sync, request),
+            loop.run_in_executor(
+                _MONITOR_OVERVIEW_EXECUTOR,
+                _build_monitoring_overview_sync,
+                request,
+            ),
             timeout=MONITOR_OVERVIEW_HANDLER_TIMEOUT,
         )
     except asyncio.TimeoutError:
@@ -732,7 +790,7 @@ async def get_monitoring_overview(request: Request):
             MONITOR_OVERVIEW_HANDLER_TIMEOUT,
         )
         return {
-            "success": False,
+            "success": True,
             "degraded": True,
             "connections": {
                 "api": "ok",

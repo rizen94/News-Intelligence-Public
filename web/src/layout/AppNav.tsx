@@ -1,5 +1,5 @@
 /**
- * Sidebar navigation — Dashboard, Discover, Investigate, Monitor, Analyze.
+ * Sidebar navigation — domain-scoped IA (Overview, Corpus, Stories, Signals, Investigate, Arcs, Outputs, Finance, Operations).
  */
 import React, { useState } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
@@ -13,20 +13,30 @@ import {
   ListSubheader,
 } from '@mui/material';
 import DashboardIcon from '@mui/icons-material/Dashboard';
-import ExploreIcon from '@mui/icons-material/Explore';
 import SearchIcon from '@mui/icons-material/Search';
 import MonitorHeartIcon from '@mui/icons-material/MonitorHeart';
-import AnalyticsIcon from '@mui/icons-material/Analytics';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
 import AutoStoriesIcon from '@mui/icons-material/AutoStories';
 import NewspaperIcon from '@mui/icons-material/Newspaper';
 import RssFeedIcon from '@mui/icons-material/RssFeed';
 import LabelIcon from '@mui/icons-material/Label';
-import VisibilityIcon from '@mui/icons-material/Visibility';
 import EventNoteIcon from '@mui/icons-material/EventNote';
 import ChecklistIcon from '@mui/icons-material/Checklist';
 import RateReviewIcon from '@mui/icons-material/RateReview';
 import TableChartIcon from '@mui/icons-material/TableChart';
+import HubIcon from '@mui/icons-material/Hub';
+import TimelineIcon from '@mui/icons-material/Timeline';
+import MapIcon from '@mui/icons-material/Map';
+import ArticleIcon from '@mui/icons-material/Article';
+import PsychologyIcon from '@mui/icons-material/Psychology';
+import AccountTreeIcon from '@mui/icons-material/AccountTree';
+import ManageSearchIcon from '@mui/icons-material/ManageSearch';
+import DescriptionIcon from '@mui/icons-material/Description';
+import LinkIcon from '@mui/icons-material/Link';
+import ScienceIcon from '@mui/icons-material/Science';
+import MemoryIcon from '@mui/icons-material/Memory';
+import AnalyticsIcon from '@mui/icons-material/Analytics';
+import ExploreIcon from '@mui/icons-material/Explore';
 import { usePublicDemoMode } from '../contexts/PublicDemoContext';
 import { getDefaultDomainKey } from '../utils/domainHelper';
 
@@ -36,7 +46,12 @@ type NavItem = {
   path: string;
   label: string;
   icon: React.ReactNode;
+  /** Show only when the URL domain segment matches (e.g. finance-only tools). */
   domain?: string;
+  /** Navigate to this domain regardless of current URL domain (cross-silo link). */
+  hrefDomain?: string;
+  demoHidden?: boolean;
+  exact?: boolean;
 };
 type NavSection = { id: string; label: string; items: NavItem[] };
 
@@ -51,7 +66,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: 'Corpus',
     items: [
       { path: 'articles', label: 'Articles', icon: <NewspaperIcon /> },
-      { path: 'rss_feeds', label: 'RSS Feeds', icon: <RssFeedIcon /> },
+      { path: 'rss_feeds', label: 'RSS Feeds', icon: <RssFeedIcon />, demoHidden: true },
     ],
   },
   {
@@ -60,47 +75,105 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { path: 'storylines', label: 'Storylines', icon: <AutoStoriesIcon /> },
       {
+        path: 'storylines/discovery',
+        label: 'Embedding catch-up',
+        icon: <ExploreIcon />,
+        demoHidden: true,
+      },
+      {
         path: 'storylines/review-queue',
         label: 'Review queue',
         icon: <RateReviewIcon />,
+        demoHidden: true,
       },
-      { path: 'watchlist', label: 'Watchlist', icon: <VisibilityIcon /> },
     ],
   },
   {
     id: 'signals',
     label: 'Signals',
     items: [
-      { path: 'topics', label: 'Topics', icon: <LabelIcon /> },
-      { path: 'events', label: 'Events', icon: <EventNoteIcon /> },
+      { path: 'topics', label: 'Topics (staging)', icon: <LabelIcon /> },
+      { path: 'events', label: 'Timeline atoms', icon: <EventNoteIcon /> },
     ],
   },
   {
     id: 'investigate',
     label: 'Investigate',
     items: [
-      { path: 'discover', label: 'Discover', icon: <ExploreIcon /> },
-      { path: 'investigate', label: 'Investigate', icon: <SearchIcon /> },
+      { path: 'investigate', label: 'Hub', icon: <HubIcon />, exact: true },
+      { path: 'investigate/entities', label: 'Entities', icon: <AccountTreeIcon /> },
+      { path: 'investigate/search', label: 'Search', icon: <SearchIcon /> },
+      { path: 'investigate/documents', label: 'Documents', icon: <DescriptionIcon /> },
       {
         path: 'investigate/narrative-threads',
-        label: 'Narrative threads',
+        label: 'Narrative threads (derived)',
         icon: <AutoStoriesIcon />,
       },
+      {
+        path: 'investigate/entity-resolution',
+        label: 'Entity resolution',
+        icon: <LinkIcon />,
+      },
+      {
+        path: 'investigate/spine-browser',
+        label: 'Spine browser',
+        icon: <ManageSearchIcon />,
+      },
+      { path: 'investigate/hypotheses', label: 'Hypotheses', icon: <ScienceIcon /> },
     ],
+  },
+  {
+    id: 'arcs',
+    label: 'Arcs',
+    items: [{ path: 'arcs', label: 'Arc catalog', icon: <TimelineIcon />, exact: true }],
   },
   {
     id: 'outputs',
     label: 'Outputs',
     items: [
-      { path: 'briefings', label: 'Briefing', icon: <NewspaperIcon /> },
-      { path: 'watchlist', label: 'Watchlist', icon: <VisibilityIcon /> },
+      { path: 'briefings', label: 'Briefings', icon: <ArticleIcon /> },
+      { path: 'arcs/reports', label: 'Arc reports', icon: <NewspaperIcon /> },
+    ],
+  },
+  {
+    id: 'finance',
+    label: 'Finance',
+    items: [
+      {
+        path: 'analysis',
+        label: 'Analysis',
+        icon: <AnalyticsIcon />,
+        domain: 'finance',
+        demoHidden: true,
+      },
+      {
+        path: 'commodity/gold',
+        label: 'Commodity',
+        icon: <ShowChartIcon />,
+        domain: 'finance',
+        demoHidden: true,
+      },
+      {
+        path: 'credit-spread',
+        label: 'Credit spread',
+        icon: <ShowChartIcon />,
+        hrefDomain: 'finance',
+        demoHidden: true,
+      },
+      {
+        path: 'trace',
+        label: 'Task trace',
+        icon: <TimelineIcon />,
+        domain: 'finance',
+        demoHidden: true,
+      },
     ],
   },
   {
     id: 'operations',
     label: 'Operations',
     items: [
-      { path: 'monitor', label: 'Monitor', icon: <MonitorHeartIcon /> },
+      { path: 'monitor', label: 'Monitor', icon: <MonitorHeartIcon />, exact: true },
       {
         path: 'monitor/sql-explorer',
         label: 'SQL explorer',
@@ -111,22 +184,40 @@ const NAV_SECTIONS: NavSection[] = [
         label: 'Audit checklist',
         icon: <ChecklistIcon />,
       },
-      { path: 'analyze', label: 'Analyze (planned)', icon: <AnalyticsIcon /> },
-    ],
-  },
-  {
-    id: 'finance',
-    label: 'Finance',
-    items: [
       {
-        path: 'commodity/gold',
-        label: 'Commodity',
-        icon: <ShowChartIcon />,
-        domain: 'finance',
+        path: 'operations/investigation-ops',
+        label: 'Investigation ops',
+        icon: <PsychologyIcon />,
+      },
+      {
+        path: 'operations/llm-activity',
+        label: 'LLM activity',
+        icon: <MemoryIcon />,
       },
     ],
   },
 ];
+
+function isNavSelected(pathname: string, base: string, path: string, exact?: boolean): boolean {
+  const fullPath = `${base}/${path}`;
+  if (exact) {
+    return pathname === fullPath;
+  }
+  if (pathname === fullPath) return true;
+  if (path.includes('/')) {
+    return pathname.startsWith(`${fullPath}/`) || pathname === fullPath;
+  }
+  if (pathname.startsWith(`${fullPath}/`)) {
+    if (path === 'monitor' && pathname !== `${base}/monitor`) {
+      return false;
+    }
+    if (path === 'arcs' && pathname.startsWith(`${base}/arcs/`)) {
+      return pathname === `${base}/arcs`;
+    }
+    return true;
+  }
+  return false;
+}
 
 export function AppNav() {
   const { domain } = useParams<{ domain: string }>();
@@ -140,15 +231,15 @@ export function AppNav() {
   const sections = NAV_SECTIONS.map(section => ({
     ...section,
     items: section.items.filter(item => {
-      if (item.domain && item.domain !== domain) return false;
+      if (item.domain && item.domain !== domain && !item.hrefDomain) return false;
       if (demoReadonly) {
         if (section.id === 'operations') return false;
-        if (item.path === 'rss_feeds' || item.path === 'watchlist') return false;
-        if (item.path?.startsWith('commodity')) return false;
+        if (item.demoHidden) return false;
       }
       return true;
     }),
   })).filter(section => section.items.length > 0);
+
   const navContent = (
     <Box sx={{ pt: 2, width: APP_NAV_WIDTH }}>
       {sections.map(section => (
@@ -165,26 +256,15 @@ export function AppNav() {
             </ListSubheader>
           }
         >
-          {section.items.map(({ path, label, icon }) => {
-            const fullPath = `${base}/${path}`;
-            const monitorExact = `${base}/monitor`;
-            let navSelected = location.pathname === fullPath;
-            if (!navSelected && !path.includes('/')) {
-              navSelected = location.pathname.startsWith(`${fullPath}/`);
-              if (
-                path === 'monitor' &&
-                location.pathname.startsWith(`${base}/monitor/`) &&
-                location.pathname !== monitorExact
-              ) {
-                navSelected = false;
-              }
-            }
+          {section.items.map(({ path, label, icon, exact, hrefDomain }) => {
+            const itemBase = hrefDomain ? `/${hrefDomain}` : base;
+            const navSelected = isNavSelected(location.pathname, itemBase, path, exact);
             return (
               <ListItemButton
                 key={path}
                 selected={navSelected}
                 onClick={() => {
-                  navigate(`${base}/${path}`);
+                  navigate(`${itemBase}/${path}`);
                   setMobileOpen(false);
                 }}
               >

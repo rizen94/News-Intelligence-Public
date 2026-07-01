@@ -11,6 +11,7 @@ Env:
   PIPELINE_NIGHTLY_START_HOUR / PIPELINE_NIGHTLY_END_HOUR (fallback: NIGHTLY_PIPELINE_*)
   PIPELINE_DAYTIME_START_HOUR / PIPELINE_DAYTIME_END_HOUR (default 7 / 16)
   PIPELINE_QUIET_ALLOWED_PHASES (default health_check,pending_db_flush)
+  PIPELINE_QUIET_HOURS_DISABLED (true) — skip quiet-window gating (operator override for catch-up)
 """
 
 from __future__ import annotations
@@ -19,14 +20,15 @@ import os
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 _DEFAULT_QUIET_ALLOWED = frozenset({"health_check", "pending_db_flush"})
 
 
 def pipeline_schedule_tz() -> ZoneInfo:
     tz_name = (
-        os.environ.get("PIPELINE_SCHEDULE_TZ")
-        or os.environ.get("NIGHTLY_PIPELINE_TZ")
+        env_str("PIPELINE_SCHEDULE_TZ")
+        or env_str("NIGHTLY_PIPELINE_TZ")
         or "America/New_York"
     ).strip() or "America/New_York"
     try:
@@ -36,9 +38,9 @@ def pipeline_schedule_tz() -> ZoneInfo:
 
 
 def _hour_env(primary: str, fallback: str, default: int) -> int:
-    raw = os.environ.get(primary)
+    raw = env_str(primary)
     if raw is None or not str(raw).strip():
-        raw = os.environ.get(fallback)
+        raw = env_str(fallback)
     try:
         return int(raw if raw is not None and str(raw).strip() else default)
     except (TypeError, ValueError):
@@ -61,6 +63,11 @@ def daytime_end_hour() -> int:
     return _hour_env("PIPELINE_DAYTIME_END_HOUR", "", 16)
 
 
+def quiet_hours_disabled() -> bool:
+    """Operator override: treat all local hours as pipeline-active (no quiet window)."""
+    return env_bool("PIPELINE_QUIET_HOURS_DISABLED", False)
+
+
 def _in_hour_window(now_local: datetime, start_h: int, end_h: int) -> bool:
     start = now_local.replace(hour=start_h, minute=0, second=0, microsecond=0)
     end = now_local.replace(hour=end_h, minute=0, second=0, microsecond=0)
@@ -81,6 +88,8 @@ def in_weekday_daytime_window(now_local: datetime | None = None) -> bool:
     """Mon–Fri full ops window (default 07:00–16:00 local)."""
     if now_local is None:
         now_local = datetime.now(pipeline_schedule_tz())
+    if quiet_hours_disabled():
+        return True
     if now_local.weekday() >= 5:
         return False
     return _in_hour_window(now_local, daytime_start_hour(), daytime_end_hour())
@@ -91,6 +100,8 @@ def in_pipeline_quiet_window(now_local: datetime | None = None) -> bool:
     Pipeline paused: daily 16:00–00:00 and weekend 07:00–16:00.
     Mutually exclusive with nightly_heavy and weekday_daytime when configured as 0–7 / 7–16.
     """
+    if quiet_hours_disabled():
+        return False
     if now_local is None:
         now_local = datetime.now(pipeline_schedule_tz())
     hour = now_local.hour
@@ -113,7 +124,7 @@ def active_pipeline_window(now_local: datetime | None = None) -> str:
 
 
 def _quiet_allowed_phases() -> frozenset[str]:
-    raw = os.environ.get(
+    raw = env_str(
         "PIPELINE_QUIET_ALLOWED_PHASES",
         "health_check,pending_db_flush",
     ).strip()
@@ -122,15 +133,32 @@ def _quiet_allowed_phases() -> frozenset[str]:
     return frozenset(x.strip() for x in raw.split(",") if x.strip())
 
 
-def automation_phase_allowed(phase_name: str, *, now_local: datetime | None = None) -> bool:
+def _backlog_severe_threshold() -> int:
+    try:
+        return max(1, int(env_str("AUTOMATION_BACKLOG_SEVERE_THRESHOLD", "25000")))
+    except (TypeError, ValueError):
+        return 25000
+
+
+def automation_phase_allowed(
+    phase_name: str,
+    *,
+    now_local: datetime | None = None,
+    pending_count: int | None = None,
+) -> bool:
     """Whether AutomationManager may schedule this phase under the operating schedule."""
     name = (phase_name or "").strip()
     if not name:
         return False
+    if quiet_hours_disabled():
+        return True
     if name in _quiet_allowed_phases():
         return True
     window = active_pipeline_window(now_local)
     if window == "quiet":
+        pending = max(0, int(pending_count or 0))
+        if pending >= _backlog_severe_threshold():
+            return True
         return False
     return window in ("nightly_heavy", "weekday_daytime")
 
@@ -195,6 +223,7 @@ def pipeline_schedule_info(*, now_local: datetime | None = None) -> dict[str, An
         "rss_collection_allowed": rss_collection_allowed(now_local=now_local),
         "automation_allowed_except_essentials": active != "quiet",
         "quiet_allowed_phases": sorted(_quiet_allowed_phases()),
+        "quiet_hours_disabled": quiet_hours_disabled(),
         "next_transition_local": next_transition,
         "next_window": next_window,
         "now_local": now_local.isoformat(),

@@ -18,6 +18,7 @@ import {
   Box,
   Skeleton,
   Divider,
+  Chip,
 } from '@mui/material';
 import {
   contextCentricApi,
@@ -70,11 +71,7 @@ export default function Dashboard() {
     const rawCtx = ctxData?.items ?? [];
     const rawEv = evData?.items ?? [];
     setContexts(rawCtx.filter((c) => !c.domain_key || c.domain_key === domain));
-    setEvents(
-      rawEv.filter(
-        (e) => !e.domain_keys?.length || e.domain_keys.includes(domain),
-      ),
-    );
+    setEvents(rawEv.filter((e) => e.domain_keys?.includes(domain)));
     if (!background) {
       setContextsLoading(false);
       setEventsLoading(false);
@@ -236,7 +233,18 @@ export default function Dashboard() {
                     >
                       <ListItemText
                         primary={e.event_name || `Event #${e.id}`}
-                        secondary={e.event_type ?? undefined}
+                        secondary={
+                          <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+                            {e.event_type && (
+                              <Typography component="span" variant="body2" color="text.secondary">
+                                {e.event_type}
+                              </Typography>
+                            )}
+                            {(e.domain_keys ?? []).map((dk) => (
+                              <Chip key={dk} label={dk} size="small" variant="outlined" sx={{ height: 20, fontSize: '0.7rem' }} />
+                            ))}
+                          </Box>
+                        }
                         primaryTypographyProps={{ noWrap: true }}
                       />
                     </ListItemButton>

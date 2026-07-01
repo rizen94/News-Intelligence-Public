@@ -23,6 +23,7 @@ from shared.services.congress_gov_client import (
     fetch_bill_text_versions,
     is_congress_gov_configured,
 )
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ LEGISLATIVE_SCAN_DOMAIN_KEYS: tuple[str, ...] = ("politics", "legal")
 
 def legislative_scan_domain_keys() -> tuple[str, ...]:
     """Comma-separated URL domain keys, e.g. ``politics,legal``. Invalid keys are skipped."""
-    raw = os.environ.get("LEGISLATIVE_SCAN_DOMAIN_KEYS", "").strip()
+    raw = env_str("LEGISLATIVE_SCAN_DOMAIN_KEYS", "").strip()
     if not raw:
         return LEGISLATIVE_SCAN_DOMAIN_KEYS
     out: list[str] = []
@@ -46,11 +47,11 @@ def legislative_scan_domain_keys() -> tuple[str, ...]:
             logger.debug("legislative_references: LEGISLATIVE_SCAN_DOMAIN_KEYS skip unknown %r", p)
     return tuple(out) if out else LEGISLATIVE_SCAN_DOMAIN_KEYS
 
-DEFAULT_CONGRESS = int(os.environ.get("LEGISLATIVE_DEFAULT_CONGRESS", "118"))
-SCAN_ARTICLE_DAYS = int(os.environ.get("LEGISLATIVE_SCAN_ARTICLE_DAYS", "90"))
+DEFAULT_CONGRESS = int(env_str("LEGISLATIVE_DEFAULT_CONGRESS", "118"))
+SCAN_ARTICLE_DAYS = int(env_str("LEGISLATIVE_SCAN_ARTICLE_DAYS", "90"))
 MAX_TEXT_CHARS = 80000
 SLEEP_BETWEEN_CONGRESS_GOV_CALLS = float(
-    os.environ.get("LEGISLATIVE_FETCH_SLEEP_SECONDS", "0.35")
+    env_str("LEGISLATIVE_FETCH_SLEEP_SECONDS", "0.35")
 )
 
 # Longer patterns first (H.J.Res before H.R.).

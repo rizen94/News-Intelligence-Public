@@ -526,6 +526,39 @@ async def get_finance_market_data(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/{domain}/finance/credit-spread")
+async def get_credit_spread(
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+    days: int = Query(365, ge=1, le=3650, description="History window for FRED view"),
+    view: str = Query("fred", description="fred | etf"),
+):
+    """Credit spread dashboard: FRED HY/IG OAS + recession bands, or ETF yield spreads."""
+    _check_domain(domain)
+    view_norm = (view or "fred").strip().lower()
+    try:
+        if view_norm == "etf":
+            from domains.finance.credit_spread_service import build_etf_credit_spread_payload
+
+            data = build_etf_credit_spread_payload()
+        elif view_norm == "fred":
+            from domains.finance.credit_spread_service import build_fred_credit_spread_payload
+
+            data = build_fred_credit_spread_payload(days=days)
+        else:
+            raise HTTPException(status_code=400, detail="view must be 'fred' or 'etf'")
+        return {
+            "success": True,
+            "data": data,
+            "view": view_norm,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error fetching credit spread: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/{domain}/finance/gold")  # Infrastructure: gold amalgam + SQLite
 async def get_gold_data(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),

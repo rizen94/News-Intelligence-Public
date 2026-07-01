@@ -14,12 +14,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from shared.database.connection import get_db_connection
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
-    raw = os.environ.get(name, "").strip().lower()
+    raw = env_str(name, "").strip().lower()
     if not raw:
         return default
     return raw in ("1", "true", "yes", "on")
@@ -121,7 +122,7 @@ def supersede_near_duplicate_versioned_facts(batch_size: int | None = None) -> i
     bs = batch_size
     if bs is None:
         try:
-            bs = int(os.environ.get("VERSIONED_FACTS_SUPERSESSION_BATCH_SIZE", "200"))
+            bs = int(env_str("VERSIONED_FACTS_SUPERSESSION_BATCH_SIZE", "200"))
         except ValueError:
             bs = 200
     bs = max(10, min(2000, int(bs)))

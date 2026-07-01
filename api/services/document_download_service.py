@@ -12,6 +12,7 @@ import os
 import re
 import time
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ RETRY_BACKOFF_SEC = 5
 # Don't retry these; mark document as permanently failed so we stop re-queuing.
 # 403 is intentionally excluded: many sources return temporary bot/WAF blocks.
 PERMANENT_HTTP_CODES = (404, 410)
-ENABLE_BROWSER_PDF_FALLBACK = os.getenv("ENABLE_BROWSER_PDF_FALLBACK", "1").strip().lower() not in {
+ENABLE_BROWSER_PDF_FALLBACK = env_str("ENABLE_BROWSER_PDF_FALLBACK", "1").strip().lower() not in {
     "0",
     "false",
     "no",

@@ -15,6 +15,7 @@ from typing import Any
 import requests
 
 from shared.database.connection import get_db_connection_context
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +23,8 @@ ACLED_API = "https://api.acleddata.com/acled/read"
 
 
 def _credentials() -> tuple[str, str] | None:
-    key = (os.environ.get("ACLED_API_KEY") or "").strip()
-    email = (os.environ.get("ACLED_EMAIL") or "").strip()
+    key = (env_str("ACLED_API_KEY") or "").strip()
+    email = (env_str("ACLED_EMAIL") or "").strip()
     if key and email:
         return key, email
     return None

@@ -3,6 +3,7 @@
 Proactive Detection Service
 Detects emerging storylines and predicts story developments
 """
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 import asyncio
 import json
@@ -43,11 +44,11 @@ class ProactiveDetectionService(DomainAwareService):
         self.min_confidence = pro.promote_min_confidence
         self.promote_min_articles = pro.promote_min_articles
         self.promote_min_confidence = pro.promote_min_confidence
-        if os.getenv("PROACTIVE_PROMOTE_MIN_ARTICLES"):
-            self.promote_min_articles = int(os.getenv("PROACTIVE_PROMOTE_MIN_ARTICLES", "4"))
-        if os.getenv("PROACTIVE_PROMOTE_MIN_CONFIDENCE"):
+        if env_str("PROACTIVE_PROMOTE_MIN_ARTICLES"):
+            self.promote_min_articles = int(env_str("PROACTIVE_PROMOTE_MIN_ARTICLES", "4"))
+        if env_str("PROACTIVE_PROMOTE_MIN_CONFIDENCE"):
             self.promote_min_confidence = float(
-                os.getenv("PROACTIVE_PROMOTE_MIN_CONFIDENCE", "0.55")
+                env_str("PROACTIVE_PROMOTE_MIN_CONFIDENCE", "0.55")
             )
 
     async def detect_emerging_storylines(
@@ -359,7 +360,7 @@ class ProactiveDetectionService(DomainAwareService):
         # Headline + description via AIStorylineDiscovery (same LLM path as full discovery)
         title = "Emerging Story"
         description = f"Emerging storyline detected from {len(articles)} articles"
-        use_llm = os.getenv("PROACTIVE_STORYLINE_TITLE_LLM", "1") != "0"
+        use_llm = env_str("PROACTIVE_STORYLINE_TITLE_LLM", "1") != "0"
         try:
             from services.ai_storyline_discovery import get_discovery_service
 
@@ -587,7 +588,7 @@ class ProactiveDetectionService(DomainAwareService):
             except Exception as sa_err:
                 logger.debug("storyline_articles insert %s/%s: %s", storyline_id, aid, sa_err)
 
-        if os.getenv("PROACTIVE_HEADLINE_70B_REFINE", "0") == "1":
+        if env_str("PROACTIVE_HEADLINE_70B_REFINE", "0") == "1":
             try:
                 from services.storyline_narrative_finisher_service import (
                     refine_storyline_headline_with_70b,

@@ -7,6 +7,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Any
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 try:
     import yaml
@@ -140,7 +141,7 @@ def get_fred_series_id(commodity_id: str) -> str | None:
     if not cfg:
         return None
     env_key = "FRED_" + cid.upper().replace("-", "_") + "_SERIES_ID"
-    env_sid = (os.environ.get(env_key) or "").strip()
+    env_sid = (env_str(env_key) or "").strip()
     if env_sid:
         return env_sid
     sid = (cfg.get("fred_series_id") or "").strip()

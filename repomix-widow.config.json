@@ -6,7 +6,7 @@
     "showLineNumbers": true,
     "compress": true,
     "topFilesLength": 15,
-    "headerText": "News Intelligence — Repomix bundle from Widow production source (/opt/news-intelligence on 192.168.93.101). Generated for AI context; excludes secrets, venv, node_modules, logs, and backups."
+    "headerText": "News Intelligence — Repomix bundle from dev workspace (unification/big-bang, 2026-06-24). Generated for AI context; excludes secrets, venv, node_modules, logs, and backups."
   },
   "include": [
     "**/*.py",
@@ -53,6 +53,8 @@
       "data/**",
       "archive/**",
       "web/_archived_duplicates/**",
+      "news-intelligence-kit/**",
+      ".cursor/**",
       "*.jsonl",
       "*.log",
       "*.bak*",

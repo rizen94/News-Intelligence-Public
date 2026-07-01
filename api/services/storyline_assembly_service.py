@@ -14,10 +14,18 @@ from typing import Any
 
 from shared.database.connection import get_db_connection_context
 from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
 _VALID_MODES = frozenset({"auto_approve", "suggest_only", "manual"})
+
+
+def _assembly_run_proactive() -> bool:
+    """Proactive keyword pass is on-demand unless outbreak fast-path is enabled."""
+    if env_bool("PROACTIVE_OUTBREAK_ONLY", False):
+        return True
+    return env_bool("STORYLINE_ASSEMBLY_RUN_PROACTIVE", False)
 
 
 def get_storyline_automation_mode(domain_key: str) -> str:
@@ -30,7 +38,7 @@ def get_storyline_automation_mode(domain_key: str) -> str:
             return mode
     except Exception as e:
         logger.debug("get_storyline_automation_mode %s: %s", domain_key, e)
-    env_mode = (os.environ.get("STORYLINE_DEFAULT_AUTOMATION_MODE") or "auto_approve").strip()
+    env_mode = (env_str("STORYLINE_DEFAULT_AUTOMATION_MODE") or "auto_approve").strip()
     return env_mode if env_mode in _VALID_MODES else "auto_approve"
 
 
@@ -80,7 +88,7 @@ def domains_needing_assembly() -> list[str]:
                 continue
             threshold = cfg.storyline_development.automation.unlinked_article_threshold
         except Exception:
-            threshold = int(os.environ.get("STORYLINE_ASSEMBLY_UNLINKED_THRESHOLD", "25"))
+            threshold = int(env_str("STORYLINE_ASSEMBLY_UNLINKED_THRESHOLD", "25"))
         if count_unlinked_articles(dk) >= threshold:
             out.append(dk)
     return out
@@ -89,7 +97,7 @@ def domains_needing_assembly() -> list[str]:
 async def run_storyline_assembly_for_domain(
     domain_key: str,
     *,
-    run_proactive: bool = True,
+    run_proactive: bool | None = None,
     run_discovery: bool = True,
     run_automation: bool = True,
     discovery_hours: int | None = None,
@@ -97,10 +105,12 @@ async def run_storyline_assembly_for_domain(
 ) -> dict[str, Any]:
     """
     Full storyline assembly for one domain:
-    1. Proactive detection (promote emerging clusters)
-    2. AI storyline discovery (save new clusters)
+    1. Proactive detection (on-demand / outbreak only — demoted from default schedule)
+    2. AI storyline discovery (save new clusters when threshold met)
     3. Storyline automation (attach new articles to enabled storylines)
     """
+    if run_proactive is None:
+        run_proactive = _assembly_run_proactive()
     schema = resolve_domain_schema(domain_key)
     steps: dict[str, Any] = {}
     unlinked_before = count_unlinked_articles(domain_key)
@@ -152,7 +162,7 @@ async def run_storyline_assembly_for_domain(
                     ).storyline_development.automation.automation_batch_per_assembly
                 except Exception:
                     max_automation_storylines = int(
-                        os.environ.get("STORYLINE_ASSEMBLY_AUTOMATION_LIMIT", "20")
+                        env_str("STORYLINE_ASSEMBLY_AUTOMATION_LIMIT", "20")
                     )
 
             svc = StorylineAutomationService(domain=domain_key)

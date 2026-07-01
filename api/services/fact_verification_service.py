@@ -21,6 +21,7 @@ from typing import Any
 
 from shared.database.connection import get_db_connection
 from shared.domain_registry import resolve_domain_schema
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +249,7 @@ def wikipedia_reference_check(claim_text: str, subject: str | None = None) -> di
         "title": None,
         "url": None,
     }
-    if os.environ.get("FACT_VERIFY_WIKIPEDIA", "true").lower() not in ("1", "true", "yes"):
+    if env_str("FACT_VERIFY_WIKIPEDIA", "true").lower() not in ("1", "true", "yes"):
         out["status"] = "disabled"
         return out
     query = (subject or "").strip() or (claim_text or "")[:100]
@@ -344,7 +345,7 @@ def wikidata_reference_check(claim_text: str, subject: str | None = None) -> dic
         "label": None,
         "dated_year_overlap": False,
     }
-    if os.environ.get("FACT_VERIFY_WIKIDATA", "true").lower() not in ("1", "true", "yes"):
+    if env_str("FACT_VERIFY_WIKIDATA", "true").lower() not in ("1", "true", "yes"):
         out["status"] = "disabled"
         return out
     query = (subject or "").strip() or (claim_text or "")[:80]
@@ -425,7 +426,7 @@ def gdelt_mention_signal(
 ) -> dict[str, Any]:
     """Low-weight global mention density from GDELT DOC API (not authoritative)."""
     out: dict[str, Any] = {"status": "skipped", "doc_count": 0, "signal_strength": 0.0}
-    if os.environ.get("FACT_VERIFY_GDELT", "true").lower() not in ("1", "true", "yes"):
+    if env_str("FACT_VERIFY_GDELT", "true").lower() not in ("1", "true", "yes"):
         out["status"] = "disabled"
         return out
     term = (subject or "").strip()
@@ -492,7 +493,7 @@ def finance_sec_articles_signal(
     if (domain_key or "").strip().lower() != fk:
         out["status"] = "skipped_domain"
         return out
-    if os.environ.get("FACT_VERIFY_SEC_FINANCE", "true").lower() not in ("1", "true", "yes"):
+    if env_str("FACT_VERIFY_SEC_FINANCE", "true").lower() not in ("1", "true", "yes"):
         out["status"] = "disabled"
         return out
     terms = _extract_key_terms(claim_text)
@@ -580,7 +581,7 @@ def entailment_llm_borderline_check(
         "verdict": None,
         "model_confidence": 0.0,
     }
-    if os.environ.get("FACT_VERIFY_ENTAILMENT_LLM", "true").lower() not in ("1", "true", "yes"):
+    if env_str("FACT_VERIFY_ENTAILMENT_LLM", "true").lower() not in ("1", "true", "yes"):
         out["status"] = "disabled"
         return out
     if not _corroboration_is_borderline(corroboration):

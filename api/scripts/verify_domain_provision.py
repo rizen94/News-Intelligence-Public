@@ -134,7 +134,7 @@ def main() -> None:
     if schema_name and not re.fullmatch(r"[a-z][a-z0-9_]*", schema_name):
         errors.append("schema_name must be lowercase snake_case (^[a-z][a-z0-9_]*$)")
 
-    if domain_key == "science-tech":
+    if domain_key in ("science-tech", "science_tech"):
         errors.append("Retired domain key science-tech — do not onboard; use split silos (e.g. artificial-intelligence).")
 
     # Registry (active YAML only)

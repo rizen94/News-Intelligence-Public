@@ -749,3 +749,72 @@ class StorylineService:
         union = len(words1.union(words2))
         
         return intersection / union if union > 0 else 0.0
+
+    async def evolve_storyline_with_new_content(
+        self,
+        storyline_id: int,
+        new_article_ids: list[int] | None = None,
+        force_evolution: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Attach new articles to a storyline via storyline_automation (scheduled evolution path).
+        """
+        try:
+            from services.storyline_automation_service import StorylineAutomationService
+
+            svc = StorylineAutomationService(domain=self.domain)
+            result = await svc.discover_articles_for_storyline(
+                storyline_id, force_refresh=force_evolution
+            )
+            articles = result.get("articles") or []
+            if new_article_ids:
+                conn = self.get_db_connection()
+                try:
+                    with conn.cursor() as cur:
+                        for aid in new_article_ids:
+                            cur.execute(
+                                f"""
+                                INSERT INTO {self.schema}.storyline_articles (storyline_id, article_id)
+                                SELECT %s, %s
+                                WHERE NOT EXISTS (
+                                    SELECT 1 FROM {self.schema}.storyline_articles
+                                    WHERE storyline_id = %s AND article_id = %s
+                                )
+                                """,
+                                (storyline_id, aid, storyline_id, aid),
+                            )
+                        cur.execute(
+                            f"SELECT COUNT(*) FROM {self.schema}.storyline_articles WHERE storyline_id = %s",
+                            (storyline_id,),
+                        )
+                        total = int(cur.fetchone()[0] or 0)
+                    conn.commit()
+                finally:
+                    conn.close()
+            else:
+                conn = self.get_db_connection()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            f"SELECT COUNT(*) FROM {self.schema}.storyline_articles WHERE storyline_id = %s",
+                            (storyline_id,),
+                        )
+                        total = int(cur.fetchone()[0] or 0)
+                finally:
+                    conn.close()
+            return {
+                "success": True,
+                "data": {
+                    "storyline_id": storyline_id,
+                    "total_articles": total,
+                    "new_articles": len(articles) + (len(new_article_ids or [])),
+                    "evolution_count": len(articles),
+                    "summary_updated": False,
+                    "context_updated": False,
+                    "summary_length": 0,
+                    "context_stats": result.get("stats") or {},
+                },
+            }
+        except Exception as e:
+            logger.error("evolve_storyline_with_new_content %s: %s", storyline_id, e)
+            return {"success": False, "error": str(e)}

@@ -11,12 +11,13 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
-ENTITY_MERGE_EXECUTE_MIN = float(os.environ.get("GRAPH_CONNECTION_ENTITY_MERGE_MIN", "0.88") or 0.88)
+ENTITY_MERGE_EXECUTE_MIN = float(env_str("GRAPH_CONNECTION_ENTITY_MERGE_MIN", "0.88") or 0.88)
 STORYLINE_LINK_ONLY_BELOW_MERGE = float(
-    os.environ.get("GRAPH_CONNECTION_STORYLINE_LINK_ONLY_MAX", "0.64") or 0.64
+    env_str("GRAPH_CONNECTION_STORYLINE_LINK_ONLY_MAX", "0.64") or 0.64
 )
 
 
@@ -33,7 +34,7 @@ def process_graph_connection_proposals_batch(
     )
     from services.storyline_consolidation_service import MERGE_SIMILARITY_THRESHOLD, get_consolidation_service
 
-    lim = limit if limit is not None else int(os.environ.get("GRAPH_CONNECTION_DISTILLATION_BATCH", "12") or 12)
+    lim = limit if limit is not None else int(env_str("GRAPH_CONNECTION_DISTILLATION_BATCH", "12") or 12)
     lim = max(1, min(lim, 100))
 
     rows = fetch_pending_proposals(limit=lim, min_confidence=0.0)

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 _DEFAULT_SINGLE_PASS = (
     "pattern_recognition",
@@ -29,7 +30,7 @@ _DEFAULT_SINGLE_PASS = (
 
 
 def _single_pass_phases() -> frozenset[str]:
-    raw = os.environ.get(
+    raw = env_str(
         "NIGHTLY_SEQUENTIAL_SINGLE_PASS_PHASES",
         ",".join(_DEFAULT_SINGLE_PASS),
     )

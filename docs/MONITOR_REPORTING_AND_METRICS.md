@@ -81,3 +81,59 @@ The Monitor page includes:
 - Phase timeline, orchestrator decision log, triggers, etc.
 
 For a **true** week-long **time-series DB** of backlogs (not just live SQL + history of runs), you would add a small **scheduled snapshot table** or keep using `.local/backlog_snapshots/` with external cron; the new API does not replace that.
+
+---
+
+## Context → claims backlog semantics
+
+Monitor and automation must agree on what counts as **work to do** vs **terminal inventory**.
+
+| Metric | Source | Meaning |
+|--------|--------|---------|
+| **`actionable_no_claims`** | `get_context_claim_backlog_stats()` / `backlog_metrics._count_claim_extraction_backlog()` | Contexts with no `extracted_claims` rows that **claim_extraction** would still select (min text length, no pass marker). Used for **`backlog_status.contexts.backlog`**, **`processing_progress`** dimension `contexts_claimed.backlog`, and phase `pending_records` for `claim_extraction`. |
+| **`total_no_claims`** | Same helper | All contexts with zero claim rows, including pass-markered PDF sections and empty parses. **Not** queue depth — do not treat as operator to-do. |
+| **`passed_no_claims_after_filters`**, **`text_too_short_no_claims`** | Breakdown fields | Subsets of terminal inventory for diagnostics. |
+
+**Operator scripts:** `api/scripts/report_context_claim_pipeline_backlog.py` prints both actionable and total. **`scripts/backlog_burndown.sh`** steady-state gates use actionable counts via `backlog_status`.
+
+**UI:** Monitor Processing pulse labels the dimension **Contexts → claims (actionable queue)**; ticker tooltips may show terminal inventory separately from queue depth.
+
+---
+
+## Unified intake extraction backlog semantics
+
+Widow prod runs **unified intake** by default (`UNIFIED_INTAKE_EXTRACTION_ENABLED=true`, `LEGACY_INTAKE_EXTRACTION_ENABLED=false`). Legacy per-phase intake (`entity_extraction`, `event_extraction`, `sentiment_analysis`, `quality_scoring`) is **suppressed** in Monitor and scheduling.
+
+| Mode | Monitor shows | Hidden (zeroed) |
+|------|---------------|-----------------|
+| **Unified (prod default)** | `unified_intake_extraction` **actionable** pending | Legacy intake phases → **0** |
+| Legacy rollback | Legacy phase `pending_records` | `unified_intake_extraction` → **0** |
+
+### Actionable vs inventory (legacy-aware)
+
+When `UNIFIED_INTAKE_LEGACY_AWARE_BACKLOG=true` (default), unified pending is **not** "every article missing a unified pass marker."
+
+| Metric | Source | Meaning |
+|--------|--------|---------|
+| **`actionable_unified_intake`** | `get_unified_intake_backlog_stats()` | Articles still needing unified LLM — **Monitor `pending_records`**, automation selection |
+| **`legacy_backfill_eligible`** | Same | Legacy outputs present; marker backfill only (no GPU) |
+| **`total_missing_unified_pass`** | Same | Raw inventory (missing unified pass marker) — **not** operator to-do |
+
+**Legacy-complete** = stored `article_entities` + event work (pass marker, `timeline_processed`, or `chronological_events`) + sentiment/quality scores (columns or pass markers).
+
+**Operator scripts:**
+
+| Script | Purpose |
+|--------|---------|
+| `api/scripts/diagnose_unified_intake_backlog_detail.py` | Per-domain breakdown: actionable vs backfill vs inventory |
+| `api/scripts/backfill_unified_intake_pass_from_legacy.py` | Bulk pass-marker backfill (no LLM) |
+
+Masking: `apply_intake_mode_pending_mask()` in `api/shared/pipeline_resource_policy.py`, applied in `backlog_metrics._get_raw_pending_counts()`.
+
+### Backlog metrics cache (pool pressure)
+
+`backlog_metrics._refresh_cache()` uses a **single-flight lock** so concurrent Monitor polls + automation scheduler do not each run the full ~35-phase COUNT sweep on cache expiry.
+
+`get_unified_intake_backlog_stats()` is cached separately (**default 300s**, `UNIFIED_INTAKE_BACKLOG_STATS_TTL_SECONDS`) because its cross-schema queries are heavier than per-phase counts.
+
+Invalidate: `invalidate_backlog_metrics_cache()` (also clears unified stats cache). Unified runner invalidates after processing work.

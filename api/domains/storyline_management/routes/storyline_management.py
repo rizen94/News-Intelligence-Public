@@ -14,12 +14,14 @@ from shared.database.connection import get_db_connection
 from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
 from shared.services.domain_aware_service import validate_domain
 from shared.services.llm_service import llm_service
+from shared.storyline_article_counts import storyline_article_count_subquery, sync_counts_update_sql
 
 from ..services.proactive_detection_service import ProactiveDetectionService
 from ..services.quality_assessment_service import QualityAssessmentService
 from ..services.rag_analysis_service import RAGAnalysisService
 from ..services.storyline_service import StorylineService
 from services.article_content_enrichment_service import format_article_content_excerpt
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -125,9 +127,10 @@ async def get_domain_storylines(
                 total = cur.fetchone()[0]
 
                 # Get paginated storylines
+                ac_sub = storyline_article_count_subquery(schema, "s")
                 query = f"""
                     SELECT s.id, s.title, s.description, s.created_at, s.updated_at,
-                           s.status, s.article_count, s.document_status,
+                           s.status, {ac_sub} AS article_count, s.document_status,
                            s.editorial_document->>'lede' as editorial_lede,
                            (SELECT MAX(sa.added_at) FROM {schema}.storyline_articles sa
                             WHERE sa.storyline_id = s.id) AS last_article_added_at
@@ -245,16 +248,14 @@ async def update_domain_storyline(
                     f"""
                     UPDATE {schema}.storylines
                     SET title = %s, description = %s, updated_at = %s,
-                        article_count = (
-                            SELECT COUNT(*) FROM {schema}.storyline_articles
-                            WHERE storyline_id = %s
-                        )
+                        {sync_counts_update_sql(schema)}
                     WHERE id = %s
                 """,
                     (
                         storyline_data.get("title"),
                         storyline_data.get("description", ""),
                         datetime.now(),
+                        storyline_id,
                         storyline_id,
                         storyline_id,
                     ),
@@ -388,14 +389,11 @@ async def remove_article_from_domain_storyline(
                 cur.execute(
                     f"""
                     UPDATE {schema}.storylines
-                    SET article_count = (
-                        SELECT COUNT(*) FROM {schema}.storyline_articles
-                        WHERE storyline_id = %s
-                    ),
+                    SET {sync_counts_update_sql(schema)},
                     updated_at = %s
                     WHERE id = %s
                 """,
-                    (storyline_id, datetime.now(), storyline_id),
+                    (storyline_id, storyline_id, datetime.now(), storyline_id),
                 )
 
                 conn.commit()
@@ -487,14 +485,11 @@ async def add_article_to_domain_storyline(
                 cur.execute(
                     f"""
                     UPDATE {schema}.storylines
-                    SET article_count = (
-                        SELECT COUNT(*) FROM {schema}.storyline_articles
-                        WHERE storyline_id = %s
-                    ),
+                    SET {sync_counts_update_sql(schema)},
                     updated_at = %s
                     WHERE id = %s
                 """,
-                    (storyline_id, datetime.now(), storyline_id),
+                    (storyline_id, storyline_id, datetime.now(), storyline_id),
                 )
 
                 conn.commit()
@@ -757,14 +752,11 @@ async def add_article_to_domain_storyline_by_id(
                     cur.execute(
                         f"""
                         UPDATE {schema}.storylines
-                        SET article_count = (
-                            SELECT COUNT(*) FROM {schema}.storyline_articles
-                            WHERE storyline_id = %s
-                        ),
+                        SET {sync_counts_update_sql(schema)},
                         updated_at = %s
                         WHERE id = %s
                         """,
-                        (storyline_id, datetime.now(), storyline_id),
+                        (storyline_id, storyline_id, datetime.now(), storyline_id),
                     )
 
                 conn.commit()
@@ -1506,7 +1498,7 @@ async def process_storyline_rag_analysis(
                     # Legacy per-schema timeline_events writes (default off; use chronological_events pipeline)
                     import os
 
-                    if os.environ.get("LEGACY_TIMELINE_EVENTS_WRITES", "0").strip().lower() in (
+                    if env_str("LEGACY_TIMELINE_EVENTS_WRITES", "0").strip().lower() in (
                         "1",
                         "true",
                         "yes",

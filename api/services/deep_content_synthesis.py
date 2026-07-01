@@ -29,13 +29,14 @@ from services.domain_knowledge_service import (
     get_domain_knowledge_service,
 )
 from services.domain_synthesis_config import get_domain_synthesis_config
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
 # Configuration
-OLLAMA_BASE_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-LLM_MODEL = os.getenv("SYNTHESIS_LLM_MODEL", "llama3.1:8b")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+OLLAMA_BASE_URL = env_str("OLLAMA_URL", "http://localhost:11434")
+LLM_MODEL = env_str("SYNTHESIS_LLM_MODEL", "llama3.1:8b")
+EMBEDDING_MODEL = env_str("EMBEDDING_MODEL", "nomic-embed-text")
 
 # Synthesis parameters
 MAX_ARTICLE_LENGTH = 100000  # Max characters per article (100KB)
@@ -177,11 +178,11 @@ class DeepContentSynthesisService:
 
     def __init__(self, db_config: dict[str, Any] = None):
         self.db_config = db_config or {
-            "host": os.getenv("DB_HOST", "localhost"),
-            "port": int(os.getenv("DB_PORT", 5433)),
-            "database": os.getenv("DB_NAME", "news_intelligence"),
-            "user": os.getenv("DB_USER", "newsapp"),
-            "password": os.getenv("DB_PASSWORD", "newsapp_password"),
+            "host": env_str("DB_HOST", "localhost"),
+            "port": int(env_str("DB_PORT", 5433)),
+            "database": env_str("DB_NAME", "news_intelligence"),
+            "user": env_str("DB_USER", "newsapp"),
+            "password": env_str("DB_PASSWORD", "newsapp_password"),
         }
         self.knowledge_service = get_domain_knowledge_service()
         logger.info("Deep Content Synthesis Service initialized")
@@ -391,12 +392,12 @@ Focus on the most important and newsworthy facts. Extract 5-15 key facts."""
 
         # Save synthesized content to database
         if save_to_db:
-            self._save_synthesis_to_db(schema, storyline_id, synthesized)
+            self._save_synthesis_to_db(domain, schema, storyline_id, synthesized)
 
         return synthesized
 
     def _save_synthesis_to_db(
-        self, schema: str, storyline_id: int, synthesized: SynthesizedArticle
+        self, domain: str, schema: str, storyline_id: int, synthesized: SynthesizedArticle
     ) -> None:
         """Save synthesized content to the storyline record"""
         try:
@@ -427,11 +428,35 @@ Focus on the most important and newsworthy facts. Extract 5-15 key facts."""
                     ),
                 )
 
+                cur.execute(
+                    "SELECT title FROM storylines WHERE id = %s",
+                    (storyline_id,),
+                )
+                sl_row = cur.fetchone()
+                sl_title = sl_row[0] if sl_row else None
+
                 conn.commit()
                 logger.info(
                     f"Saved synthesis for storyline {storyline_id} ({synthesized.word_count} words)"
                 )
             conn.close()
+            try:
+                from services.saved_intel_service import save_intel_output
+
+                save_intel_output(
+                    content_type="storyline_synthesis",
+                    subject_type="storyline",
+                    subject_id=storyline_id,
+                    content_md=markdown,
+                    domain_key=domain,
+                    title=sl_title or synthesized.title,
+                    metadata={
+                        "word_count": synthesized.word_count,
+                        "quality_score": synthesized.quality_score,
+                    },
+                )
+            except Exception as save_err:
+                logger.warning("save_intel_output storyline_synthesis: %s", save_err)
         except Exception as e:
             logger.error(f"Failed to save synthesis: {e}")
 

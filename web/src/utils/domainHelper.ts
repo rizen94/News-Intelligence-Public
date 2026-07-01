@@ -19,13 +19,13 @@ export interface Domain {
   schema: string;
 }
 
-/** Used when the API is unreachable or returned no domains (SSR, offline, boot). Template silos — not legacy keys. */
+/** Used when the API is unreachable or returned no domains (SSR, offline, boot). */
 const FALLBACK_DOMAINS: Domain[] = [
+  { key: 'legal', name: 'Legal', schema: 'legal' },
+  { key: 'medicine', name: 'Medicine', schema: 'medicine' },
+  { key: 'artificial-intelligence', name: 'Artificial Intelligence', schema: 'artificial_intelligence' },
   { key: 'politics', name: 'Politics', schema: 'politics' },
   { key: 'finance', name: 'Finance', schema: 'finance' },
-  { key: 'artificial-intelligence', name: 'Artificial Intelligence', schema: 'artificial_intelligence' },
-  { key: 'medicine', name: 'Medicine', schema: 'medicine' },
-  { key: 'legal', name: 'Legal', schema: 'legal' },
 ];
 
 let _cachedDomains: Domain[] | null = null;
@@ -82,7 +82,7 @@ export const DOMAIN_KEYS_LIST: DomainKey[] = FALLBACK_DOMAINS.map(d => d.key);
 
 export function getDefaultDomainKey(): DomainKey {
   const list = domainsList();
-  return list[0]?.key ?? 'politics';
+  return list[0]?.key ?? FALLBACK_DOMAINS[0].key;
 }
 
 /** Full URL for registry_domains — aligned with getCurrentApiUrl / getApiOrigin (see apiConnectionManager health). */
@@ -233,5 +233,5 @@ export function formatDomainLabel(
  */
 export const getDomainSchema = (domain: DomainKey): string => {
   const domainObj = getDomain(domain);
-  return domainObj?.schema || 'politics_2';
+  return domainObj?.schema || FALLBACK_DOMAINS[0].schema;
 };

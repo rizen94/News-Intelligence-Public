@@ -155,10 +155,9 @@ def reload_config() -> None:
 
 
 def _normalise_domain_key(domain_key: str) -> str:
-    k = domain_key.lower().strip().replace("_", "-")
-    if k in ("sciencetech", "science tech", "science-tech"):
-        return "artificial-intelligence"
-    return k
+    from shared.pipeline_domain_sql import normalize_legacy_domain_key
+
+    return normalize_legacy_domain_key(domain_key)
 
 
 def _float(val: Any, default: float) -> float:

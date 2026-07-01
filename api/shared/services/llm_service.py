@@ -22,7 +22,28 @@ from config.settings import (
     OLLAMA_MODEL_EXTRACTION,
     OLLAMA_MODEL_PHI,
     OLLAMA_POP_OS_HOST,
+    OLLAMA_TIMEOUT,
 )
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
+
+
+def _httpx_ollama_timeout(lane: str | None = None) -> float:
+    try:
+        default = float(env_str("OLLAMA_TIMEOUT", str(OLLAMA_TIMEOUT)))
+    except ValueError:
+        default = float(OLLAMA_TIMEOUT)
+    lane_key = (lane or "").strip().lower()
+    if lane_key == "gpu":
+        try:
+            return float(env_str("OLLAMA_GPU_TIMEOUT", env_str("BULK_OLLAMA_TIMEOUT", str(default))))
+        except ValueError:
+            return default
+    if lane_key == "cpu":
+        try:
+            return float(env_str("OLLAMA_CPU_TIMEOUT", str(default)))
+        except ValueError:
+            return default
+    return default
 
 logger = logging.getLogger(__name__)
 
@@ -64,14 +85,14 @@ def _get_lane_semaphore(execution_lane: str | None, dual_enabled: bool) -> async
     lane = (execution_lane or "gpu").strip().lower()
     if lane == "cpu":
         global _ollama_cpu_semaphore, _ollama_cpu_semaphore_loop
-        cpu_cap = max(1, int(os.environ.get("OLLAMA_CPU_CONCURRENCY", "6")))
+        cpu_cap = max(1, int(env_str("OLLAMA_CPU_CONCURRENCY", "6")))
         _ollama_cpu_semaphore, _ollama_cpu_semaphore_loop = _loop_bound_semaphore(
             _ollama_cpu_semaphore, _ollama_cpu_semaphore_loop, cpu_cap
         )
         return _ollama_cpu_semaphore
 
     global _ollama_gpu_semaphore, _ollama_gpu_semaphore_loop
-    gpu_cap = max(1, int(os.environ.get("OLLAMA_GPU_CONCURRENCY", "6")))
+    gpu_cap = max(1, int(env_str("OLLAMA_GPU_CONCURRENCY", "6")))
     _ollama_gpu_semaphore, _ollama_gpu_semaphore_loop = _loop_bound_semaphore(
         _ollama_gpu_semaphore, _ollama_gpu_semaphore_loop, gpu_cap
     )
@@ -135,34 +156,35 @@ class LLMService:
     def __init__(self, ollama_base_url: str | None = None):
         self.ollama_base_url = (ollama_base_url or OLLAMA_HOST).rstrip("/")
         self.ollama_cpu_host = (
-            os.environ.get("OLLAMA_CPU_HOST", self.ollama_base_url).rstrip("/")
+            env_str("OLLAMA_CPU_HOST", self.ollama_base_url).rstrip("/")
         )
         self.ollama_gpu_host = (
-            os.environ.get("OLLAMA_GPU_HOST", self.ollama_base_url).rstrip("/")
+            env_str("OLLAMA_GPU_HOST", self.ollama_base_url).rstrip("/")
         )
         # popOS host for 70B model - heavy summarization work on RTX5090
         self.ollama_pop_os_host = OLLAMA_POP_OS_HOST.rstrip("/")
-        self.dual_host_enabled = os.environ.get(
+        self.dual_host_enabled = env_str(
             "OLLAMA_DUAL_HOST_ROUTING_ENABLED", "false"
         ).lower() in ("1", "true", "yes")
-        self.client = httpx.AsyncClient(
-            timeout=180.0
-        )  # Increased timeout to 180s for comprehensive analysis
+        base_timeout = _httpx_ollama_timeout()
+        cpu_timeout = _httpx_ollama_timeout("cpu")
+        gpu_timeout = _httpx_ollama_timeout("gpu")
+        self.client = httpx.AsyncClient(timeout=base_timeout)
         self.cpu_client = (
             self.client
             if self.ollama_cpu_host == self.ollama_base_url
-            else httpx.AsyncClient(timeout=180.0)
+            else httpx.AsyncClient(timeout=cpu_timeout)
         )
         self.gpu_client = (
             self.client
             if self.ollama_gpu_host == self.ollama_base_url
-            else httpx.AsyncClient(timeout=180.0)
+            else httpx.AsyncClient(timeout=gpu_timeout)
         )
         # popOS client for 70B model on remote RTX5090
         self.pop_os_client = (
             self.client
             if self.ollama_pop_os_host == self.ollama_base_url
-            else httpx.AsyncClient(timeout=300.0)
+            else httpx.AsyncClient(timeout=gpu_timeout)
         )
         self._pop_os_available = True
         self._pop_os_last_check = None
@@ -342,7 +364,7 @@ class LLMService:
         base_url, cb_key = self._resolve_sync_execution_target(model=model_type, execution_lane=execution_lane)
 
         try:
-            with httpx.Client(timeout=300.0) as sync_client:  # 300s for 70B on popOS
+            with httpx.Client(timeout=_httpx_ollama_timeout()) as sync_client:
                 response = sync_client.post(
                     f"{base_url}/api/generate",
                     json={
@@ -681,22 +703,40 @@ class LLMService:
             from shared.services.ollama_model_policy import (
                 InvocationKind,
                 keep_alive_for_invocation,
+                num_ctx_for_invocation,
                 num_predict_for_invocation,
             )
 
             kind = invocation_kind if isinstance(invocation_kind, InvocationKind) else None
+            opts: dict = {
+                "temperature": 0.7,
+                "top_p": 0.9,
+                "num_predict": num_predict_for_invocation(kind),
+            }
+            num_ctx = num_ctx_for_invocation(kind)
+            if num_ctx is not None:
+                opts["num_ctx"] = num_ctx
+            model_name = model.value
+            if kind == InvocationKind.STRUCTURED_EXTRACTION:
+                override = (
+                    env_str("BULK_EXTRACTION_MODEL", "").strip()
+                    or env_str("OLLAMA_MODEL_EXTRACTION", "").strip()
+                )
+                if override:
+                    model_name = override
+            lane = (execution_lane or _llm_execution_lane.get() or "gpu").strip().lower()
+            if lane == "cpu":
+                cpu_extraction = env_str("BULK_CPU_EXTRACTION_MODEL", "").strip()
+                if cpu_extraction:
+                    model_name = cpu_extraction
             response = await client.post(
                 f"{base_url}/api/generate",
                 json={
-                    "model": model.value,
+                    "model": model_name,
                     "prompt": prompt,
                     "stream": False,
                     "keep_alive": keep_alive_for_invocation(kind),
-                    "options": {
-                        "temperature": 0.7,
-                        "top_p": 0.9,
-                        "num_predict": num_predict_for_invocation(kind),
-                    },
+                    "options": opts,
                 },
             )
 
@@ -773,3 +813,10 @@ class LLMService:
 
 # Global LLM service instance
 llm_service = LLMService()
+
+
+def reset_llm_service() -> LLMService:
+    """Recreate global LLMService after env routing changes (bulk PopOS offload)."""
+    global llm_service
+    llm_service = LLMService()
+    return llm_service

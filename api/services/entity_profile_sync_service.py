@@ -10,6 +10,7 @@ import logging
 import os
 
 from shared.domain_registry import resolve_domain_schema
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -17,14 +18,14 @@ logger = logging.getLogger(__name__)
 def _mention_backfill_limit() -> int:
     """Contexts per domain to refresh per round (link_context_to_article_entities)."""
     try:
-        return max(50, int(os.environ.get("ENTITY_PROFILE_SYNC_MENTION_BACKFILL_LIMIT", "10000")))
+        return max(50, int(env_str("ENTITY_PROFILE_SYNC_MENTION_BACKFILL_LIMIT", "10000")))
     except ValueError:
         return 10_000
 
 
 def _mention_backfill_rounds() -> int:
     try:
-        return max(1, min(50, int(os.environ.get("ENTITY_PROFILE_SYNC_MENTION_BACKFILL_ROUNDS", "3"))))
+        return max(1, min(50, int(env_str("ENTITY_PROFILE_SYNC_MENTION_BACKFILL_ROUNDS", "3"))))
     except ValueError:
         return 3
 

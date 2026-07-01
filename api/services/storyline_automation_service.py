@@ -11,6 +11,7 @@ from typing import Any
 
 from shared.database.connection import get_db_connection
 from shared.services.domain_aware_service import DomainAwareService
+from shared.storyline_article_counts import sync_counts_update_sql
 
 from services.domain_synthesis_config import get_domain_synthesis_config
 from services.quality_monitoring_service import get_quality_monitoring_service
@@ -1453,13 +1454,11 @@ class StorylineAutomationService(DomainAwareService):
                     cur.execute(
                         f"""
                         UPDATE {self.schema}.storylines
-                        SET article_count = (
-                            SELECT COUNT(*) FROM {self.schema}.storyline_articles WHERE storyline_id = %s
-                        ),
+                        SET {sync_counts_update_sql(self.schema)},
                         updated_at = %s
                         WHERE id = %s
                         """,
-                        (storyline_id, datetime.now(), storyline_id),
+                        (storyline_id, storyline_id, datetime.now(), storyline_id),
                     )
 
                 conn.commit()

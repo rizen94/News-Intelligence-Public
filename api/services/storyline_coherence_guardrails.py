@@ -13,6 +13,7 @@ import os
 import re
 from collections import Counter
 from typing import Any
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 # Align with claim_extraction_service._GENERIC_SUBJECTS (avoid importing that module at package load).
 _GENERIC_SUBJECTS = frozenset(
@@ -221,7 +222,7 @@ _EARNINGS_COHERENCE_THEME_RE = re.compile(
 
 
 def guardrails_enabled() -> bool:
-    return os.getenv("STORYLINE_COHERENCE_GUARDRAILS", "1").strip().lower() not in (
+    return env_str("STORYLINE_COHERENCE_GUARDRAILS", "1").strip().lower() not in (
         "0",
         "false",
         "no",
@@ -230,7 +231,7 @@ def guardrails_enabled() -> bool:
 
 def min_distinct_specific_entities() -> int:
     try:
-        return max(1, int(os.getenv("STORYLINE_MIN_DISTINCT_SPECIFIC_ENTITIES", "2")))
+        return max(1, int(env_str("STORYLINE_MIN_DISTINCT_SPECIFIC_ENTITIES", "2")))
     except ValueError:
         return 2
 

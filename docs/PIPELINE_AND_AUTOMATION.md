@@ -11,6 +11,12 @@
 | Task names, `depends_on`, phase numbers, default intervals | `api/services/automation_manager.py` → `self.schedules` |
 | Per-task implementation | Same file → `async def _execute_<task_name>` (grep `_execute_`) |
 | Pending / backlog counts (what "has work" means) | `api/services/backlog_metrics.py` → `_count_*` helpers, `BATCH_SIZE_PER_TASK`, `SKIP_WHEN_EMPTY` |
+| Unified intake backlog (actionable vs legacy backfill) | `api/shared/unified_intake_backlog.py` → `get_unified_intake_backlog_stats()`, `sql_actionable_unified_intake()` |
+| Unified intake automation drain | `api/shared/unified_intake_extraction_runner.py` |
+| Dual-lane PopOS + Widow extraction routing | `api/shared/bulk_catchup_llm_routing.py`, `api/shared/pipeline_resource_policy.py` |
+| Fast NER pre-pass (spaCy + GLiNER) | `api/shared/fast_ner_lane.py` |
+| Semantic context chunking | `api/shared/context_chunking.py` |
+| Signal-first article lanes | `api/shared/article_signal_gate.py` |
 | Orchestrator budgets / collection interval overrides | `api/config/orchestrator_governance.yaml` |
 | Domain silos — **processing / backlog** | `shared.domain_registry` → `pipeline_url_schema_pairs()`, `get_pipeline_schema_names_active()`, `get_pipeline_active_domain_keys()` (`PIPELINE_INCLUDE` / `PIPELINE_EXCLUDE`) |
 | Domain silos — **RSS** (default full registry) | `collect_rss_feeds` → `url_schema_pairs()` unless `RSS_INGEST_MIRROR_PIPELINE=true` (then pipeline pairs); minus `RSS_INGEST_EXCLUDE_DOMAIN_KEYS` |
@@ -122,11 +128,89 @@ For each run, **success** means: *the phase consumed a bounded batch of eligible
 | **`entity_profile_sync`** | Canonical / profile drift per pipeline domain. | Inactive domains (not in pipeline). | Profiles for resolver, RAG, claims. |
 | **`metadata_enrichment`** | Articles with content length > 50 and metadata not marked done. | Below threshold; domain not in pipeline counts. | `quality_score`, categories, `metadata.enrichment_done`. |
 | **`ml_processing`** | Same readiness as ML gate; `ml_processed` false. | Fails gate; missing columns handled gracefully. | Summaries / features for storylines and UI. |
-| **`entity_extraction`** | Articles without `article_entities` rows, with sufficient content and enrichment timing rules (`automation_manager` SQL). | **Strict domains** (`ENTITY_EXTRACTION_RESOLVE_STRICT_DOMAIN_KEYS`): mentions that do not resolve to existing `entity_canonical` are skipped (no new canonical from extraction). | `article_entities` → context mentions / entity graph. |
-| **`claim_extraction` / `claims_to_facts`** | Contexts without claims; high-confidence claims for promotion. | Low confidence, missing subjects; batch limits. | `versioned_facts` after resolution. |
+| **`unified_intake_extraction`** | When **`UNIFIED_INTAKE_EXTRACTION_ENABLED=true`** (Widow prod default): **actionable** articles still needing unified LLM (`UNIFIED_INTAKE_LEGACY_AWARE_BACKLOG=true` excludes legacy-complete rows). | Legacy-complete articles (entities + events + scores present) → marker backfill only, not LLM. When unified **off**: phase does not schedule. | Fan-out to extract tables + pass markers. |
+| **`entity_extraction` / `event_extraction` / `sentiment_analysis` / `quality_scoring`** | Legacy intake when unified is **off**. | When unified is **on**: Monitor pending **0** (phases suppressed). | Per-phase extract tables / scores. |
+| **`claim_extraction` / `claims_to_facts`** | **Actionable** contexts without claims (min text length, no `claim_extraction` pass marker). | Pass-markered empty outcomes (`parsed_empty`, `no_claims_after_filters`), text too short, batch limits. ~23k **terminal** no-claim rows are inventory, not backlog — see `get_context_claim_backlog_stats()`. | `versioned_facts` after resolution. |
 | **`event_tracking` / v5 event stack** | Unlinked contexts or articles for event pipeline; schema from pipeline list. | Domains outside pipeline; rows failing extraction heuristics. | Tracked events → briefings, cross-domain, watchlist. |
 | **Storyline family** (`discovery`, `proactive_detection`, `processing`, `automation`, `enrichment`, `rag_enhancement`) | Per-phase SQL/backlog (see `_count_*`); **only pipeline domains** in batch loops. | Inactive storylines, automation off, cooldowns, caps per domain. | Richer storylines → editorial, digest, refinement queue. |
 | **`legislative_references`** | Unscanned articles in configured **legislative** domain keys; Congress.gov configured. | No bill mentions; API key missing; rate limits (`SLEEP_BETWEEN_*`). | `legislative_references` snapshots. |
+
+#### Unified intake extraction (`UNIFIED_INTAKE_EXTRACTION_ENABLED=true`)
+
+When enabled, **`unified_intake_extraction`** replaces scheduled **`entity_extraction`**, **`event_extraction`**, **`sentiment_analysis`**, and **`quality_scoring`** (legacy executors remain for catch-up rollback). One batched PopOS GPU call per 2–3 articles fans out to:
+
+- `{schema}.article_entities` (+ dates/times/countries/keywords)
+- `intelligence.extracted_claims` (via inline `article_to_context` from enrich)
+- `public.chronological_events`
+- `articles.sentiment_score` / `quality_score`
+- Pass markers for all legacy phases + `unified_intake_extraction`
+
+**Inline context on enrich:** `content_enrichment` calls `sync_context_from_article_after_content_change` so new rows get `intelligence.contexts` without waiting for `context_sync`.
+
+**`entity_profile_build` gating:** runs only in nightly window or when extract bulk pending ≤ `PIPELINE_REFINEMENT_BULK_CLEAR_THRESHOLD` (default 50), and only for profiles with upstream-cleared article + context mentions (`ENTITY_PROFILE_BUILD_UPSTREAM_GATE`).
+
+| Env | Default | Role |
+|-----|---------|------|
+| `UNIFIED_INTAKE_EXTRACTION_ENABLED` | `true` | Opt-out: set `false` or `LEGACY_INTAKE_EXTRACTION_ENABLED=true` for per-phase intake |
+| `FAST_NER_ENABLED` | `true` | spaCy + GLiNER pre-pass before LLM entity fan-out |
+| `FAST_NER_BACKEND` | `both` | `spacy`, `gliner`, `both`, or `auto` |
+| `CONTEXT_CHUNKING_ENABLED` | `true` | Semantic multi-chunk contexts for long articles |
+| `UNIFIED_INTAKE_EXTRACTION_BATCH_SIZE` | `3` | Articles per LLM call |
+| `UNIFIED_INTAKE_EXTRACTION_PARALLEL` | `6` | Concurrent batch lanes |
+| `UNIFIED_INTAKE_EXTRACTION_RUN_BUDGET_SECONDS` | `0` | **0 = unlimited** drain until idle or stall; positive = circuit breaker only |
+| `PIPELINE_DRAIN_STALL_ROUNDS` | `3` | Consecutive zero-progress rounds before yield |
+| `INTAKE_FUSION_ENABLED` | `true` | Extended schema (`topic_tags`, `storyline_hints`) + SQL tail |
+| `SPINE_PIPELINE_MODE` | `legacy` | `ordered` = spine conductor owns enrich→fuse→sql_tail; `shadow` = log only |
+| `SPINE_SQL_TAIL_BATCH_LIMIT` | `200` | Pass 2 SQL batch size (claims_to_facts, profile link, fast topic) |
+| `UNIFIED_INTAKE_LEGACY_AWARE_BACKLOG` | `true` | Count/schedule only articles needing unified LLM; legacy-complete → pass-marker backfill |
+| `UNIFIED_INTAKE_BACKLOG_STATS_TTL_SECONDS` | `300` | Cache TTL for heavy unified backlog stats query |
+| `BACKLOG_CACHE_TTL_SECONDS` | `90` | Cache TTL for `get_all_pending_counts()` (single-flight lock prevents thundering herd) |
+| `ENTITY_PROFILE_BUILD_ANYTIME` | unset | Bypass profile build gating |
+| `ENTITY_PROFILE_BUILD_UPSTREAM_GATE` | `true` | Per-profile upstream SQL filter |
+
+**Legacy-aware backlog (June 2026):** Tens of thousands of articles may lack a `unified_intake_extraction` pass marker after cutover from legacy per-phase intake. Most already have entities, events, and scores — re-running unified LLM on them is wasteful. When `UNIFIED_INTAKE_LEGACY_AWARE_BACKLOG=true`:
+
+| Metric | Meaning |
+|--------|---------|
+| `total_missing_unified_pass` | Inventory — any eligible article without unified pass marker |
+| `legacy_backfill_eligible` | Marker-only backfill (no GPU) |
+| `actionable_unified_intake` | **Monitor `pending_records` and automation selection** |
+
+Bulk marker backfill: `PYTHONPATH=api python3 api/scripts/backfill_unified_intake_pass_from_legacy.py`. Diagnostic: `api/scripts/diagnose_unified_intake_backlog_detail.py`.
+
+**DB connection discipline:** Unified runner uses **one short-lived connection per domain** for article selection, then releases before LLM batches. Fan-out uses **one connection per article** with a single commit. Do not hold worker pool connections across Ollama calls.
+
+#### Intake Fusion (2-pass spine, June 2026)
+
+When `INTAKE_FUSION_ENABLED=true` (default with unified intake):
+
+| Pass | Step | LLM |
+|------|------|-----|
+| 0 | `content_enrichment` + inline `context_sync` | No |
+| 1 | `unified_intake_extraction` — entities, claims, events, scores, `topic_tags` | One batched call per group |
+| 2 | `spine_sql_tail` — `claims_to_facts`, profile links, fast topic match, event context markers | No |
+
+Drains use **stall detection** (`PIPELINE_DRAIN_STALL_ROUNDS`) instead of wall-clock budgets. Steady-state `*_RUN_BUDGET_SECONDS=0` means drain until pending floor.
+
+`SPINE_PIPELINE_MODE=ordered` runs enrich → fuse → sql tail via `spine_pipeline_conductor` and suppresses competing spine phase enqueues. Rollback: `INTAKE_FUSION_ENABLED=false`, `SPINE_PIPELINE_MODE=legacy`.
+
+#### Post-spine assembly (link graph + editorial room, June 2026)
+
+After spine completes, three passes replace ~25 competing automation phases:
+
+| Pass | Owner | LLM |
+|------|--------|-----|
+| 0 | `link_indexer_service` (hooked from `spine_sql_tail`) | No — entity edges, proposals, `story_entity_index` |
+| 1 | `assembly_conductor_service` (`ASSEMBLY_PIPELINE_MODE=ordered`) | Rare — distillation, event tail, continuation, assembly, automation, ambiguous entity resolve |
+| 2 | `editorial_room_loop_service` | Yes — iterative Ollama + vault `25_Connections/` |
+
+Env defaults (Widow rollout): `ASSEMBLY_PIPELINE_MODE=shadow` → `ordered`, `EDITORIAL_ROOM_LOOP_ENABLED=true`, `CONTENT_REFINEMENT_API_ENQUEUE_ONLY=true`, `AUTO_ENQUEUE_COMPREHENSIVE_RAG=0`.
+
+Retired schedulers: `POST_SPINE_RETIRED_PHASES` in `api/shared/assembly_phase_order.py` + `AUTOMATION_DISABLED_SCHEDULES`. Monitor zeros retired phase pending via `apply_intake_mode_pending_mask()`.
+
+Investigate shell graph expansion: `GET /api/investigation/graph_neighbors?seed_kind=entity&seed_id=…`.
+
+Quality gate: `api/scripts/verify_intake_fusion_quality.py --limit 100 --dry-run`.
 
 ### Operator Validation
 
@@ -219,7 +303,7 @@ Below: **Task** = scheduler key in `schedules`. **Backlog key** = name in `backl
 | `entity_extraction` | 300s | `collection_cycle` | `_execute_entity_extraction` | Articles pending entity phase | `{schema}.article_entities`, `articles.entities` JSONB |
 | `quality_scoring` | 300s | `collection_cycle` | `_execute_quality_scoring` | Same content-readiness gate as ML | `quality_score` |
 | `sentiment_analysis` | 300s | `collection_cycle` | `_execute_sentiment_analysis` | Same content-readiness gate as ML | Sentiment fields |
-| `topic_clustering` | 300s | `collection_cycle` | `_execute_topic_clustering` | Articles for clustering / topic backlog | `topics`, assignments, clusters |
+| `topic_clustering` | 300s | `collection_cycle` | `_execute_topic_clustering` | Articles for clustering / topic backlog | `topic_clusters`, `article_topic_clusters`, `topic_keywords` (fast lane) |
 
 ### Phase 6–8 — Storylines and RAG
 

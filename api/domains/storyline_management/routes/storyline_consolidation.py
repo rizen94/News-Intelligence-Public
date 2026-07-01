@@ -9,6 +9,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Path, Query
 from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
+from shared.storyline_article_counts import storyline_article_count_subquery
 
 logger = logging.getLogger(__name__)
 
@@ -195,17 +196,18 @@ async def get_mega_storylines(
 
         try:
             with conn.cursor() as cur:
+                ac_sub = storyline_article_count_subquery(schema, "s")
                 cur.execute(
                     f"""
                     SELECT
-                        s.id, s.title, s.description, s.article_count,
+                        s.id, s.title, s.description, {ac_sub} AS article_count,
                         s.consolidation_score, s.merge_count, s.created_at,
                         (SELECT COUNT(*) FROM {schema}.storylines child
                          WHERE child.parent_storyline_id = s.id) as child_count
                     FROM {schema}.storylines s
                     WHERE s.is_mega_storyline = TRUE
                     AND s.merged_into_id IS NULL
-                    ORDER BY s.article_count DESC
+                    ORDER BY {ac_sub} DESC
                     LIMIT %s
                 """,
                     (limit,),
@@ -214,13 +216,14 @@ async def get_mega_storylines(
                 rows = cur.fetchall()
 
                 mega_storylines = []
+                child_ac = storyline_article_count_subquery(schema, "st")
                 for row in rows:
                     # Get child storylines
                     cur.execute(
                         f"""
-                        SELECT id, title, article_count
-                        FROM {schema}.storylines
-                        WHERE parent_storyline_id = %s
+                        SELECT st.id, st.title, {child_ac} AS article_count
+                        FROM {schema}.storylines st
+                        WHERE st.parent_storyline_id = %s
                         ORDER BY article_count DESC
                     """,
                         (row[0],),

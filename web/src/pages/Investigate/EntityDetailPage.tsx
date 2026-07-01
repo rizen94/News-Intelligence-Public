@@ -12,7 +12,6 @@ import {
   Box,
   Skeleton,
   Stack,
-  Chip,
 } from '@mui/material';
 import ArrowBack from '@mui/icons-material/ArrowBack';
 import AutoAwesome from '@mui/icons-material/AutoAwesome';
@@ -20,8 +19,11 @@ import {
   contextCentricApi,
   type EntityProfile,
   type NriEntityBridge,
+  type NriEntityClaimRow,
 } from '@/services/api/contextCentric';
 import OrchestratorTagsEditor from '@/components/shared/OrchestratorTagsEditor/OrchestratorTagsEditor';
+import { FtmBridgePanel } from '@/components/nri/FtmBridgePanel';
+import { UiCard } from '@/components/ui';
 
 function displayName(p: EntityProfile): string {
   const meta = p.metadata as Record<string, unknown> | null;
@@ -33,6 +35,7 @@ export default function EntityDetailPage() {
   const navigate = useNavigate();
   const [profile, setProfile] = useState<EntityProfile | null>(null);
   const [bridge, setBridge] = useState<NriEntityBridge | null>(null);
+  const [claims, setClaims] = useState<NriEntityClaimRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -46,11 +49,13 @@ export default function EntityDetailPage() {
     Promise.all([
       contextCentricApi.getEntityProfile(numId),
       contextCentricApi.getNriEntityBridge(numId),
+      contextCentricApi.getNriEntityClaims({ entity_profile_id: numId, limit: 30 }),
     ])
-      .then(([p, b]) => {
+      .then(([p, b, c]) => {
         if (!cancelled) {
           setProfile(p);
           setBridge(b?.bridge ?? null);
+          setClaims(c?.items ?? []);
         }
       })
       .catch(() => {
@@ -102,22 +107,14 @@ export default function EntityDetailPage() {
           <CardContent>
             {bridge && (
               <Box sx={{ mb: 2 }}>
-                <Typography variant='subtitle2' gutterBottom>
-                  Identity spine (NRI)
-                </Typography>
-                <Stack direction='row' spacing={1} flexWrap='wrap' useFlexGap>
-                  <Chip label={`FtM: ${bridge.ftm_id}`} size='small' color='primary' variant='outlined' />
-                  {bridge.caption && <Chip label={bridge.caption} size='small' />}
-                  {bridge.bridge_score != null && (
-                    <Chip label={`score ${bridge.bridge_score.toFixed(3)}`} size='small' />
-                  )}
-                  <Button
-                    size='small'
-                    onClick={() => navigate(`/${domain}/investigate/entity-resolution`)}
-                  >
-                    NRI queue
-                  </Button>
-                </Stack>
+                <FtmBridgePanel bridge={bridge} />
+                <Button
+                  size='small'
+                  sx={{ mt: 1 }}
+                  onClick={() => navigate(`/${domain}/investigate/entity-resolution`)}
+                >
+                  NRI resolution queue
+                </Button>
               </Box>
             )}
             <Box sx={{ mb: 2 }}>
@@ -172,6 +169,28 @@ export default function EntityDetailPage() {
                       </Box>
                     ))}
               </Box>
+            )}
+            {claims.length > 0 && (
+              <UiCard title='Claims mentioning this entity' subheader='FtM-linked contexts only'>
+                <Stack spacing={1}>
+                  {claims.map(c => (
+                    <Box key={c.id}>
+                      <Typography variant='body2'>
+                        <strong>{c.subject_text ?? '—'}</strong> {c.predicate_text ?? '—'}{' '}
+                        {c.object_text ?? ''}
+                      </Typography>
+                      <Button
+                        size='small'
+                        onClick={() =>
+                          navigate(`/${domain}/discover/contexts/${c.context_id}`)
+                        }
+                      >
+                        Context #{c.context_id}
+                      </Button>
+                    </Box>
+                  ))}
+                </Stack>
+              </UiCard>
             )}
           </CardContent>
         </Card>

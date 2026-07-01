@@ -36,10 +36,16 @@ if not os.environ.get("DB_PASSWORD") and os.path.exists(os.path.join(ROOT, ".db_
     except OSError:
         pass
 
-DOMAIN_SCHEMAS = ("politics", "finance", "science_tech")
+DOMAIN_SCHEMAS: tuple[str, ...] = ()
+
+# Legacy public tables — schema exists but live pipeline uses domain silos + intelligence.*
+LEGACY_OPTIONAL_CHECKS: list[tuple[str, str, str, list[str]]] = [
+    ("event_extraction INSERT (legacy)", "public", "chronological_events", ["event_id", "source_article_id", "title", "event_fingerprint"]),
+    ("event_deduplication (legacy)", "public", "chronological_events", ["canonical_event_id"]),
+]
 
 # (area_label, schema_or_DOMAIN_TOKEN, table, columns)
-# Use "__domain__" to fan out to politics, finance, science_tech
+# Use "__domain__" to fan out to pipeline-active schemas from domain_registry
 RAW_CHECKS: list[tuple[str, str, str, list[str]]] = [
     ("RSS / collection → articles", "__domain__", "articles", ["id", "title", "url", "content", "processing_status"]),
     ("RSS / collection", "__domain__", "rss_feeds", ["id", "feed_url"]),
@@ -48,18 +54,33 @@ RAW_CHECKS: list[tuple[str, str, str, list[str]]] = [
     ("entity_extraction", "__domain__", "article_entities", ["article_id", "entity_name", "canonical_entity_id"]),
     ("entity_extraction", "__domain__", "entity_canonical", ["id", "canonical_name"]),
     ("event_extraction gates + UPDATE", "__domain__", "articles", ["timeline_processed", "timeline_events_generated"]),
-    ("event_extraction INSERT", "public", "chronological_events", ["event_id", "source_article_id", "title", "event_fingerprint"]),
-    ("event_deduplication", "public", "chronological_events", ["canonical_event_id"]),
     ("context_sync", "intelligence", "contexts", ["id", "domain_key", "content"]),
     ("context_sync", "intelligence", "article_to_context", ["article_id", "domain_key", "context_id"]),
     ("document_processing", "intelligence", "processed_documents", ["id", "metadata", "extracted_sections"]),
     ("automation_run_history", "public", "automation_run_history", ["phase_name", "finished_at", "success"]),
     ("automation_state", "public", "automation_state", ["key", "value"]),
+    ("topic_clustering", "__domain__", "topic_clusters", ["id", "cluster_name", "article_count"]),
+    ("topic_clustering", "__domain__", "article_topic_clusters", ["article_id", "topic_cluster_id"]),
+    ("topic_clustering (optional)", "__domain__", "topic_keywords", ["topic_cluster_id", "keyword"]),
     ("applied_migrations ledger", "public", "applied_migrations", ["migration_id", "applied_at"]),
 ]
 
 
+def _pipeline_domain_schemas() -> tuple[str, ...]:
+    try:
+        from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
+
+        keys = get_pipeline_active_domain_keys()
+        if keys:
+            return tuple(resolve_domain_schema(k) for k in keys)
+    except Exception:
+        pass
+    return ("politics", "finance")
+
+
 def expand_raw() -> list[tuple[str, str, str, list[str]]]:
+    global DOMAIN_SCHEMAS
+    DOMAIN_SCHEMAS = _pipeline_domain_schemas()
     out: list[tuple[str, str, str, list[str]]] = []
     for area, schema, table, cols in RAW_CHECKS:
         if schema == "__domain__":
@@ -67,6 +88,19 @@ def expand_raw() -> list[tuple[str, str, str, list[str]]]:
                 out.append((f"{area} [{dom}]", dom, table, cols))
         else:
             out.append((area, schema, table, cols))
+    return out
+
+
+def expand_legacy() -> list[tuple[str, str, str, list[str]]]:
+    colmap: dict[tuple[str, str], set[str]] = defaultdict(set)
+    areas: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for area, schema, table, cols in LEGACY_OPTIONAL_CHECKS:
+        key = (schema, table)
+        colmap[key].update(cols)
+        areas[key].append(area)
+    out: list[tuple[str, str, str, list[str]]] = []
+    for (schema, table), cols in colmap.items():
+        out.append((areas[(schema, table)][0], schema, table, sorted(cols)))
     return out
 
 
@@ -165,9 +199,28 @@ def main() -> int:
                 missing_any = True
             else:
                 note = ""
-                if table == "chronological_events" and rc == 0:
-                    note = " *(`event_extraction` may still be idle or LLM returned no events)*"
                 out(f"| `{schema}.{table}` | OK | {rc_s} | {label_short} |{note}")
+
+        out()
+        out("## Legacy / optional tables (not required for active pipeline)")
+        out()
+        out("| `schema.table` | Status | Rows | Notes |")
+        out("|------------------|--------|------|-------|")
+        leg_colmap, leg_areas = merge_by_table(expand_legacy())
+        for (schema, table) in sorted(leg_colmap.keys(), key=lambda x: (x[0], x[1])):
+            req = sorted(leg_colmap[(schema, table)])
+            area_labels = leg_areas[(schema, table)]
+            label_short = "; ".join(sorted(set(area_labels))[:2])
+            if not table_exists(cur, schema, table):
+                out(f"| `{schema}.{table}` | missing (legacy) | — | {label_short} |")
+                continue
+            cols = table_columns(cur, schema, table)
+            miss = [c for c in req if c not in cols]
+            rc = row_count(cur, schema, table)
+            rc_s = f"{rc:,}" if rc is not None else "n/a"
+            status = "LEGACY OK" if not miss else f"LEGACY INCOMPLETE `{miss}`"
+            empty_note = " (empty — live events use domain silos)" if rc == 0 else ""
+            out(f"| `{schema}.{table}` | {status} | {rc_s} | {label_short}{empty_note} |")
 
         out()
         out("## Persistence signals (processed data landing)")
@@ -188,11 +241,20 @@ def main() -> int:
                 )
                 t, f = cur.fetchone()
                 out(f"| `{dom}.articles` timeline | processed={t:,} pending={f:,} |")
-        cur.execute(
-            "SELECT COUNT(*) FROM public.chronological_events WHERE extraction_timestamp > NOW() - INTERVAL '7 days'"
-        )
-        recent_ev = cur.fetchone()[0]
-        out(f"| `chronological_events` last 7d | {recent_ev:,} rows with recent extraction_timestamp |")
+        if table_exists(cur, "public", "chronological_events"):
+            cur.execute(
+                "SELECT COUNT(*) FROM public.chronological_events WHERE extraction_timestamp > NOW() - INTERVAL '7 days'"
+            )
+            recent_ev = cur.fetchone()[0]
+            out(f"| `chronological_events` last 7d (legacy) | {recent_ev:,} rows with recent extraction_timestamp |")
+        for dom in DOMAIN_SCHEMAS:
+            if table_exists(cur, dom, "articles"):
+                cur.execute(f'SELECT COUNT(*) FROM "{dom}".articles')
+                ac = cur.fetchone()[0]
+                out(f"| `{dom}.articles` total (active silo) | {ac:,} |")
+        if table_exists(cur, "intelligence", "contexts"):
+            cur.execute("SELECT COUNT(*) FROM intelligence.contexts")
+            out(f"| `intelligence.contexts` total | {cur.fetchone()[0]:,} |")
         cur.execute(
             """
             SELECT COUNT(*) FROM public.automation_run_history

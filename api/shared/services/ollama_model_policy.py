@@ -18,6 +18,7 @@ from config.settings import (
 
 # Import after settings to avoid cycles at collection time
 from shared.services.llm_service import ModelType, TaskType
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 
 class InvocationKind(str, Enum):
@@ -74,9 +75,9 @@ def resolve_model_for_invocation(
         return ModelType.LLAMA_8B
 
     if kind == InvocationKind.STRUCTURED_EXTRACTION:
-        if OLLAMA_USE_QWEN_FOR_EXTRACTION:
+        if env_bool("OLLAMA_USE_QWEN_FOR_EXTRACTION", OLLAMA_USE_QWEN_FOR_EXTRACTION):
             return ModelType.QWEN_25_7B
-        if OLLAMA_USE_SECONDARY_FOR_EXTRACTION:
+        if env_bool("OLLAMA_USE_SECONDARY_FOR_EXTRACTION", OLLAMA_USE_SECONDARY_FOR_EXTRACTION):
             return ModelType.MISTRAL_7B
         return ModelType.LLAMA_8B
 
@@ -122,7 +123,10 @@ def num_predict_for_invocation(kind: InvocationKind | None) -> int:
         InvocationKind.FAST_SIMPLE,
         InvocationKind.REAL_TIME_UI,
     ):
-        return 512
+        try:
+            return int(env_str("OLLAMA_EXTRACTION_NUM_PREDICT", "2048"))
+        except ValueError:
+            return 2048
     if kind in (
         InvocationKind.INTERACTIVE_SUMMARY,
         InvocationKind.BRIEFING_LEAD,
@@ -135,6 +139,18 @@ def num_predict_for_invocation(kind: InvocationKind | None) -> int:
     if kind == InvocationKind.FINANCE_GENERATION_HIGH:
         return 1200
     return 800
+
+
+def num_ctx_for_invocation(kind: InvocationKind | None) -> int | None:
+    """Cap context window for extraction — PopOS defaults to 32k which slows inference."""
+    import os
+
+    if kind == InvocationKind.STRUCTURED_EXTRACTION:
+        try:
+            return int(env_str("OLLAMA_EXTRACTION_NUM_CTX", "8192"))
+        except ValueError:
+            return 8192
+    return None
 
 
 def keep_alive_for_invocation(kind: InvocationKind | None) -> str:

@@ -34,6 +34,7 @@ from typing import Any
 
 from shared.database.connection import get_db_connection
 from shared.domain_registry import get_active_domain_keys
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -59,35 +60,35 @@ VALID_JOB_TYPES = frozenset(
 # ~70B narrative finisher + headline refiner share one GPU-friendly cap per batch
 _HEAVY_70B_JOB_TYPES = frozenset({JOB_NARRATIVE_FINISHER, JOB_HEADLINE_REFINER})
 _MAX_FINISHER_PER_CYCLE = int(
-    os.environ.get(
+    env_str(
         "NARRATIVE_FINISHER_MAX_INFLIGHT",
-        os.environ.get("CONTENT_REFINEMENT_MAX_FINISHER_JOBS_PER_CYCLE", "1"),
+        env_str("CONTENT_REFINEMENT_MAX_FINISHER_JOBS_PER_CYCLE", "1"),
     )
 )
-_MAX_JOBS_PER_CYCLE = int(os.environ.get("CONTENT_REFINEMENT_MAX_JOBS_PER_CYCLE", "4"))
+_MAX_JOBS_PER_CYCLE = int(env_str("CONTENT_REFINEMENT_MAX_JOBS_PER_CYCLE", "4"))
 # Claim enough pending rows to sort by "initial master narrative" vs refresh before applying caps
-_CLAIM_BATCH = int(os.environ.get("CONTENT_REFINEMENT_CLAIM_BATCH", "32"))
+_CLAIM_BATCH = int(env_str("CONTENT_REFINEMENT_CLAIM_BATCH", "32"))
 
 # Nightly window (local TZ): higher throughput for ~70B finisher catch-up
 _NIGHTLY_MAX_FINISHER = int(
-    os.environ.get(
+    env_str(
         "CONTENT_REFINEMENT_NIGHTLY_MAX_FINISHER_JOBS_PER_CYCLE",
         str(max(_MAX_FINISHER_PER_CYCLE, 2)),
     )
 )
 _NIGHTLY_MAX_JOBS = int(
-    os.environ.get(
+    env_str(
         "CONTENT_REFINEMENT_NIGHTLY_MAX_JOBS_PER_CYCLE",
         str(max(_MAX_JOBS_PER_CYCLE, 6)),
     )
 )
 _NIGHTLY_CLAIM_BATCH = int(
-    os.environ.get(
+    env_str(
         "CONTENT_REFINEMENT_NIGHTLY_CLAIM_BATCH",
         str(max(_CLAIM_BATCH, 48)),
     )
 )
-_NIGHTLY_MAX_BATCH_LOOPS = int(os.environ.get("NIGHTLY_GPU_REFINEMENT_MAX_BATCH_LOOPS", "500"))
+_NIGHTLY_MAX_BATCH_LOOPS = int(env_str("NIGHTLY_GPU_REFINEMENT_MAX_BATCH_LOOPS", "500"))
 
 _nightly_drain_lock = asyncio.Lock()
 
@@ -111,7 +112,7 @@ def _default_nightly_pipeline_window_active() -> bool:
 
 def nightly_gpu_refinement_exclusive_gpu_enabled() -> bool:
     """When True, automation defers other Ollama phases during the nightly refinement window."""
-    return os.environ.get("NIGHTLY_GPU_REFINEMENT_EXCLUSIVE_GPU", "0").lower() in (
+    return env_str("NIGHTLY_GPU_REFINEMENT_EXCLUSIVE_GPU", "0").lower() in (
         "1",
         "true",
         "yes",
@@ -242,7 +243,7 @@ def enqueue_initial_narrative_finisher(
     domain_key: str, storyline_id: int, *, source: str
 ) -> dict[str, Any]:
     """Queue ~70B master narrative at high priority (deduped per storyline/job_type)."""
-    if os.getenv("STORYLINE_AUTO_ENQUEUE_NARRATIVE_FINISHER", "1") == "0":
+    if env_str("STORYLINE_AUTO_ENQUEUE_NARRATIVE_FINISHER", "1") == "0":
         return {"success": True, "skipped": True, "reason": "disabled_by_env"}
     return enqueue_content_refinement(
         domain_key,
@@ -265,15 +266,22 @@ def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
 
     Disabled with AUTO_ENQUEUE_COMPREHENSIVE_RAG=0. Per-domain scan cap:
     AUTO_ENQUEUE_COMPREHENSIVE_RAG_PER_DOMAIN (default 8).
+    When CONTENT_REFINEMENT_API_ENQUEUE_ONLY=true (default), scheduler never auto-enqueues.
     """
-    if os.getenv("AUTO_ENQUEUE_COMPREHENSIVE_RAG", "1").lower() not in (
+    if env_str("CONTENT_REFINEMENT_API_ENQUEUE_ONLY", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return {"skipped": True, "reason": "api_enqueue_only", "enqueued": 0, "already_queued": 0}
+    if env_str("AUTO_ENQUEUE_COMPREHENSIVE_RAG", "1").lower() not in (
         "1",
         "true",
         "yes",
     ):
         return {"skipped": True, "reason": "disabled_by_env", "enqueued": 0, "already_queued": 0}
 
-    limit = max(1, int(os.environ.get("AUTO_ENQUEUE_COMPREHENSIVE_RAG_PER_DOMAIN", "8")))
+    limit = max(1, int(env_str("AUTO_ENQUEUE_COMPREHENSIVE_RAG_PER_DOMAIN", "8")))
     stats: dict[str, Any] = {"enqueued": 0, "already_queued": 0, "errors": 0, "by_domain": {}}
 
     for domain_key in sorted(get_active_domain_keys()):
@@ -400,7 +408,13 @@ def maybe_auto_enqueue_comprehensive_rag_from_scheduler() -> None:
     enqueue at drain start). Interval: AUTO_ENQUEUE_RAG_SCHEDULER_SECONDS (default 30).
     """
     global _last_scheduler_auto_enqueue_monotonic
-    if os.getenv("AUTO_ENQUEUE_COMPREHENSIVE_RAG", "1").lower() not in (
+    if env_str("CONTENT_REFINEMENT_API_ENQUEUE_ONLY", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return
+    if env_str("AUTO_ENQUEUE_COMPREHENSIVE_RAG", "1").lower() not in (
         "1",
         "true",
         "yes",
@@ -413,7 +427,7 @@ def maybe_auto_enqueue_comprehensive_rag_from_scheduler() -> None:
             return
     except Exception:
         pass
-    interval = float(os.environ.get("AUTO_ENQUEUE_RAG_SCHEDULER_SECONDS", "30"))
+    interval = float(env_str("AUTO_ENQUEUE_RAG_SCHEDULER_SECONDS", "30"))
     if interval <= 0:
         return
     now = time.monotonic()

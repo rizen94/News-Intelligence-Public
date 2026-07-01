@@ -66,6 +66,7 @@ class APIConnectionManager {
             'articles',
             'storylines',
             'intelligence',
+            'investigation',
             'public',
             'deduplication',
             'topics',

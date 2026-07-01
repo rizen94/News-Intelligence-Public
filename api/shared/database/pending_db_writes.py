@@ -16,6 +16,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ def _project_root() -> Path:
 
 
 def _queue_dir() -> Path:
-    raw = os.getenv("DB_PENDING_WRITES_DIR")
+    raw = env_str("DB_PENDING_WRITES_DIR")
     if raw:
         return Path(raw)
     return _project_root() / ".local" / "db_pending_writes"

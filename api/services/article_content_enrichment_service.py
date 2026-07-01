@@ -17,21 +17,22 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
+
+from shared.article_text_metrics import compute_word_count
 
 logger = logging.getLogger(__name__)
-
-# Env flags for fallback steps (each optional)
-_ENABLE_BROWSER = os.environ.get("ENABLE_BROWSER_ENRICHMENT", "").strip().lower() in (
+_ENABLE_BROWSER = env_str("ENABLE_BROWSER_ENRICHMENT", "").strip().lower() in (
     "1",
     "true",
     "yes",
 )
-_ENABLE_WAYBACK = os.environ.get("ENABLE_WAYBACK_ENRICHMENT", "").strip().lower() in (
+_ENABLE_WAYBACK = env_str("ENABLE_WAYBACK_ENRICHMENT", "").strip().lower() in (
     "1",
     "true",
     "yes",
 )
-_ENABLE_ARCHIVETODAY = os.environ.get("ENABLE_ARCHIVETODAY_ENRICHMENT", "").strip().lower() in (
+_ENABLE_ARCHIVETODAY = env_str("ENABLE_ARCHIVETODAY_ENRICHMENT", "").strip().lower() in (
     "1",
     "true",
     "yes",
@@ -44,6 +45,39 @@ _FETCH_TIMEOUT = 10
 
 MAX_CONTENT_CHARS = 50_000
 MIN_CONTENT_TO_ENRICH = 500
+
+_topic_queue_cache: dict[str, bool] = {}
+
+
+def _topic_extraction_queue_available(conn, schema_name: str) -> bool:
+    """Some domain schemas (legal, medicine) lacked topic_extraction_queue until migration 236."""
+    if schema_name in _topic_queue_cache:
+        return _topic_queue_cache[schema_name]
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = %s AND table_name = 'topic_extraction_queue'
+                """,
+                (schema_name,),
+            )
+            ok = cur.fetchone() is not None
+    except Exception:
+        ok = False
+    _topic_queue_cache[schema_name] = ok
+    return ok
+
+
+def _enqueue_topic_extraction(cur, schema_name: str, article_id: int) -> None:
+    cur.execute(
+        f"""
+        INSERT INTO {schema_name}.topic_extraction_queue (article_id, status, priority, created_at)
+        VALUES (%s, 'pending', 3, NOW())
+        ON CONFLICT (article_id) DO UPDATE SET status = 'pending', priority = 3, created_at = NOW()
+        """,
+        (article_id,),
+    )
 # Burst (48h catch-up): 0.4s between fetches; revert to 0.6 after catch-up
 RATE_LIMIT_SLEEP = 0.4
 
@@ -376,10 +410,11 @@ def _remove_article(conn, schema_name: str, article_id: int) -> None:
                 f"""UPDATE {schema_name}.articles SET enrichment_status = 'removed', updated_at = NOW() WHERE id = %s""",
                 (article_id,),
             )
-            cur.execute(
-                f"""DELETE FROM {schema_name}.topic_extraction_queue WHERE article_id = %s""",
-                (article_id,),
-            )
+            if _topic_extraction_queue_available(conn, schema_name):
+                cur.execute(
+                    f"""DELETE FROM {schema_name}.topic_extraction_queue WHERE article_id = %s""",
+                    (article_id,),
+                )
         conn.commit()
         logger.info("Article removed (bad datapoint): %s.articles id=%s", schema_name, article_id)
     except Exception as e:
@@ -415,9 +450,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
     from shared.pipeline_article_selection import sql_order_created_at
 
     from services.context_processor_service import (
-        ensure_context_for_article,
         sync_context_from_article_after_content_change,
-        update_context_content_for_article,
     )
 
     conn = get_db_connection()
@@ -495,7 +528,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                         enriched += 1
                         remaining -= 1
                         try:
-                            ensure_context_for_article(domain_key, article_id)
+                            sync_context_from_article_after_content_change(domain_key, article_id)
                         except Exception as ctx_e:
                             logger.debug(
                                 "enrichment fast-path context %s/%s: %s",
@@ -518,22 +551,18 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                     text = text[:MAX_CONTENT_CHARS]
                 with conn.cursor() as cur:
                     if text:
+                        wc = compute_word_count(text)
                         cur.execute(
-                            f"""UPDATE {schema_name}.articles SET content = %s, enrichment_status = 'enriched', updated_at = NOW() WHERE id = %s""",
-                            (text, article_id),
+                            f"""UPDATE {schema_name}.articles SET content = %s, word_count = %s,
+                                enrichment_status = 'enriched', updated_at = NOW() WHERE id = %s""",
+                            (text, wc, article_id),
                         )
                         cur.execute(
                             f"""UPDATE {schema_name}.articles SET entities = NULL WHERE id = %s""",
                             (article_id,),
                         )
-                        cur.execute(
-                            f"""
-                            INSERT INTO {schema_name}.topic_extraction_queue (article_id, status, priority, created_at)
-                            VALUES (%s, 'pending', 3, NOW())
-                            ON CONFLICT (article_id) DO UPDATE SET status = 'pending', priority = 3, created_at = NOW()
-                            """,
-                            (article_id,),
-                        )
+                        if _topic_extraction_queue_available(conn, schema_name):
+                            _enqueue_topic_extraction(cur, schema_name, article_id)
                     else:
                         # All paths (live, browser, wayback, archivetoday) failed: remove as bad datapoint
                         _remove_article(conn, schema_name, article_id)
@@ -546,7 +575,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                 if text:
                     enriched += 1
                     remaining -= 1
-                    update_context_content_for_article(domain_key, article_id)
+                    sync_context_from_article_after_content_change(domain_key, article_id)
 
                 time.sleep(RATE_LIMIT_SLEEP)
 
@@ -713,24 +742,19 @@ def fetch_full_content_for_article(domain_key: str, article_id: int) -> dict[str
                     "content": existing.strip() or None,
                 }
             text = text[:MAX_CONTENT_CHARS]
+            wc = compute_word_count(text)
             with conn.cursor() as cur:
                 cur.execute(
-                    f"""UPDATE {schema_name}.articles SET content = %s, enrichment_status = 'enriched',
-                        updated_at = NOW() WHERE id = %s""",
-                    (text, article_id),
+                    f"""UPDATE {schema_name}.articles SET content = %s, word_count = %s,
+                        enrichment_status = 'enriched', updated_at = NOW() WHERE id = %s""",
+                    (text, wc, article_id),
                 )
                 cur.execute(
                     f"UPDATE {schema_name}.articles SET entities = NULL WHERE id = %s",
                     (article_id,),
                 )
-                cur.execute(
-                    f"""
-                    INSERT INTO {schema_name}.topic_extraction_queue (article_id, status, priority, created_at)
-                    VALUES (%s, 'pending', 3, NOW())
-                    ON CONFLICT (article_id) DO UPDATE SET status = 'pending', priority = 3, created_at = NOW()
-                    """,
-                    (article_id,),
-                )
+                if _topic_extraction_queue_available(conn, schema_name):
+                    _enqueue_topic_extraction(cur, schema_name, article_id)
             conn.commit()
 
         sync_context_from_article_after_content_change(domain_key, article_id)

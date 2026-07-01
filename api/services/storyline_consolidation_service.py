@@ -28,6 +28,7 @@ from services.storyline_coherence_guardrails import (
     assess_mega_group_coherence,
     is_overly_generic_storyline_title,
 )
+from shared.storyline_article_counts import sync_counts_update_sql
 from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
@@ -238,6 +239,13 @@ def derive_mega_storyline_title(children: list["StorylineInfo"]) -> str:
     return f"Related Stories: {base}"
 
 
+def _distinct_article_count(members: list["StorylineInfo"]) -> int:
+    """Distinct article_id count across storylines (not sum of stale columns)."""
+    from shared.storyline_article_counts import distinct_article_count
+
+    return distinct_article_count(members)
+
+
 @dataclass
 class StorylineInfo:
     """Lightweight storyline representation for consolidation"""
@@ -375,6 +383,7 @@ class StorylineConsolidationService:
                         (storyline.id,),
                     )
                     storyline.article_ids = [r["article_id"] for r in cur.fetchall()]
+                    storyline.article_count = len(storyline.article_ids)
 
                     storylines.append(storyline)
 
@@ -638,17 +647,14 @@ class StorylineConsolidationService:
                 cur.execute(
                     f"""
                     UPDATE {schema}.storylines
-                    SET article_count = (
-                        SELECT COUNT(*) FROM {schema}.storyline_articles
-                        WHERE storyline_id = %s
-                    ),
+                    SET {sync_counts_update_sql(schema)},
                     merge_count = COALESCE(merge_count, 0) + 1,
                     consolidation_score = GREATEST(COALESCE(consolidation_score, 0), %s),
                     last_consolidated_at = NOW(),
                     updated_at = NOW()
                     WHERE id = %s
                 """,
-                    (primary.id, similarity["overall"], primary.id),
+                    (primary.id, primary.id, similarity["overall"], primary.id),
                 )
 
                 # Mark secondary as merged
@@ -831,8 +837,8 @@ class StorylineConsolidationService:
                         queue.append(neighbor)
 
             # Only create mega-storyline if group has multiple members
-            # and enough total articles
-            total_articles = sum(s.article_count for s in component)
+            # and enough total articles (distinct IDs, not sum of stale columns)
+            total_articles = _distinct_article_count(component)
 
             if len(component) >= 2 and total_articles >= min_articles_for_mega:
                 ok, reason = assess_mega_group_coherence(domain, component)
@@ -984,7 +990,7 @@ class StorylineConsolidationService:
                 if mega_id is not None:
                     self._fold_duplicate_mega_rows(cur, schema, mega_title, mega_id)
                 else:
-                    total_articles = sum(c.article_count for c in children)
+                    total_articles = _distinct_article_count(children)
                     cur.execute(
                         f"""
                         INSERT INTO {schema}.storylines

@@ -13,11 +13,39 @@ See docs/ENTITY_GROUPING_AND_KEY_TARGETS.md.
 import logging
 from typing import Any
 
+from config.runtime import env_int
+
 logger = logging.getLogger(__name__)
 
 # Default batch sizes per cycle (tune for latency vs throughput)
 DEFAULT_RELATIONSHIP_LIMIT = 100
 DEFAULT_DOWNTIME_RELATIONSHIP_LIMIT = 50
+ENTITY_RELATIONSHIPS_MAX_ROWS = env_int("ENTITY_RELATIONSHIPS_MAX_ROWS", 5_000_000)
+
+
+def _entity_relationships_at_cap() -> bool:
+    from shared.database.connection import get_db_connection
+
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT reltuples::bigint FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'intelligence' AND c.relname = 'entity_relationships'
+                """
+            )
+            row = cur.fetchone()
+            est = int(row[0] or 0) if row else 0
+            return est >= ENTITY_RELATIONSHIPS_MAX_ROWS
+    except Exception as e:
+        logger.debug("entity_relationships cap check: %s", e)
+        return False
+    finally:
+        conn.close()
 
 
 def run_cycle(
@@ -48,20 +76,28 @@ def run_cycle(
         result["errors"].append(f"cleanup: {e!s}")
 
     # 2. Relationship extraction: co-mentions -> entity_relationships (vectors between entities)
-    try:
-        from services.relationship_extraction_service import extract_relationships_from_contexts
-
-        rel_out = extract_relationships_from_contexts(
-            domain_key=domain_key,
-            limit=relationship_limit,
+    if _entity_relationships_at_cap():
+        logger.warning(
+            "Entity organizer: skipping relationship extraction (entity_relationships >= %s rows)",
+            ENTITY_RELATIONSHIPS_MAX_ROWS,
         )
-        if rel_out.get("success"):
-            result["relationships_extracted"] = rel_out.get("extracted", 0)
-        else:
-            result["errors"].append(rel_out.get("error", "relationship extraction failed"))
-    except Exception as e:
-        logger.warning("Entity organizer relationship extraction: %s", e)
-        result["errors"].append(f"relationships: {e!s}")
+        result["relationships_skipped_cap"] = True
+    else:
+        try:
+            from services.relationship_extraction_service import extract_relationships_from_contexts
+
+            rel_out = extract_relationships_from_contexts(
+                domain_key=domain_key,
+                limit=relationship_limit,
+            )
+            if rel_out.get("success"):
+                result["relationships_extracted"] = rel_out.get("extracted", 0)
+                result["contexts_processed"] = rel_out.get("contexts_processed", 0)
+            else:
+                result["errors"].append(rel_out.get("error", "relationship extraction failed"))
+        except Exception as e:
+            logger.warning("Entity organizer relationship extraction: %s", e)
+            result["errors"].append(f"relationships: {e!s}")
 
     return result
 

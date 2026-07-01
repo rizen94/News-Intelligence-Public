@@ -7,7 +7,7 @@
   "display_order": 25,
   "is_active": true,
   "database": {
-    "clone_from": "science_tech",
+        "clone_from": "politics",
     "include_article_topic_clusters": true,
     "migration_ref": "188_artificial_intelligence_domain_silo.sql"
   },
@@ -39,7 +39,8 @@
         "feed_url": "https://blog.google/technology/ai/rss/"
       },
       {
-        "feed_url": "https://blogs.microsoft.com/ai/feed/"
+        "feed_url": "https://www.microsoft.com/en-us/research/blog/feed/",
+        "feed_name": "Microsoft Research Blog"
       },
       {
         "feed_url": "https://huggingface.co/blog/feed.xml"
@@ -57,7 +58,72 @@
         "feed_url": "https://news.mit.edu/rss/topic/artificial-intelligence2"
       },
       {
-        "feed_url": "https://deepmind.google/blog/rss.xml"
+        "feed_url": "https://deepmind.google/blog/rss.xml",
+        "feed_name": "Google DeepMind Blog"
+      },
+      {
+        "feed_url": "https://blogs.nvidia.com/feed/",
+        "feed_name": "NVIDIA Blog"
+      },
+      {
+        "feed_url": "https://aws.amazon.com/blogs/machine-learning/feed/",
+        "feed_name": "AWS Machine Learning Blog"
+      },
+      {
+        "feed_url": "https://cloud.google.com/blog/products/ai-machine-learning/rss",
+        "feed_name": "Google Cloud AI Blog"
+      },
+      {
+        "feed_url": "https://azure.microsoft.com/en-us/blog/feed/",
+        "feed_name": "Microsoft Azure Blog"
+      },
+      {
+        "feed_url": "https://engineering.fb.com/feed/",
+        "feed_name": "Meta Engineering Blog"
+      },
+      {
+        "feed_url": "https://blog.langchain.com/rss/",
+        "feed_name": "LangChain Blog"
+      },
+      {
+        "feed_url": "https://cohere.com/blog/rss.xml",
+        "feed_name": "Cohere Blog"
+      },
+      {
+        "feed_url": "https://pytorch.org/blog/feed.xml",
+        "feed_name": "PyTorch Blog"
+      },
+      {
+        "feed_url": "https://stability.ai/news?format=rss",
+        "feed_name": "Stability AI News"
+      },
+      {
+        "feed_url": "https://importai.substack.com/feed",
+        "feed_name": "Import AI Newsletter"
+      },
+      {
+        "feed_url": "https://www.latent.space/feed",
+        "feed_name": "Latent Space"
+      },
+      {
+        "feed_url": "https://www.semianalysis.com/feed",
+        "feed_name": "SemiAnalysis"
+      },
+      {
+        "feed_url": "https://simonwillison.net/atom/everything/",
+        "feed_name": "Simon Willison"
+      },
+      {
+        "feed_url": "https://lilianweng.github.io/index.xml",
+        "feed_name": "Lil'Log"
+      },
+      {
+        "feed_url": "https://www.interconnects.ai/feed",
+        "feed_name": "Interconnects"
+      },
+      {
+        "feed_url": "https://buttondown.email/ainews/rss",
+        "feed_name": "AI News (Ben's Bites)"
       }
     ]
   },
@@ -75,8 +141,8 @@
   ],
   "llm_prompt_guidance": "Prioritize concrete technical advances and empirical results over speculation. For model\ncomparisons, include specific benchmarks, compute requirements, and practical trade-offs.\nHighlight real-world implementation details, costs, and measurable business impacts.\nFor career content, focus on specific roles, required skills, salary trends, and growth\ntrajectories. Distinguish between research breakthroughs and production-ready tools.\nInclude deployment considerations, scaling challenges, and best practices from actual\nimplementations.",
   "workload_assumptions": {
-    "expected_active_feeds": 35,
-    "rough_new_articles_per_day": 150,
+    "expected_active_feeds": 50,
+    "rough_new_articles_per_day": 220,
     "llm_heavy_phases_enabled": true
   }
 }

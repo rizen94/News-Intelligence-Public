@@ -92,45 +92,95 @@ async def _extract_batch(
     rows: list[tuple[int, str, str]],
     *,
     parallel: int,
+    gpu_sem: asyncio.Semaphore | None = None,
+    cpu_sem: asyncio.Semaphore | None = None,
+    sem: asyncio.Semaphore | None = None,
+    lane_index_offset: int = 0,
 ) -> dict[str, int]:
     from services.article_entity_extraction_service import ArticleEntityExtractionService
+    from shared.backlog_orchestration import run_with_gpu_lane_pool, sprint_gpu_only
 
     extractor = ArticleEntityExtractionService()
-    sem = asyncio.Semaphore(max(1, parallel))
     ok = 0
     fail = 0
+    lane_totals: dict[str, int] = {"gpu": 0}
 
-    async def _one(article_id: int, title: str, content: str) -> bool:
+    async def _process_one(article_id: int, title: str, content: str) -> bool:
         nonlocal ok, fail
-        async with sem:
-            try:
-                result = await extractor.extract_and_store(
-                    article_id=article_id,
-                    title=title,
-                    content=content,
-                    schema=schema,
+        try:
+            result = await extractor.extract_and_store(
+                article_id=article_id,
+                title=title,
+                content=content,
+                schema=schema,
+            )
+            success = bool(result.get("success"))
+            if success:
+                cnt = (result.get("counts") or {}).get("entities") or 0
+                record_article_phase_pass(
+                    schema,
+                    article_id,
+                    "entity_extraction",
+                    "entities_stored" if int(cnt) > 0 else "no_entities_stored",
                 )
-                success = bool(result.get("success"))
-                if success:
-                    cnt = (result.get("counts") or {}).get("entities") or 0
-                    record_article_phase_pass(
-                        schema,
-                        article_id,
-                        "entity_extraction",
-                        "entities_stored" if int(cnt) > 0 else "no_entities_stored",
-                    )
-                    ok += 1
-                else:
-                    fail += 1
-                return success
-            except Exception as e:
-                logger.warning("extract article %s (%s): %s", article_id, domain_key, e)
+                ok += 1
+            else:
                 fail += 1
-                return False
+            return success
+        except Exception as e:
+            logger.warning("extract article %s (%s): %s", article_id, domain_key, e)
+            fail += 1
+            return False
 
     if rows:
-        await asyncio.gather(*[_one(aid, t, c) for aid, t, c in rows])
-    return {"ok": ok, "fail": fail, "batch_size": len(rows)}
+        if sprint_gpu_only():
+            results = await run_with_gpu_lane_pool(
+                rows,
+                parallel,
+                lambda _i, row: _process_one(row[0], row[1], row[2]),
+            )
+            for r in results:
+                if isinstance(r, Exception):
+                    fail += 1
+            lane_totals["gpu"] = ok
+        else:
+            from shared.bulk_catchup_llm_routing import assign_extraction_lane
+            from shared.services.llm_service import pop_llm_execution_lane, push_llm_execution_lane
+
+            gpu_p = parallel
+            cpu_p = 0
+            if gpu_sem is not None and cpu_sem is not None:
+                try:
+                    from config.runtime import env_str
+
+                    gpu_p = int(env_str("BULK_GPU_PARALLEL", str(parallel)))
+                    cpu_p = int(env_str("BULK_CPU_PARALLEL", "2"))
+                except ValueError:
+                    pass
+
+            async def _one_indexed(idx: int, row: tuple[int, str, str]) -> None:
+                article_id, title, content = row
+                lane = assign_extraction_lane(
+                    lane_index_offset + idx, gpu_parallel=gpu_p, cpu_parallel=cpu_p
+                )
+                lane_sem = gpu_sem if lane == "gpu" else cpu_sem
+                if lane_sem is None:
+                    await _process_one(article_id, title, content)
+                    return
+                async with lane_sem:
+                    token = push_llm_execution_lane(lane)
+                    try:
+                        await _process_one(article_id, title, content)
+                        lane_totals[lane] = lane_totals.get(lane, 0) + 1
+                    finally:
+                        pop_llm_execution_lane(token)
+
+            await asyncio.gather(*[_one_indexed(i, row) for i, row in enumerate(rows)])
+
+    out = {"ok": ok, "fail": fail, "batch_size": len(rows)}
+    if lane_totals.get("gpu") or lane_totals.get("cpu"):
+        out["lane_articles"] = {k: v for k, v in lane_totals.items() if v}
+    return out
 
 
 def _sync_domain(domain_key: str) -> dict[str, int]:
@@ -214,6 +264,9 @@ async def _run_domains(
 
 
 def main() -> int:
+    from shared.catchup_bootstrap import bootstrap_catchup
+
+    bootstrap_catchup(bulk_active=True)
     parser = argparse.ArgumentParser(description="Entity extraction catch-up + profile sync")
     parser.add_argument(
         "--domains",

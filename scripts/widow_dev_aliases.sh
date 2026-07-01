@@ -43,9 +43,35 @@ widow-code() {
     code --ssh-remote=ssh://widow
 }
 
+# --- GPU handoff (PopOS local shell → Widow via SSH where noted) ---
+# Bash names use hyphens; spoken form: "local GPU pause", "widow GPU resume", etc.
+_HOMELAB_ROOT="${HOME}/Documents/projects/HomeLab-AI-Stack"
+_NI_WIDOW_ROOT="/opt/news-intelligence"
+
+local-gpu-pause() {
+    "${_HOMELAB_ROOT}/scripts/release_popos_gpu_for_local.sh" "$@"
+}
+
+local-gpu-resume() {
+    "${_HOMELAB_ROOT}/scripts/resume_popos_gpu_after_local.sh" "$@"
+}
+
+widow-gpu-pause() {
+    ssh widow "${_NI_WIDOW_ROOT}/scripts/pause_for_bulk_catchup.sh" "$@"
+}
+
+widow-gpu-resume() {
+    ssh widow "${_NI_WIDOW_ROOT}/scripts/resume_after_bulk_catchup.sh; sudo systemctl start news-intelligence-api-public 2>/dev/null || true"
+}
+
 # Print helpful message
 echo "🔧 Widow development environment configured."
 echo "   - 'widow-mount'  : Mount project via SSHFS"
 echo "   - 'widow-cd'     : CD to mounted project"
 echo "   - 'widow-project': SSH into project directory"
 echo "   - 'widow-code'   : Open VS Code Remote to Widow"
+echo "   GPU handoff (run on PopOS):"
+echo "   - 'local-gpu-pause'  — pause NI/NRI + clear PopOS Ollama VRAM (local GPU pause)"
+echo "   - 'local-gpu-resume' — restore NI/NRI GPU sharing (local GPU resume)"
+echo "   - 'widow-gpu-pause'  — pause NI/NRI on Widow only (widow GPU pause)"
+echo "   - 'widow-gpu-resume' — resume NI/NRI on Widow only (widow GPU resume)"

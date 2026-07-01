@@ -24,6 +24,7 @@ from shared.domain_registry import (
     get_pipeline_active_domain_keys,
     resolve_domain_schema,
 )
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ DEFAULT_POLICY = {
 
 
 def _env_bool(name: str, default: bool) -> bool:
-    raw = os.environ.get(name, "").strip().lower()
+    raw = env_str(name, "").strip().lower()
     if not raw:
         return default
     return raw in ("1", "true", "yes", "on")
@@ -121,7 +122,7 @@ class IntelligenceCleanupController:
 
         claims_days = int(self.policy.get("retention_extracted_claims_days") or 0)
         if not claims_days:
-            claims_days = int(os.environ.get("EXTRACTED_CLAIMS_RETENTION_DAYS", "0") or 0)
+            claims_days = int(env_str("EXTRACTED_CLAIMS_RETENTION_DAYS", "0") or 0)
         if claims_days > 0:
             batch = int(self.policy.get("retention_extracted_claims_batch_size") or 5000)
             results["extracted_claims_pruned"] = self.prune_unpromoted_extracted_claims(

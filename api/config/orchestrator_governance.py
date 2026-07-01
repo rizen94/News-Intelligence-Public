@@ -92,9 +92,6 @@ def _default_config() -> dict[str, Any]:
             ],
         },
         "processing": {
-            "batch_size": 10,
-            "max_concurrent": 3,
-            "context_window_days": 7,
             "phases": {},
         },
         "learning": {
@@ -113,7 +110,7 @@ def _default_config() -> dict[str, Any]:
             "max_events_per_cycle": 3,
         },
         "entity_tracking": {
-            "enabled": True,
+            "enabled": False,
             "dossier_compile_interval_seconds": 86400,
             "max_dossiers_per_cycle": 2,
         },
@@ -158,5 +155,31 @@ def _default_config() -> dict[str, Any]:
             "source_priorities": ["government", "think_tank", "research"],
             "document_types": ["report", "analysis", "briefing"],
             "ingest_urls": [],
+        },
+        "pipeline_orchestration_harmony": {
+            "gap_fill_enabled": True,
+            "use_measured_duration": True,
+            "cooldown_fraction": 0.35,
+            "entity_extraction_run_budget_seconds": 900,
+            "ml_processing_run_budget_seconds": 900,
+            "sentiment_analysis_run_budget_seconds": 900,
+            "claim_extraction_drain_max_seconds": 900,
+        },
+        "pipeline_conductor": {
+            "automation_primary": True,
+            "orchestrator_processing_nudge_enabled": True,
+            "orchestrator_post_collection_kickoff_enabled": True,
+            "post_collection_phases": ["content_enrichment", "context_sync"],
+            "orchestrator_collection_enabled": True,
+            "workload_driven_scheduling": True,
+            "external_schedulers": [
+                {
+                    "name": "nri_mention_resolve",
+                    "host": "widow",
+                    "interval_seconds": 300,
+                    "budget_env": "NRI_MENTION_RESOLVE_BUDGET_SECONDS",
+                    "note": "CEM mention resolution — in-process via api/nri_core (mention_resolution phase)",
+                },
+            ],
         },
     }
