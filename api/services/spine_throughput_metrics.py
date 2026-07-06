@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections import deque
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any
@@ -19,6 +19,7 @@ _MAX_SAMPLES = 500
 _lock = Lock()
 
 _fusion_batches: deque[dict[str, float]] = deque(maxlen=_MAX_SAMPLES)
+_fusion_parse_retries: dict[str, int] = defaultdict(int)
 _spine_latency_hours: deque[float] = deque(maxlen=_MAX_SAMPLES)
 _over_sla_count = 0
 _SLA_HOURS = 4.0
@@ -57,6 +58,12 @@ def record_fusion_batch_metrics(
             }
         )
         _recompute_snapshot_locked()
+
+
+def record_fusion_parse_retry(kind: str) -> None:
+    key = (kind or "").strip() or "unknown"
+    with _lock:
+        _fusion_parse_retries[key] += 1
 
 
 def record_spine_latency_hours(hours: float) -> None:
@@ -107,6 +114,7 @@ def get_spine_throughput_snapshot() -> dict[str, Any]:
             "spine_p95_latency_hours": s.spine_p95_latency_hours,
             "spine_over_sla_count": s.spine_over_sla_count,
             "spine_sla_hours": s.spine_sla_hours,
+            "fusion_parse_retries": dict(_fusion_parse_retries),
         }
 
 

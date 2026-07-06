@@ -710,6 +710,7 @@ def compute_processing_progress_response(
     snapshot_operator_metrics: dict[str, Any] = {}
     snapshot_signal_lane_metrics: dict[str, Any] = {}
     snapshot_feed_health_metrics: dict[str, Any] = {}
+    snapshot_queue_audit: dict[str, Any] = {}
     work_queues_m: dict[str, Any] = {}
     intake_window_hours: int | None = None
     pending_included = pending_metrics_source in ("live", "snapshot")
@@ -759,6 +760,7 @@ def compute_processing_progress_response(
                 work_queues_m = dict(snap.get("work_queues") or {})
                 snapshot_signal_lane_metrics = dict(snap.get("signal_lane_metrics") or {})
                 snapshot_feed_health_metrics = dict(snap.get("feed_health_metrics") or {})
+                snapshot_queue_audit = dict(snap.get("queue_audit") or {})
                 raw_intake = snap.get("intake_window_hours")
                 if raw_intake is not None:
                     try:
@@ -1027,6 +1029,18 @@ def compute_processing_progress_response(
         except Exception as e:
             logger.debug("processing_progress feed_health_metrics: %s", e)
 
+    queue_audit: dict[str, Any] = {}
+    if pending_included and pending_m:
+        if snapshot_queue_audit:
+            queue_audit = snapshot_queue_audit
+        else:
+            try:
+                from shared.queue_audit import build_queue_audit
+
+                queue_audit = build_queue_audit(pending_m)
+            except Exception as e:
+                logger.debug("processing_progress queue_audit: %s", e)
+
     try:
         from shared.monitor_pulse_debug import monitor_pulse_debug
 
@@ -1061,6 +1075,7 @@ def compute_processing_progress_response(
             "signal_lane_metrics": signal_lane_metrics,
             "feed_health_metrics": feed_health_metrics,
             "operator_metrics": operator_metrics,
+            "queue_audit": queue_audit,
             "reporting_definitions": reporting_definitions,
             "monitor_schema_version": MONITOR_SCHEMA_VERSION,
             "dimension_throughput_included": include_dimension_throughput,

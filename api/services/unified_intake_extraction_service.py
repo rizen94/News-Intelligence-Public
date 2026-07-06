@@ -34,12 +34,18 @@ from shared.pipeline_pass_marker import (
 )
 from shared.services.ollama_model_caller import get_ollama_model_caller
 from shared.services.ollama_model_policy import InvocationKind
-from shared.monitor_pulse_debug import monitor_pulse_debug
+from modules.ml.entity_extractor import _repair_json_object_text
 from shared.spine_phase_order import intake_fusion_enabled
 
 logger = logging.getLogger(__name__)
 
 _EVENT_TYPES_STR = ", ".join(sorted(VALID_EVENT_TYPES))
+
+_JSON_RETRY_SUFFIX = (
+    "\n\nYour previous answer was not valid JSON. "
+    "Reply with ONLY a single JSON object mapping each required article_id to its extraction — "
+    "no markdown fences, no commentary before or after the object."
+)
 
 
 def _bulk_catchup_fast_path() -> bool:
@@ -50,6 +56,18 @@ def _defer_context_during_bulk() -> bool:
     if env_str("UNIFIED_INTAKE_DEFER_CONTEXT_SYNC", "").lower() in ("1", "true", "yes"):
         return True
     return _bulk_catchup_fast_path()
+
+
+def _try_parse_first_json_object(text: str) -> dict[str, Any] | None:
+    """Salvage the first JSON object when the LLM appends prose or extra objects."""
+    start = text.find("{")
+    if start < 0:
+        return None
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(text, start)
+    except json.JSONDecodeError:
+        return None
+    return obj if isinstance(obj, dict) else None
 
 
 class UnifiedIntakeExtractionService:
@@ -114,7 +132,8 @@ class UnifiedIntakeExtractionService:
         if not blocks:
             return {}
 
-        prompt = self._build_prompt(blocks)
+        article_ids = [int(a["article_id"]) for a in valid]
+        prompt = self._build_prompt(blocks, article_ids=article_ids)
         llm_t0 = time.monotonic()
         try:
             gen = await self._caller.generate(
@@ -129,7 +148,53 @@ class UnifiedIntakeExtractionService:
             return {}
         llm_elapsed = time.monotonic() - llm_t0
 
-        parsed_by_id = self._parse_batch_response(raw)
+        parsed_by_id = self._parse_batch_response(raw, article_ids=article_ids)
+
+        if not parsed_by_id and valid:
+            self._record_parse_retry("json_decode_fail")
+            try:
+                correction_t0 = time.monotonic()
+                gen_retry = await self._caller.generate(
+                    prompt + _JSON_RETRY_SUFFIX,
+                    kind=InvocationKind.STRUCTURED_EXTRACTION,
+                    approx_prompt_chars=len(prompt) + len(_JSON_RETRY_SUFFIX),
+                )
+                llm_elapsed += time.monotonic() - correction_t0
+                retry_raw = (gen_retry.text or "") if gen_retry is not None else ""
+                if getattr(gen_retry, "model", None):
+                    extraction_model = gen_retry.model
+                parsed_by_id = self._parse_batch_response(retry_raw, article_ids=article_ids)
+                if parsed_by_id:
+                    self._record_parse_retry("json_retry_suffix_recovered")
+            except Exception as e:
+                logger.warning("unified_intake JSON correction retry failed: %s", e)
+
+        if not parsed_by_id and len(valid) > 1:
+            mid = len(valid) // 2
+            self._record_parse_retry("split_retry")
+            logger.warning(
+                "unified_intake batch JSON parse failed; split-retry %s articles -> %s+%s",
+                len(valid),
+                mid,
+                len(valid) - mid,
+            )
+            left = await self.extract_batch(valid[:mid])
+            right = await self.extract_batch(valid[mid:])
+            return {**left, **right}
+
+        missing_arts = [a for a in valid if int(a["article_id"]) not in parsed_by_id]
+        retry_out: dict[int, dict[str, Any]] = {}
+        if missing_arts and len(valid) > 1:
+            self._record_parse_retry("partial_retry")
+            logger.warning(
+                "unified_intake partial parse %s/%s; retrying %s articles",
+                len(parsed_by_id),
+                len(valid),
+                len(missing_arts),
+            )
+            retry_out = await self.extract_batch(missing_arts)
+
+        arts_to_fan = [a for a in valid if int(a["article_id"]) in parsed_by_id]
         fan_t0 = time.monotonic()
 
         async def _fan_out_one(art: dict[str, Any]) -> tuple[int, dict[str, Any]]:
@@ -149,24 +214,10 @@ class UnifiedIntakeExtractionService:
                 logger.error("unified fan-out failed article %s: %s", aid, e)
                 return aid, {"success": False, "error": str(e)}
 
-        fan_pairs = await asyncio.gather(*[_fan_out_one(art) for art in valid])
-        out = dict(fan_pairs)
+        fan_pairs = await asyncio.gather(*[_fan_out_one(art) for art in arts_to_fan])
+        out = {**dict(fan_pairs), **retry_out}
         fan_elapsed = time.monotonic() - fan_t0
         articles_per_call = len(valid)
-        monitor_pulse_debug(
-            "unified_intake_extraction_service.py:extract_batch",
-            "intake_fusion timing",
-            {
-                "article_count": articles_per_call,
-                "llm_seconds": round(llm_elapsed, 2),
-                "fan_out_seconds": round(fan_elapsed, 2),
-                "llm_passes_per_article": round(1.0 / max(1, articles_per_call), 4),
-                "bulk_fast": _bulk_catchup_fast_path(),
-                "fusion_enabled": intake_fusion_enabled(),
-            },
-            hypothesis_id="throughput",
-            run_id="fusion",
-        )
         try:
             from services.spine_throughput_metrics import record_fusion_batch_metrics
 
@@ -179,7 +230,16 @@ class UnifiedIntakeExtractionService:
             pass
         return out
 
-    def _build_prompt(self, blocks: list[str]) -> str:
+    @staticmethod
+    def _record_parse_retry(kind: str) -> None:
+        try:
+            from services.spine_throughput_metrics import record_fusion_parse_retry
+
+            record_fusion_parse_retry(kind)
+        except Exception:
+            pass
+
+    def _build_prompt(self, blocks: list[str], *, article_ids: list[int] | None = None) -> str:
         schema_block = fusion_prompt_schema_block(_EVENT_TYPES_STR)
         fusion_note = ""
         if intake_fusion_enabled():
@@ -187,6 +247,13 @@ class UnifiedIntakeExtractionService:
                 "\n- topic_tags: 3-8 specific themes/entities for clustering (not generic words).\n"
                 "- storyline_hints: optional 0-2 short storyline labels with primary_entities.\n"
             )
+        id_constraint = ""
+        if article_ids:
+            id_list = ", ".join(f'"{aid}"' for aid in article_ids)
+            id_constraint = f"\n- Top-level JSON keys MUST be exactly: {id_list}.\n"
+        bulk_note = ""
+        if _bulk_catchup_fast_path():
+            bulk_note = "\n- Keep extractions concise; the response must be complete valid JSON ending with `}`.\n"
         return f"""Extract structured intelligence from {len(blocks)} news articles below.
 Return ONE JSON object mapping each article_id (string key) to an extraction object.
 
@@ -197,17 +264,23 @@ Rules:
 - Use empty arrays when a section has no items. No placeholder names like "None" or "N/A".
 - claims: subject and predicate required; object optional; confidence 0.0-1.0.
 - events: event_title required per event; use publication context for relative dates.
-- scoring.sentiment_score: 0.0 (negative) to 1.0 (positive); quality_score: 0.0-1.0.{fusion_note}
+- scoring.sentiment_score: 0.0 (negative) to 1.0 (positive); quality_score: 0.0-1.0.{fusion_note}{id_constraint}{bulk_note}
 
 Articles:
 {chr(10).join(blocks)}
 
-Return ONLY valid JSON. Example empty article:
+Return ONLY valid JSON — no markdown fences, no text before or after the JSON object. Example empty article:
 {{"12345": {{"entities": {{"people": [], "organizations": [], "subjects": [], "recurring_events": [], "dates": [], "times": [], "countries": [], "keywords": []}}, "claims": [], "events": [], "scoring": {{"sentiment_score": 0.5, "sentiment_label": "neutral", "quality_score": 0.5}}, "topic_tags": [], "storyline_hints": []}}}}
 """
 
-    def _parse_batch_response(self, raw: str) -> dict[int, dict[str, Any]]:
+    def _parse_batch_response(
+        self,
+        raw: str,
+        *,
+        article_ids: list[int] | None = None,
+    ) -> dict[int, dict[str, Any]]:
         text = (raw or "").strip()
+        fence_chunk = None
         if "```" in text:
             parts = text.split("```")
             for part in parts:
@@ -215,6 +288,7 @@ Return ONLY valid JSON. Example empty article:
                 if chunk.lower().startswith("json"):
                     chunk = chunk[4:].strip()
                 if chunk.startswith("{"):
+                    fence_chunk = chunk
                     text = chunk
                     break
         start = text.find("{")
@@ -222,15 +296,31 @@ Return ONLY valid JSON. Example empty article:
         if start < 0 or end <= start:
             logger.warning("unified_intake_extraction parse: no JSON object in response (len=%s)", len(raw or ""))
             return {}
+        slice_text = text[start : end + 1]
         try:
-            parsed = json.loads(text[start : end + 1])
+            parsed = json.loads(slice_text)
         except json.JSONDecodeError as e:
-            logger.warning(
-                "unified_intake_extraction parse: JSON decode failed (len=%s): %s",
-                len(raw or ""),
-                e,
-            )
-            return {}
+            try:
+                parsed = json.loads(_repair_json_object_text(slice_text))
+            except json.JSONDecodeError:
+                parsed = None
+            if parsed is None and "Extra data" in str(e):
+                salvaged = _try_parse_first_json_object(slice_text)
+                if salvaged:
+                    parsed = salvaged
+            if parsed is None:
+                err_pos = getattr(e, "pos", None)
+                snippet = ""
+                if err_pos is not None and slice_text:
+                    lo = max(0, int(err_pos) - 80)
+                    hi = min(len(slice_text), int(err_pos) + 80)
+                    snippet = slice_text[lo:hi]
+                logger.warning(
+                    "unified_intake_extraction parse: JSON decode failed (len=%s): %s",
+                    len(raw or ""),
+                    e,
+                )
+                return {}
         if not isinstance(parsed, dict):
             return {}
         out: dict[int, dict[str, Any]] = {}
@@ -259,7 +349,8 @@ Return ONLY valid JSON. Example empty article:
         pub_date = art.get("pub_date") or datetime.now(timezone.utc)
         storyline_id = art.get("storyline_id")
 
-        entity_obj = payload.get("entities") if isinstance(payload.get("entities"), dict) else {}
+        entities_raw = payload.get("entities")
+        entity_obj = entities_raw if isinstance(entities_raw, dict) else {}
         if fast_entities:
             entity_obj = merge_entity_dicts(entity_obj, fast_entities)
         parsed, parse_ok = self._entity_svc._parse_response(json.dumps(entity_obj), title)

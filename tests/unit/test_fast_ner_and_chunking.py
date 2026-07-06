@@ -14,6 +14,15 @@ def test_merge_entity_dicts_dedupes_by_name():
     assert merged["people"][0]["confidence"] == 0.9
 
 
+def test_merge_entity_dicts_coerces_string_items():
+    base = {"people": ["Jane Doe", {"name": "ACME Corp", "confidence": 0.9}]}
+    extra = {"organizations": [{"name": "ACME Corp", "confidence": 0.95, "fast_ner_source": "spacy"}]}
+    merged = merge_entity_dicts(base, extra)
+    assert merged["people"][0]["name"] == "Jane Doe"
+    assert merged["people"][0]["confidence"] == 0.8
+    assert len(merged["organizations"]) == 1
+
+
 def test_split_short_article_single_chunk():
     chunks = split_article_into_context_chunks("Title", "Short body text.")
     assert len(chunks) == 1

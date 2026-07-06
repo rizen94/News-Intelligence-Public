@@ -155,7 +155,7 @@ When enabled, **`unified_intake_extraction`** replaces scheduled **`entity_extra
 | `FAST_NER_ENABLED` | `true` | spaCy + GLiNER pre-pass before LLM entity fan-out |
 | `FAST_NER_BACKEND` | `both` | `spacy`, `gliner`, `both`, or `auto` |
 | `CONTEXT_CHUNKING_ENABLED` | `true` | Semantic multi-chunk contexts for long articles |
-| `UNIFIED_INTAKE_EXTRACTION_BATCH_SIZE` | `3` | Articles per LLM call |
+| `UNIFIED_INTAKE_EXTRACTION_BATCH_SIZE` | `3` | Articles per LLM call (`scripts/run_baseline_catchup.sh` mirrors this default) |
 | `UNIFIED_INTAKE_EXTRACTION_PARALLEL` | `6` | Concurrent batch lanes |
 | `UNIFIED_INTAKE_EXTRACTION_RUN_BUDGET_SECONDS` | `0` | **0 = unlimited** drain until idle or stall; positive = circuit breaker only |
 | `PIPELINE_DRAIN_STALL_ROUNDS` | `3` | Consecutive zero-progress rounds before yield |

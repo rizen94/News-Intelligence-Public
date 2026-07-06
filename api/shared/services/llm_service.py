@@ -702,6 +702,7 @@ class LLMService:
         try:
             from shared.services.ollama_model_policy import (
                 InvocationKind,
+                extraction_temperature_for_invocation,
                 keep_alive_for_invocation,
                 num_ctx_for_invocation,
                 num_predict_for_invocation,
@@ -709,7 +710,7 @@ class LLMService:
 
             kind = invocation_kind if isinstance(invocation_kind, InvocationKind) else None
             opts: dict = {
-                "temperature": 0.7,
+                "temperature": extraction_temperature_for_invocation(kind),
                 "top_p": 0.9,
                 "num_predict": num_predict_for_invocation(kind),
             }
@@ -729,15 +730,18 @@ class LLMService:
                 cpu_extraction = env_str("BULK_CPU_EXTRACTION_MODEL", "").strip()
                 if cpu_extraction:
                     model_name = cpu_extraction
+            payload: dict[str, Any] = {
+                "model": model_name,
+                "prompt": prompt,
+                "stream": False,
+                "keep_alive": keep_alive_for_invocation(kind),
+                "options": opts,
+            }
+            if kind == InvocationKind.STRUCTURED_EXTRACTION:
+                payload["format"] = "json"
             response = await client.post(
                 f"{base_url}/api/generate",
-                json={
-                    "model": model_name,
-                    "prompt": prompt,
-                    "stream": False,
-                    "keep_alive": keep_alive_for_invocation(kind),
-                    "options": opts,
-                },
+                json=payload,
             )
 
             if response.status_code == 200:

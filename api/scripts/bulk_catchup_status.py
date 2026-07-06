@@ -29,6 +29,17 @@ PROGRESS = _REPO_ROOT / "data" / "bulk_catchup_progress.json"
 BULK_SINCE = "2026-06-10T14:00:00"
 PROGRESS_PHASES = ("event_tracking", "context_sync", "content_enrichment")
 
+# Phases shown in the generic pending list (independent queues — not summable).
+OPERATOR_PENDING_PHASES = (
+    "unified_intake_extraction",
+    "claim_extraction",
+    "entity_profile_build",
+    "event_tracking",
+    "context_sync",
+    "content_enrichment",
+    "topic_clustering",
+)
+
 
 def _load_env() -> None:
     env_file = _REPO_ROOT / ".env"
@@ -78,6 +89,33 @@ def _backlog() -> dict[str, int]:
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod.get_all_pending_counts()
+
+
+def _unified_intake_stats() -> dict[str, int]:
+    try:
+        from shared.unified_intake_backlog import get_unified_intake_backlog_stats
+
+        return get_unified_intake_backlog_stats()
+    except Exception:
+        return {}
+
+
+def _claim_stats() -> dict[str, int]:
+    try:
+        from services.claim_extraction_service import get_context_claim_backlog_stats
+
+        return get_context_claim_backlog_stats()
+    except Exception:
+        return {}
+
+
+def _intake_mode_label() -> str:
+    try:
+        from shared.pipeline_resource_policy import intake_extraction_suppressed
+
+        return "unified" if intake_extraction_suppressed() else "legacy"
+    except Exception:
+        return "unknown"
 
 
 def _entity_stats() -> dict:
@@ -198,27 +236,78 @@ def render() -> str:
     phase = ck.get("current_phase") or "-"
     phase_info = (ck.get("phases") or {}).get(phase) or {}
     pending = _backlog()
+    unified = _unified_intake_stats()
+    claims = _claim_stats()
     ent = _entity_stats()
+    intake_mode = _intake_mode_label()
     lines = [
         f"=== Bulk / pipeline status @ {now} ===",
         f"bulk_catchup: {running}  pid={pid or '-'}  elapsed={_bulk_elapsed(pid)}",
         f"competition_pause: {'ON' if PAUSE_MARKER.is_file() else 'OFF'}",
         f"checkpoint phase: {phase}  loops={phase_info.get('loops', '-')}  last_batch={phase_info.get('last_result', {})}",
+        f"intake_mode: {intake_mode}",
         "",
-        "Backlog pending:",
-        f"  entity_extraction:  {pending.get('entity_extraction', 0):,}",
-        f"  claim_extraction:   {pending.get('claim_extraction', 0):,}",
-        f"  event_tracking:     {pending.get('event_tracking', 0):,}",
-        f"  context_sync:       {pending.get('context_sync', 0):,}",
-        f"  content_enrichment: {pending.get('content_enrichment', 0):,}",
+        "Note: phase queues are independent (articles vs contexts vs profiles). Do not sum rows.",
         "",
-        "Entity extraction (since bulk start):",
-        f"  total_stored: {ent.get('total_stored', 0):,}  needs_retry: {ent.get('needs_retry', 0):,}",
-        f"  last_1h: {ent.get('stored_1h', 0):,}/hr  last_pass: {ent.get('last_pass', '-')}",
     ]
-    if ent.get("stored_1h") and pending.get("entity_extraction"):
-        eta_h = pending["entity_extraction"] / max(ent["stored_1h"], 1)
-        lines.append(f"  entity ETA @ current rate: ~{eta_h:.1f}h")
+
+    if intake_mode == "unified":
+        lines.extend(
+            [
+                "Unified intake backlog (articles):",
+                f"  actionable (LLM work):      {unified.get('actionable_unified_intake', pending.get('unified_intake_extraction', 0)):,}",
+                f"  legacy_backfill_eligible:   {unified.get('legacy_backfill_eligible', 0):,}  (marker-only, no GPU)",
+                f"  total_missing_unified_pass: {unified.get('total_missing_unified_pass', 0):,}  (inventory)",
+                "",
+                "Claim extraction backlog (contexts):",
+                f"  actionable (queue):         {claims.get('actionable_no_claims', pending.get('claim_extraction', 0)):,}",
+                f"  total_no_claims:            {claims.get('total_no_claims', 0):,}  (inventory, not all actionable)",
+                "",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "Legacy intake mode — unified_intake_extraction masked in Monitor.",
+                f"  entity_extraction pending:  {pending.get('entity_extraction', 0):,}",
+                "",
+                "Claim extraction backlog (contexts):",
+                f"  actionable (queue):         {claims.get('actionable_no_claims', pending.get('claim_extraction', 0)):,}",
+                f"  total_no_claims:            {claims.get('total_no_claims', 0):,}  (inventory)",
+                "",
+            ]
+        )
+
+    lines.append("Per-phase pending (independent — do not sum):")
+    for ph in OPERATOR_PENDING_PHASES:
+        if ph == "unified_intake_extraction" and intake_mode != "unified":
+            continue
+        if ph == "entity_extraction":
+            continue
+        val = int(pending.get(ph) or 0)
+        if val > 0 or ph in ("unified_intake_extraction", "claim_extraction", "entity_profile_build"):
+            lines.append(f"  {ph:28} {val:,}")
+
+    if intake_mode == "unified":
+        legacy_ent = int(pending.get("entity_extraction") or 0)
+        lines.append(
+            f"  {'entity_extraction (masked)':28} {legacy_ent:,}  (Monitor shows 0 in unified mode)"
+        )
+
+    lines.extend(
+        [
+            "",
+            "Entity extraction pass markers (since bulk start — historical, not current queue):",
+            f"  total_stored: {ent.get('total_stored', 0):,}  needs_retry: {ent.get('needs_retry', 0):,}",
+            f"  last_1h: {ent.get('stored_1h', 0):,}/hr  last_pass: {ent.get('last_pass', '-')}",
+        ]
+    )
+
+    actionable = unified.get("actionable_unified_intake") or pending.get("unified_intake_extraction")
+    if intake_mode == "unified" and ent.get("stored_1h") and actionable:
+        eta_h = actionable / max(ent["stored_1h"], 1)
+        lines.append(f"  unified intake ETA @ entity 1h rate (rough): ~{eta_h:.1f}h")
+
     errs = _recent_errors()
     if errs:
         lines.append("")

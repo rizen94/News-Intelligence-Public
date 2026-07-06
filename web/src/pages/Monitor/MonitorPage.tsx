@@ -206,6 +206,49 @@ function formatPulseCount(n: number | null | undefined): string {
   return `${n}`;
 }
 
+type QueueAuditPhase = {
+  monitor_pending?: number;
+  matches_automation_sql?: boolean;
+  note?: string;
+  error?: string;
+  actionable_unified_intake?: number;
+  total_missing_unified_pass?: number;
+  legacy_backfill_eligible?: number;
+  automation_sql_recount?: number;
+  actionable_no_claims_broad?: number;
+  total_no_claims_inventory?: number;
+};
+
+const QUEUE_AUDIT_PHASE_LABELS: Record<string, string> = {
+  unified_intake_extraction: 'unified_intake_extraction',
+  claim_extraction: 'claim_extraction',
+  entity_profile_build: 'entity_profile_build',
+};
+
+function formatQueueAuditCheck(phase: QueueAuditPhase): string {
+  if (phase.error) return phase.error;
+  const parts: string[] = [];
+  if (phase.actionable_unified_intake != null) {
+    parts.push(`vs actionable_unified_intake ${formatPulseCount(phase.actionable_unified_intake)}`);
+  }
+  if (phase.automation_sql_recount != null) {
+    parts.push(`vs automation SQL ${formatPulseCount(phase.automation_sql_recount)}`);
+  }
+  if (phase.total_missing_unified_pass != null) {
+    parts.push(`broader inventory ${formatPulseCount(phase.total_missing_unified_pass)}`);
+  }
+  if (phase.legacy_backfill_eligible != null && phase.legacy_backfill_eligible > 0) {
+    parts.push(`legacy backfill ${formatPulseCount(phase.legacy_backfill_eligible)}`);
+  }
+  if (phase.actionable_no_claims_broad != null) {
+    parts.push(`broad no-claims ${formatPulseCount(phase.actionable_no_claims_broad)}`);
+  }
+  if (phase.total_no_claims_inventory != null) {
+    parts.push(`all no-claim contexts ${formatPulseCount(phase.total_no_claims_inventory)}`);
+  }
+  return parts.join(' · ') || '—';
+}
+
 /**
  * Heuristic only: compare the latest hour to a baseline that avoids double-counting that hour
  * inside the 24h total. Baseline = mean completions over the other 23 hours in the rolling window;
@@ -220,6 +263,7 @@ type ProcessingPulseState = {
     pending_metrics_as_of_utc?: string;
     intake_window_hours?: number;
     operator_metrics?: Record<string, unknown>;
+    queue_audit?: { phases?: Record<string, QueueAuditPhase> };
     reporting_definitions?: Record<string, string>;
     dimensions?: ProcessingPulseDimension[];
     phase_dashboard?: ProcessingPulsePhase[];
@@ -327,6 +371,7 @@ function mergeProcessingPulseWithCachedPending(
         pending_metrics_as_of_utc:
           cached.data.pending_metrics_as_of_utc ?? cached.data.generated_at_utc,
         operator_metrics: cached.data.operator_metrics ?? fast.data.operator_metrics,
+        queue_audit: cached.data.queue_audit ?? fast.data.queue_audit,
       },
     },
     pendingStale: false,
@@ -1302,46 +1347,10 @@ export default function MonitorPage() {
               <Divider />
               <Box>
                 <Typography variant='caption' color='text.secondary' sx={{ display: 'block', mb: 0.75 }}>
-                  Actionable queue depths (contexts→claims excludes pass-markered terminal rows; see
-                  ticker tooltip for inventory)
-                </Typography>
-                <Table size='small' sx={{ '& td': { py: 0.5 } }}>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Queue</TableCell>
-                      <TableCell align='right'>Rows waiting</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {(processingPulse.data.dimensions ?? [])
-                      .filter(d => d.backlog != null && d.backlog > 0)
-                      .map(d => (
-                        <TableRow key={d.id}>
-                          <TableCell>{d.label || d.id}</TableCell>
-                          <TableCell align='right'>
-                            {formatPulseCount(d.backlog ?? 0)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    {(processingPulse.data.dimensions ?? []).every(
-                      d => d.backlog == null || d.backlog <= 0
-                    ) && (
-                      <TableRow>
-                        <TableCell colSpan={2}>
-                          <Typography variant='body2' color='text.secondary'>
-                            No positive dimension backlogs in this snapshot (or all at zero).
-                          </Typography>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </Box>
-              <Divider />
-              <Box>
-                <Typography variant='caption' color='text.secondary' sx={{ display: 'block', mb: 0.75 }}>
-                  Automation phases — total queue, first-time work, retries, and fresh intake; modeled
-                  rows per run and estimated runs to clear; then pass/fail when the phase completes
+                  Automation phases — each Total queue is an independent per-phase depth (articles,
+                  contexts, or profiles). Do not sum across rows; correlated pipeline stages overlap.
+                  First-time work, retries, fresh intake; modeled rows per run and estimated runs to
+                  clear; then pass/fail when the phase completes.
                 </Typography>
                 <Table size='small' sx={{ '& td': { py: 0.5 } }}>
                   <TableHead>
@@ -1349,7 +1358,7 @@ export default function MonitorPage() {
                       <TableCell>Phase</TableCell>
                       <TableCell
                         align='right'
-                        title='Total eligible pending work (scheduler queue depth)'
+                        title='Eligible pending work for this phase only (scheduler queue depth). Units differ by phase — do not sum across rows.'
                       >
                         Total queue
                       </TableCell>
@@ -1553,6 +1562,62 @@ export default function MonitorPage() {
                   </Typography>
                 )}
               </Box>
+              {processingPulse.data.queue_audit?.phases &&
+                Object.keys(processingPulse.data.queue_audit.phases).length > 0 && (
+                  <>
+                    <Divider />
+                    <Box>
+                      <Typography
+                        variant='caption'
+                        color='text.secondary'
+                        sx={{ display: 'block', mb: 0.75 }}
+                      >
+                        Queue audit — independent SQL cross-checks for Total queue (not duplicate
+                        totals). Mismatch means investigate backlog_metrics vs inventory definitions.
+                      </Typography>
+                      <Table size='small' sx={{ '& td': { py: 0.5 } }}>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Phase</TableCell>
+                            <TableCell align='right'>Total queue</TableCell>
+                            <TableCell align='center'>SQL match</TableCell>
+                            <TableCell>Cross-check</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {Object.entries(processingPulse.data.queue_audit.phases).map(
+                            ([key, row]) => (
+                              <TableRow key={key}>
+                                <TableCell>{QUEUE_AUDIT_PHASE_LABELS[key] ?? key}</TableCell>
+                                <TableCell align='right'>
+                                  {formatPulseCount(row.monitor_pending ?? 0)}
+                                </TableCell>
+                                <TableCell align='center'>
+                                  {row.error ? (
+                                    '—'
+                                  ) : row.matches_automation_sql ? (
+                                    <Typography component='span' color='success.main'>
+                                      yes
+                                    </Typography>
+                                  ) : (
+                                    <Typography component='span' color='warning.main'>
+                                      no
+                                    </Typography>
+                                  )}
+                                </TableCell>
+                                <TableCell>
+                                  <Typography variant='body2' title={row.note}>
+                                    {formatQueueAuditCheck(row)}
+                                  </Typography>
+                                </TableCell>
+                              </TableRow>
+                            )
+                          )}
+                        </TableBody>
+                      </Table>
+                    </Box>
+                  </>
+                )}
               <Divider />
               <Box>
                 <Typography variant='caption' color='text.secondary' sx={{ display: 'block', mb: 0.5 }}>

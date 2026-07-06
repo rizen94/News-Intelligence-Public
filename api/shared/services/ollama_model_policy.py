@@ -114,6 +114,16 @@ def resolve_model_for_llm_task(
     return resolve_model_for_invocation(InvocationKind.DEFAULT, urgency, approx_prompt_chars)
 
 
+def extraction_temperature_for_invocation(kind: InvocationKind | None) -> float:
+    """Lower temperature for structured JSON extraction."""
+    if kind == InvocationKind.STRUCTURED_EXTRACTION:
+        try:
+            return float(env_str("OLLAMA_EXTRACTION_TEMPERATURE", "0.15"))
+        except ValueError:
+            return 0.15
+    return 0.7
+
+
 def num_predict_for_invocation(kind: InvocationKind | None) -> int:
     """Token cap by invocation kind — avoids 2000-token budget on short extraction passes."""
     if kind is None:

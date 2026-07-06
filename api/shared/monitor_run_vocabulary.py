@@ -322,49 +322,6 @@ async def emit_phase_run_event(
     except Exception as e:
         logger.warning("emit_phase_run_event history %s: %s", event.phase_key, e)
 
-    # #region agent log
-    try:
-        import json as _json
-        import time as _time
-        from pathlib import Path as _Path
-
-        _log_candidates = (
-            _Path("/home/pete/Documents/projects/News Intelligence/.cursor/debug-e7d0f8.log"),
-            _Path("/opt/news-intelligence/logs/debug-e7d0f8.ndjson"),
-        )
-        _line = (
-            _json.dumps(
-                {
-                    "sessionId": "e7d0f8",
-                    "runId": "emit-verify",
-                    "hypothesisId": "H-unified-batch",
-                    "location": "monitor_run_vocabulary.py:emit_phase_run_event",
-                    "message": "phase_run_event_emitted",
-                    "data": {
-                        "phase_key": event.phase_key,
-                        "iteration_index": event.iteration_index,
-                        "rows_processed": event.rows_processed,
-                        "persisted": persisted,
-                        "scheduler_path": event.scheduler_path,
-                        "status": event.run_history_status,
-                    },
-                    "timestamp": int(_time.time() * 1000),
-                }
-            )
-            + "\n"
-        )
-        for _lp in _log_candidates:
-            try:
-                _lp.parent.mkdir(parents=True, exist_ok=True)
-                with open(_lp, "a", encoding="utf-8") as _df:
-                    _df.write(_line)
-                break
-            except Exception:
-                continue
-    except Exception:
-        pass
-    # #endregion
-
     if invalidate_backlog_on_work and event.rows_processed > 0:
         try:
             from services.backlog_metrics import invalidate_backlog_metrics_cache

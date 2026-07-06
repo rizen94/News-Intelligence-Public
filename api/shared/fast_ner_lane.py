@@ -80,6 +80,8 @@ def _append_entity(
     in_headline = any(t in name.lower() for t in tokens) if tokens else False
     key = name.lower()
     for existing in out[bucket]:
+        if not isinstance(existing, dict):
+            continue
         if (existing.get("name") or "").strip().lower() == key:
             if confidence > float(existing.get("confidence") or 0):
                 existing["confidence"] = confidence
@@ -201,12 +203,30 @@ def extract_fast_entities(title: str, content: str) -> dict[str, list[dict[str, 
     return merged
 
 
+def _coerce_entity_item(item: Any) -> dict[str, Any] | None:
+    if isinstance(item, dict):
+        return item
+    if isinstance(item, str):
+        name = item.strip()
+        if name:
+            return {"name": name, "confidence": 0.8}
+    return None
+
+
 def merge_entity_dicts(
     base: dict[str, list[dict[str, Any]]],
     extra: dict[str, list[dict[str, Any]]],
 ) -> dict[str, list[dict[str, Any]]]:
     """Merge fast NER into LLM entity payload (dedupe by bucket + lower name)."""
-    out = {k: list(v) for k, v in base.items()}
+    out: dict[str, list[dict[str, Any]]] = {}
+    for bucket, items in base.items():
+        out[bucket] = []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            coerced = _coerce_entity_item(item)
+            if coerced:
+                out[bucket].append(coerced)
     for bucket, items in extra.items():
         if bucket not in out:
             out[bucket] = []

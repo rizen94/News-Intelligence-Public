@@ -16,6 +16,16 @@ BULK_PAUSE_ALLOW_PHASES: frozenset[str] = frozenset(
     {"health_check", "pending_db_flush"}
 )
 
+# GPU extraction phases deferred while bulk catch-up holds the competition pause.
+BULK_PAUSE_DEFER_GPU_PHASES: frozenset[str] = frozenset(
+    {
+        "unified_intake_extraction",
+        "entity_extraction",
+        "event_extraction",
+        "entity_profile_sync",
+    }
+)
+
 
 def bulk_catchup_competition_pause_active() -> bool:
     if env_str(_PAUSE_ENV, "").strip().lower() in ("1", "true", "yes"):
@@ -25,6 +35,15 @@ def bulk_catchup_competition_pause_active() -> bool:
 
 def bulk_catchup_pause_allows_phase(phase_name: str) -> bool:
     return (phase_name or "").strip() in BULK_PAUSE_ALLOW_PHASES
+
+
+def bulk_catchup_pause_defers_phase(phase_name: str) -> bool:
+    """True when automation should not enqueue/run this phase during bulk catch-up."""
+    if not bulk_catchup_competition_pause_active():
+        return False
+    if bulk_catchup_pause_allows_phase(phase_name):
+        return False
+    return (phase_name or "").strip() in BULK_PAUSE_DEFER_GPU_PHASES
 
 
 def write_pause_marker(*, reason: str = "bulk_catchup", by: str = "operator") -> Path:

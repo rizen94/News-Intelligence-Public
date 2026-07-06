@@ -22,7 +22,7 @@ Monitor poll every ~30s:
 | Activity `task_name` | `phase_key` | |
 | Pulse `phase_name` | `phase_key` | |
 | Column "Runs (1h)" | `phase_run` count | From SQL not activity |
-| "Total queue" | `queue_depth` | `pending_records` |
+| "Total queue" | `queue_depth` | `pending_records` | Per-phase depth only — **do not sum across phases** (units differ; correlated work overlaps). |
 | "Runs to clear" | `estimated_phase_runs` | Today: `batches_to_drain` |
 | "First pass" | `pipeline_pass` backlog | Not run success |
 

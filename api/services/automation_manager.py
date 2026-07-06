@@ -1676,6 +1676,11 @@ class AutomationManager:
             if stall_holds.get(task.name, 0) > 0:
                 actions.append(f"drop_stall_hold:{task.name}")
                 continue
+            from shared.bulk_catchup_pause import bulk_catchup_pause_defers_phase
+
+            if bulk_catchup_pause_defers_phase(task.name) and not meta.get("operator_request"):
+                actions.append(f"drop_bulk_pause:{task.name}")
+                continue
             if int(pending.get(task.name, 0) or 0) <= 0 and task.name != "spine_sql_tail":
                 actions.append(f"drop_empty:{task.name}")
                 continue
@@ -1730,6 +1735,11 @@ class AutomationManager:
             if stall_holds.get(phase, 0) > 0:
                 continue
             if self._should_skip_redundant_phase_request(phase):
+                continue
+            from shared.bulk_catchup_pause import bulk_catchup_pause_defers_phase
+
+            if bulk_catchup_pause_defers_phase(phase):
+                actions.append(f"drop_bulk_pause:{phase}")
                 continue
             inflight = self._phase_pipeline_inflight(phase)
             cap = self._per_phase_scheduler_concurrent_cap(phase)

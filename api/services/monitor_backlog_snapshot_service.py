@@ -109,12 +109,20 @@ def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] |
         except Exception as e:
             logger.warning("monitor_backlog_snapshot vault_work_queue failed: %s", e)
         refreshed_at = datetime.now(timezone.utc).isoformat()
+        queue_audit: dict[str, Any] = {}
+        try:
+            from shared.queue_audit import build_queue_audit
+
+            queue_audit = build_queue_audit(pending)
+        except Exception as e:
+            logger.warning("monitor_backlog_snapshot queue_audit failed: %s", e)
         payload: dict[str, Any] = {
             "refreshed_at_utc": refreshed_at,
             "interval_seconds": interval,
             "pending": pending,
             "backlog": backlog,
             "operator_metrics": operator_metrics,
+            "queue_audit": queue_audit,
             "work_queues": work_queues,
             "signal_lane_metrics": signal_lane_metrics,
             "feed_health_metrics": feed_health_metrics,
