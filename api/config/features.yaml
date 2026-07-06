@@ -1,0 +1,276 @@
+# News Intelligence feature registry (v10.1 SSOT)
+# Lifecycle: under_developed | staged | incorporated | deprecated | archived
+# See docs/FEATURE_REGISTRY.md
+
+unified_intake_extraction:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.0.0"
+  incorporated_in: "10.0.0"
+  replaces: [entity_extraction, event_extraction, sentiment_analysis, quality_scoring]
+  replaced_by: null
+  phase_name: unified_intake_extraction
+  modules: [api/services/unified_intake_extraction_service.py]
+  flags:
+    env: UNIFIED_INTAKE_EXTRACTION_ENABLED
+  archive_path: null
+  notes: Sole intake LLM path
+
+entity_extraction:
+  lifecycle: archived
+  enabled: false
+  introduced_in: "8.0.0"
+  incorporated_in: null
+  replaces: []
+  replaced_by: unified_intake_extraction
+  phase_name: entity_extraction
+  modules: [api/_archived/intake/entity_extraction_runner.py]
+  flags:
+    env: LEGACY_INTAKE_EXTRACTION_ENABLED
+  archive_path: api/_archived/intake/entity_extraction_runner.py
+  notes: Rollback via LEGACY_INTAKE_EXTRACTION_ENABLED=true
+
+event_extraction:
+  lifecycle: archived
+  enabled: false
+  introduced_in: "8.0.0"
+  replaced_by: unified_intake_extraction
+  phase_name: event_extraction
+  modules: [api/_archived/intake/event_extraction_runner.py]
+  flags:
+    env: LEGACY_INTAKE_EXTRACTION_ENABLED
+  archive_path: api/_archived/intake/event_extraction_runner.py
+  notes: Rollback via LEGACY_INTAKE_EXTRACTION_ENABLED=true
+
+sentiment_analysis:
+  lifecycle: archived
+  enabled: false
+  replaced_by: unified_intake_extraction
+  phase_name: sentiment_analysis
+  archive_path: api/_archived/automation/retired_phase_handlers.py
+  notes: Folded into unified intake
+
+quality_scoring:
+  lifecycle: archived
+  enabled: false
+  replaced_by: unified_intake_extraction
+  phase_name: quality_scoring
+  archive_path: api/_archived/automation/retired_phase_handlers.py
+  notes: Folded into unified intake
+
+ml_processing:
+  lifecycle: archived
+  enabled: false
+  replaced_by: unified_intake_extraction
+  phase_name: ml_processing
+  modules: [api/_archived/intake/ml_processing_service.py]
+  archive_path: api/_archived/intake/ml_processing_service.py
+  notes: Superseded by unified intake fusion
+
+metadata_enrichment:
+  lifecycle: archived
+  enabled: false
+  replaced_by: unified_intake_extraction
+  phase_name: metadata_enrichment
+  modules: [api/_archived/intake/metadata_enrichment_service.py]
+  archive_path: api/_archived/intake/metadata_enrichment_service.py
+  notes: Superseded by unified intake fusion
+
+article_signal_gate:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  incorporated_in: "10.1.0"
+  phase_name: null
+  modules: [api/shared/article_signal_gate.py]
+  flags:
+    env: ARTICLE_SIGNAL_ENABLED
+    yaml: signal_first.article_signal_enabled
+  notes: Full/light/skip lanes for LLM admission
+
+signal_admission_governor:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  incorporated_in: "10.1.0"
+  modules: [api/services/signal_admission_governor_service.py]
+  notes: Adaptive ARTICLE_SIGNAL_FULL_MIN_QUALITY from net_growth metrics
+
+rss_feed_silencing:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  incorporated_in: "10.1.0"
+  phase_name: rss_feed_health
+  modules: [api/services/rss_feed_health_service.py]
+  flags:
+    env: RSS_FEED_SILENCE_ENABLED
+    yaml: rss_feed_health.enabled
+  notes: Warn-then-auto-silence; dry_run via rss_feed_health.dry_run
+
+claim_resolvability_gate:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  incorporated_in: "10.1.0"
+  phase_name: claim_extraction
+  modules: [api/services/claim_extraction_service.py]
+  flags:
+    env: CLAIM_EXTRACTION_REQUIRE_SEEDED_DOMAIN_KEYS
+  notes: Seeded-pool gate before claim insert
+
+co_mention_edge_aggregation:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  incorporated_in: "10.1.0"
+  modules: [api/services/link_indexer_service.py]
+  notes: Upsert aggregated edges with hard cap
+
+pipeline_status_table:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  incorporated_in: "10.1.0"
+  modules: [api/shared/pipeline_status_store.py]
+  notes: Narrow eligibility table interim store
+
+spine_work_queues:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  incorporated_in: "10.1.0"
+  modules: [api/services/spine_work_queue_service.py]
+  notes: content_enrichment_queue, unified_intake_queue, spine_tail_queue
+
+spine_conductor:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.0.0"
+  incorporated_in: "10.1.0"
+  phase_name: spine_conductor
+  modules: [api/services/spine_pipeline_conductor.py]
+  flags:
+    env: SPINE_PIPELINE_MODE
+  notes: Drain helpers retained; scheduling loop retired in favor of pipeline_controller
+
+assembly_conductor:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.0.0"
+  incorporated_in: "10.1.0"
+  phase_name: assembly_conductor
+  modules: [api/services/assembly_conductor_service.py]
+  flags:
+    env: ASSEMBLY_PIPELINE_MODE
+  notes: Drain helpers retained; scheduling loop retired in favor of pipeline_controller
+
+pipeline_controller:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  incorporated_in: "10.1.0"
+  modules: [api/services/pipeline_controller.py]
+  notes: Single scheduling brain — decision tree, queue reconcile, dual-host GPU routing, stall detection
+
+drain_phase_cli:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  incorporated_in: "10.1.0"
+  modules: [api/scripts/drain_phase.py]
+  notes: Unified operator drain command
+
+context_sync:
+  lifecycle: incorporated
+  enabled: true
+  phase_name: context_sync
+  flags:
+    yaml: context_centric.tasks.context_sync
+
+entity_profile_sync:
+  lifecycle: incorporated
+  enabled: true
+  phase_name: entity_profile_sync
+  flags:
+    yaml: context_centric.tasks.entity_profile_sync
+
+claim_extraction:
+  lifecycle: incorporated
+  enabled: true
+  phase_name: claim_extraction
+  flags:
+    yaml: context_centric.tasks.claim_extraction
+
+entity_profile_build:
+  lifecycle: incorporated
+  enabled: true
+  phase_name: entity_profile_build
+  flags:
+    yaml: context_centric.tasks.entity_profile_build
+
+entity_dossier_compile:
+  lifecycle: incorporated
+  enabled: true
+  phase_name: entity_dossier_compile
+  flags:
+    yaml: context_centric.tasks.entity_dossier_compile
+
+pattern_recognition:
+  lifecycle: under_developed
+  enabled: false
+  phase_name: pattern_recognition
+  flags:
+    yaml: context_centric.tasks.pattern_recognition
+  notes: Disabled until pattern_discoveries has baseline data
+
+arc_report_generation:
+  lifecycle: under_developed
+  enabled: false
+  phase_name: arc_report_generation
+  notes: Longitudinal table empty; scheduler off
+
+longitudinal_matview_refresh:
+  lifecycle: under_developed
+  enabled: false
+  phase_name: longitudinal_matview_refresh
+  notes: Longitudinal table empty; scheduler off
+
+relationship_extraction:
+  lifecycle: archived
+  enabled: false
+  replaced_by: co_mention_edge_aggregation
+  phase_name: relationship_extraction
+  modules: [api/_archived/services/relationship_extraction_service.py]
+  archive_path: api/_archived/services/relationship_extraction_service.py
+  notes: Entity organizer uses link_indexer; API loads archived module on demand
+
+orchestrator_coordinator:
+  lifecycle: incorporated
+  enabled: true
+  notes: Collection cadence scheduler manifest entry
+
+automation_manager:
+  lifecycle: incorporated
+  enabled: true
+  notes: Maintenance + ingest scheduler shell
+
+newsplatform_secondary:
+  lifecycle: incorporated
+  enabled: true
+  notes: RSS ingest systemd unit
+
+widow_db_adjacent_cron:
+  lifecycle: incorporated
+  enabled: true
+  notes: DB-adjacent cron jobs on Widow
+
+widow_tracking_discovery_cron:
+  lifecycle: incorporated
+  enabled: true
+  notes: Weekly tracking discovery cron
+
+consolidation:
+  lifecycle: incorporated
+  enabled: true
+  notes: Hourly consolidation rotation manifest

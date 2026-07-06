@@ -26,7 +26,7 @@ def reload_project_modules():
         "shared.database.connection",
         "shared.services.llm_service",
         "services.automation_manager",
-        "services.ml_processing_service",
+        "shared.legacy_intake_rollback",
     ]
 
     reloaded_count = 0

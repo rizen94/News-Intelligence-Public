@@ -81,6 +81,23 @@ class UnifiedIntakeExtractionService:
             if len(combined.strip()) < 50:
                 continue
             fast_by_id[aid] = extract_fast_entities(title, content)
+            ner_count = sum(len(v) for v in (fast_by_id[aid] or {}).values())
+            if len(combined.strip()) < 400 and ner_count < 2:
+                schema = art.get("schema") or art.get("schema_name") or ""
+                if schema:
+                    from shared.pipeline_pass_marker import (
+                        TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
+                        record_article_phase_pass,
+                    )
+
+                    record_article_phase_pass(
+                        schema,
+                        aid,
+                        "unified_intake_extraction",
+                        "fast_ner_sparse_skip",
+                        TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
+                    )
+                continue
             pub = art.get("pub_date")
             pub_s = pub.strftime("%Y-%m-%d") if isinstance(pub, datetime) else "unknown"
             hint = format_ner_hints_for_prompt(fast_by_id[aid])
@@ -304,7 +321,9 @@ Return ONLY valid JSON. Example empty article:
                     events.append(evt)
 
             if events:
-                events_saved = int(await self._event_svc.save_events(events, conn) or 0)
+                events_saved = int(
+                    await self._event_svc.save_events(events, conn, commit=False) or 0
+                )
 
             scoring = payload.get("scoring") if isinstance(payload.get("scoring"), dict) else {}
             sentiment_score = scoring.get("sentiment_score")
@@ -390,6 +409,11 @@ Return ONLY valid JSON. Example empty article:
 
 def _store_topic_tags(cur, schema: str, article_id: int, topic_tags: list[dict[str, Any]]) -> None:
     """Seed article_keywords from fusion topic_tags for fast topic match."""
+    from shared.database.connection import get_db_connection
+    from shared.pg_savepoint import execute_with_savepoint
+
+    conn = getattr(cur, "connection", None) or get_db_connection()
+    sp_seq = 0
     for tag in topic_tags:
         kw = (tag.get("keyword") or "").strip()
         if not kw:
@@ -399,16 +423,17 @@ def _store_topic_tags(cur, schema: str, article_id: int, topic_tags: list[dict[s
         except (TypeError, ValueError):
             conf = 0.75
         kw_type = (tag.get("type") or "subject")[:30]
-        try:
-            cur.execute(
-                f"""
+        sp_seq += 1
+        execute_with_savepoint(
+            cur,
+            conn,
+            f"fusion_tag_{article_id}_{sp_seq}",
+            f"""
                 INSERT INTO {schema}.article_keywords
                 (article_id, keyword, keyword_type, confidence, in_headline)
                 VALUES (%s, %s, %s, %s, false)
                 ON CONFLICT (article_id, keyword) DO UPDATE SET
                     confidence = GREATEST({schema}.article_keywords.confidence, EXCLUDED.confidence)
-                """,
-                (article_id, kw[:255], kw_type, max(0.0, min(1.0, conf))),
-            )
-        except Exception as e:
-            logger.debug("fusion topic_tag insert %s: %s", article_id, e)
+            """,
+            (article_id, kw[:255], kw_type, max(0.0, min(1.0, conf))),
+        )

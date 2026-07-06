@@ -15,11 +15,11 @@ from config.runtime import env_str
 logger = logging.getLogger(__name__)
 
 
-def _governance_harmony() -> dict:
+def _governance_run_budgets() -> dict:
     try:
         from config.orchestrator_governance import get_orchestrator_governance_config
 
-        raw = get_orchestrator_governance_config().get("pipeline_orchestration_harmony") or {}
+        raw = get_orchestrator_governance_config().get("pipeline_controller") or {}
         return raw if isinstance(raw, dict) else {}
     except Exception:
         return {}
@@ -44,7 +44,7 @@ def phase_run_budget_seconds(phase: str, default: int = 0) -> int:
         pass
     gov_key = f"{(phase or '').strip().lower().replace('-', '_')}_run_budget_seconds"
     try:
-        gov_val = _governance_harmony().get(gov_key)
+        gov_val = _governance_run_budgets().get(gov_key)
         if gov_val is not None and str(gov_val).strip() != "":
             val = int(gov_val)
             if val <= 0:
@@ -62,7 +62,7 @@ def phase_run_budget_seconds(phase: str, default: int = 0) -> int:
                 return max(60, min(14_400, val))
         except (TypeError, ValueError):
             pass
-        gov_ce = _governance_harmony().get("claim_extraction_drain_max_seconds")
+        gov_ce = _governance_run_budgets().get("claim_extraction_drain_max_seconds")
         if gov_ce is not None:
             try:
                 val = int(gov_ce)

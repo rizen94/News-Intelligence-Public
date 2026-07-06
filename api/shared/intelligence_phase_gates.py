@@ -44,6 +44,16 @@ def invalidate_intelligence_phase_gate_cache() -> None:
 
 def should_skip_automation_phase(phase: str) -> bool:
     """Return True when the phase should not run (empty unwired targets)."""
+    try:
+        from config.feature_registry import feature_lifecycle, is_feature_enabled
+
+        lc = feature_lifecycle(phase)
+        if lc in ("under_developed", "archived", "deprecated"):
+            return not is_feature_enabled(phase)
+        if lc == "staged" and not is_feature_enabled(phase):
+            return True
+    except Exception:
+        pass
     if phase == "arc_report_generation" or phase == "longitudinal_matview_refresh":
         if _table_row_estimate("intelligence", "arc_definitions") < 1:
             return True

@@ -22,9 +22,9 @@ ALLOW_NRI_LITERAL = {
     API / "config" / "runtime.py",
     API / "config" / "investigation_tables.py",
     API / "database" / "migrations" / "237_investigation_schema_merge.sql",
-    API / "services" / "nri_integration_service.py",
-    API / "services" / "nri_bridge_qa_service.py",
-    API / "services" / "nri_entity_claims_service.py",
+    API / "_archived" / "services" / "nri_integration_service.py",
+    API / "_archived" / "services" / "nri_bridge_qa_service.py",
+    API / "_archived" / "services" / "nri_entity_claims_service.py",
 }
 
 # Paths that must be clean for unification cutover

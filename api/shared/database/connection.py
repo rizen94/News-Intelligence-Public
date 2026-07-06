@@ -515,6 +515,46 @@ def get_db_pool_snapshot() -> Dict[str, Any]:
     }
 
 
+def _automation_db_pool_pressure_gate_enabled() -> bool:
+    """When True, defer new scheduled work if worker psycopg2 pool utilization is above threshold."""
+    return env_str("AUTOMATION_DB_POOL_PRESSURE_GATE_ENABLED", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def _db_pool_gate_exempt_phases() -> frozenset[str]:
+    """Phases that may still schedule when the worker pool is hot (liveness + spill replay)."""
+    base = frozenset({"health_check", "pending_db_flush"})
+    raw = env_str("AUTOMATION_DB_POOL_GATE_EXEMPT_PHASES", "").strip()
+    if not raw:
+        return base
+    return base | frozenset(x.strip() for x in raw.split(",") if x.strip())
+
+
+def automation_db_pool_should_defer_phase(phase_name: str) -> bool:
+    """
+    True when this phase should not be newly scheduled while the worker DB pool is under pressure.
+
+    Does not apply to tasks already queued. Exempt phases (health_check, pending_db_flush) always pass.
+    """
+    if phase_name in _db_pool_gate_exempt_phases():
+        return False
+    if not _automation_db_pool_pressure_gate_enabled():
+        return False
+    try:
+        snap = get_db_pool_snapshot()
+        utilization = float((snap.get("worker") or {}).get("utilization") or 0.0)
+    except Exception:
+        return False
+    try:
+        threshold = float(env_str("AUTOMATION_DB_WORKER_UTILIZATION_SKIP_THRESHOLD", "0.82"))
+    except ValueError:
+        threshold = 0.82
+    return utilization >= threshold
+
+
 def close_pool() -> None:
     """Close all worker/UI psycopg2 pools and dispose the SQLAlchemy engine (call on shutdown).
 

@@ -424,13 +424,19 @@ def get_backlog_status() -> dict[str, Any]:
         entity_profiles_any_updated_last_24h = 0
         entity_profiles_any_updated_4d = 0
         try:
+            from shared.entity_profile_eligibility import sql_entity_profile_needs_build
+
+            entity_profile_needs_build = sql_entity_profile_needs_build("ep")
             cur.execute("SELECT COUNT(*) FROM intelligence.entity_profiles")
             entity_profile_total = cur.fetchone()[0] or 0
             cur.execute(
-                """
+                f"""
                 SELECT COUNT(*) FROM intelligence.entity_profiles ep
-                WHERE ep.sections = '[]'::jsonb OR ep.sections IS NULL
-                   OR ep.updated_at < NOW() - INTERVAL '7 days'
+                WHERE {entity_profile_needs_build}
+                  AND EXISTS (
+                      SELECT 1 FROM intelligence.context_entity_mentions cem
+                      WHERE cem.entity_profile_id = ep.id
+                  )
                 """
             )
             entity_profile_backlog = cur.fetchone()[0] or 0
@@ -1677,6 +1683,14 @@ _processing_progress_fast_cond = threading.Condition(_processing_progress_fast_l
 _processing_progress_fast_inflight: set[tuple[bool, bool]] = set()
 
 
+def invalidate_processing_progress_fast_cache() -> None:
+    """Drop cached Monitor pulse so the next poll picks up a fresh backlog snapshot."""
+    with _processing_progress_fast_cond:
+        _processing_progress_fast_cache.clear()
+        _processing_progress_fast_inflight.clear()
+        _processing_progress_fast_cond.notify_all()
+
+
 def _refresh_processing_progress_fast_cache(key: tuple[bool, bool]) -> None:
     """Background rebuild after stale-while-revalidate handoff."""
     include_hourly_tick_rows, use_backlog_snapshot = key
@@ -1877,6 +1891,27 @@ def set_health_feed_results(results: dict[str, dict[str, Any]]) -> None:
     _health_feed_results.clear()
     _health_feed_results.update(results)
     _health_feed_results_ts = time.time()
+
+
+@router.get("/features")
+async def get_feature_registry(
+    lifecycle: str | None = None,
+    enabled: bool | None = None,
+):
+    """List backend features by lifecycle tag (v10.1 feature registry)."""
+    from config.feature_registry import is_feature_enabled, lifecycle_counts, list_features
+
+    items = list_features(lifecycle=lifecycle, enabled=enabled)
+    for item in items:
+        item["runtime_enabled"] = is_feature_enabled(item["key"])
+    return {
+        "success": True,
+        "data": {
+            "features": items,
+            "lifecycle_counts": lifecycle_counts(),
+            "version": __import__("config.version", fromlist=["get_version"]).get_version(),
+        },
+    }
 
 
 @router.get("/health/feeds")

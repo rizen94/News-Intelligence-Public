@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 _STATE_KEY = "monitor_backlog_snapshot"
 
 _last_refresh_monotonic: float = 0.0
+_last_drain_refresh_monotonic: float = 0.0
 
 
 def snapshot_interval_seconds() -> int:
@@ -23,6 +24,15 @@ def snapshot_interval_seconds() -> int:
         return max(60, int(raw))
     except ValueError:
         return 900
+
+
+def drain_refresh_interval_seconds() -> int:
+    """Min seconds between snapshot rebuilds triggered by phase drain completion."""
+    raw = env_str("MONITOR_BACKLOG_SNAPSHOT_DRAIN_REFRESH_SECONDS", "60").strip()
+    try:
+        return max(15, int(raw))
+    except ValueError:
+        return 60
 
 
 def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] | None:
@@ -141,6 +151,14 @@ def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] |
             len(pending),
             elapsed_ms,
         )
+        try:
+            from domains.system_monitoring.routes.resource_dashboard import (
+                invalidate_processing_progress_fast_cache,
+            )
+
+            invalidate_processing_progress_fast_cache()
+        except Exception as inv_err:
+            logger.debug("processing_progress fast cache invalidate: %s", inv_err)
         return payload
     except Exception as e:
         logger.warning("refresh_monitor_backlog_snapshot failed: %s", e)
@@ -188,4 +206,15 @@ def maybe_refresh_monitor_backlog_snapshot() -> None:
     interval = snapshot_interval_seconds()
     if _last_refresh_monotonic and (time.monotonic() - _last_refresh_monotonic) < interval:
         return
+    refresh_monitor_backlog_snapshot(force=True)
+
+
+def maybe_refresh_monitor_backlog_snapshot_after_drain() -> None:
+    """After a queue-draining phase completes, refresh snapshot (throttled) so Monitor Total queue moves."""
+    global _last_drain_refresh_monotonic
+    interval = drain_refresh_interval_seconds()
+    now_mono = time.monotonic()
+    if _last_drain_refresh_monotonic and (now_mono - _last_drain_refresh_monotonic) < interval:
+        return
+    _last_drain_refresh_monotonic = now_mono
     refresh_monitor_backlog_snapshot(force=True)

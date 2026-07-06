@@ -31,7 +31,8 @@ async def _run_enrichment_batch(limit: int) -> int:
 async def _run_profile_build_batch(limit: int) -> int:
     from services.entity_profile_builder_service import run_profile_builder_batch
 
-    return int(await run_profile_builder_batch(limit=limit) or 0)
+    result = await run_profile_builder_batch(limit=limit)
+    return int(result.updated or 0)
 
 
 async def run_enhancement_cycle(

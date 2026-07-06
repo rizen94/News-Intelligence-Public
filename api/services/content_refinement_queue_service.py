@@ -10,9 +10,7 @@ Job types:
 Processed by automation task `content_refinement_queue` (see automation_manager).
 Before each drain batch, automation calls `auto_enqueue_comprehensive_rag_for_automation()` so
 deep analysis (`comprehensive_rag`) is queued without using the UI (disable via
-`AUTO_ENQUEUE_COMPREHENSIVE_RAG=0`). The scheduler also calls
-`maybe_auto_enqueue_comprehensive_rag_from_scheduler()` every ~30s so the DB queue gains work even
-when the refinement phase is starved (`AUTO_ENQUEUE_RAG_SCHEDULER_SECONDS`).
+`AUTO_ENQUEUE_COMPREHENSIVE_RAG=0`).
 
 Nightly pipeline (America/New_York by default): automation phase `nightly_enrichment_context` runs
 02:00–07:00 (`NIGHTLY_PIPELINE_*`): kickoff RSS once per local day, drain enrichment and context_sync,
@@ -27,7 +25,6 @@ import asyncio
 import json
 import logging
 import os
-import time
 from datetime import datetime, timezone
 from collections.abc import Callable
 from typing import Any
@@ -37,9 +34,6 @@ from shared.domain_registry import get_active_domain_keys
 from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
-
-# Throttle scheduler-driven enqueue so we fill the DB queue even if the refinement phase is starved.
-_last_scheduler_auto_enqueue_monotonic: float = 0.0
 
 JOB_COMPREHENSIVE_RAG = "comprehensive_rag"
 JOB_NARRATIVE_FINISHER = "narrative_finisher"
@@ -396,45 +390,6 @@ def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
             stats.get("by_domain", {}),
         )
     return stats
-
-
-def maybe_auto_enqueue_comprehensive_rag_from_scheduler() -> None:
-    """
-    Run auto_enqueue on an interval from AutomationManager._scheduler (not only when the
-    content_refinement_queue task runs). Otherwise pending=0 skips visible work and the phase
-    can starve behind higher-backlog tasks, so storylines never get comprehensive_rag rows.
-
-    Skipped during the unified nightly pipeline window (nightly_enrichment_context owns drain +
-    enqueue at drain start). Interval: AUTO_ENQUEUE_RAG_SCHEDULER_SECONDS (default 30).
-    """
-    global _last_scheduler_auto_enqueue_monotonic
-    if env_str("CONTENT_REFINEMENT_API_ENQUEUE_ONLY", "true").lower() in (
-        "1",
-        "true",
-        "yes",
-    ):
-        return
-    if env_str("AUTO_ENQUEUE_COMPREHENSIVE_RAG", "1").lower() not in (
-        "1",
-        "true",
-        "yes",
-    ):
-        return
-    try:
-        from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
-
-        if in_nightly_pipeline_window_est():
-            return
-    except Exception:
-        pass
-    interval = float(env_str("AUTO_ENQUEUE_RAG_SCHEDULER_SECONDS", "30"))
-    if interval <= 0:
-        return
-    now = time.monotonic()
-    if now - _last_scheduler_auto_enqueue_monotonic < interval:
-        return
-    _last_scheduler_auto_enqueue_monotonic = now
-    auto_enqueue_comprehensive_rag_for_automation()
 
 
 def _need_initial_narrative_map_for_batch(

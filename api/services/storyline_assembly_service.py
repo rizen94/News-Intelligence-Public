@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any
 
 from shared.database.connection import get_db_connection_context
@@ -113,7 +114,17 @@ async def run_storyline_assembly_for_domain(
         run_proactive = _assembly_run_proactive()
     schema = resolve_domain_schema(domain_key)
     steps: dict[str, Any] = {}
+    assembly_started = datetime.now(timezone.utc)
     unlinked_before = count_unlinked_articles(domain_key)
+
+    try:
+        from services.event_tracking_service import link_tracked_events_to_storylines
+
+        linked_te = link_tracked_events_to_storylines(limit=25)
+        if linked_te:
+            steps["tracked_event_storyline_links"] = linked_te
+    except Exception as e:
+        logger.debug("storyline assembly tracked_event link %s: %s", domain_key, e)
 
     if run_proactive:
         try:
@@ -194,6 +205,42 @@ async def run_storyline_assembly_for_domain(
             steps["storyline_automation"] = {"error": str(e)}
 
     unlinked_after = count_unlinked_articles(domain_key)
+    assembly_finished = datetime.now(timezone.utc)
+    automation_step = steps.get("storyline_automation") if isinstance(steps.get("storyline_automation"), dict) else {}
+    scanned = int(automation_step.get("storylines_scanned") or 0)
+    if scanned > 0 or unlinked_before > unlinked_after:
+        try:
+            from shared.services.phase_batch_run_history import record_phase_batch_completion_async
+
+            await record_phase_batch_completion_async(
+                "storyline_assembly",
+                assembly_started,
+                assembly_finished,
+                stats={
+                    "round_processed": max(0, unlinked_before - unlinked_after),
+                    "storylines_scanned": scanned,
+                    "articles_matched": int(automation_step.get("articles_matched") or 0),
+                    "unlinked_before": unlinked_before,
+                    "unlinked_after": unlinked_after,
+                    "domain": domain_key,
+                },
+                scheduler_path="storyline_assembly_service",
+            )
+            if scanned > 0:
+                await record_phase_batch_completion_async(
+                    "storyline_automation",
+                    assembly_started,
+                    assembly_finished,
+                    stats={
+                        "storylines_scanned": scanned,
+                        "articles_matched": int(automation_step.get("articles_matched") or 0),
+                        "round_processed": scanned,
+                        "domain": domain_key,
+                    },
+                    scheduler_path="storyline_assembly_service",
+                )
+        except Exception as e:
+            logger.debug("storyline assembly batch history %s: %s", domain_key, e)
     return {
         "success": True,
         "domain": domain_key,

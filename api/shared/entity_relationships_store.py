@@ -19,12 +19,41 @@ def normalize_edge(
 UPSERT_ENTITY_RELATIONSHIP_SQL = """
 INSERT INTO intelligence.entity_relationships
     (source_domain, source_entity_id, target_domain, target_entity_id,
-     relationship_type, confidence)
-VALUES (%s, %s, %s, %s, %s, %s)
+     relationship_type, confidence, co_occurrence_count, last_seen_at)
+VALUES (%s, %s, %s, %s, %s, %s, 1, NOW())
 ON CONFLICT (source_domain, source_entity_id, target_domain, target_entity_id, relationship_type)
-DO UPDATE SET confidence = GREATEST(
-    intelligence.entity_relationships.confidence,
-    EXCLUDED.confidence
-)
+DO UPDATE SET
+    confidence = GREATEST(
+        intelligence.entity_relationships.confidence,
+        EXCLUDED.confidence
+    ),
+    co_occurrence_count = intelligence.entity_relationships.co_occurrence_count + 1,
+    last_seen_at = NOW()
 RETURNING id
 """
+
+
+def entity_relationships_at_cap() -> bool:
+    """True when table is at ENTITY_RELATIONSHIPS_MAX_ROWS — reject new edges."""
+    from config.runtime import env_int
+
+    cap = env_int("ENTITY_RELATIONSHIPS_MAX_ROWS", 5_000_000)
+    try:
+        from shared.database.connection import get_db_connection_context
+
+        with get_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT reltuples::bigint AS estimate
+                    FROM pg_class
+                    WHERE oid = 'intelligence.entity_relationships'::regclass
+                    """
+                )
+                row = cur.fetchone()
+                if row and row[0] is not None:
+                    return int(row[0]) >= cap
+                cur.execute("SELECT COUNT(*) FROM intelligence.entity_relationships")
+                return int(cur.fetchone()[0] or 0) >= cap
+    except Exception:
+        return False

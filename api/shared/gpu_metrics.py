@@ -212,3 +212,33 @@ def should_throttle_ollama(max_temp_c: int = GPU_TEMP_THROTTLE_C) -> bool:
     if temp is None:
         return False
     return temp >= max_temp_c
+
+
+def should_throttle_ollama_for_lane(
+    execution_lane: str | None = None,
+    *,
+    max_temp_c: int = GPU_TEMP_THROTTLE_C,
+) -> bool:
+    """
+    Throttle LLM work by execution lane.
+
+    GPU lane with dual-host routing: use PopOS probe from catchup_host_metrics.
+    Otherwise: local Widow nvidia-smi via get_gpu_metrics().
+    """
+    from config.runtime import env_str
+
+    lane = (execution_lane or "gpu").strip().lower()
+    dual = env_str("OLLAMA_DUAL_HOST_ROUTING_ENABLED", "").lower() in ("1", "true", "yes")
+    if dual and lane == "gpu":
+        try:
+            from shared.adaptive_batch_policy import ensure_routing_context
+            from shared.catchup_host_metrics import sample_resources
+
+            ensure_routing_context()
+            snap = sample_resources()
+            temp = getattr(snap, "gpu_temp_c", None)
+            if temp is not None:
+                return float(temp) >= max_temp_c
+        except Exception:
+            pass
+    return should_throttle_ollama(max_temp_c=max_temp_c)

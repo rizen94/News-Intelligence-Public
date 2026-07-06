@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-- **Path convention:** Flat `/api` prefix (no version in path). Domain-scoped routes use `{domain}` where `domain` is `politics`, `finance`, or `science-tech`.
+- **Path convention:** Flat `/api` prefix (no version in path). Domain-scoped routes use `{domain}` where `domain` is `legal`, `medicine`, `artificial-intelligence`, `politics`, or `finance`.
 - **Response shape:** Endpoints typically return JSON with `success`, `data`, and optional `message`. Standard error responses use HTTP status codes and a consistent error payload.
 - **Integrations:** The React frontend calls these APIs via `web/src/services/api/` and `apiService.ts`; base URL and proxy are configured in env and Vite.
 

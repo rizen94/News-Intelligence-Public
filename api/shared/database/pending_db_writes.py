@@ -47,6 +47,8 @@ def enqueue_automation_run_history(
     finished_at: str,
     success: bool,
     error_message: str | None,
+    *,
+    metadata: str | None = None,
 ) -> None:
     """Append one automation_run_history-equivalent row for later flush."""
     rec = {
@@ -56,6 +58,7 @@ def enqueue_automation_run_history(
         "finished_at": finished_at,
         "success": success,
         "error_message": error_message,
+        "metadata": metadata,
         "enqueued_at": datetime.utcnow().isoformat() + "Z",
     }
     _append_record(rec)
@@ -130,18 +133,25 @@ def flush_pending_writes() -> dict[str, Any]:
                 rtype = rec.get("type")
                 if rtype == "automation_run_history":
                     try:
+                        err = rec.get("error_message")
+                        meta = rec.get("metadata")
+                        if meta and err and str(err).strip().startswith('{"batch":'):
+                            err = None
                         with conn.cursor() as cur:
                             cur.execute(
                                 """
-                                INSERT INTO automation_run_history (phase_name, started_at, finished_at, success, error_message)
-                                VALUES (%s, %s, %s, %s, %s)
+                                INSERT INTO automation_run_history (
+                                    phase_name, started_at, finished_at, success, error_message, metadata
+                                )
+                                VALUES (%s, %s, %s, %s, %s, COALESCE(%s::jsonb, '{}'::jsonb))
                                 """,
                                 (
                                     rec.get("phase_name"),
                                     rec.get("started_at"),
                                     rec.get("finished_at"),
                                     rec.get("success"),
-                                    rec.get("error_message"),
+                                    err,
+                                    meta,
                                 ),
                             )
                         conn.commit()

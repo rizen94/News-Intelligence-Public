@@ -54,9 +54,7 @@ _SCHEDULING_ENV_KEYS = (
     "DB_POOL_WORKER_MAX",
     "DB_POOL_UI_MAX",
     "DB_PORT",
-    "USE_WORKLOAD_DRIVEN_ORDER",
     "COLLECTION_THROTTLE_PENDING_THRESHOLD",
-    "ENRICHMENT_BACKLOG_FIRST_ENABLED",
 )
 
 
@@ -252,6 +250,61 @@ def main() -> int:
         )
     except Exception as e:
         _emit("gates", "pending gates failed", {"error": str(e)})
+
+    try:
+        from services.backlog_metrics import get_all_pending_counts
+        from services.pipeline_controller import (
+            assess_all_phase_health,
+            host_state_dict,
+            is_catchup_active,
+            pick_next_phases,
+            sample_host_resources,
+        )
+
+        pending = get_all_pending_counts()
+        resources = sample_host_resources(force=True)
+        health = assess_all_phase_health(pending, {})
+        fake_schedules = {
+            p: {"enabled": True, "interval": 300, "phase": 0}
+            for p, n in pending.items()
+            if int(n or 0) > 0
+        }
+        fake_schedules.update(
+            {
+                "collection_cycle": {"enabled": True, "interval": 7200, "phase": 0},
+                "health_check": {"enabled": True, "interval": 30, "phase": 0},
+                "spine_sql_tail": {"enabled": True, "interval": 300, "phase": 4},
+            }
+        )
+
+        class _FakeAM:
+            schedules = fake_schedules
+            _pending_collection_queue = []
+
+        desired, branch = pick_next_phases(
+            pending,
+            resources,
+            health,
+            _FakeAM(),
+            stall_holds={},
+            catchup=is_catchup_active(pending),
+        )
+        _emit(
+            "controller",
+            "pipeline controller dry-run",
+            {
+                "catchup_active": is_catchup_active(pending),
+                "tree_branch": branch,
+                "desired_phases": desired[:12],
+                "hosts": host_state_dict(resources),
+                "phase_health": {
+                    k: {"status": v.status, "detail": v.detail}
+                    for k, v in list(health.items())[:10]
+                },
+            },
+        )
+    except Exception as e:
+        _emit("controller", "pipeline controller preview failed", {"error": str(e)})
 
     print(json.dumps({"ok": True, "conflicts": conflicts}, indent=2))
     return 0

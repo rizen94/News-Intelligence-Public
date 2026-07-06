@@ -10,7 +10,6 @@ from services.article_processing_service import ArticleProcessingService
 from services.automation_manager import get_automation_manager
 from services.circuit_breaker_service import get_circuit_breaker_service
 from services.distributed_cache_service import get_distributed_cache_service
-from services.dynamic_resource_service import get_dynamic_resource_service
 from services.early_quality_service import get_early_quality_service
 from services.predictive_scaling_service import get_predictive_scaling_service
 
@@ -22,7 +21,6 @@ __all__ = [
     "get_automation_manager",
     "get_early_quality_service",
     "get_smart_cache_service",
-    "get_dynamic_resource_service",
     "get_circuit_breaker_service",
     "get_predictive_scaling_service",
     "get_distributed_cache_service",

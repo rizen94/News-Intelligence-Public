@@ -14,10 +14,6 @@ from services.cross_domain_service import (
     get_unified_timeline,
     run_cross_domain_synthesis,
 )
-from services.relationship_extraction_service import (
-    extract_relationships_from_contexts,
-    get_network_subgraph,
-)
 from services.trend_predictions_service import get_predictions, get_trend_analysis
 
 router = APIRouter(prefix="/api/intelligence", tags=["Cross-domain & relationships"])
@@ -117,6 +113,9 @@ def post_extract_relationships(
     limit: int = Body(50, embed=True),
 ) -> dict[str, Any]:
     """Extract entity relationships from contexts (co-mentions -> entity_relationships). Returns extracted count and relationship_ids."""
+    from shared.archived_services_loader import load_relationship_extraction_service
+
+    extract_relationships_from_contexts = load_relationship_extraction_service().extract_relationships_from_contexts
     result = extract_relationships_from_contexts(
         context_ids=context_ids,
         domain_key=domain,
@@ -187,6 +186,9 @@ def get_network_graph(
     limit_per_layer: int = Query(50, ge=1, le=200),
 ) -> dict[str, Any]:
     """Subgraph around entity: nodes = (domain, entity_id), edges = entity_relationships."""
+    from shared.archived_services_loader import load_relationship_extraction_service
+
+    get_network_subgraph = load_relationship_extraction_service().get_network_subgraph
     types_list = [t.strip() for t in relationship_types.split(",")] if relationship_types else None
     result = get_network_subgraph(
         domain=domain,

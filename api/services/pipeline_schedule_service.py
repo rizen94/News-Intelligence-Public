@@ -135,9 +135,9 @@ def _quiet_allowed_phases() -> frozenset[str]:
 
 def _backlog_severe_threshold() -> int:
     try:
-        return max(1, int(env_str("AUTOMATION_BACKLOG_SEVERE_THRESHOLD", "25000")))
+        return max(1, int(env_str("AUTOMATION_BACKLOG_SEVERE_THRESHOLD", "10000")))
     except (TypeError, ValueError):
-        return 25000
+        return 10000
 
 
 def automation_phase_allowed(

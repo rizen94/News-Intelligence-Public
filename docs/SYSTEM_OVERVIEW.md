@@ -16,7 +16,7 @@ This document maps the full system: API route structure, web interface structure
 │  localhost:5173 → Nginx → localhost:8000                           │
 ├─────────────────────────────────────────────────────────────────────┤
 │  API (FastAPI, Python) — api/main.py                            │
-│  Domains: politics | finance | science-tech                        │
+│  Domains: legal | medicine | artificial-intelligence | politics | finance │
 │  Routes: /api/{domain}/... and /api/...                            │
 ├──────────────┬──────────────┬───────────────┬───────────────────────┤
 │  PostgreSQL  │  Ollama LLM  │  RSS Sources  │  External APIs       │
@@ -371,7 +371,7 @@ All routes are mounted from `api/main.py`. Each domain router defines its own pr
 
 ### 4.1 Route Map
 
-All routes are under `/:domain/` where domain is `politics`, `finance`, or `science-tech`. Default redirect: `/` → `/politics/dashboard`.
+All routes are under `/:domain/` where domain is one of the five pipeline-active silos (`legal`, `medicine`, `artificial-intelligence`, `politics`, `finance`). Default redirect: `/` → `/politics/dashboard`.
 
 | Path | Component | Description |
 |------|-----------|-------------|
@@ -411,7 +411,7 @@ Located in `web/src/layout/AppNav.tsx` — persistent sidebar (220px desktop, dr
 | Analyze | `analyze` | AnalyticsIcon | All domains |
 | Commodity | `commodity/gold` | ShowChartIcon | **Finance only** |
 
-Domain selector in the header switches between politics, finance, science-tech.
+Domain selector in the header switches between the five active pipeline domains.
 
 ### 4.3 Page Components
 

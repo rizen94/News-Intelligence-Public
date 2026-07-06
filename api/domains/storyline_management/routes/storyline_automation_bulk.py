@@ -10,7 +10,7 @@ from fastapi import Body, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
 from shared.database.connection import get_db_connection
-from shared.domain_registry import resolve_domain_schema
+from shared.domain_registry import resolve_domain_schema, DOMAIN_PATH_PATTERN
 from shared.services.domain_aware_service import validate_domain
 from services.storyline_automation_service import StorylineAutomationService
 
@@ -84,7 +84,7 @@ def _approve_suggestion_row(
 def register_bulk_routes(router) -> None:
     @router.post("/{domain}/storylines/review-queue/bulk-approve")
     async def bulk_approve_suggestions(
-        domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+        domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
         body: BulkSuggestionBody = Body(...),
     ):
         if not validate_domain(domain):
@@ -148,7 +148,7 @@ def register_bulk_routes(router) -> None:
 
     @router.post("/{domain}/storylines/review-queue/bulk-reject")
     async def bulk_reject_suggestions(
-        domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+        domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
         body: BulkSuggestionBody = Body(...),
     ):
         if not validate_domain(domain):
@@ -197,7 +197,7 @@ def register_bulk_routes(router) -> None:
 
     @router.post("/{domain}/storylines/automation/discover")
     async def domain_automation_discover(
-        domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+        domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
         force_refresh: bool = Query(False),
         limit: int = Query(15, ge=1, le=100),
     ):

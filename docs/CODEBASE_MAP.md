@@ -91,7 +91,7 @@ Shared cross-domain schema lives in PostgreSQL **`intelligence`**; per-domain co
 
 ## Tests and scripts
 
-- **`tests/`** (repo root) — **CI pytest** target. Legacy tree was moved to **`api/_archived/legacy_pytest_tree_2026_03/`** (unmaintained vs CI).
+- **`tests/`** (repo root) — **CI pytest** target.
 - **`scripts/`** — Operational scripts; **`api/scripts/`** — migrations, registers, verifiers.
 
 See [DOCS_INDEX.md](DOCS_INDEX.md) for the full documentation set.

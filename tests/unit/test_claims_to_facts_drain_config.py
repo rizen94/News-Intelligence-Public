@@ -1,5 +1,15 @@
 """Config helpers for claims_to_facts drain and nightly batch alignment."""
 
+import importlib.util
+from pathlib import Path
+
+_PCS = Path(__file__).resolve().parents[2] / "api" / "services" / "pipeline_conductor_service.py"
+_spec = importlib.util.spec_from_file_location("pipeline_conductor_service", _PCS)
+assert _spec and _spec.loader
+_pcs = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_pcs)
+_FALLBACK_PIPELINE_PHASES = _pcs._FALLBACK_PIPELINE_PHASES
+
 
 def test_get_nightly_claims_to_facts_batch_limit_matches_daytime_when_unset(monkeypatch):
     from services import claim_extraction_service as ces
@@ -25,10 +35,8 @@ def test_claims_to_facts_drain_enabled_default(monkeypatch):
     assert ces.claims_to_facts_drain_enabled() is False
 
 
-def test_workload_balancer_includes_claims_to_facts():
-    from services.workload_balancer import workload_balancer_phase_names
-
-    assert "claims_to_facts" in workload_balancer_phase_names()
+def test_claims_to_facts_in_effective_processing_phases():
+    assert "claims_to_facts" in _FALLBACK_PIPELINE_PHASES
 
 
 def test_claims_to_facts_backlog_suffix_promotable_hint_default(monkeypatch):

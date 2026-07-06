@@ -1,0 +1,38 @@
+{
+  "$schema": "https://repomix.com/schemas/latest/schema.json",
+  "output": {
+    "filePath": "repomix-nri-output.md",
+    "style": "markdown",
+    "showLineNumbers": true,
+    "compress": true,
+    "topFilesLength": 15,
+    "headerText": "NRI (Investigation) — Repomix bundle from api/nri_core/ after monorepo unification and import normalization (unification/big-bang, 2026-06-24)."
+  },
+  "include": [
+    "api/nri_core/**/*.py",
+    "api/config/runtime.py",
+    "api/config/investigation_tables.py",
+    "api/config/database_targets.py",
+    "api/config/schedulers.yaml",
+    "api/domains/intelligence_hub/routes/investigation.py",
+    "api/database/migrations/237_investigation_schema_merge.sql",
+    "docs/INVESTIGATION.md",
+    "docs/UNIFICATION_BASELINE.md",
+    "docs/UNIFICATION_CUTOVER.md"
+  ],
+  "ignore": {
+    "useGitignore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      "**/__pycache__/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "news-intelligence-kit/**",
+      ".cursor/**",
+      "repomix-nri-output.*"
+    ]
+  },
+  "security": {
+    "enableSecurityCheck": true
+  }
+}

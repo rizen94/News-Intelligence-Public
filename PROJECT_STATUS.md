@@ -3,6 +3,8 @@
 > **MIGRATION COMPLETE AND FINAL (June 2026)**  
 > PopOS → Widow migration is done. **Do not develop on the PopOS local copy** — it is headed for NAS cold storage. All active development, queries, and operations belong on **Widow**.
 
+> **v10.1 in progress:** Active development on branch `release/10.1`. Production `/opt/news-intelligence` cuts over at tag `v10.1.0` only — no partial rsync during development. See [docs/UPGRADE_10.1.md](docs/UPGRADE_10.1.md).
+
 ---
 
 ## Where to work
@@ -79,14 +81,7 @@ Post-cutover bake (complete June 2026): `nri` schema dropped; `/api/nri/*` shims
 
 **Status: deployed on Widow prod** (`UNIFIED_INTAKE_EXTRACTION_ENABLED=true`, `LEGACY_INTAKE_EXTRACTION_ENABLED=false`).
 
-| Item | State |
-|------|-------|
-| Intake path | Single batched LLM phase (`unified_intake_extraction`) replaces legacy entity/event/sentiment/quality phases |
-| Fast NER | spaCy + GLiNER pre-pass (`FAST_NER_ENABLED=true`) |
-| Context chunking | Long articles → `article` + `article_chunk` contexts (`CONTEXT_CHUNKING_ENABLED=true`) |
-| Legacy backlog | ~57k articles marker-backfilled without re-LLM (`UNIFIED_INTAKE_LEGACY_AWARE_BACKLOG=true`) |
-| Dual-lane GPU | `AUTOMATION_DUAL_LANE=true`, PopOS `OLLAMA_GPU_HOST` for extraction overflow |
-| Monitor | `unified_intake_extraction` shows **actionable** pending (~7.5k post-backfill), not raw inventory |
+| Entity extraction robustness | Improved JSON parsing with repair/retry mechanisms; topic extraction uses fast NER fallback |
 
 Docs: [docs/PIPELINE_AND_AUTOMATION.md](docs/PIPELINE_AND_AUTOMATION.md), [docs/MONITOR_REPORTING_AND_METRICS.md](docs/MONITOR_REPORTING_AND_METRICS.md).
 
@@ -119,4 +114,4 @@ Complete before removing the PopOS local copy:
 - [docs/DOCS_INDEX.md](docs/DOCS_INDEX.md) — documentation index
 - [docs/DOCUMENTATION_FACT_CHECK_2026-06.md](docs/DOCUMENTATION_FACT_CHECK_2026-06.md) — doc vs Widow alignment audit (June 2026)
 
-*Last verified: 2026-06-22 — `scripts/verify_documentation_ground_truth.py` on Widow (exit 0).*
+*Last verified: 2026-07-04 — `scripts/verify_documentation_ground_truth.py` on Widow (exit 0).*

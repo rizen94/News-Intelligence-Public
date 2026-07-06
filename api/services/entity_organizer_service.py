@@ -83,21 +83,34 @@ def run_cycle(
         )
         result["relationships_skipped_cap"] = True
     else:
-        try:
-            from services.relationship_extraction_service import extract_relationships_from_contexts
+        from shared.domain_registry import get_active_domain_keys
+        from services.link_indexer_service import index_domain_co_mentions
 
-            rel_out = extract_relationships_from_contexts(
-                domain_key=domain_key,
-                limit=relationship_limit,
+        domains: list[str] = (
+            [domain_key] if domain_key else list(get_active_domain_keys())
+        )
+        if not domains:
+            result["errors"].append("relationships: no active domains")
+        else:
+            per_domain_limit = (
+                relationship_limit
+                if domain_key
+                else max(1, relationship_limit // len(domains))
             )
-            if rel_out.get("success"):
-                result["relationships_extracted"] = rel_out.get("extracted", 0)
-                result["contexts_processed"] = rel_out.get("contexts_processed", 0)
-            else:
-                result["errors"].append(rel_out.get("error", "relationship extraction failed"))
-        except Exception as e:
-            logger.warning("Entity organizer relationship extraction: %s", e)
-            result["errors"].append(f"relationships: {e!s}")
+            extracted = 0
+            contexts = 0
+            for dk in domains:
+                try:
+                    rel_out = index_domain_co_mentions(dk, limit=per_domain_limit)
+                    extracted += int(rel_out.get("extracted") or 0)
+                    contexts += int(rel_out.get("contexts_processed") or 0)
+                except Exception as e:
+                    logger.warning(
+                        "Entity organizer relationship extraction (%s): %s", dk, e
+                    )
+                    result["errors"].append(f"relationships/{dk}: {e!s}")
+            result["relationships_extracted"] = extracted
+            result["contexts_processed"] = contexts
 
     return result
 

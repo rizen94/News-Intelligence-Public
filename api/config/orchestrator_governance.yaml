@@ -34,7 +34,7 @@ quality_thresholds:
 
 # Signal-first article lanes — see docs/SIGNAL_FIRST_OPS.md and shared/article_signal_gate.py
 signal_first:
-  article_signal_enabled: false
+  article_signal_enabled: true
   article_signal_full_min_quality: 0.45
   article_signal_trending_top_n: 15
   target_full_llm_ratio_min: 0.15
@@ -42,7 +42,7 @@ signal_first:
 
 # RSS feed warn-then-auto silencing — see services/rss_feed_health_service.py
 rss_feed_health:
-  enabled: false
+  enabled: true
   dry_run: true
   min_quality: 0.45
   zero_yield_days: 14
@@ -192,7 +192,7 @@ collection:
 processing:
   # Phase intervals (seconds). YAML overrides merge with full pipeline registry from
   # pipeline_conductor_service.get_effective_processing_phases() (all ANALYSIS_PIPELINE_STEPS).
-  # ProcessingGovernor nudges when orchestrator_processing_nudge_enabled: true.
+  # Processing enqueue is owned by PipelineController (v10.1+).
   phases:
     topic_clustering:
       interval_seconds: 300
@@ -237,42 +237,16 @@ resources:
   max_api_calls_per_hour: 1000
   storage_warning_threshold: 0.8
 
-# v8: collect-then-analyze pipeline (optional; automation_manager defaults used if absent)
-# Env override: COLLECTION_CYCLE_INTERVAL_SECONDS
-analysis_pipeline:
-  step_budgets_seconds: [1800, 1200, 1200, null]  # Foundation, Extraction, Intelligence, Output (null = no limit)
-  # 0 = unlimited batch re-enqueues per analysis window (workers + Ollama semaphores bound throughput). Env: AUTOMATION_MAX_REQUEUE_PER_WINDOW
-  max_requeue_per_window: 0
+# v10.1: Processing enqueue is owned by PipelineController (see pipeline_controller below).
+# Collection throttled via COLLECTION_THROTTLE_PENDING_THRESHOLD in automation_manager.
 
-# Workload-driven scheduling: automation_manager checks every process every tick; run order and eligibility
-# are determined by current workload (backlog/pending), not fixed intervals. Collection is throttled when
-# downstream backlog is high so collection → processing → synthesis completes before more RSS. See
-# automation_manager.py USE_WORKLOAD_DRIVEN_ORDER, WORKLOAD_MIN_COOLDOWN, COLLECTION_THROTTLE_PENDING_THRESHOLD.
-# Duration harmony (measured run time vs cooldown, gap-fill idle workers): docs/PIPELINE_ORCHESTRATION_HARMONY.md
-# Full knob map + conflicts: docs/PIPELINE_TUNING_REGISTRY.md
-# Env overrides these keys when set (see pipeline_batch_drain / pipeline_orchestration_harmony).
-pipeline_orchestration_harmony:
-  gap_fill_enabled: true
-  use_measured_duration: true
-  cooldown_fraction: 0.35
-  entity_extraction_run_budget_seconds: 900
-  ml_processing_run_budget_seconds: 900
-  sentiment_analysis_run_budget_seconds: 900
-  claim_extraction_drain_max_seconds: 900
-
-# Pipeline conductor — roles of the three schedulers (AutomationManager, OrchestratorCoordinator, external).
-# Env overrides:
-#   PIPELINE_CONDUCTOR_AUTOMATION_PRIMARY — default true (AutomationManager owns processing)
-#   PIPELINE_CONDUCTOR_ORCHESTRATOR_NUDGE — default true (coordinator gap-fill + post-collection kickoff)
 pipeline_conductor:
   automation_primary: true
-  orchestrator_processing_nudge_enabled: true
   orchestrator_post_collection_kickoff_enabled: true
   post_collection_phases:
     - content_enrichment
     - context_sync
   orchestrator_collection_enabled: true
-  workload_driven_scheduling: true
   external_schedulers:
     - name: nri_mention_resolve
       host: widow
@@ -290,7 +264,7 @@ rss_feed_health:
 # Post-spine assembly — programmatic link graph + editorial room (June 2026)
 # Retired phases remain in code; scheduling suppressed via POST_SPINE_RETIRED_PHASES + AUTOMATION_DISABLED_SCHEDULES.
 post_spine_assembly:
-  assembly_pipeline_mode: shadow  # shadow | ordered | legacy — env ASSEMBLY_PIPELINE_MODE
+  assembly_pipeline_mode: ordered  # shadow | ordered | legacy — env ASSEMBLY_PIPELINE_MODE
   editorial_room_loop_enabled: true
   link_indexer_on_spine_tail: true
   retired_scheduled_phases:
@@ -321,3 +295,27 @@ post_spine_assembly:
   vault_editorial_paths:
     connections: "25_Connections/"
     investigations: "20_Investigations/"
+
+# Unified pipeline controller (v10.1+) — replaces scheduler tick + spine/assembly conductor loops.
+pipeline_controller:
+  catchup_clear_threshold: 50
+  prefetch_multiplier: 2
+  max_concurrent_widow_gpu_drains: 2  # PopOS LLM drains on Widow workers; default 2 when AUTOMATION_MAX_CONCURRENT_TASKS >= 4
+  popos_overflow_util_max_pct: 85
+  popos_overflow_temp_max_c: 82
+  # Widow RAM pressure — route PopOS-eligible LLM phases instead of wait_resources throttle.
+  widow_memory_pressure_pct: 78
+  widow_memory_critical_pct: 92
+  widow_memory_pressure_headroom: 0.22
+  stall_zero_progress_passes: 2
+  stall_backlog_unchanged_replans: 3
+  failing_error_repeat_passes: 2
+  stall_hold_replans: 1
+  post_collection_kickoff_enabled: true
+  post_collection_phases:
+    - content_enrichment
+    - context_sync
+  entity_extraction_run_budget_seconds: 900
+  ml_processing_run_budget_seconds: 900
+  sentiment_analysis_run_budget_seconds: 900
+  claim_extraction_drain_max_seconds: 900

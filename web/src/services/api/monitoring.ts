@@ -26,8 +26,8 @@ export const monitoringApi = {
     try {
       const response = await getApi().get(
         '/api/system_monitoring/monitoring/overview',
-        // Fail fast when API/pool is saturated — Monitor loads other panels in parallel.
-        { timeout: 20000 }
+        // API returns degraded JSON within ~12s; allow headroom for proxy + saturated API.
+        { timeout: 30000 }
       );
       return response.data;
     } catch (error) {
@@ -35,8 +35,13 @@ export const monitoringApi = {
       const msg = err.message || 'request failed';
       Logger.apiError('Failed to fetch monitoring overview', err);
       return {
-        success: false,
-        connections: {},
+        success: true,
+        degraded: true,
+        connections: {
+          api: 'ok',
+          database: 'unknown',
+          webserver: { status: 'unknown' },
+        },
         activities: { current: [], recent: [] },
         error: `monitoring/overview: ${msg}`,
       };

@@ -1,0 +1,15 @@
+# Example domain YAML (not loaded until user provisions via Setup)
+
+domain_key: sports
+schema_name: sports
+display_name: Sports
+description: Professional and amateur sports news
+is_active: false
+data_sources:
+  rss:
+    seed_feed_urls:
+      - https://www.espn.com/espn/rss/news
+focus_areas:
+  - leagues
+  - transfers
+llm_prompt_guidance: Focus on teams, athletes, and competitions.

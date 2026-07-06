@@ -34,6 +34,8 @@ SMOKE_PATHS: tuple[tuple[str, str], ...] = (
     ("H3", "/api/orchestrator/status"),
     ("H4", "/api/context_centric/status"),
     ("H4", "/api/investigation/health"),
+    ("H4", "/api/tracking/discovery?include_vault_reconcile=false"),
+    ("H4", "/api/investigation/graph_neighbors?seed_kind=entity&seed_id=1&max_depth=1&max_nodes=5"),
     ("H5", "/api/legal/storylines?limit=1"),
     ("H5", "/api/politics/storylines?limit=1"),
     ("H5", "/api/finance/storylines?limit=1"),

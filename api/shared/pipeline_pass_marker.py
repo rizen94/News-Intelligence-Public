@@ -330,6 +330,15 @@ def bulk_record_article_phase_pass(
                 (iso, outcome, ts, article_ids),
             )
         conn.commit()
+        try:
+            from shared.pipeline_status_store import upsert_pipeline_status
+
+            for aid in article_ids:
+                upsert_pipeline_status(
+                    schema, int(aid), p, outcome=outcome, terminal_state=ts
+                )
+        except Exception:
+            pass
     except Exception as e:
         logger.debug("bulk_record_article_phase_pass %s: %s", schema, e)
         try:

@@ -42,10 +42,7 @@ Smaller commits mean smaller diffs, faster operations, and easier history.
 
 ## Testing before Phase 4 (context-centric)
 
-- **Smoke test (no DB):** From project root run  
-  `PYTHONPATH=api .venv/bin/python api/_archived/legacy_pytest_tree_2026_03/test_context_centric_imports.py`  
-  Verifies context-centric services and API routes load (archived tree; prefer adding checks under `tests/`).
-- **Legacy API route tests (DB required):** `api/_archived/legacy_pytest_tree_2026_03/test_api_routes.py` — needs PostgreSQL and credentials; not run in CI.
+- **Smoke test (no DB):** From project root run `python3 api/scripts/verify_api_wiring_smoke.py` and `python3 scripts/verify_feature_registry.py`.
 - **Commit in chunks:** Use `bash scripts/commit_context_centric.sh` to commit context-centric and doc changes in logical order (migrations → services → config → API → test → docs → hygiene). Confirm each step at the prompt.
 
 ## Optional disk cleanup
@@ -61,7 +58,7 @@ Smaller commits mean smaller diffs, faster operations, and easier history.
 | **`docs/_archive/`** | Superseded **Markdown** guides, old release notes (`_archive/releases/`), consolidated copies of merged docs (`_archive/consolidated/`). Still versioned unless excluded. |
 | **`scripts/archive/`** | Retired **scripts** (one-off migrations, deprecated daemons). Do not delete without checking `SCRIPTS_INDEX.md`. |
 | **`docs/archive/`** (except `_archive/`) | **Cleanup buckets** — `planning_incubator/`, `docker_stack/`, `root_analysis_snapshots/`, etc. See [archive/CLEANUP_2026_03.md](archive/CLEANUP_2026_03.md). |
-| **`api/_archived/`**, **`web/_archived_duplicates/`** | Retired **code** only; follow “reuse before create” — restore from here before re-implementing. |
+| **`api/_archived/`** | Retired **code** only; follow “reuse before create” — restore from here before re-implementing. |
 | **`docs/generated/`** | Pointer [generated/README.md](generated/README.md) — documents script-emitted reports; reports may still live as `docs/*_REPORT.md` at repo root for tooling compatibility. |
 
 When you **merge** two docs, move the superseded file under `docs/_archive/consolidated/` with a one-line “Status: superseded by …” banner and update [DOCS_INDEX.md](DOCS_INDEX.md) (prefer updating the index over leaving stale top-level paths).

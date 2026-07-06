@@ -8,6 +8,8 @@
 > - **Database:** NI owns `news_intel` on Widow. **Apps** use PgBouncer **`DB_PORT=6432`**; **admin/migrations** use direct Postgres **`:5432`**. Homelab Postgres MCP on PopOS reads it read-only — that is **not** Homelab's local Postgres on `:15432`.
 > - See [PROJECT_STATUS.md](PROJECT_STATUS.md) and [../PROJECT_BOUNDARIES.md](../PROJECT_BOUNDARIES.md).
 
+> **v10.1 (release/10.1):** Pipeline Exclusive Paths — feature registry, admission control, queue-based spine, conductor-only scheduling. Version SSOT: repo-root `VERSION`. New backend features must register in `api/config/features.yaml`. See [docs/UPGRADE_10.1.md](docs/UPGRADE_10.1.md) and [docs/FEATURE_REGISTRY.md](docs/FEATURE_REGISTRY.md).
+
 Context for AI assistants. Use project terminology consistently.
 
 ---
@@ -56,16 +58,20 @@ Context for AI assistants. Use project terminology consistently.
 | Unified intake extraction (batched LLM fan-out) | `api/services/unified_intake_extraction_service.py` |
 | Unified intake extraction runner | `api/shared/unified_intake_extraction_runner.py` |
 | Spine SQL tail | `api/services/spine_sql_tail_service.py` |
-| Spine conductor | `api/services/spine_pipeline_conductor.py` |
+| Pipeline controller (scheduling SSOT) | `api/services/pipeline_controller.py` |
+| Monitor run vocabulary (activity ↔ run history SSOT) | `api/shared/monitor_run_vocabulary.py`, `docs/MONITOR_REPORTING_AND_METRICS.md`, `docs/monitor_alignment/` |
+| Spine conductor (drain helpers) | `api/services/spine_pipeline_conductor.py` |
 | Link indexer (post-spine pass 0) | `api/services/link_indexer_service.py` |
-| Assembly conductor | `api/services/assembly_conductor_service.py` |
+| Assembly conductor (drain helpers) | `api/services/assembly_conductor_service.py` |
 | Editorial room loop | `api/services/editorial_room_loop_service.py` |
 | Assembly phase order / retired phases | `api/shared/assembly_phase_order.py` |
 | Unified intake backlog (actionable vs legacy backfill) | `api/shared/unified_intake_backlog.py` |
 | Signal-first article lanes | `api/shared/article_signal_gate.py`, `docs/SIGNAL_FIRST_OPS.md` |
 | RSS feed health / silencing | `api/services/rss_feed_health_service.py`, `api/scripts/rss_feed_yield_report.py` |
-| Batched event extraction (automation + catch-up) | `api/shared/event_extraction_runner.py` |
-| Batched entity extraction (automation + catch-up) | `api/shared/entity_extraction_runner.py` |
+| Batched event extraction (legacy rollback) | `api/_archived/intake/event_extraction_runner.py` via `LEGACY_INTAKE_EXTRACTION_ENABLED` |
+| Batched entity extraction (legacy rollback) | `api/_archived/intake/entity_extraction_runner.py` via `LEGACY_INTAKE_EXTRACTION_ENABLED` |
+| Archived legacy intake / retired phases | `api/_archived/intake/`, `api/_archived/automation/retired_phase_handlers.py` |
+| Legacy intake rollback loader | `api/shared/legacy_intake_rollback.py` |
 | Entity resolution routes | `api/domains/intelligence_hub/routes/entity_resolution.py` |
 | Entity service facade | `api/services/entity_service_facade.py` |
 | Shared kernel | `api/shared/kernel/`, `api/shared/services/article_query_service.py` |
@@ -169,4 +175,4 @@ News Intelligence is separate from **HomeLab AI Stack**. Homelab's `postgres-mcp
 
 ---
 
-*Last verified against Widow ground truth: 2026-06-22 — see [docs/DOCUMENTATION_FACT_CHECK_2026-06.md](docs/DOCUMENTATION_FACT_CHECK_2026-06.md) and [docs/generated/WIDOW_GROUND_TRUTH_2026-06-22.md](docs/generated/WIDOW_GROUND_TRUTH_2026-06-22.md).*
+*Last verified against Widow ground truth: 2026-07-04 — see [docs/DOCUMENTATION_FACT_CHECK_2026-06.md](docs/DOCUMENTATION_FACT_CHECK_2026-06.md) and [docs/generated/WIDOW_GROUND_TRUTH_2026-06-22.md](docs/generated/WIDOW_GROUND_TRUTH_2026-06-22.md). Recent improvements include event-driven eligibility for dossier/profile/RAG phases, entity organizer domain_key=None fix, and enhanced JSON parsing robustness in entity extraction services.*

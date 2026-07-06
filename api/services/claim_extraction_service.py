@@ -115,13 +115,22 @@ def _is_overly_generic_subject(subject_text: str | None) -> bool:
 
 def _claim_extraction_strict_seeded_domain_keys() -> frozenset[str]:
     """
-    Optional allowlist of domains where claim subjects must match existing canonical/profile names
-    before insertion into extracted_claims.
+    Domains where claim subjects must match seeded entity pool before insert.
+    v10.1: when claim_resolvability_gate is incorporated, defaults to all pipeline-active domains.
     """
     raw = env_str("CLAIM_EXTRACTION_REQUIRE_SEEDED_DOMAIN_KEYS", "").strip()
-    if not raw:
-        return frozenset()
-    return frozenset(x.strip().lower() for x in raw.split(",") if x.strip())
+    if raw:
+        return frozenset(x.strip().lower() for x in raw.split(",") if x.strip())
+    try:
+        from config.feature_registry import is_feature_enabled
+
+        if is_feature_enabled("claim_resolvability_gate"):
+            from shared.domain_registry import get_pipeline_active_domain_keys
+
+            return frozenset(get_pipeline_active_domain_keys())
+    except Exception:
+        pass
+    return frozenset()
 
 
 def _subject_matches_seeded_pool(cur, domain_key: str, subject_text: str) -> bool:
@@ -141,6 +150,23 @@ def _subject_matches_seeded_pool(cur, domain_key: str, subject_text: str) -> boo
     )
     if cur.fetchone():
         return True
+    try:
+        cur.execute(
+            """
+            SELECT 1
+            FROM intelligence.entity_profiles ep
+            WHERE similarity(
+                lower(trim(COALESCE(ep.metadata->>'canonical_name', ''))),
+                %s
+            ) > 0.55
+            LIMIT 1
+            """,
+            (norm,),
+        )
+        if cur.fetchone():
+            return True
+    except Exception:
+        pass
     cur.execute(
         f"""
         SELECT 1
@@ -151,6 +177,31 @@ def _subject_matches_seeded_pool(cur, domain_key: str, subject_text: str) -> boo
         (norm,),
     )
     return bool(cur.fetchone())
+
+
+def claim_extraction_gap_fill_sql() -> str:
+    """When fusion is on, only contexts linked to unified-cleared articles."""
+    try:
+        from shared.spine_phase_order import fused_claim_extraction_gap_fill_only
+
+        if not fused_claim_extraction_gap_fill_only():
+            return ""
+    except Exception:
+        return ""
+    return """
+        AND EXISTS (
+            SELECT 1
+            FROM intelligence.article_to_context atc
+            JOIN public.domains d ON d.domain_key = atc.domain_key
+            JOIN LATERAL (
+                SELECT 1
+                FROM information_schema.schemata s
+                WHERE s.schema_name = d.schema_name
+            ) _s ON true
+            WHERE atc.context_id = c.id
+              AND atc.article_id IS NOT NULL
+        )
+    """
 
 
 def claim_extraction_min_text_len() -> int:
@@ -571,30 +622,38 @@ def insert_parsed_claims_for_context(
     strict_domains = _claim_extraction_strict_seeded_domain_keys()
     strict_seeded = bool(context_domain_key and context_domain_key in strict_domains)
     cred_mult = max(0.0, min(1.0, float(cred_mult)))
+    from shared.pg_savepoint import execute_with_savepoint
+
     try:
         with conn.cursor() as cur:
-            for subject_text, predicate_text, object_text, confidence in claims:
-                try:
-                    if _is_overly_generic_subject(subject_text):
-                        skipped_generic += 1
-                        continue
-                    if strict_seeded and not _subject_matches_seeded_pool(
-                        cur, str(context_domain_key), subject_text
-                    ):
-                        skipped_unseeded += 1
-                        continue
-                    adj_conf = max(0.0, min(1.0, float(confidence) * cred_mult))
-                    cur.execute(
-                        """
+            for idx, (subject_text, predicate_text, object_text, confidence) in enumerate(claims):
+                if _is_overly_generic_subject(subject_text):
+                    skipped_generic += 1
+                    continue
+                if strict_seeded and not _subject_matches_seeded_pool(
+                    cur, str(context_domain_key), subject_text
+                ):
+                    skipped_unseeded += 1
+                    continue
+                adj_conf = max(0.0, min(1.0, float(confidence) * cred_mult))
+                if execute_with_savepoint(
+                    cur,
+                    conn,
+                    f"claim_ins_{context_id}_{idx}",
+                    """
                         INSERT INTO intelligence.extracted_claims
                         (context_id, subject_text, predicate_text, object_text, confidence)
                         VALUES (%s, %s, %s, %s, %s)
-                        """,
-                        (context_id, subject_text, predicate_text, object_text, adj_conf),
-                    )
+                    """,
+                    (context_id, subject_text, predicate_text, object_text, adj_conf),
+                ):
                     inserted += 1
-                except Exception as e:
-                    logger.debug("Claim insert skip: %s", e)
+                else:
+                    logger.debug(
+                        "Claim insert skip context_id=%s subject=%r",
+                        context_id,
+                        subject_text[:80],
+                    )
         conn.commit()
     except Exception as e:
         try:
@@ -748,30 +807,38 @@ Keep each subject under ~80 characters when possible."""
     skipped_unseeded = 0
     strict_domains = _claim_extraction_strict_seeded_domain_keys()
     strict_seeded = bool(context_domain_key and context_domain_key in strict_domains)
+    from shared.pg_savepoint import execute_with_savepoint
+
     try:
         with conn.cursor() as cur:
-            for subject_text, predicate_text, object_text, confidence in claims:
-                try:
-                    if _is_overly_generic_subject(subject_text):
-                        skipped_generic += 1
-                        continue
-                    if strict_seeded and not _subject_matches_seeded_pool(
-                        cur, str(context_domain_key), subject_text
-                    ):
-                        skipped_unseeded += 1
-                        continue
-                    adj_conf = max(0.0, min(1.0, float(confidence) * cred_mult))
-                    cur.execute(
-                        """
+            for idx, (subject_text, predicate_text, object_text, confidence) in enumerate(claims):
+                if _is_overly_generic_subject(subject_text):
+                    skipped_generic += 1
+                    continue
+                if strict_seeded and not _subject_matches_seeded_pool(
+                    cur, str(context_domain_key), subject_text
+                ):
+                    skipped_unseeded += 1
+                    continue
+                adj_conf = max(0.0, min(1.0, float(confidence) * cred_mult))
+                if execute_with_savepoint(
+                    cur,
+                    conn,
+                    f"claim_llm_{context_id}_{idx}",
+                    """
                         INSERT INTO intelligence.extracted_claims
                         (context_id, subject_text, predicate_text, object_text, confidence)
                         VALUES (%s, %s, %s, %s, %s)
-                        """,
-                        (context_id, subject_text, predicate_text, object_text, adj_conf),
-                    )
+                    """,
+                    (context_id, subject_text, predicate_text, object_text, adj_conf),
+                ):
                     inserted += 1
-                except Exception as e:
-                    logger.debug(f"Claim insert skip: {e}")
+                else:
+                    logger.debug(
+                        "Claim insert skip context_id=%s subject=%r",
+                        context_id,
+                        subject_text[:80],
+                    )
         conn.commit()
     except Exception as e:
         try:

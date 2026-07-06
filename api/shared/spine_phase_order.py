@@ -36,10 +36,10 @@ FUSED_CLAIM_GAP_PHASE = "claim_extraction"
 
 def spine_pipeline_mode() -> str:
     """ordered | shadow | legacy (workload-driven)."""
-    raw = env_str("SPINE_PIPELINE_MODE", "legacy").strip().lower()
+    raw = env_str("SPINE_PIPELINE_MODE", "ordered").strip().lower()
     if raw in ("ordered", "shadow", "legacy"):
         return raw
-    return "legacy"
+    return "ordered"
 
 
 def spine_pipeline_ordered_active() -> bool:
@@ -82,11 +82,18 @@ def fused_claim_extraction_gap_fill_only() -> bool:
 
 def spine_phases_for_nightly_prefix() -> tuple[str, ...]:
     """Replace legacy entity/ml prefix in nightly sequential drain."""
-    return SPINE_PHASE_ORDER + (
+    base: tuple[str, ...] = SPINE_PHASE_ORDER + (
         "claim_extraction",
         "claims_to_facts",
         "event_tracking",
         "topic_clustering",
         "entity_profile_sync",
-        "entity_profile_build",
     )
+    try:
+        from shared.assembly_phase_order import assembly_pipeline_ordered_active
+
+        if assembly_pipeline_ordered_active():
+            return base
+    except Exception:
+        pass
+    return base + ("entity_profile_build",)

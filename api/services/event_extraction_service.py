@@ -28,6 +28,8 @@ import uuid
 from datetime import date, datetime, timezone
 from typing import Any
 
+from psycopg2.extras import Json
+
 from shared.services.llm_service import LLMService, ModelType
 from shared.services.ollama_model_caller import get_ollama_model_caller
 from shared.services.ollama_model_policy import InvocationKind
@@ -596,32 +598,57 @@ class EventExtractionService:
             "extraction_confidence": 0.8,
             "importance_score": 0.5,
             "location": location,
-            "entities": json.dumps(key_actors),
+            "entities": Json(key_actors),
             "event_fingerprint": fingerprint,
             "source_count": 1,
-            "key_actors": json.dumps(key_actors),
+            "key_actors": Json(key_actors),
             "outcome": outcome,
             "is_ongoing": is_ongoing,
-            "continuation_signals": json.dumps(continuation_signals),
+            "continuation_signals": Json(continuation_signals),
             "date_precision": date_precision,
             "event_sequence_position": sequence,
             "temporal_status": temporal_status,
         }
 
-    async def save_events(self, events: list[dict[str, Any]], conn) -> int:
+    async def save_events(
+        self,
+        events: list[dict[str, Any]],
+        conn,
+        *,
+        commit: bool = True,
+    ) -> int:
         """Persist extracted events into the chronological_events table."""
         if not events:
             return 0
 
+        from shared.pg_savepoint import (
+            execute_with_savepoint,
+            rollback_transaction,
+            transaction_in_error,
+        )
+
+        if transaction_in_error(conn):
+            rollback_transaction(conn)
+
         cursor = conn.cursor()
         saved = 0
         for idx, evt in enumerate(events):
-            sp = f"evt_save_{idx}"
             evt["date_precision"] = _normalize_date_precision(evt.get("date_precision"))
-            try:
-                cursor.execute(f"SAVEPOINT {sp}")
-                cursor.execute(
-                    """
+            row = dict(evt)
+            for json_key in ("entities", "key_actors", "continuation_signals"):
+                val = row.get(json_key)
+                if isinstance(val, str):
+                    try:
+                        row[json_key] = Json(json.loads(val))
+                    except json.JSONDecodeError:
+                        row[json_key] = Json([])
+                elif isinstance(val, (list, dict)):
+                    row[json_key] = Json(val)
+            ok = execute_with_savepoint(
+                cursor,
+                conn,
+                f"evt_save_{idx}",
+                """
                     INSERT INTO public.chronological_events (
                         event_id, storyline_id, title, description, event_type,
                         actual_event_date, relative_temporal_expression,
@@ -644,21 +671,21 @@ class EventExtractionService:
                     )
                     ON CONFLICT (event_id) DO NOTHING
                 """,
-                    evt,
-                )
-                cursor.execute(f"RELEASE SAVEPOINT {sp}")
+                row,
+            )
+            if ok:
                 saved += 1
-            except Exception as e:
-                try:
-                    cursor.execute(f"ROLLBACK TO SAVEPOINT {sp}")
-                    cursor.execute(f"RELEASE SAVEPOINT {sp}")
-                except Exception:
-                    conn.rollback()
-                logger.error(f"Failed to save event '{evt.get('title')}': {e}")
+            else:
+                logger.error(
+                    "Failed to save event %r (article_id=%s)",
+                    evt.get("title"),
+                    evt.get("source_article_id"),
+                )
 
-        conn.commit()
+        if commit:
+            conn.commit()
         cursor.close()
-        logger.info(f"Saved {saved}/{len(events)} events to database")
+        logger.info("Saved %s/%s events to database", saved, len(events))
         return saved
 
     async def close(self):

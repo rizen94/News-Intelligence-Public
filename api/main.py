@@ -21,6 +21,7 @@ LLM routing uses Ollama (see ``config.settings`` and ``shared.services.ollama_mo
 import faulthandler
 import signal as _signal
 from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
+from config.version import get_version
 
 faulthandler.enable()
 try:
@@ -147,6 +148,13 @@ async def lifespan(app: FastAPI):
                 "NEWS_INTEL_CORS_ORIGINS is empty: browsers on another origin cannot call the API with CORS. "
                 "Set comma-separated origins (e.g. https://app.example.com) if you expose the UI separately."
             )
+
+    try:
+        from shared.pipeline_resource_policy import configure_pipeline_resources
+
+        configure_pipeline_resources()
+    except Exception as e:
+        logger.debug("pipeline resource policy at startup: %s", e)
 
     # Initialize database connection pool early (persistent connection)
     try:
@@ -316,7 +324,6 @@ async def lifespan(app: FastAPI):
     # Start automation manager in background thread (before OrchestratorCoordinator)
     try:
         from services.automation_manager import AutomationManager
-        from services.ml_processing_service import MLProcessingService
         import services.automation_manager as _automation_module
 
         automation = AutomationManager(db_config)
@@ -352,13 +359,22 @@ async def lifespan(app: FastAPI):
         )
 
         if not env_bool("NEWS_INTEL_KIT_MODE", False):
-            try:
-                ml_processing_service = MLProcessingService()
-                ml_processing_service.start_processing()
-                logger.info("✅ ML Processing Service started automatically")
-                app.state.ml_processing = ml_processing_service
-            except Exception as e:
-                logger.error(f"❌ Failed to start ML Processing Service: {e}")
+            from config.settings import legacy_intake_extraction_enabled
+
+            if legacy_intake_extraction_enabled():
+                try:
+                    from shared.legacy_intake_rollback import load_ml_processing_service
+
+                    MLProcessingService = load_ml_processing_service().MLProcessingService
+                    ml_processing_service = MLProcessingService()
+                    ml_processing_service.start_processing()
+                    logger.info("ML Processing Service started (legacy intake rollback)")
+                    app.state.ml_processing = ml_processing_service
+                except Exception as e:
+                    logger.error("Failed to start ML Processing Service (legacy rollback): %s", e)
+            else:
+                app.state.ml_processing = None
+                logger.debug("ML Processing Service skipped (unified intake is sole path)")
         else:
             app.state.ml_processing = None
             logger.info("Kit mode: ML Processing Service skipped")
@@ -833,7 +849,7 @@ app = FastAPI(
     Set `NEWS_INTEL_ENV=production` for stricter CORS, Host header checks, disabled OpenAPI by default,
     generic 500 responses, and in-app rate limiting (see `docs/SECURITY_OPERATIONS.md`).
     """,
-    version="5.0.0",
+    version=get_version(),
     lifespan=lifespan,
     docs_url=_docs_url,
     redoc_url=_redoc_url,
@@ -1066,8 +1082,8 @@ async def root():
     return {
         "success": True,
         "data": {
-            "name": "News Intelligence System v5.0",
-            "version": "5.0.0",
+            "name": f"News Intelligence System v{get_version()}",
+            "version": get_version(),
             "architecture": "Domain-Driven Design",
             "ai_models": {"primary": MODELS["primary"], "secondary": MODELS["secondary"]},
             "domains": [

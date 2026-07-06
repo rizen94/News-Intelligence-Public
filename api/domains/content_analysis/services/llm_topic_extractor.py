@@ -27,10 +27,46 @@ from domains.content_analysis.services.topic_clustering_service import (
     TopicClusteringService,
     default_batch_ollama_url,
 )
-from modules.ml.entity_extractor import LocalEntityExtractor
+from shared.fast_ner_lane import extract_fast_entities
 from shared.services.llm_service import LLMService
 
 logger = logging.getLogger(__name__)
+
+# Map fast_ner intake buckets to topic entity_type labels.
+_FAST_NER_BUCKET_LABELS = {
+    "people": "PERSON",
+    "organizations": "ORGANIZATION",
+    "countries": "LOCATION",
+    "recurring_events": "EVENT",
+    "subjects": "SUBJECT",
+}
+
+
+def _fast_ner_entities_for_topics(
+    title: str, content: str | None
+) -> list[dict[str, Any]]:
+    """Run spaCy/GLiNER NER and return dict rows for _ner_entity_fields."""
+    fast = extract_fast_entities(title or "", (content or "")[:5000])
+    entities: list[dict[str, Any]] = []
+    for bucket, label in _FAST_NER_BUCKET_LABELS.items():
+        for item in fast.get(bucket) or []:
+            if not isinstance(item, dict):
+                continue
+            name = (item.get("name") or "").strip()
+            if not name:
+                continue
+            try:
+                conf = float(item.get("confidence") or 0.8)
+            except (TypeError, ValueError):
+                conf = 0.8
+            entities.append(
+                {
+                    "name": name,
+                    "confidence": max(0.0, min(1.0, conf)),
+                    "label": label,
+                }
+            )
+    return entities
 
 
 @dataclass
@@ -66,8 +102,6 @@ class LLMTopicExtractor:
         resolved = (ollama_url or default_batch_ollama_url()).rstrip("/")
         self.ollama_url = resolved
 
-        # Initialize LLM services (reuse existing infrastructure)
-        self.entity_extractor = LocalEntityExtractor(ollama_url=resolved)
         self.llm_service = LLMService(ollama_base_url=resolved)
 
         # Resource management
@@ -81,11 +115,13 @@ class LLMTopicExtractor:
         self._test_llm_availability()
 
     def _test_llm_availability(self):
-        """Test if LLM services are available"""
+        """Test if Ollama is reachable for topic clustering."""
+        import requests
+
         tracker = get_llm_activity_tracker()
         try:
-            # Quick test - try to extract entities from a simple text
-            self.entity_extractor.extract_entities("Test", use_cache=False)
+            resp = requests.get(f"{self.ollama_url}/api/tags", timeout=8)
+            resp.raise_for_status()
             self.use_llm = True
             tracker.update_llm_availability(True)
             logger.info("✅ LLM services available for topic extraction")
@@ -319,11 +355,14 @@ class LLMTopicExtractor:
                 metadata={"title": title[:100]},
             )
 
-            # Combine text for analysis
-            text = f"{title} {summary or ''} {content[:5000] if content else ''}"  # full article body (capped)
-
-            # Extract entities using NER (structured, fast)
-            entities_result = self.entity_extractor.extract_entities(text, use_cache=True)
+            # Fast NER (spaCy/GLiNER) — no Ollama entity JSON call
+            ner_entities = _fast_ner_entities_for_topics(title, content)
+            if ner_entities:
+                logger.debug(
+                    "topic fast_ner: %s entities for article %s",
+                    len(ner_entities),
+                    article_id,
+                )
 
             # Extract topics using LLM (semantic understanding)
             # Use existing TopicClusteringService which has proper LLM integration
@@ -345,11 +384,14 @@ class LLMTopicExtractor:
                 logger.warning(f"TopicClusteringService failed, using direct LLM: {topic_error}")
                 llm_topics = []
 
-            # Combine entities and LLM topics
+            # Combine text for analysis
+            text = f"{title} {summary or ''} {content[:5000] if content else ''}"  # full article body (capped)
+
+            # Combine fast NER entities and LLM topics
             topics = []
 
-            # Add entities as topics (normalize dict vs Entity — cache can leak dicts)
-            for entity in entities_result.entities:
+            # Add NER entities as topics
+            for entity in ner_entities:
                 conf, ent_text, ent_label = self._ner_entity_fields(entity)
                 if conf > 0.5 and ent_text:
                     topics.append(
@@ -465,6 +507,7 @@ class LLMTopicExtractor:
             "ORGANIZATION": "business",
             "LOCATION": "international",
             "EVENT": "general",
+            "SUBJECT": "general",
             "PRODUCT": "technology",
             "TECHNOLOGY": "technology",
             "DATE": "general",

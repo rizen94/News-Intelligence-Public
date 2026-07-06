@@ -64,6 +64,33 @@ def index_spine_complete_articles(*, limit: int | None = None) -> dict[str, Any]
     return totals
 
 
+def index_domain_co_mentions(domain_key: str, *, limit: int = 50) -> dict[str, Any]:
+    """Index co-mention edges for pending articles in one domain (entity_organizer path)."""
+    from shared.domain_registry import resolve_domain_schema
+
+    schema_name = resolve_domain_schema(domain_key)
+    cap = max(1, min(int(limit), 500))
+    totals = {
+        "articles": 0,
+        "entity_edges": 0,
+        "event_proposals": 0,
+        "cross_domain_proposals": 0,
+        "storyline_index_updates": 0,
+    }
+    article_ids = _fetch_indexable_article_ids(schema_name, cap)
+    for aid in article_ids:
+        stats = index_article(domain_key, schema_name, aid)
+        totals["articles"] += 1
+        totals["entity_edges"] += int(stats.get("entity_edges") or 0)
+        totals["event_proposals"] += int(stats.get("event_proposals") or 0)
+        totals["cross_domain_proposals"] += int(stats.get("cross_domain_proposals") or 0)
+        totals["storyline_index_updates"] += int(stats.get("storyline_index_updates") or 0)
+    totals["success"] = True
+    totals["extracted"] = totals["entity_edges"]
+    totals["contexts_processed"] = totals["articles"]
+    return totals
+
+
 def _fetch_indexable_article_ids(schema_name: str, limit: int) -> list[int]:
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
@@ -123,6 +150,11 @@ def _index_entity_co_mentions(
     )
     rows = cur.fetchall()
     if len(rows) < 2:
+        return 0
+    from shared.entity_relationships_store import entity_relationships_at_cap
+
+    if entity_relationships_at_cap():
+        logger.warning("link_indexer: entity_relationships at cap — skipping new edges")
         return 0
     n = 0
     ids = [int(r[0]) for r in rows]

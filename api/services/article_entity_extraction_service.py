@@ -381,6 +381,17 @@ Return ONLY valid JSON. Use empty arrays when a type has no entities. No placeho
     ) -> dict[str, int]:
         counts = {"entities": 0, "dates": 0, "times": 0, "countries": 0, "keywords": 0}
 
+        from shared.pg_savepoint import execute_with_savepoint, run_in_savepoint
+
+        sp_seq = 0
+
+        def _sp_exec(sql: str, params=None) -> bool:
+            nonlocal sp_seq
+            sp_seq += 1
+            return execute_with_savepoint(
+                cur, conn, f"ae_{article_id}_{sp_seq}", sql, params
+            )
+
         with conn.cursor() as cur:
             cur.execute(f"SET search_path TO {schema}, public")
             try:
@@ -471,10 +482,15 @@ Return ONLY valid JSON. Use empty arrays when a type has no entities. No placeho
                             row_entity_type = "family"
                         canonical_ids_used.add(canonical_id)
                         if original_phrase and original_phrase != name_to_use:
-                            _add_alias(cur, schema, canonical_id, original_phrase)
-                    try:
-                        cur.execute(
-                            f"""
+                            sp_seq += 1
+                            run_in_savepoint(
+                                cur,
+                                conn,
+                                f"ae_{article_id}_{sp_seq}",
+                                lambda: _add_alias(cur, schema, canonical_id, original_phrase),
+                            )
+                    if _sp_exec(
+                        f"""
                             INSERT INTO {schema}.article_entities
                             (article_id, entity_name, entity_type, mention_source, confidence, source_text_snippet, canonical_entity_id)
                             VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -483,19 +499,23 @@ Return ONLY valid JSON. Use empty arrays when a type has no entities. No placeho
                                 mention_source = EXCLUDED.mention_source,
                                 canonical_entity_id = COALESCE(EXCLUDED.canonical_entity_id, article_entities.canonical_entity_id)
                         """,
-                            (
-                                article_id,
-                                name[:255],
-                                row_entity_type,
-                                mention,
-                                conf,
-                                name[:200],
-                                canonical_id,
-                            ),
-                        )
+                        (
+                            article_id,
+                            name[:255],
+                            row_entity_type,
+                            mention,
+                            conf,
+                            name[:200],
+                            canonical_id,
+                        ),
+                    ):
                         counts["entities"] += 1
-                    except Exception as e:
-                        logger.debug(f"article_entities insert skip: {e}")
+                    elif logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(
+                            "article_entities insert skip for article %s name=%r",
+                            article_id,
+                            name[:80],
+                        )
 
            # 1b. Auto-populate entity_canonical.description from local Wikipedia if missing
             #     Only attempt for entities with wiki_status='pending' (avoids re-querying failures)
@@ -517,26 +537,37 @@ Return ONLY valid JSON. Use empty arrays when a type has no entities. No placeho
                         if wiki and wiki.get("extract"):
                             extract = (wiki.get("extract") or "")[:500]
                             page_id = wiki.get("page_id")
-                            cur.execute(
-                                f"""
-                                UPDATE {schema}.entity_canonical
-                                SET description = %s, wikipedia_page_id = %s,
-                                    wiki_status = 'found', wiki_checked_at = NOW(),
-                                    updated_at = NOW()
-                                WHERE id = %s
-                                """,
-                                (extract, page_id, eid),
+                            sp_seq += 1
+                            run_in_savepoint(
+                                cur,
+                                conn,
+                                f"ae_{article_id}_{sp_seq}",
+                                lambda eid=eid, extract=extract, page_id=page_id: cur.execute(
+                                    f"""
+                                    UPDATE {schema}.entity_canonical
+                                    SET description = %s, wikipedia_page_id = %s,
+                                        wiki_status = 'found', wiki_checked_at = NOW(),
+                                        updated_at = NOW()
+                                    WHERE id = %s
+                                    """,
+                                    (extract, page_id, eid),
+                                ),
                             )
                         else:
-                            # Wikipedia had no result — mark so we don't retry every article
-                            cur.execute(
-                                f"""
-                                UPDATE {schema}.entity_canonical
-                                SET wiki_status = 'not_found', wiki_checked_at = NOW(),
-                                    updated_at = NOW()
-                                WHERE id = %s
-                                """,
-                                (eid,),
+                            sp_seq += 1
+                            run_in_savepoint(
+                                cur,
+                                conn,
+                                f"ae_{article_id}_{sp_seq}",
+                                lambda eid=eid: cur.execute(
+                                    f"""
+                                    UPDATE {schema}.entity_canonical
+                                    SET wiki_status = 'not_found', wiki_checked_at = NOW(),
+                                        updated_at = NOW()
+                                    WHERE id = %s
+                                    """,
+                                    (eid,),
+                                ),
                             )
                     except Exception as e:
                         logger.debug("Wikipedia description backfill for entity %s: %s", eid, e)
@@ -557,29 +588,22 @@ Return ONLY valid JSON. Use empty arrays when a type has no entities. No placeho
                 norm = _dict_val(item, "normalized_iso") or None
                 expr_type = (_dict_val(item, "type") or "unknown")[:30]
                 conf = _item_conf(item, 0.7)
-                try:
-                    cur.execute(
-                        f"""
+                if _sp_exec(
+                    f"""
                         INSERT INTO {schema}.article_extracted_dates
                         (article_id, raw_expression, normalized_date, expression_type, confidence)
                         VALUES (%s, %s, %s::date, %s, %s)
                     """,
-                        (article_id, raw_expr[:500], norm if norm else None, expr_type, conf),
-                    )
+                    (article_id, raw_expr[:500], norm if norm else None, expr_type, conf),
+                ) or _sp_exec(
+                    f"""
+                        INSERT INTO {schema}.article_extracted_dates
+                        (article_id, raw_expression, expression_type, confidence)
+                        VALUES (%s, %s, %s, %s)
+                    """,
+                    (article_id, raw_expr[:500], expr_type, conf),
+                ):
                     counts["dates"] += 1
-                except Exception:
-                    try:
-                        cur.execute(
-                            f"""
-                            INSERT INTO {schema}.article_extracted_dates
-                            (article_id, raw_expression, expression_type, confidence)
-                            VALUES (%s, %s, %s, %s)
-                        """,
-                            (article_id, raw_expr[:500], expr_type, conf),
-                        )
-                        counts["dates"] += 1
-                    except Exception as e:
-                        logger.debug(f"article_extracted_dates insert skip: {e}")
 
             # 3. article_extracted_times
             for item in parsed.get("times", [])[:10]:
@@ -591,29 +615,22 @@ Return ONLY valid JSON. Use empty arrays when a type has no entities. No placeho
                 norm = _dict_val(item, "normalized") or None
                 tz = (_dict_val(item, "timezone") or "")[:50] or None
                 conf = _item_conf(item, 0.7)
-                try:
-                    cur.execute(
-                        f"""
+                if _sp_exec(
+                    f"""
                         INSERT INTO {schema}.article_extracted_times
                         (article_id, raw_expression, normalized_time, timezone, confidence)
                         VALUES (%s, %s, %s::time, %s, %s)
                     """,
-                        (article_id, raw_expr[:500], norm if norm else None, tz or None, conf),
-                    )
+                    (article_id, raw_expr[:500], norm if norm else None, tz or None, conf),
+                ) or _sp_exec(
+                    f"""
+                        INSERT INTO {schema}.article_extracted_times
+                        (article_id, raw_expression, timezone, confidence)
+                        VALUES (%s, %s, %s, %s)
+                    """,
+                    (article_id, raw_expr[:500], tz or None, conf),
+                ):
                     counts["times"] += 1
-                except Exception:
-                    try:
-                        cur.execute(
-                            f"""
-                            INSERT INTO {schema}.article_extracted_times
-                            (article_id, raw_expression, timezone, confidence)
-                            VALUES (%s, %s, %s, %s)
-                        """,
-                            (article_id, raw_expr[:500], tz or None, conf),
-                        )
-                        counts["times"] += 1
-                    except Exception as e:
-                        logger.debug(f"article_extracted_times insert skip: {e}")
 
             # 4. article_extracted_countries
             for item in parsed.get("countries", [])[:15]:
@@ -625,9 +642,8 @@ Return ONLY valid JSON. Use empty arrays when a type has no entities. No placeho
                 ) or COUNTRY_ALIASES.get(name.lower())
                 mention = "headline" if _item_in_headline(item) else "body"
                 conf = _item_conf(item, 0.8)
-                try:
-                    cur.execute(
-                        f"""
+                if _sp_exec(
+                    f"""
                         INSERT INTO {schema}.article_extracted_countries
                         (article_id, country_name, iso_code, mention_context, confidence)
                         VALUES (%s, %s, %s, %s, %s)
@@ -635,11 +651,9 @@ Return ONLY valid JSON. Use empty arrays when a type has no entities. No placeho
                             iso_code = COALESCE(EXCLUDED.iso_code, article_extracted_countries.iso_code),
                             confidence = EXCLUDED.confidence
                     """,
-                        (article_id, name[:255], iso[:2] if iso else None, mention, conf),
-                    )
+                    (article_id, name[:255], iso[:2] if iso else None, mention, conf),
+                ):
                     counts["countries"] += 1
-                except Exception as e:
-                    logger.debug(f"article_extracted_countries insert skip: {e}")
 
             # 5. article_keywords (thematic only)
             for item in parsed.get("keywords", [])[:20]:
@@ -655,20 +669,17 @@ Return ONLY valid JSON. Use empty arrays when a type has no entities. No placeho
                     kw_type = "general"
                 source = "headline" if _item_in_headline(item) else "body"
                 conf = _item_conf(item, 0.7)
-                try:
-                    cur.execute(
-                        f"""
+                if _sp_exec(
+                    f"""
                         INSERT INTO {schema}.article_keywords
                         (article_id, keyword, keyword_type, source, confidence)
                         VALUES (%s, %s, %s, %s, %s)
                         ON CONFLICT (article_id, keyword) DO UPDATE SET
                             confidence = EXCLUDED.confidence
                     """,
-                        (article_id, kw[:255], kw_type, source, conf),
-                    )
+                    (article_id, kw[:255], kw_type, source, conf),
+                ):
                     counts["keywords"] += 1
-                except Exception as e:
-                    logger.debug(f"article_keywords insert skip: {e}")
 
         return counts
 

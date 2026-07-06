@@ -45,6 +45,8 @@ async def run_unified_intake_extraction_batch_drain(
     batch_size: int | None = None,
     on_article_failure: ArticleFailureHandler | None = None,
     on_batch_complete: Callable[[int, dict[str, Any]], Awaitable[None]] | None = None,
+    on_wave_complete: Callable[[int, dict[str, Any]], Awaitable[None]] | None = None,
+    use_spine_work_queues: bool | None = None,
 ) -> dict[str, int]:
     per_domain = articles_per_domain
     if per_domain is None:
@@ -91,6 +93,9 @@ async def run_unified_intake_extraction_batch_drain(
 
     if article_signal_enabled():
         defer_signal_light_unified_intake_batch(per_domain_limit=per_domain * 2)
+        from shared.article_signal_gate import defer_signal_light_phase_batch
+
+        defer_signal_light_phase_batch("topic_clustering", per_domain_limit=per_domain * 2)
     ml_ready = sql_ml_ready_and_content_bounds("a")
     order = sql_order_coalesce_pub_created("a")
     domains = list(pipeline_url_schema_pairs())
@@ -112,60 +117,90 @@ async def run_unified_intake_extraction_batch_drain(
                 logger.warning("unified_intake legacy backfill %s: %s", schema_name, e)
         return n
 
-    def _fetch_domain_articles() -> dict[str, list[tuple]]:
-        """One short-lived connection per domain — release before LLM batches run."""
+    order = sql_order_coalesce_pub_created("a")
+    domains = list(pipeline_url_schema_pairs())
+
+    from services.spine_work_queue_service import (
+        claim_fair_share_batch,
+        count_all_pending,
+        finalize_unified_intake_queue_round,
+        release_queue_item,
+        spine_work_queues_enabled,
+    )
+
+    queues_active = (
+        spine_work_queues_enabled()
+        if use_spine_work_queues is None
+        else bool(use_spine_work_queues)
+    )
+    queue_claim_batch = max(per_domain * max(1, len(domains)), 60)
+
+    def _fetch_one_schema(schema_name: str, article_ids: list[int] | None = None) -> list[tuple]:
+        sig = ""
+        if article_signal_enabled():
+            sig = f" AND ({sql_article_signal_full_lane_filter('a', schema_name)}) "
+        id_clause = ""
+        id_params: tuple[Any, ...] = ()
+        if article_ids:
+            id_clause = " AND a.id = ANY(%s) "
+            id_params = (article_ids,)
+        if unified_intake_legacy_aware_backlog_enabled():
+            where_sql = sql_actionable_unified_intake(schema_name, "a")
+        else:
+            where_sql = f"""
+                COALESCE(
+                    (a.metadata #>> '{{pipeline_skip,unified_intake_extraction_skip}}')::boolean,
+                    false
+                ) = false
+                  AND a.content IS NOT NULL
+                  AND LENGTH(a.content) > 100
+                  AND ({ml_ready})
+                  AND (
+                      LENGTH(a.content) >= 500
+                      OR a.created_at < NOW() - INTERVAL '2 hours'
+                      OR COALESCE(a.enrichment_status, '') IN (
+                          'enriched', 'failed', 'inaccessible'
+                      )
+                  )
+                  {pass_clause}
+            """
+        limit_sql = "" if article_ids else f" LIMIT {per_domain}"
         from shared.database.connection import get_db_connection_context
 
-        out: dict[str, list[tuple]] = {}
+        with get_db_connection_context() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT a.id, a.title, a.content, a.published_at,
+                           (
+                               SELECT sa.storyline_id::text
+                               FROM {schema_name}.storyline_articles sa
+                               WHERE sa.article_id = a.id
+                               ORDER BY sa.added_at DESC NULLS LAST
+                               LIMIT 1
+                           ) AS storyline_id
+                    FROM {schema_name}.articles a
+                    WHERE {where_sql}
+                      {id_clause}
+                      {sig}
+                    ORDER BY {order}
+                    {limit_sql}
+                    """,
+                    id_params,
+                )
+                return cursor.fetchall()
 
-        def _fetch_one_schema(schema_name: str) -> list[tuple]:
-            sig = ""
-            if article_signal_enabled():
-                sig = f" AND ({sql_article_signal_full_lane_filter('a', schema_name)}) "
-            if unified_intake_legacy_aware_backlog_enabled():
-                where_sql = sql_actionable_unified_intake(schema_name, "a")
-            else:
-                where_sql = f"""
-                    COALESCE(
-                        (a.metadata #>> '{{pipeline_skip,unified_intake_extraction_skip}}')::boolean,
-                        false
-                    ) = false
-                      AND a.content IS NOT NULL
-                      AND LENGTH(a.content) > 100
-                      AND ({ml_ready})
-                      AND (
-                          LENGTH(a.content) >= 500
-                          OR a.created_at < NOW() - INTERVAL '2 hours'
-                          OR COALESCE(a.enrichment_status, '') IN (
-                              'enriched', 'failed', 'inaccessible'
-                          )
-                      )
-                      {pass_clause}
-                """
-            with get_db_connection_context() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(
-                        f"""
-                        SELECT a.id, a.title, a.content, a.published_at,
-                               (
-                                   SELECT sa.storyline_id::text
-                                   FROM {schema_name}.storyline_articles sa
-                                   WHERE sa.article_id = a.id
-                                   ORDER BY sa.added_at DESC NULLS LAST
-                                   LIMIT 1
-                               ) AS storyline_id
-                        FROM {schema_name}.articles a
-                        WHERE {where_sql}
-                          {sig}
-                        ORDER BY {order}
-                        LIMIT {per_domain}
-                        """
-                    )
-                    return cursor.fetchall()
+    def _fetch_domain_articles(claimed_by_schema: dict[str, list[int]] | None = None) -> dict[str, list[tuple]]:
+        """One short-lived connection per domain — release before LLM batches run."""
+        out: dict[str, list[tuple]] = {}
 
         for _domain_key, schema_name in domains:
             try:
-                out[schema_name] = _fetch_one_schema(schema_name)
+                ids = (claimed_by_schema or {}).get(schema_name)
+                out[schema_name] = _fetch_one_schema(
+                    schema_name,
+                    ids if ids else None,
+                )
             except Exception as e:
                 logger.warning(
                     "unified_intake_extraction query for %s: %s", schema_name, e
@@ -180,7 +215,42 @@ async def run_unified_intake_extraction_batch_drain(
         while not budget.expired():
             round_backfill = await loop.run_in_executor(None, _backfill_legacy_complete)
             backfill_count += round_backfill
-            domain_articles = await loop.run_in_executor(None, _fetch_domain_articles)
+            claimed_by_schema: dict[str, list[int]] = {}
+            use_queue_round = False
+            if queues_active:
+                claimed_by_schema = await loop.run_in_executor(
+                    None,
+                    lambda: claim_fair_share_batch(
+                        "unified_intake_extraction", queue_claim_batch
+                    ),
+                )
+                use_queue_round = bool(claimed_by_schema)
+                if not use_queue_round:
+                    pending_q = await loop.run_in_executor(
+                        None,
+                        lambda: count_all_pending("unified_intake_extraction"),
+                    )
+                    if pending_q > 0:
+                        continue
+            domain_articles = await loop.run_in_executor(
+                None,
+                lambda c=claimed_by_schema if use_queue_round else None: _fetch_domain_articles(c),
+            )
+            if use_queue_round and claimed_by_schema:
+                fetched_ids = {
+                    int(row[0])
+                    for rows in domain_articles.values()
+                    for row in rows
+                }
+                for schema_name, ids in claimed_by_schema.items():
+                    for article_id in ids:
+                        if article_id not in fetched_ids:
+                            release_queue_item(
+                                schema_name,
+                                "unified_intake_extraction",
+                                article_id,
+                                error="not_actionable",
+                            )
             pending_rows: list[tuple[str, str, tuple]] = []
             for domain_key, schema_name in domains:
                 for row in domain_articles.get(schema_name, []):
@@ -193,6 +263,7 @@ async def run_unified_intake_extraction_batch_drain(
 
             batch_rounds += 1
             round_ok = 0
+            wave_idx = 0
 
             batch_slices = [
                 pending_rows[i : i + llm_batch]
@@ -278,10 +349,12 @@ async def run_unified_intake_extraction_batch_drain(
                 )
 
                 for batch_slice, results in wave_outcomes:
+                    schema_outcomes: dict[str, dict[int, bool]] = {}
                     for dk, schema, row in batch_slice:
                         article_id = row[0]
                         result = results.get(article_id, {"success": False})
-                        if result.get("success") or result.get("attempted"):
+                        ok = bool(result.get("success") or result.get("attempted"))
+                        if ok:
                             round_ok += 1
                         elif on_article_failure and not result.get("success"):
                             await on_article_failure(
@@ -291,6 +364,24 @@ async def run_unified_intake_extraction_batch_drain(
                                     result.get("error") or result.get("reason") or "failed"
                                 ),
                             )
+                        if use_queue_round:
+                            schema_outcomes.setdefault(schema, {})[article_id] = ok
+                    if use_queue_round:
+                        for schema, outcomes in schema_outcomes.items():
+                            finalize_unified_intake_queue_round(schema, outcomes)
+
+                wave_idx += 1
+                if on_wave_complete is not None:
+                    await on_wave_complete(
+                        wave_idx,
+                        {
+                            "batch_round": batch_rounds,
+                            "wave_processed": len(wave),
+                            "round_processed": round_ok,
+                            "total_processed": processed_count + round_ok,
+                            "backfill_count": backfill_count,
+                        },
+                    )
 
                 if budget.expired():
                     break
@@ -305,6 +396,13 @@ async def run_unified_intake_extraction_batch_drain(
                         "backfill_count": backfill_count,
                     },
                 )
+            if round_ok > 0:
+                try:
+                    from services.backlog_metrics import invalidate_backlog_metrics_cache
+
+                    invalidate_backlog_metrics_cache()
+                except Exception:
+                    pass
             had_pending = bool(pending_rows)
             if stall.record_round(processed=round_ok, had_pending=had_pending):
                 break

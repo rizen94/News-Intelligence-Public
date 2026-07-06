@@ -35,7 +35,8 @@ get_conductor_config = pcs.get_conductor_config
 get_effective_processing_phases = pcs.get_effective_processing_phases
 get_post_collection_kickoff_phases = pcs.get_post_collection_kickoff_phases
 orchestrator_post_collection_kickoff_enabled = pcs.orchestrator_post_collection_kickoff_enabled
-orchestrator_processing_nudge_enabled = pcs.orchestrator_processing_nudge_enabled
+conductor_pipeline_modes = pcs.conductor_pipeline_modes
+phase_conductor_scheduling_suppressed = pcs.phase_conductor_scheduling_suppressed
 
 
 def _schedule_keys() -> set[str]:
@@ -57,6 +58,12 @@ def main() -> int:
     dispatch = _dispatch_keys()
     governor = set(get_effective_processing_phases().keys())
     kickoff = get_post_collection_kickoff_phases()
+    modes = conductor_pipeline_modes()
+
+    conductor_suppressed_in_governor = sorted(
+        p for p in governor if phase_conductor_scheduling_suppressed(p)
+    )
+    kickoff_suppressed = sorted(p for p in kickoff if phase_conductor_scheduling_suppressed(p))
 
     missing_dispatch = sorted(schedules - dispatch - {"processing_history"})
     governor_not_scheduled = sorted(governor - schedules)
@@ -81,7 +88,7 @@ def main() -> int:
 
     report = {
         "conductor": get_conductor_config(),
-        "nudge_enabled": orchestrator_processing_nudge_enabled(),
+        "pipeline_modes": modes,
         "post_collection_kickoff": orchestrator_post_collection_kickoff_enabled(),
         "post_collection_phases": kickoff,
         "schedule_count": len(schedules),
@@ -90,7 +97,11 @@ def main() -> int:
         "missing_dispatch_handlers": missing_dispatch,
         "governor_phases_not_in_schedules": governor_not_scheduled,
         "schedules_without_governor_entry": scheduled_not_governor,
-        "ok": not missing_dispatch,
+        "conductor_suppressed_still_in_governor": conductor_suppressed_in_governor,
+        "kickoff_phases_suppressed": kickoff_suppressed,
+        "ok": not missing_dispatch
+        and not conductor_suppressed_in_governor
+        and not kickoff_suppressed,
     }
     print(json.dumps(report, indent=2, default=str))
     return 0 if report["ok"] else 1

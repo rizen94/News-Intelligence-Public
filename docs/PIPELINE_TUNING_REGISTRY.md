@@ -2,46 +2,40 @@
 
 Canonical map of **who reads what**, known **conflicts**, and **defunct** knobs after multiple dev cycles.
 
-**Precedence (highest wins):** explicit env var → `orchestrator_governance.yaml` (harmony section only) → code default.
+**Precedence (highest wins):** explicit env var → `orchestrator_governance.yaml` (`pipeline_controller`, `pipeline_conductor`) → code default.
 
-**Not authoritative:** `self.schedules[phase].interval` in AutomationManager when `USE_WORKLOAD_DRIVEN_ORDER=true` and phase has pending work (interval is fallback when idle only).
-
----
-
-## 1. Three schedulers (single config: `pipeline_conductor`)
-
-| Layer | Tick | What it schedules | Backlog-aware? |
-|-------|------|-------------------|----------------|
-| **AutomationManager** | `AUTOMATION_SCHEDULER_TICK_SECONDS` (5s) | All `self.schedules` phases + gap-fill | Yes — primary when `automation_primary: true` |
-| **OrchestratorCoordinator** | `orchestrator.loop_interval_seconds` (60s) | RSS/finance collection + optional `request_phase` nudge | Only when `orchestrator_processing_nudge_enabled: true` (default **false**) |
-| **NRI mention resolver** | systemd timer (5 min) | `resolve_drain` on CEM backlog | Documented in `pipeline_conductor.external_schedulers` |
-
-**Conductor env:** `PIPELINE_CONDUCTOR_AUTOMATION_PRIMARY` (default true), `PIPELINE_CONDUCTOR_ORCHESTRATOR_NUDGE` (default false). See `api/services/pipeline_conductor_service.py`.
-
-**Interference (mitigated):** With nudge disabled (default), ProcessingGovernor returns None and coordinator does not duplicate `request_phase`. ResourceGovernor `can_run("processing")` only checks **API calls/hour**, not LLM tokens.
+**Not authoritative:** `self.schedules[phase].interval` — display/fallback only; **PipelineController** enqueues from backlog counters.
 
 ---
 
-## 2. AutomationManager — scheduling & caps
+## 1. Schedulers (v10.1)
 
-| Env | Default | Purpose | Conflicts / notes |
-|-----|---------|---------|-------------------|
-| `AUTOMATION_SCHEDULER_TICK_SECONDS` | 5 | Scheduler loop | × many phases = high DB load on backlog refresh |
-| `AUTOMATION_WORKLOAD_MIN_COOLDOWN_SECONDS` | 10 | Min re-enqueue when pending | Overridden by **harmony** (fraction of measured duration) |
-| `AUTOMATION_HARMONY_USE_MEASURED_DURATION` | true | Duration-based cooldown | + `adaptive_timing` in **idle/legacy** interval path only |
-| `AUTOMATION_HARMONY_COOLDOWN_FRACTION` | 0.35 | cooldown ≈ avg_run × fraction | |
-| `AUTOMATION_GAP_FILL_ENABLED` | true | Idle workers → backlog phases | Respects same caps as normal enqueue |
-| `WORKLOAD_BALANCER_ENABLED` | **false** | Extra cooldown curve | **Off by default** — enable only if harmony too aggressive |
-| `AUTOMATION_MAX_SCHEDULED_DEPTH_PER_PHASE` | 1 | Queued duplicates per phase | Good; prevents 5 min interval × tick spam |
+| Layer | Trigger | What it schedules |
+|-------|---------|-----------------|
+| **PipelineController** | Worker done → `notify_worker_done()` → replan | Processing phases from backlog + lane/host caps |
+| **AutomationManager** | Controller `reconcile_and_enqueue` | Runs queued tasks; standalone `health_check` loop |
+| **OrchestratorCoordinator** | 60s loop (when controller absent for collection) | RSS/finance collection; finance interest analysis |
+| **NRI mention resolver** | In-process **`mention_resolution`** phase | CEM drain (external timer retired) |
+
+**Conductor config:** `pipeline_conductor` in YAML — post-collection kickoff, external scheduler docs. See `api/services/pipeline_conductor_service.py`.
+
+---
+
+## 2. AutomationManager — caps & gates
+
+| Env | Default | Purpose | Notes |
+|-----|---------|---------|-------|
+| `AUTOMATION_MAX_CONCURRENT_TASKS` | 12 | Phase worker pool size | Main throughput cap |
+| `AUTOMATION_MAX_SCHEDULED_DEPTH_PER_PHASE` | 1 | Queued duplicates per phase | Prevents asyncio queue explosion |
 | `AUTOMATION_PER_PHASE_CONCURRENT_CAP` | 2 | Same phase parallel runs | Long GPU drain occupies cap |
 | `AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES` | — | e.g. `claim_extraction:1` | |
-| `AUTOMATION_MAX_REQUEUE_PER_WINDOW` | 0 (unlimited) | Continuous re-queue after batch | yaml `analysis_pipeline.max_requeue_per_window` |
 | `AUTOMATION_QUEUE_SOFT_CAP` | **0** (off) | Pause enqueue when deep queue | Prefer caps above |
-| `COLLECTION_THROTTLE_PENDING_THRESHOLD` | 1200 | Block `collection_cycle` when downstream heavy | Sum of enrichment+context_sync+document_processing (+extras) |
-| `COLLECTION_CYCLE_INTERVAL_SECONDS` | 7200 | yaml `collection_cycle.interval_seconds` | Ignored when workload-driven + pending |
-| `AUTOMATION_DISABLED_SCHEDULES` | — | **Widow prod:** context_sync, entity_profile_sync, pending_db_flush, claims_to_facts, pattern_recognition | Cron offload; **duplicate key in .env** — fix to one line |
-| `AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE` | — | Widow: RSS elsewhere | |
-| `PIPELINE_BACKFILL_MODE` | false | Pause RSS/docs during catch-up | Widow: false (good) |
+| `AUTOMATION_DB_POOL_PRESSURE_GATE_ENABLED` | true | Defer replans when worker pool hot | See `connection.automation_db_pool_should_defer_phase` |
+| `AUTOMATION_DB_WORKER_UTILIZATION_SKIP_THRESHOLD` | 0.82 | Pool util threshold | |
+| `COLLECTION_THROTTLE_PENDING_THRESHOLD` | 1200 | Block `collection_cycle` when downstream heavy | |
+| `COLLECTION_CYCLE_INTERVAL_SECONDS` | 7200 | yaml `collection_cycle.interval_seconds` | Controller gates on backlog |
+| `AUTOMATION_DISABLED_SCHEDULES` | — | Comma-separated phase disable list | |
+| `PIPELINE_BACKFILL_MODE` | false | Pause RSS/docs during catch-up | |
 
 ### Time windows (hard gates — override everything)
 
@@ -66,7 +60,42 @@ Canonical map of **who reads what**, known **conflicts**, and **defunct** knobs 
 | `claim_extraction` | `CLAIM_EXTRACTION_BATCH_LIMIT` | `CLAIM_EXTRACTION_DRAIN_MAX_SECONDS` (**900**) | `CLAIM_EXTRACTION_DRAIN=true` default; internal drain loop |
 | `claims_to_facts` | `CLAIMS_TO_FACTS_BATCH_LIMIT` | `CLAIMS_TO_FACTS_DRAIN_MAX_SECONDS` (**900**) | `CLAIMS_TO_FACTS_DRAIN` |
 
-**Monitor mismatch:** `backlog_metrics.BATCH_SIZE_PER_TASK` uses **single-round** estimates (e.g. entity 60 = 20×3). ETA in UI understates drain throughput — use `processing_progress` + run history, not batch table alone.
+**Monitor mismatch:** `backlog_metrics._per_run_batch_size()` now reads live env for `unified_intake_extraction`, `entity_profile_build`, `entity_dossier_compile`, and `event_tracking`. Legacy `BATCH_SIZE_PER_TASK` entries remain fallbacks for other phases.
+
+### Assembly conductor drain loops (v10.1+)
+
+When `ASSEMBLY_PIPELINE_MODE=ordered`, batch-capable phases loop until cycle budget or stall:
+
+| Phase | Cycle budget env | Batch env |
+|-------|------------------|-----------|
+| `entity_profile_build` | `ASSEMBLY_ENTITY_PROFILE_BUILD_CYCLE_BUDGET_SECONDS` (600) | `ENTITY_PROFILE_BUILD_LIMIT` |
+| `entity_dossier_compile` | `ASSEMBLY_ENTITY_DOSSIER_COMPILE_CYCLE_BUDGET_SECONDS` (600) | `ENTITY_DOSSIER_COMPILE_MAX` |
+| `event_tracking` | `ASSEMBLY_EVENT_TRACKING_CYCLE_BUDGET_SECONDS` (120) | `EVENT_TRACKING_ASSEMBLY_BATCH_LIMIT` / `EVENT_TRACKING_ASSEMBLY_BATCH_MAX` (300) |
+| `graph_connection_distillation` | `ASSEMBLY_GRAPH_CONNECTION_DISTILLATION_CYCLE_BUDGET_SECONDS` (60) | processor default |
+
+**Automation drain (v10.1+):** When `ENTITY_PROFILE_BUILD_DRAIN=true` (default), each scheduled `entity_profile_build` task loops batches until idle or `ENTITY_PROFILE_BUILD_RUN_BUDGET_SECONDS` / assembly cycle budget. Parallel in-flight profiles: `ENTITY_PROFILE_BUILD_PARALLEL` (default 3). First-pass (empty sections) uses fast single-LLM path (`ENTITY_PROFILE_BUILD_FAST_CONTEXT_LIMIT`, default 15); refresh builds use full iterative path (`ENTITY_PROFILE_BUILD_FULL_CONTEXT_LIMIT`, default 75).
+
+| Env | Default | Purpose |
+|-----|---------|---------|
+| `ENTITY_PROFILE_BUILD_DRAIN` | `true` | Multi-batch drain per scheduler task |
+| `ENTITY_PROFILE_BUILD_PARALLEL` | `3` | Concurrent profiles per batch |
+| `ENTITY_PROFILE_BUILD_FAST_CONTEXT_LIMIT` | `15` | Context cap for first_pass (single LLM) |
+| `ENTITY_PROFILE_BUILD_FULL_CONTEXT_LIMIT` | `75` | Context cap for refresh builds |
+| `ENTITY_PROFILE_BUILD_PRIORITY_FIRST_PASS` | `true` | Dequeue empty-section profiles first |
+| `ENTITY_PROFILE_BUILD_ITERATIVE_MIN_CONTEXTS` | `30` | Iterative chunking only on refresh path above this count |
+| `ENTITY_PROFILE_BUILD_RUN_BUDGET_SECONDS` | `0` (unlimited) | Optional automation task wall-clock cap |
+
+Dossier defer: `ASSEMBLY_DEFER_DOSSIER_PROFILE_FIRST_PASS` (default 8000) uses profile **first-pass** count; dossier **retry** backlog above that threshold can still run compile.
+
+### Adaptive batch policy (`api/shared/adaptive_batch_policy.py`)
+
+| Env | Default | Purpose |
+|-----|---------|---------|
+| `AUTOMATION_ADAPTIVE_BATCH_ENABLED` | true when `PIPELINE_BACKFILL_MODE=true` | Headroom-based batch tuning |
+| `ADAPTIVE_BATCH_INCREASE_HEADROOM` | 0.50 | Raise batch when headroom ≥ this |
+| `ADAPTIVE_BATCH_DECREASE_HEADROOM` | 0.25 | Lower batch when headroom < this |
+
+Persists last tuned batch per phase in `public.automation_state` (`adaptive_batch:{phase}`). Wired into spine enrichment, unified intake, and assembly drain phases.
 
 ---
 
@@ -86,11 +115,9 @@ Canonical map of **who reads what**, known **conflicts**, and **defunct** knobs 
 | Section | Wired? | Consumer |
 |---------|--------|----------|
 | `collection.sources` | Yes | CollectionGovernor, OrchestratorCoordinator |
-| `processing.phases.*.interval_seconds` | Yes | ProcessingGovernor when `orchestrator_processing_nudge_enabled: true` |
-| `processing.batch_size`, `max_concurrent`, `context_window_days` | **Removed** | Were never wired — deleted from yaml |
-| `pipeline_conductor` | Yes | `pipeline_conductor_service` — scheduler roles + external timers |
-| `analysis_pipeline.step_budgets_seconds` | Partial | Step reporting; **gating disabled** when workload-driven |
-| `pipeline_orchestration_harmony` | Yes (fallback) | `pipeline_batch_drain`, `pipeline_orchestration_harmony` if env unset |
+| `processing.phases.*.interval_seconds` | Display | Phase registry / Monitor (not enqueue driver) |
+| `pipeline_conductor` | Yes | Post-collection kickoff, external scheduler docs |
+| `pipeline_controller` | Yes | Run budgets, host balance, lane caps, post-collection phases |
 | `resources.daily_llm_tokens` | Partial | Blocks orchestrator **analysis/synthesis** only |
 | `entity_tracking.enabled` | Yes | Coordinator dossier compile (default false in yaml) |
 
@@ -100,15 +127,19 @@ Canonical map of **who reads what**, known **conflicts**, and **defunct** knobs 
 
 | Knob | Why |
 |------|-----|
+| `analysis_pipeline.*` | Removed — v8 analysis-window scheduling retired |
+| `pipeline_orchestration_harmony` | Module deleted; budgets moved to `pipeline_controller` |
+| `AUTOMATION_SCHEDULER_TICK_SECONDS` | Legacy scheduler loop |
+| `AUTOMATION_GAP_FILL_ENABLED` / `AUTOMATION_HARMONY_*` | Harmony module deleted |
+| `WORKLOAD_BALANCER_ENABLED` | `workload_balancer.py` deleted |
+| `AUTOMATION_MAX_REQUEUE_PER_WINDOW` | Continuous self re-queue retired |
+| `orchestrator_processing_nudge_enabled` | Orchestrator `request_phase` nudge retired |
+| `PIPELINE_CONDUCTOR_ORCHESTRATOR_NUDGE` | Same |
 | `AUTOMATION_SCHEDULE` (cron string in env.example) | Not read by AutomationManager |
 | `CELERY_*` | No Celery worker in NI API |
-| `ML_BATCH_SIZE`, `ML_MODEL_PATH` | Legacy ML config; not automation path |
-| `INTELLIGENCE_UPDATE_INTERVAL` | Not referenced in `api/` |
-| `ENRICHMENT_BACKLOG_FIRST_*` | Hardcoded **false** in automation_manager |
+| `ENRICHMENT_BACKLOG_FIRST_*` | Removed from automation_manager |
 | `articles.entities` jsonb | Unused; entities in `article_entities` |
 | `processing_status` on articles | Never updated by extraction; use pass markers |
-| `scripts/daily_batch_processor.py`, `optimized_ml_worker.py` | Manual/legacy; not systemd automation |
-| `entity_tracking.enabled: false` + `entity_dossier_compile` in automation | Duplicate path — pick one |
 
 ---
 
@@ -129,15 +160,46 @@ Not controlled by NI AutomationManager.
 Set only these unless debugging one phase:
 
 ```bash
+# Global concurrency + adaptive batches
+AUTOMATION_MAX_CONCURRENT_TASKS=12
+AUTOMATION_DISABLE_DYNAMIC_TASK_SCALING=false
+AUTOMATION_PER_PHASE_CONCURRENT_CAP=3
+AUTOMATION_ADAPTIVE_BATCH_ENABLED=true
+
+# Unified intake (spine bottleneck)
+UNIFIED_INTAKE_EXTRACTION_ARTICLES_PER_DOMAIN=60
+UNIFIED_INTAKE_EXTRACTION_BATCH_SIZE=5
+UNIFIED_INTAKE_EXTRACTION_PARALLEL=10
+
+# Assembly throughput
+EVENT_TRACKING_ASSEMBLY_BATCH_LIMIT=150
+EVENT_TRACKING_ASSEMBLY_BATCH_MAX=300
+ENTITY_PROFILE_BUILD_LIMIT=100
+ENTITY_PROFILE_BUILD_PARALLEL=3
+ENTITY_PROFILE_BUILD_DRAIN=true
+ENTITY_PROFILE_BUILD_FAST_CONTEXT_LIMIT=15
+ENTITY_PROFILE_BUILD_PRIORITY_FIRST_PASS=true
+ENTITY_DOSSIER_COMPILE_MAX=80
+ASSEMBLY_CONDUCTOR_IDLE_SECONDS=30
+ASSEMBLY_ENTITY_PROFILE_BUILD_CYCLE_BUDGET_SECONDS=600
+ASSEMBLY_ENTITY_DOSSIER_COMPILE_CYCLE_BUDGET_SECONDS=600
+SPINE_CONDUCTOR_IDLE_SECONDS=15
+
 # Throughput
 ENTITY_EXTRACTION_RUN_BUDGET_SECONDS=1800
 SENTIMENT_ANALYSIS_RUN_BUDGET_SECONDS=1800
 CLAIM_EXTRACTION_DRAIN_MAX_SECONDS=1800
 
-# Scheduling
-AUTOMATION_WORKLOAD_MIN_COOLDOWN_SECONDS=30
-WORKLOAD_BALANCER_ENABLED=true
-AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES=claim_extraction:1,entity_extraction:1
+# Entity profile catch-up sprint (run_backlog_gpu_sprint.py --phase entity_profile_build)
+# ENTITY_PROFILE_BUILD_ANYTIME=true
+# ENTITY_PROFILE_BUILD_DRAIN=true
+# ENTITY_PROFILE_BUILD_PARALLEL=4
+# BACKLOG_SPRINT_ACTIVE=true
+# BACKLOG_SPRINT_GPU_HOST=http://192.168.93.99:11434
+
+# Scheduling — PipelineController replan drives throughput
+AUTOMATION_PER_PHASE_CONCURRENT_CAP=3
+AUTOMATION_ADAPTIVE_BATCH_ENABLED=true
 
 # Windows (don’t fight nightly)
 # NIGHTLY_PIPELINE_EXCLUSIVE=1  # leave on; rely on nightly drain + daytime budgets
@@ -153,7 +215,7 @@ AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES=claim_extraction:1,entity_extracti
 
 | Doc | Topic |
 |-----|-------|
-| [PIPELINE_ORCHESTRATION_HARMONY.md](PIPELINE_ORCHESTRATION_HARMONY.md) | Duration harmony + gap-fill |
+| [PIPELINE_ORCHESTRATION_HARMONY.md](PIPELINE_ORCHESTRATION_HARMONY.md) | Retired harmony pointer + v10.1 scheduling map |
 | [RESOURCE_BUDGETS_AND_LEAN_PIPELINE.md](RESOURCE_BUDGETS_AND_LEAN_PIPELINE.md) | DB pool + Ollama caps |
 | [PIPELINE_AND_AUTOMATION.md](PIPELINE_AND_AUTOMATION.md) | Phase catalog |
 | [configs/env.example](../configs/env.example) | Full env comment index (some defaults stale — trust this registry + code) |

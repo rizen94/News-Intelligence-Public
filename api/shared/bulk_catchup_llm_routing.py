@@ -185,40 +185,12 @@ def configure_catchup_extraction_routing(
         env_set("BULK_CPU_EXTRACTION_MODEL", cpu_extraction_model)
 
     try:
-        with urllib.request.urlopen(f"{pop}/api/tags", timeout=5) as resp:
-            tags = json.loads(resp.read().decode())
-        names = {m.get("name", "") for m in tags.get("models") or []}
-        if extraction_model not in names and f"{extraction_model}:latest" not in names:
-            logger.warning(
-                "BULK_EXTRACTION_MODEL %s not on PopOS (%s). Pull it or set BULK_EXTRACTION_MODEL=llama3.1:8b",
-                extraction_model,
-                pop,
-            )
+        from shared.ollama_extraction_model_resolver import resolve_extraction_models_for_hosts
+
+        resolve_extraction_models_for_hosts(gpu_host=pop, cpu_host=local, run_id="bulk_catchup")
+        extraction_model = env_str("OLLAMA_MODEL_EXTRACTION", extraction_model).strip()
     except Exception as e:
-        logger.warning("PopOS Ollama probe failed (%s): %s", pop, e)
-
-    if dual_lane:
-        try:
-            with urllib.request.urlopen(f"{local}/api/tags", timeout=5) as resp:
-                tags = json.loads(resp.read().decode())
-            names = {m.get("name", "") for m in tags.get("models") or []}
-            if extraction_model not in names and f"{extraction_model}:latest" not in names:
-                logger.warning(
-                    "BULK_EXTRACTION_MODEL %s not on local CPU host (%s); CPU lane may fail",
-                    extraction_model,
-                    local,
-                )
-        except Exception as e:
-            logger.warning("Local Ollama probe failed (%s): %s", local, e)
-
-    try:
-        from shared.services.llm_service import reset_llm_service
-        from shared.services.ollama_model_caller import reset_ollama_model_caller
-
-        reset_llm_service()
-        reset_ollama_model_caller()
-    except Exception as e:
-        logger.debug("LLM service reset after catchup routing: %s", e)
+        logger.warning("Bulk catchup extraction model resolve failed (%s): %s", pop, e)
 
     if dual_lane:
         logger.info(

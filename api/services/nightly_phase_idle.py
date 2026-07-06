@@ -2,7 +2,8 @@
 Nightly sequential drain — definitive idle detection per automation phase.
 
 * **Backlog-backed phases** — ``phase_has_pending_work`` reads ``get_all_pending_counts()`` (same
-  source as the daytime scheduler). When a phase’s raw count is 0, that phase is done for this drain.
+  source as PipelineController / daytime scheduling). When a phase’s raw count is 0, that phase is
+  done for this drain.
 * **Single-pass phases** — exploratory or best-effort work with no cheap global count (e.g.
   ``pattern_matching``). Exactly **one** invocation per sweep (see
   ``NIGHTLY_SEQUENTIAL_SINGLE_PASS_PHASES``); the drain does not spin waiting for a backlog metric.

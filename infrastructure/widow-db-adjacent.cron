@@ -1,19 +1,17 @@
-# Widow: DB-adjacent jobs (no FastAPI). Install ONCE only:
+# Widow: DB-adjacent ops NOT handled by AutomationManager / PipelineController.
+# Install ONCE only:
 #   sudo cp infrastructure/widow-db-adjacent.cron /etc/cron.d/widow-db-adjacent
 #   sudo chmod 644 /etc/cron.d/widow-db-adjacent
-# Do NOT also install as news-intelligence-widow-db or newsplatform-db-adjacent (duplicates).
+#
+# context_sync, entity_profile_sync, pending_db_flush — PipelineController worker queue
+# when backlog counters show work (not cron, not fixed idle intervals).
 #
 # On the main GPU host .env set:
 #   AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE=true
-#   AUTOMATION_DISABLED_SCHEDULES=context_sync,entity_profile_sync,pending_db_flush
-#
-# RSS: either keep systemd newsplatform-secondary.service OR add --rss below (not both).
+#   AUTOMATION_DISABLED_SCHEDULES=claims_to_facts,pattern_recognition  # example only
 
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
-
-# Every 15 minutes: contexts + entity profile map + replay spill file (flock skips if prior run still active)
-*/15 * * * * pete flock -n /tmp/widow-db-adjacent-sync.lock -c "cd /opt/news-intelligence && PYTHONPATH=api /opt/news-intelligence/.venv/bin/python api/scripts/run_widow_db_adjacent.py --context-sync --entity-profile-sync --pending-db-flush >> /opt/news-intelligence/logs/widow_db_adjacent.log 2>&1"
 
 # Every 5 minutes: terminate idle-in-transaction sessions older than 5 min (pool leak recovery)
 */5 * * * * pete flock -n /tmp/widow-db-adjacent-idle-tx.lock -c "cd /opt/news-intelligence && PYTHONPATH=api /opt/news-intelligence/.venv/bin/python api/scripts/run_widow_db_adjacent.py --terminate-idle-in-tx --idle-in-tx-minutes 5 >> /opt/news-intelligence/logs/widow_db_adjacent.log 2>&1"

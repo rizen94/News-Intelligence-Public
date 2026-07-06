@@ -2,21 +2,25 @@
 
 from __future__ import annotations
 
+import importlib.util
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import pytest
+_API = Path(__file__).resolve().parents[2] / "api" / "services" / "pipeline_schedule_service.py"
+_spec = importlib.util.spec_from_file_location("pipeline_schedule_service", _API)
+assert _spec and _spec.loader
+pss = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(pss)
 
-from services.pipeline_schedule_service import (
-    active_pipeline_window,
-    automation_phase_allowed,
-    db_adjacent_sync_allowed,
-    in_nightly_heavy_window,
-    in_pipeline_quiet_window,
-    in_weekday_daytime_window,
-    pipeline_schedule_info,
-    rss_collection_allowed,
-)
+active_pipeline_window = pss.active_pipeline_window
+automation_phase_allowed = pss.automation_phase_allowed
+db_adjacent_sync_allowed = pss.db_adjacent_sync_allowed
+in_nightly_heavy_window = pss.in_nightly_heavy_window
+in_pipeline_quiet_window = pss.in_pipeline_quiet_window
+in_weekday_daytime_window = pss.in_weekday_daytime_window
+pipeline_schedule_info = pss.pipeline_schedule_info
+rss_collection_allowed = pss.rss_collection_allowed
 
 ET = ZoneInfo("America/New_York")
 
@@ -72,6 +76,16 @@ class TestPipelineWindows:
         )
         assert not automation_phase_allowed(
             "topic_clustering", now_local=quiet, pending_count=1000
+        )
+
+    def test_automation_phase_allowed_severe_backlog_default_threshold(self, monkeypatch):
+        monkeypatch.delenv("AUTOMATION_BACKLOG_SEVERE_THRESHOLD", raising=False)
+        quiet = _et(2026, 5, 18, 20)
+        assert automation_phase_allowed(
+            "unified_intake_extraction", now_local=quiet, pending_count=23691
+        )
+        assert not automation_phase_allowed(
+            "unified_intake_extraction", now_local=quiet, pending_count=5000
         )
 
     def test_automation_phase_allowed_weekday_daytime(self, monkeypatch):

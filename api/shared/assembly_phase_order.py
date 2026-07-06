@@ -11,6 +11,7 @@ from config.runtime import env_str
 # Work-completion order after spine (link indexer runs inside spine_sql_tail).
 POST_SPINE_PHASE_ORDER: tuple[str, ...] = (
     "graph_connection_distillation",
+    "entity_profile_build",
     "event_tracking",
     "story_continuation",
     "storyline_assembly",
@@ -49,10 +50,10 @@ POST_SPINE_RETIRED_PHASES: frozenset[str] = frozenset(
 
 def assembly_pipeline_mode() -> str:
     """ordered | shadow | legacy (workload-driven competition)."""
-    raw = env_str("ASSEMBLY_PIPELINE_MODE", "legacy").strip().lower()
+    raw = env_str("ASSEMBLY_PIPELINE_MODE", "ordered").strip().lower()
     if raw in ("ordered", "shadow", "legacy"):
         return raw
-    return "legacy"
+    return "ordered"
 
 
 def assembly_pipeline_ordered_active() -> bool:

@@ -76,6 +76,16 @@ type PhaseRow = {
 };
 
 /** Sort automation phases by first-pass queue (desc), then total pending, then name. */
+function isMonitorVisiblePhase(p: { scheduling_status?: string; phase_name?: string }): boolean {
+  return p.scheduling_status !== 'retired';
+}
+
+function filterMonitorPhases<T extends PhaseRow & { scheduling_status?: string }>(
+  phases: T[]
+): T[] {
+  return phases.filter(isMonitorVisiblePhase);
+}
+
 function sortPhasesByPending<T extends PhaseRow>(phases: T[]): T[] {
   return [...phases].sort((a, b) => {
     const fa = Number(a.pending_first_pass ?? a.pending_records ?? 0);
@@ -153,8 +163,10 @@ type ProcessingPulseDimension = {
 
 type ProcessingPulsePhase = {
   phase_name?: string;
+  phase_key?: string;
   /** DB-backed count of records not yet processed for this phase (pending queue). */
   pending_records?: number;
+  queue_depth?: number;
   /** Never cleared / first-time work for this phase. */
   pending_first_pass?: number;
   /** Attempted but needs another pass (retry / reprocess). */
@@ -162,8 +174,11 @@ type ProcessingPulsePhase = {
   /** First-pass items within intake window (fresh RSS backlog). */
   intake_first_pass?: number;
   work_queue_metric_kind?: string;
+  scheduling_status?: 'active' | 'suppressed' | 'retired' | string;
+  queue_stale?: boolean;
   /** ceil(unprocessed ÷ rows_per_run); null if no row-batch model. How many phase runs to drain the queue. */
   batches_to_drain?: number | null;
+  estimated_phase_runs?: number | null;
   /** Modeled rows consumed per scheduled run (not measured from history). */
   estimated_batch_per_run?: number;
   runs_1h?: number;
@@ -173,9 +188,11 @@ type ProcessingPulsePhase = {
   failures_24h?: number;
   successes_7d?: number;
   failures_7d?: number;
-  /** % of automation_run_history rows in window with success=true */
+  /** % of automation_run_history rows in window with success=true (not pipeline pass markers). */
   pass_rate_24h?: number | null;
   pass_rate_7d?: number | null;
+  run_success_rate_24h?: number | null;
+  run_success_rate_7d?: number | null;
   avg_duration_sec_24h?: number | null;
 };
 
@@ -226,7 +243,7 @@ function mergeProcessingPulseWithCachedPending(
   if (!fast?.data) return { pulse: fast, pendingStale: false };
   if (fast.data.pending_metrics_included) {
     const phases = sortPhasesByPending(
-      fast.data.phase_dashboard ?? fast.data.phases ?? []
+      filterMonitorPhases(fast.data.phase_dashboard ?? fast.data.phases ?? [])
     );
     return {
       pulse: {
@@ -278,53 +295,25 @@ function mergeProcessingPulseWithCachedPending(
     return { pulse: fast, pendingStale: true };
   }
 
-  // #region agent log
-  try {
-    const ui = fastPhases.find(p => p.phase_name === 'unified_intake_extraction');
-    const cached = cachedPhases.find(p => p.phase_name === 'unified_intake_extraction');
-    if (ui || cached) {
-      fetch('http://127.0.0.1:7678/ingest/79eeed92-cd4a-41d4-872f-8f142138548b', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'e7d0f8' },
-        body: JSON.stringify({
-          sessionId: 'e7d0f8',
-          runId: 'pre-fix',
-          hypothesisId: 'H3',
-          location: 'MonitorPage.tsx:mergeProcessingPulseWithCachedPending',
-          message: 'pulse_merge_state',
-          data: {
-            pendingStale,
-            fast_runs_1h: ui?.runs_1h,
-            cached_runs_1h: cached?.runs_1h,
-            fast_pending: ui?.pending_records,
-            cached_pending: cached?.pending_records,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-    }
-  } catch {
-    /* ignore */
-  }
-  // #endregion
-
   const mergedPhases = sortPhasesByPending(
-    fastPhases.map(p => {
-      const name = p.phase_name;
-      if (!name) return p;
-      const c = cachedByPhase.get(name);
-      if (!c) return p;
-      return {
-        ...p,
-        pending_records: c.pending_records,
-        pending_first_pass: c.pending_first_pass,
-        pending_retry: c.pending_retry,
-        intake_first_pass: c.intake_first_pass,
-        work_queue_metric_kind: c.work_queue_metric_kind,
-        estimated_batch_per_run: c.estimated_batch_per_run,
-        batches_to_drain: c.batches_to_drain,
-      };
-    })
+    filterMonitorPhases(
+      fastPhases.map(p => {
+        const name = p.phase_name;
+        if (!name) return p;
+        const c = cachedByPhase.get(name);
+        if (!c) return p;
+        return {
+          ...p,
+          pending_records: c.pending_records,
+          pending_first_pass: c.pending_first_pass,
+          pending_retry: c.pending_retry,
+          intake_first_pass: c.intake_first_pass,
+          work_queue_metric_kind: c.work_queue_metric_kind,
+          estimated_batch_per_run: c.estimated_batch_per_run,
+          batches_to_drain: c.batches_to_drain,
+        };
+      })
+    )
   );
 
   return {
@@ -453,7 +442,9 @@ export default function MonitorPage() {
             prev?.data?.phase_dashboard ?? prev?.data?.phases ?? [];
           const fullPhases = pulse.data?.phase_dashboard ?? pulse.data?.phases ?? [];
           if (fastPhases.length === 0 || fullPhases.length === 0) {
-            const phases = sortPhasesByPending(fullPhases.length ? fullPhases : fastPhases);
+            const phases = sortPhasesByPending(
+              filterMonitorPhases(fullPhases.length ? fullPhases : fastPhases)
+            );
             return {
               ...pulse,
               data: {
@@ -474,22 +465,24 @@ export default function MonitorPage() {
               .map(p => [p.phase_name as string, p])
           );
           const mergedPhases = sortPhasesByPending(
-            fastPhases.map(p => {
-              const name = p.phase_name;
-              if (!name) return p;
-              const row = fullByPhase.get(name);
-              if (!row) return p;
-              return {
-                ...p,
-                pending_records: row.pending_records,
-                pending_first_pass: row.pending_first_pass,
-                pending_retry: row.pending_retry,
-                intake_first_pass: row.intake_first_pass,
-                work_queue_metric_kind: row.work_queue_metric_kind,
-                estimated_batch_per_run: row.estimated_batch_per_run,
-                batches_to_drain: row.batches_to_drain,
-              };
-            })
+            filterMonitorPhases(
+              fastPhases.map(p => {
+                const name = p.phase_name;
+                if (!name) return p;
+                const row = fullByPhase.get(name);
+                if (!row) return p;
+                return {
+                  ...p,
+                  pending_records: row.pending_records,
+                  pending_first_pass: row.pending_first_pass,
+                  pending_retry: row.pending_retry,
+                  intake_first_pass: row.intake_first_pass,
+                  work_queue_metric_kind: row.work_queue_metric_kind,
+                  estimated_batch_per_run: row.estimated_batch_per_run,
+                  batches_to_drain: row.batches_to_drain,
+                };
+              })
+            )
           );
           return {
             ...pulse,
@@ -533,25 +526,6 @@ export default function MonitorPage() {
     const pulse =
       results[2].status === 'fulfilled' ? results[2].value : settledErr(results[2], 'processing_progress');
     const gpuH = results[3].status === 'fulfilled' ? results[3].value : null;
-    // #region agent log
-    fetch('http://127.0.0.1:7678/ingest/79eeed92-cd4a-41d4-872f-8f142138548b', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'e7d0f8' },
-      body: JSON.stringify({
-        sessionId: 'e7d0f8',
-        location: 'MonitorPage.tsx:refreshHeavyPanels',
-        message: 'heavy_panels_settled',
-        data: {
-          pipelineOk: Boolean(pipe && typeof pipe === 'object' && (pipe as { success?: boolean }).success),
-          pipelineStatus: (pipe as { data?: { pipeline_status?: string } })?.data?.pipeline_status,
-          pulseOk: Boolean(pulse && typeof pulse === 'object' && (pulse as { success?: boolean }).success),
-          pulseError: (pulse as { error?: string })?.error,
-        },
-        timestamp: Date.now(),
-        hypothesisId: 'H1-H3',
-      }),
-    }).catch(() => {});
-    // #endregion
     setPipeline(pipe ?? null);
     if (pulse && typeof pulse === 'object' && 'success' in pulse) {
       setProcessingPulse(prev => {
@@ -561,7 +535,7 @@ export default function MonitorPage() {
         );
         if (pendingStale) {
           queueMicrotask(() => {
-            void fetchPendingMetrics();
+            void fetchPendingMetrics(true);
           });
         }
         return merged;
@@ -733,28 +707,23 @@ export default function MonitorPage() {
     () => [
       'collection_cycle',
       'context_sync',
-      'entity_extraction',
       'entity_profile_sync',
       'claim_extraction',
       'claims_to_facts',
       'event_tracking',
-      'event_extraction',
       'topic_clustering',
-      'storyline_discovery',
-      'storyline_processing',
-      'editorial_document_generation',
-      'editorial_briefing_generation',
-      'digest_generation',
-      'daily_briefing_synthesis',
+      'entity_profile_build',
+      'unified_intake_extraction',
     ],
     []
   );
 
   const runPhaseOptions = useMemo(() => {
-    const rows =
+    const rows = filterMonitorPhases(
       processingPulse?.data?.phase_dashboard ??
-      processingPulse?.data?.phases ??
-      [];
+        processingPulse?.data?.phases ??
+        []
+    );
     const names = rows
       .map(p => p.phase_name)
       .filter((n): n is string => typeof n === 'string' && n.length > 0);
@@ -767,7 +736,10 @@ export default function MonitorPage() {
   ]);
 
   const overviewLoadFailed =
-    !initialLoad && overview != null && overview.success === false;
+    !initialLoad &&
+    overview != null &&
+    overview.success === false &&
+    overview.degraded !== true;
   const overviewDegraded =
     !initialLoad && overview != null && overview.degraded === true;
 
@@ -1221,8 +1193,9 @@ export default function MonitorPage() {
         per run is 0 (no row-batch model for that phase), runs to clear shows —. <strong>Runs</strong> count{' '}
         <code style={{ fontSize: '0.85em' }}>automation_run_history</code> rows; for{' '}
         <strong>claim_extraction</strong> with drain, one row is recorded per completed batch (not one per
-        scheduler task). <strong>Pass %</strong> ={' '}
-        <code style={{ fontSize: '0.85em' }}>100 × successes ÷ completions</code> in the window; SQL
+        scheduler task).         <strong>Pass %</strong> ={' '}
+        <code style={{ fontSize: '0.85em' }}>100 × successes ÷ completions</code> in the window (run
+        success rate — not the same as pipeline &quot;first pass&quot; queue columns); SQL
         treats non-TRUE <code style={{ fontSize: '0.85em' }}>success</code> (FALSE or NULL) as not passed —
         a sample proportion, not a confidence interval. Chip arrows compare the last hour to a baseline
         rate (see tooltips; heuristic only). Dimension chips are SQL throughputs, not mutually exclusive
@@ -1415,21 +1388,52 @@ export default function MonitorPage() {
                       <TableCell align='right'>Runs 7d</TableCell>
                       <TableCell align='right'>Pass 24h</TableCell>
                       <TableCell align='right'>Fail 24h</TableCell>
-                      <TableCell align='right'>Pass % 24h</TableCell>
-                      <TableCell align='right'>Pass % 7d</TableCell>
+                      <TableCell
+                        align='right'
+                        title='Run success rate: scheduler completions marked success=TRUE (not pipeline first-pass queue)'
+                      >
+                        Run success % 24h
+                      </TableCell>
+                      <TableCell
+                        align='right'
+                        title='Run success rate over 7 days (scheduler completions, not pipeline pass markers)'
+                      >
+                        Run success % 7d
+                      </TableCell>
                       <TableCell align='right'>Avg s</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {sortPhasesByPending(
-                      processingPulse.data.phase_dashboard ??
-                        processingPulse.data.phases ??
-                        []
+                      filterMonitorPhases(
+                        processingPulse.data.phase_dashboard ??
+                          processingPulse.data.phases ??
+                          []
+                      )
                     )
                       .slice(0, 40)
                       .map(p => (
-                        <TableRow key={p.phase_name}>
-                          <TableCell>{p.phase_name}</TableCell>
+                        <TableRow
+                          key={p.phase_name}
+                          sx={
+                            p.queue_stale
+                              ? { '& td': { bgcolor: 'action.hover' } }
+                              : undefined
+                          }
+                        >
+                          <TableCell>
+                            {p.phase_name}
+                            {p.scheduling_status === 'suppressed' && (
+                              <Typography
+                                component='span'
+                                variant='caption'
+                                color='text.secondary'
+                                sx={{ display: 'block' }}
+                              >
+                                suppressed (intake mode)
+                              </Typography>
+                            )}
+                          </TableCell>
                           <TableCell align='right'>
                             {formatPulseCount(p.pending_records ?? 0)}
                           </TableCell>
@@ -1472,22 +1476,41 @@ export default function MonitorPage() {
                             {formatPulseCount(p.estimated_batch_per_run ?? 0)}
                           </TableCell>
                           <TableCell align='right'>
-                            {p.batches_to_drain == null ? (
-                              '—'
-                            ) : (p.batches_to_drain ?? 0) > 1 ? (
-                              <Typography
-                                component='span'
-                                variant='body2'
-                                color='warning.main'
-                              >
-                                {formatPulseCount(p.batches_to_drain)}
-                              </Typography>
-                            ) : (
-                              formatPulseCount(p.batches_to_drain)
-                            )}
+                            {(() => {
+                              const runsToClear =
+                                p.estimated_phase_runs ?? p.batches_to_drain;
+                              if (runsToClear == null) return '—';
+                              if ((runsToClear ?? 0) > 1) {
+                                return (
+                                  <Typography
+                                    component='span'
+                                    variant='body2'
+                                    color='warning.main'
+                                  >
+                                    {formatPulseCount(runsToClear)}
+                                  </Typography>
+                                );
+                              }
+                              return formatPulseCount(runsToClear);
+                            })()}
                           </TableCell>
                           <TableCell align='right'>{p.runs_1h ?? 0}</TableCell>
-                          <TableCell align='right'>{p.runs_24h ?? 0}</TableCell>
+                          <TableCell
+                            align='right'
+                            title={
+                              p.queue_stale
+                                ? 'Backlog exists but no meaningful completions in the last 24h'
+                                : undefined
+                            }
+                          >
+                            {(p.runs_24h ?? 0) === 0 && p.queue_stale ? (
+                              <Typography component='span' variant='body2' color='warning.main'>
+                                {p.runs_24h ?? 0}
+                              </Typography>
+                            ) : (
+                              p.runs_24h ?? 0
+                            )}
+                          </TableCell>
                           <TableCell align='right'>{p.runs_7d ?? 0}</TableCell>
                           <TableCell align='right'>{p.successes_24h ?? 0}</TableCell>
                           <TableCell align='right'>
@@ -1504,10 +1527,14 @@ export default function MonitorPage() {
                             )}
                           </TableCell>
                           <TableCell align='right'>
-                            {p.pass_rate_24h != null ? `${p.pass_rate_24h}%` : '—'}
+                            {(p.run_success_rate_24h ?? p.pass_rate_24h) != null
+                              ? `${p.run_success_rate_24h ?? p.pass_rate_24h}%`
+                              : '—'}
                           </TableCell>
                           <TableCell align='right'>
-                            {p.pass_rate_7d != null ? `${p.pass_rate_7d}%` : '—'}
+                            {(p.run_success_rate_7d ?? p.pass_rate_7d) != null
+                              ? `${p.run_success_rate_7d ?? p.pass_rate_7d}%`
+                              : '—'}
                           </TableCell>
                           <TableCell align='right'>
                             {p.avg_duration_sec_24h != null
@@ -1518,8 +1545,9 @@ export default function MonitorPage() {
                       ))}
                   </TableBody>
                 </Table>
-                {(processingPulse.data.phase_dashboard ?? processingPulse.data.phases ?? [])
-                  .length > 40 && (
+                {filterMonitorPhases(
+                  processingPulse.data.phase_dashboard ?? processingPulse.data.phases ?? []
+                ).length > 40 && (
                   <Typography variant='caption' color='text.secondary' sx={{ mt: 0.5, display: 'block' }}>
                     Showing 40 rows sorted by first-pass queue, then total pending.
                   </Typography>

@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 _API = Path(__file__).resolve().parents[2] / "api"
-_QA_PATH = _API / "services" / "nri_bridge_qa_service.py"
+_QA_PATH = _API / "_archived" / "services" / "nri_bridge_qa_service.py"
 _spec = importlib.util.spec_from_file_location("nri_bridge_qa_service", _QA_PATH)
 _mod = importlib.util.module_from_spec(_spec)
 sys.modules["nri_bridge_qa_service"] = _mod

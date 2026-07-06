@@ -151,7 +151,7 @@ async def _run_entity_extraction(domains: list[str] | None, max_articles: int, p
 
     spec = importlib.util.spec_from_file_location(
         "run_entity_extraction_catchup",
-        Path(__file__).resolve().parent / "run_entity_extraction_catchup.py",
+        Path(__file__).resolve().parents[1] / "_archived" / "scripts" / "run_entity_extraction_catchup.py",
     )
     assert spec and spec.loader
     rec = importlib.util.module_from_spec(spec)
@@ -247,9 +247,18 @@ def _run_topic_clustering() -> int:
 
 
 def _run_metadata_enrichment(limit_per_domain: int) -> int:
-    from services.metadata_enrichment_service import run_metadata_enrichment_batch_for_domains
+    from shared.legacy_intake_rollback import (
+        legacy_intake_rollback_active,
+        load_metadata_enrichment_service,
+    )
 
-    return int(asyncio.run(run_metadata_enrichment_batch_for_domains(limit_per_domain=limit_per_domain)) or 0)
+    if not legacy_intake_rollback_active():
+        logger.warning(
+            "metadata_enrichment requires LEGACY_INTAKE_EXTRACTION_ENABLED=true; use unified_intake_extraction"
+        )
+        return 0
+    mod = load_metadata_enrichment_service()
+    return int(asyncio.run(mod.run_metadata_enrichment_batch_for_domains(limit_per_domain=limit_per_domain)) or 0)
 
 
 def _execute_phase(phase: str, args: argparse.Namespace) -> dict:

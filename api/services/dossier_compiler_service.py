@@ -465,15 +465,25 @@ def compile_dossier(
 def _run_scheduled_dossier_compiles(
     max_dossiers: int,
     get_db_connection_fn: Any | None = None,
-    stale_days: int = 7,
+    stale_days: int | None = None,
 ) -> int:
     """
     Phase 5: Used by OrchestratorCoordinator. Select up to max_dossiers (domain_key, entity_id)
-    from entity_profiles that have no dossier or dossier older than stale_days; compile each.
-    Returns number of dossiers successfully compiled.
+    from entity_profiles missing a dossier or with upstream changes since last compile
+    (see ``shared.entity_dossier_eligibility``). Returns number successfully compiled.
+
+    ``stale_days`` is deprecated; set ``ENTITY_DOSSIER_STALE_DAYS`` in env instead.
     """
     from shared.database.connection import get_db_connection
+    from shared.entity_dossier_eligibility import sql_entity_dossier_needs_compile
     from shared.pipeline_domain_sql import pipeline_domain_any_sql
+
+    if stale_days is not None and stale_days >= 0:
+        import logging as _logging
+
+        _logging.getLogger(__name__).debug(
+            "stale_days=%s ignored; use ENTITY_DOSSIER_STALE_DAYS", stale_days
+        )
 
     fn = get_db_connection_fn or get_db_connection
     conn = fn() if callable(fn) else None
@@ -482,6 +492,7 @@ def _run_scheduled_dossier_compiles(
     domain_sql, domain_keys = pipeline_domain_any_sql("ep.domain_key")
     if not domain_keys:
         return 0
+    needs_compile = sql_entity_dossier_needs_compile("ep", "ed")
     candidates: list[tuple] = []
     try:
         with conn.cursor() as cur:
@@ -493,11 +504,11 @@ def _run_scheduled_dossier_compiles(
                   ON ed.domain_key = ep.domain_key AND ed.entity_id = ep.canonical_entity_id
                 WHERE ep.canonical_entity_id IS NOT NULL
                   AND {domain_sql}
-                  AND (ed.id IS NULL OR ed.compilation_date < CURRENT_DATE - %s)
+                  AND {needs_compile}
                 ORDER BY ed.compilation_date ASC NULLS FIRST
                 LIMIT %s
                 """,
-                (domain_keys, stale_days, max_dossiers),
+                (domain_keys, max_dossiers),
             )
             candidates = [(r[0], r[1]) for r in cur.fetchall() if r[1] is not None]
     except Exception as e:

@@ -33,6 +33,14 @@ def article_signal_enabled() -> bool:
 
 def article_signal_full_min_quality() -> float:
     try:
+        from services.signal_admission_governor_service import get_persisted_full_min_quality
+
+        persisted = get_persisted_full_min_quality()
+        if persisted is not None:
+            return persisted
+    except Exception:
+        pass
+    try:
         from config.orchestrator_governance import get_orchestrator_governance_config
 
         gov = get_orchestrator_governance_config()
@@ -45,6 +53,14 @@ def article_signal_full_min_quality() -> float:
 
 
 def article_signal_trending_top_n() -> int:
+    try:
+        from config.orchestrator_governance import get_orchestrator_governance_config
+
+        sf = get_orchestrator_governance_config().get("signal_first") or {}
+        if isinstance(sf, dict) and sf.get("article_signal_trending_top_n") is not None:
+            return max(1, min(50, int(sf.get("article_signal_trending_top_n"))))
+    except Exception:
+        pass
     return max(1, min(50, env_int("ARTICLE_SIGNAL_TRENDING_TOP_N", 15)))
 
 
@@ -262,6 +278,76 @@ def defer_signal_light_unified_intake_batch(
                         schema_name,
                         ids,
                         "unified_intake_extraction",
+                        "signal_deferred",
+                        TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
+                    )
+                counts[schema_name] = len(ids)
+
+    return counts
+
+
+def defer_signal_light_phase_batch(
+    phase_name: str,
+    *,
+    per_domain_limit: int = 200,
+) -> dict[str, int]:
+    """
+    Mark light-lane articles as signal_deferred for any phase using pass markers.
+    Used for topic_clustering and legacy entity_extraction backlog hygiene.
+    """
+    if not article_signal_enabled():
+        return {}
+
+    from shared.database.connection import get_db_connection_context
+    from shared.domain_registry import pipeline_url_schema_pairs
+    from shared.pipeline_pass_marker import (
+        TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
+        bulk_record_article_phase_pass,
+        phase_backlog_uses_pass_marker,
+        sql_article_pass_null,
+    )
+    from shared.article_processing_gates import sql_ml_ready_and_content_bounds
+
+    if not phase_backlog_uses_pass_marker(phase_name):
+        return {}
+
+    ml_ready = sql_ml_ready_and_content_bounds("a")
+    pass_clause = f" AND ({sql_article_pass_null(phase_name, 'a')}) "
+    counts: dict[str, int] = {}
+
+    with get_db_connection_context() as conn:
+        with conn.cursor() as cur:
+            for domain_key, schema_name in pipeline_url_schema_pairs():
+                light_filter = sql_article_signal_light_lane_filter("a", schema_name)
+                if light_filter == "FALSE":
+                    continue
+                try:
+                    cur.execute(
+                        f"""
+                        SELECT a.id
+                        FROM {schema_name}.articles a
+                        WHERE a.content IS NOT NULL
+                          AND LENGTH(a.content) > 100
+                          AND ({ml_ready})
+                          AND ({light_filter})
+                          {pass_clause}
+                        ORDER BY a.created_at ASC
+                        LIMIT %s
+                        """,
+                        (per_domain_limit,),
+                    )
+                    ids = [int(r[0]) for r in cur.fetchall()]
+                except Exception as exc:
+                    logger.warning(
+                        "defer_signal_light %s %s: %s", phase_name, schema_name, exc
+                    )
+                    ids = []
+
+                if ids:
+                    bulk_record_article_phase_pass(
+                        schema_name,
+                        ids,
+                        phase_name,
                         "signal_deferred",
                         TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
                     )

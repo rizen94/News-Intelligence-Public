@@ -9,7 +9,7 @@ const Footer: React.FC = () => {
           <p>&copy; 2025 News Intelligence System. All rights reserved.</p>
         </div>
         <div className='footer-right'>
-          <p>Version 5.0.0 | Powered by AI</p>
+          <p>Version 10.1.0 | Powered by AI</p>
         </div>
       </div>
     </footer>

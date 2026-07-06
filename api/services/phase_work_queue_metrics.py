@@ -433,7 +433,66 @@ def _queue_story_enhancement() -> PhaseWorkQueue:
             pass
 
 
+def _queue_entity_profile_build() -> PhaseWorkQueue:
+    from shared.entity_profile_eligibility import (
+        sql_entity_profile_refresh_since_build,
+        sql_entity_profile_sections_empty,
+    )
+    from shared.pipeline_domain_sql import pipeline_domain_any_sql
+
+    conn = _get_conn()
+    if not conn:
+        return _empty_queue("entity_profile")
+    domain_sql, domain_keys = pipeline_domain_any_sql("ep.domain_key")
+    if not domain_keys:
+        return _empty_queue("entity_profile")
+    empty_sql = sql_entity_profile_sections_empty("ep")
+    refresh_sql = sql_entity_profile_refresh_since_build("ep")
+    hours = intake_window_hours()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '12s'")
+            cur.execute(
+                f"""
+                SELECT
+                  COUNT(*) FILTER (WHERE {empty_sql})::bigint,
+                  COUNT(*) FILTER (WHERE {refresh_sql})::bigint,
+                  COUNT(*) FILTER (WHERE {empty_sql}
+                    AND ep.created_at >= NOW() - (%s || ' hours')::interval)::bigint
+                FROM intelligence.entity_profiles ep
+                WHERE ep.canonical_entity_id IS NOT NULL
+                  AND {domain_sql}
+                  AND EXISTS (
+                      SELECT 1 FROM intelligence.context_entity_mentions cem
+                      WHERE cem.entity_profile_id = ep.id
+                  )
+                """,
+                (hours, list(domain_keys)),
+            )
+            row = cur.fetchone()
+            if not row:
+                return _empty_queue("entity_profile")
+            first_pass, retry, intake = int(row[0] or 0), int(row[1] or 0), int(row[2] or 0)
+            return {
+                "total_pending": first_pass + retry,
+                "first_pass": first_pass,
+                "retry_pending": retry,
+                "intake_first_pass": intake,
+                "metric_kind": "entity_profile",
+                "intake_window_hours": hours,
+            }
+    except Exception as e:
+        logger.debug("phase_work_queue entity_profile_build: %s", e)
+        return _empty_queue("entity_profile")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _queue_entity_dossier_compile() -> PhaseWorkQueue:
+    from shared.entity_dossier_eligibility import sql_entity_dossier_refresh_since_compile
     from shared.pipeline_domain_sql import pipeline_domain_any_sql
 
     conn = _get_conn()
@@ -442,16 +501,16 @@ def _queue_entity_dossier_compile() -> PhaseWorkQueue:
     domain_sql, domain_keys = pipeline_domain_any_sql("ep.domain_key")
     if not domain_keys:
         return _empty_queue("entity_dossier")
+    refresh_sql = sql_entity_dossier_refresh_since_compile("ep", "ed")
     hours = intake_window_hours()
     try:
         with conn.cursor() as cur:
-            cur.execute("SET LOCAL statement_timeout = '8s'")
+            cur.execute("SET LOCAL statement_timeout = '12s'")
             cur.execute(
                 f"""
                 SELECT
                   COUNT(*) FILTER (WHERE ed.id IS NULL)::bigint,
-                  COUNT(*) FILTER (WHERE ed.id IS NOT NULL
-                    AND ed.compilation_date < CURRENT_DATE - INTERVAL '7 days')::bigint,
+                  COUNT(*) FILTER (WHERE {refresh_sql})::bigint,
                   COUNT(*) FILTER (WHERE ed.id IS NULL
                     AND ep.created_at >= NOW() - (%s || ' hours')::interval)::bigint
                 FROM intelligence.entity_profiles ep
@@ -521,23 +580,30 @@ def _queue_event_extraction() -> PhaseWorkQueue:
 
 _PHASE_HANDLERS: dict[str, Any] = {
     "topic_clustering": _queue_topic_clustering,
-    "entity_extraction": _queue_entity_extraction,
     "unified_intake_extraction": _queue_unified_intake_extraction,
+    "storyline_assembly": _queue_storyline_assembly,
+    "story_enhancement": _queue_story_enhancement,
+    "entity_profile_build": _queue_entity_profile_build,
+    "entity_dossier_compile": _queue_entity_dossier_compile,
+}
+
+_LEGACY_INTAKE_QUEUE_HANDLERS: dict[str, Any] = {
+    "entity_extraction": _queue_entity_extraction,
     "metadata_enrichment": _queue_metadata_enrichment,
     "sentiment_analysis": _queue_sentiment_analysis,
     "event_extraction": _queue_event_extraction,
-    "storyline_assembly": _queue_storyline_assembly,
-    "story_enhancement": _queue_story_enhancement,
-    "entity_dossier_compile": _queue_entity_dossier_compile,
 }
 
 
 def get_phase_work_queue(phase_name: str, *, pending_total: int | None = None) -> PhaseWorkQueue:
+    from config.settings import legacy_intake_extraction_enabled
     from shared.pipeline_resource_policy import intake_phase_scheduled
 
+    if phase_name in _LEGACY_INTAKE_QUEUE_HANDLERS and not legacy_intake_extraction_enabled():
+        return _empty_queue("archived_legacy_intake")
     if not intake_phase_scheduled(phase_name):
         return _empty_queue("inactive_intake_mode")
-    handler = _PHASE_HANDLERS.get(phase_name)
+    handler = _PHASE_HANDLERS.get(phase_name) or _LEGACY_INTAKE_QUEUE_HANDLERS.get(phase_name)
     if handler:
         return handler()
     if pending_total is not None:
@@ -569,9 +635,21 @@ def get_all_phase_work_queues(
             pending_totals = {}
     out: dict[str, PhaseWorkQueue] = {}
     for phase, total in pending_totals.items():
-        if phase in _PHASE_HANDLERS:
+        if phase in _PHASE_HANDLERS or phase in _LEGACY_INTAKE_QUEUE_HANDLERS:
             try:
-                q = _PHASE_HANDLERS[phase]()
+                handler = _PHASE_HANDLERS.get(phase) or _LEGACY_INTAKE_QUEUE_HANDLERS.get(phase)
+                if handler is None:
+                    q = _queue_from_pending_total(phase, total)
+                elif phase in _LEGACY_INTAKE_QUEUE_HANDLERS:
+                    from config.settings import legacy_intake_extraction_enabled
+
+                    q = (
+                        handler()
+                        if legacy_intake_extraction_enabled()
+                        else _empty_queue("archived_legacy_intake")
+                    )
+                else:
+                    q = handler()
             except Exception as e:
                 logger.debug("work queue handler %s: %s", phase, e)
                 q = _queue_from_pending_total(phase, total)

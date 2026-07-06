@@ -1,0 +1,22 @@
+# Snapshot of post-spine retired phases (v10.1 prune reference).
+retired_scheduled_phases:
+  - proactive_detection
+  - storyline_discovery
+  - narrative_thread_build
+  - pattern_recognition
+  - pattern_matching
+  - relationship_extraction
+  - editorial_briefing_generation
+  - editorial_document_generation
+  - arc_report_generation
+  - daily_briefing_synthesis
+  - digest_generation
+  - storyline_synthesis
+  - rag_enhancement
+  - storyline_enrichment
+  - storyline_processing
+  - investigation_report_refresh
+  - story_enhancement
+  - event_coherence_review
+  - timeline_generation
+  - entity_position_tracker

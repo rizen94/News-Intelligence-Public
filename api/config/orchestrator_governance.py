@@ -156,22 +156,11 @@ def _default_config() -> dict[str, Any]:
             "document_types": ["report", "analysis", "briefing"],
             "ingest_urls": [],
         },
-        "pipeline_orchestration_harmony": {
-            "gap_fill_enabled": True,
-            "use_measured_duration": True,
-            "cooldown_fraction": 0.35,
-            "entity_extraction_run_budget_seconds": 900,
-            "ml_processing_run_budget_seconds": 900,
-            "sentiment_analysis_run_budget_seconds": 900,
-            "claim_extraction_drain_max_seconds": 900,
-        },
         "pipeline_conductor": {
             "automation_primary": True,
-            "orchestrator_processing_nudge_enabled": True,
             "orchestrator_post_collection_kickoff_enabled": True,
             "post_collection_phases": ["content_enrichment", "context_sync"],
             "orchestrator_collection_enabled": True,
-            "workload_driven_scheduling": True,
             "external_schedulers": [
                 {
                     "name": "nri_mention_resolve",

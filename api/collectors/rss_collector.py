@@ -34,6 +34,18 @@ def _utc_aware(dt):
     return dt.astimezone(timezone.utc)
 
 
+def _enqueue_spine_enrichment_queue(schema_name: str, article_id: int | None) -> None:
+    if article_id is None:
+        return
+    try:
+        from services.spine_work_queue_service import enqueue_article, spine_work_queues_enabled
+
+        if spine_work_queues_enabled():
+            enqueue_article(schema_name, int(article_id), "content_enrichment")
+    except Exception:
+        pass
+
+
 def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=None, feed_id: int | None = None):
     """
     Insert into {schema}.articles with provenance columns when present.
@@ -71,6 +83,8 @@ def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=
                     *feed_vals,
                 ),
             )
+            row = cur.fetchone()
+            _enqueue_spine_enrichment_queue(schema_name, int(row[0]) if row else None)
             return
         except psycopg2.errors.UndefinedColumn:
             pass
@@ -98,6 +112,8 @@ def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=
             """,
             insert_vals,
         )
+    row = cur.fetchone()
+    _enqueue_spine_enrichment_queue(schema_name, int(row[0]) if row else None)
 
 
 def _update_feed_fetch_stats(

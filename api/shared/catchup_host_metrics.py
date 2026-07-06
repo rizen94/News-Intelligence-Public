@@ -16,8 +16,12 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-GPU_HEAVY_PHASES = frozenset({"entity_profile_build", "story_enhancement", "event_extraction"})
-DB_HEAVY_PHASES = frozenset({"entity_dossier_compile", "entity_profile_build", "story_enhancement"})
+
+def _phase_uses_gpu_llm(phase: str) -> bool:
+    from shared.pipeline_resource_policy import get_phase_policy
+
+    pol = get_phase_policy(phase)
+    return bool(pol and pol.requires_llm and pol.execution_lane == "gpu")
 
 
 @dataclass
@@ -60,14 +64,16 @@ class ResourceSnapshot:
     cpu_llm_headroom: float
 
     def phase_headroom(self, phase: str) -> float:
+        from shared.pipeline_resource_policy import phase_resource_class
+
         parts: list[float] = [self.local_memory_headroom, self.db_headroom]
-        if phase in GPU_HEAVY_PHASES:
+        if _phase_uses_gpu_llm(phase):
             parts.append(self.gpu_llm_headroom)
             if _routing.dual_lane:
                 parts.append(self.cpu_llm_headroom)
         else:
             parts.append(self.local_cpu_headroom)
-        if phase in DB_HEAVY_PHASES:
+        if phase_resource_class(phase) == "db_heavy":
             parts.append(self.db_headroom)
         return min(parts)
 

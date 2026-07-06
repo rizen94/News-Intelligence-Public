@@ -99,6 +99,34 @@ BATCH_SIZE_PER_TASK: Dict[str, int] = {
 # Phases where backlog = pending (orchestrator / not row-batched in this model).
 NO_BACKLOG_BATCH_SUBTRACT_PHASES = frozenset({"nightly_enrichment_context"})
 
+LEGACY_INTAKE_BACKLOG_KEYS = frozenset(
+    {
+        "metadata_enrichment",
+        "ml_processing",
+        "entity_extraction",
+        "sentiment_analysis",
+        "quality_scoring",
+        "event_extraction",
+    }
+)
+
+
+def _should_skip_backlog_count(phase: str) -> bool:
+    """Skip expensive scans for archived phases under v10.1 defaults."""
+    if phase in LEGACY_INTAKE_BACKLOG_KEYS:
+        from config.settings import legacy_intake_extraction_enabled
+
+        if not legacy_intake_extraction_enabled():
+            return True
+    try:
+        from shared.assembly_phase_order import post_spine_scheduling_suppressed
+
+        if post_spine_scheduling_suppressed(phase):
+            return True
+    except Exception:
+        pass
+    return False
+
 
 def _default_batch_for_unknown_phase() -> int:
     """When a phase has pending counts but no BATCH_SIZE_PER_TASK entry, subtract at least this many rows per run so row-excess backlog != pending (scheduler); Monitor shows ceil(pending/batch) as batches_to_drain."""
@@ -154,44 +182,48 @@ RAW_PENDING_COUNT_KEYS = frozenset(
 def _get_raw_pending_counts() -> Dict[str, int]:
     """Query all raw pending-work counts (not cached — called by the cached wrapper)."""
     raw: Dict[str, int] = {}
+
+    def _set(phase: str, value: int) -> None:
+        raw[phase] = 0 if _should_skip_backlog_count(phase) else value
+
     try:
-        raw["content_enrichment"] = _count_content_enrichment_backlog()
-        raw["context_sync"] = _count_context_sync_backlog()
-        raw["event_tracking"] = _count_event_tracking_backlog()
-        raw["claim_extraction"] = _count_claim_extraction_backlog()
-        raw["entity_profile_build"] = _count_entity_profile_build_backlog()
-        raw["investigation_report_refresh"] = _count_investigation_report_backlog()
-        raw["document_processing"] = _count_document_processing_backlog()
+        _set("content_enrichment", _count_content_enrichment_backlog())
+        _set("context_sync", _count_context_sync_backlog())
+        _set("event_tracking", _count_event_tracking_backlog())
+        _set("claim_extraction", _count_claim_extraction_backlog())
+        _set("entity_profile_build", _count_entity_profile_build_backlog())
+        _set("investigation_report_refresh", _count_investigation_report_backlog())
+        _set("document_processing", _count_document_processing_backlog())
         try:
             from shared.database.pending_db_writes import pending_line_count
 
             raw["pending_db_flush"] = pending_line_count()
         except Exception:
             raw["pending_db_flush"] = 0
-        raw["content_refinement_queue"] = _count_content_refinement_queue_pending()
-        raw["metadata_enrichment"] = _count_metadata_enrichment_pending()
-        raw["ml_processing"] = _count_ml_processing_pending()
-        raw["entity_extraction"] = _count_entity_extraction_pending()
-        raw["unified_intake_extraction"] = _count_unified_intake_extraction_pending()
-        raw["sentiment_analysis"] = _count_sentiment_analysis_pending()
-        raw["quality_scoring"] = _count_quality_scoring_pending()
-        raw["storyline_processing"] = _count_storyline_processing_pending()
-        raw["topic_clustering"] = _count_topic_clustering_pending()
-        raw["timeline_generation"] = _count_timeline_generation_pending()
-        raw["storyline_discovery"] = _count_storyline_discovery_pending()
-        raw["rag_enhancement"] = _count_rag_enhancement_pending()
-        raw["event_extraction"] = _count_event_extraction_pending()
-        raw["proactive_detection"] = _count_proactive_detection_pending()
-        raw["storyline_assembly"] = _count_storyline_assembly_pending()
-        raw["storyline_automation"] = _count_storyline_automation_pending()
-        raw["claims_to_facts"] = _count_claims_to_facts_pending()
-        raw["legislative_references"] = _count_legislative_references_backlog()
-        raw["entity_profile_sync"] = _count_entity_profile_sync_pending()
-        raw["entity_enrichment"] = _count_entity_enrichment_pending()
-        raw["entity_dossier_compile"] = _count_entity_dossier_compile_pending()
-        raw["story_enhancement"] = _count_story_enhancement_pending()
-        raw["storyline_synthesis"] = _count_storyline_synthesis_pending()
-        raw["graph_connection_distillation"] = _count_graph_connection_distillation_pending()
+        _set("content_refinement_queue", _count_content_refinement_queue_pending())
+        _set("metadata_enrichment", _count_metadata_enrichment_pending())
+        _set("ml_processing", _count_ml_processing_pending())
+        _set("entity_extraction", _count_entity_extraction_pending())
+        _set("unified_intake_extraction", _count_unified_intake_extraction_pending())
+        _set("sentiment_analysis", _count_sentiment_analysis_pending())
+        _set("quality_scoring", _count_quality_scoring_pending())
+        _set("storyline_processing", _count_storyline_processing_pending())
+        _set("topic_clustering", _count_topic_clustering_pending())
+        _set("timeline_generation", _count_timeline_generation_pending())
+        _set("storyline_discovery", _count_storyline_discovery_pending())
+        _set("rag_enhancement", _count_rag_enhancement_pending())
+        _set("event_extraction", _count_event_extraction_pending())
+        _set("proactive_detection", _count_proactive_detection_pending())
+        _set("storyline_assembly", _count_storyline_assembly_pending())
+        _set("storyline_automation", _count_storyline_automation_pending())
+        _set("claims_to_facts", _count_claims_to_facts_pending())
+        _set("legislative_references", _count_legislative_references_backlog())
+        _set("entity_profile_sync", _count_entity_profile_sync_pending())
+        _set("entity_enrichment", _count_entity_enrichment_pending())
+        _set("entity_dossier_compile", _count_entity_dossier_compile_pending())
+        _set("story_enhancement", _count_story_enhancement_pending())
+        _set("storyline_synthesis", _count_storyline_synthesis_pending())
+        _set("graph_connection_distillation", _count_graph_connection_distillation_pending())
         nightly_base = (
             int(raw.get("content_enrichment", 0) or 0)
             + int(raw.get("context_sync", 0) or 0)
@@ -302,6 +334,35 @@ def _per_run_batch_size(task: str) -> int:
             return fact + queue + enrich + build
         except Exception:
             return int(BATCH_SIZE_PER_TASK["story_enhancement"])
+    if task == "unified_intake_extraction":
+        try:
+            from shared.adaptive_batch_policy import get_persisted_adaptive_batch
+            from shared.pipeline_batch_drain import phase_batch_limit
+
+            per_domain = phase_batch_limit("unified_intake_extraction", 40)
+            adaptive_pd = get_persisted_adaptive_batch("unified_intake_extraction")
+            if adaptive_pd is not None:
+                per_domain = adaptive_pd
+            doms = len(get_pipeline_schema_names_active()) or 1
+            return max(1, per_domain * doms)
+        except Exception:
+            pass
+    if task == "entity_profile_build":
+        try:
+            return max(1, min(150, int(env_str("ENTITY_PROFILE_BUILD_LIMIT", "25"))))
+        except Exception:
+            pass
+    if task == "entity_dossier_compile":
+        try:
+            return max(1, min(100, int(env_str("ENTITY_DOSSIER_COMPILE_MAX", "20"))))
+        except Exception:
+            pass
+    if task == "event_tracking":
+        try:
+            batch_max = max(25, min(300, int(env_str("EVENT_TRACKING_ASSEMBLY_BATCH_MAX", "300"))))
+            return max(1, min(batch_max, int(env_str("EVENT_TRACKING_ASSEMBLY_BATCH_LIMIT", "25"))))
+        except Exception:
+            pass
     if task in BATCH_SIZE_PER_TASK:
         return int(BATCH_SIZE_PER_TASK[task])
     return _default_batch_for_unknown_phase()
@@ -411,8 +472,16 @@ def _claim_extraction_min_text_length() -> int:
 
 
 def _count_content_enrichment_backlog() -> int:
-    """Articles (across active domain schemas) pending full-text enrichment.
-    Matches content_enrichment batch query: enrichment_status NULL/pending/failed, attempts < 3, has URL."""
+    """Articles pending enrichment; uses queue COUNT when SPINE_USE_WORK_QUEUES."""
+    try:
+        from services.spine_work_queue_service import count_all_pending, spine_work_queues_enabled
+
+        if spine_work_queues_enabled():
+            q = count_all_pending("content_enrichment")
+            if q > 0:
+                return q
+    except Exception:
+        pass
     conn = _get_conn()
     if not conn:
         return 0
@@ -521,6 +590,13 @@ def _count_claim_extraction_backlog() -> int:
     pass_sql = ""
     if phase_backlog_uses_pass_marker("claim_extraction"):
         pass_sql = f" AND ({sql_context_pass_null('claim_extraction', 'c')}) "
+    gap_sql = ""
+    try:
+        from services.claim_extraction_service import claim_extraction_gap_fill_sql
+
+        gap_sql = claim_extraction_gap_fill_sql()
+    except Exception:
+        pass
     try:
         with conn.cursor() as cur:
             cur.execute("SET LOCAL statement_timeout = '60s'")
@@ -535,6 +611,7 @@ def _count_claim_extraction_backlog() -> int:
                       LENGTH(COALESCE(c.content, '')) + LENGTH(COALESCE(c.title, ''))
                   ) >= %s
                   {pass_sql}
+                  {gap_sql}
                 """,
                 (min_text,),
             )
@@ -578,6 +655,7 @@ def _count_entity_profile_build_backlog() -> int:
         sql_entity_profile_upstream_cleared_exists,
         _entity_profile_upstream_gate_enabled,
     )
+    from shared.entity_profile_eligibility import sql_entity_profile_needs_build
     from shared.pipeline_domain_sql import pipeline_domain_any_sql
 
     conn = _get_conn()
@@ -589,15 +667,15 @@ def _count_entity_profile_build_backlog() -> int:
     upstream_sql = ""
     if _entity_profile_upstream_gate_enabled():
         upstream_sql = f" AND {sql_entity_profile_upstream_cleared_exists()} "
+    needs_build = sql_entity_profile_needs_build("ep")
     try:
         with conn.cursor() as cur:
-            cur.execute("SET LOCAL statement_timeout = '8s'")
+            cur.execute("SET LOCAL statement_timeout = '12s'")
             cur.execute(
                 f"""
                 SELECT COUNT(*) FROM intelligence.entity_profiles ep
                 WHERE {domain_sql}
-                  AND (ep.sections = '[]'::jsonb OR ep.sections IS NULL
-                       OR ep.updated_at < NOW() - INTERVAL '7 days')
+                  AND {needs_build}
                   AND EXISTS (
                       SELECT 1 FROM intelligence.context_entity_mentions cem
                       WHERE cem.entity_profile_id = ep.id
@@ -807,6 +885,15 @@ def _count_entity_extraction_pending() -> int:
 
 def _count_unified_intake_extraction_pending() -> int:
     """Articles needing unified LLM (excludes legacy-complete marker backfill)."""
+    try:
+        from services.spine_work_queue_service import count_all_pending, spine_work_queues_enabled
+
+        if spine_work_queues_enabled():
+            q = count_all_pending("unified_intake_extraction")
+            if q > 0:
+                return q
+    except Exception:
+        pass
     from config.settings import unified_intake_extraction_enabled
     from shared.pipeline_resource_policy import intake_extraction_suppressed
     from shared.unified_intake_backlog import (
@@ -875,226 +962,6 @@ def _count_unified_intake_extraction_pending() -> int:
             conn.close()
         except Exception:
             pass
-
-
-def entity_extraction_has_pending_work() -> bool:
-    """True if any active domain has articles eligible for entity extraction (matches automation)."""
-    conn = _get_conn()
-    if not conn:
-        return False
-    pass_sql = ""
-    if phase_backlog_uses_pass_marker("entity_extraction"):
-        pass_sql = f" AND ({sql_article_pass_null('entity_extraction', 'a')}) "
-    try:
-        for schema in get_pipeline_schema_names_active():
-            with conn.cursor() as cur:
-                cur.execute("SET LOCAL statement_timeout = '3s'")
-                cur.execute(
-                    f"""
-                    SELECT 1 FROM {schema}.articles a
-                    LEFT JOIN {schema}.article_entities ae ON ae.article_id = a.id
-                    WHERE ae.id IS NULL
-                      AND COALESCE((a.metadata #>> '{{pipeline_skip,entity_extraction_skip}}')::boolean, false) = false
-                      AND a.content IS NOT NULL
-                      AND LENGTH(a.content) > 100
-                      AND (
-                          LENGTH(a.content) >= 500
-                          OR a.created_at < NOW() - INTERVAL '2 hours'
-                          OR COALESCE(a.enrichment_status, '') IN (
-                              'enriched', 'failed', 'inaccessible'
-                          )
-                      )
-                      {pass_sql}
-                    LIMIT 1
-                    """
-                )
-                if cur.fetchone():
-                    return True
-        return False
-    except Exception as e:
-        logger.debug("entity_extraction_has_pending_work: %s", e)
-        return False
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
-
-
-def ml_processing_has_pending_work() -> bool:
-    """Articles awaiting ML queue insert (matches automation_manager selection)."""
-    conn = _get_conn()
-    if not conn:
-        return False
-    ml_ready = sql_ml_ready_and_content_bounds()
-    try:
-        for schema in get_pipeline_schema_names_active():
-            with conn.cursor() as cur:
-                cur.execute("SET LOCAL statement_timeout = '3s'")
-                cur.execute(
-                    f"""
-                    SELECT 1 FROM {schema}.articles
-                    WHERE ml_processed = FALSE AND ({ml_ready})
-                    LIMIT 1
-                    """
-                )
-                if cur.fetchone():
-                    return True
-        return False
-    except Exception as e:
-        logger.debug("ml_processing_has_pending_work: %s", e)
-        return False
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
-
-
-def sentiment_analysis_has_pending_work() -> bool:
-    """Articles eligible for sentiment scoring (matches automation_manager)."""
-    conn = _get_conn()
-    if not conn:
-        return False
-    ml_ready = sql_ml_ready_and_content_bounds()
-    pass_sql = ""
-    if phase_backlog_uses_pass_marker("sentiment_analysis"):
-        pass_sql = f" AND ({sql_article_pass_null('sentiment_analysis', 'a')}) "
-    try:
-        for schema in get_pipeline_schema_names_active():
-            with conn.cursor() as cur:
-                cur.execute("SET LOCAL statement_timeout = '3s'")
-                cur.execute(
-                    f"""
-                    SELECT 1 FROM {schema}.articles a
-                    WHERE a.sentiment_score IS NULL
-                      AND COALESCE((a.metadata #>> '{{pipeline_skip,sentiment_analysis_skip}}')::boolean, false) = false
-                      AND ({ml_ready})
-                      {pass_sql}
-                    LIMIT 1
-                    """
-                )
-                if cur.fetchone():
-                    return True
-        return False
-    except Exception as e:
-        logger.debug("sentiment_analysis_has_pending_work: %s", e)
-        return False
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
-
-
-def claim_extraction_has_pending_work() -> bool:
-    """Contexts without extracted claims (matches claim_extraction batch gate)."""
-    conn = _get_conn()
-    if not conn:
-        return False
-    min_text = _claim_extraction_min_text_length()
-    pass_sql = ""
-    if phase_backlog_uses_pass_marker("claim_extraction"):
-        pass_sql = f" AND ({sql_context_pass_null('claim_extraction', 'c')}) "
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SET LOCAL statement_timeout = '15s'")
-            cur.execute(
-                f"""
-                SELECT 1 FROM intelligence.contexts c
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM intelligence.extracted_claims ec
-                    WHERE ec.context_id = c.id
-                )
-                  AND (
-                      LENGTH(COALESCE(c.content, '')) + LENGTH(COALESCE(c.title, ''))
-                  ) >= %s
-                  {pass_sql}
-                LIMIT 1
-                """,
-                (min_text,),
-            )
-            return cur.fetchone() is not None
-    except Exception as e:
-        logger.debug("claim_extraction_has_pending_work: %s", e)
-        return False
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
-
-
-def topic_clustering_has_pending_work() -> bool:
-    """Articles awaiting topic_clustering pass (aligned with _count_topic_clustering_pending)."""
-    conn = _get_conn()
-    if not conn:
-        return False
-    try:
-        from config.settings import (
-            topic_clustering_backlog_uses_pass_marker,
-            topic_clustering_graduation_confidence,
-        )
-
-        use_pass = topic_clustering_backlog_uses_pass_marker()
-        conf = float(topic_clustering_graduation_confidence())
-    except Exception:
-        use_pass = True
-        conf = 0.88
-    try:
-        for schema in get_pipeline_schema_names_active():
-            with conn.cursor() as cur:
-                cur.execute("SET LOCAL statement_timeout = '8s'")
-                if use_pass:
-                    cur.execute(
-                        f"""
-                        SELECT 1 FROM {schema}.articles a
-                        WHERE a.content IS NOT NULL
-                          AND LENGTH(a.content) > 100
-                          AND (a.metadata->'pipeline'->'topic_clustering'->>'last_pass_at') IS NULL
-                        LIMIT 1
-                        """
-                    )
-                else:
-                    cur.execute(
-                        f"""
-                        SELECT 1 FROM (
-                            SELECT a.id
-                            FROM {schema}.articles a
-                            LEFT JOIN {schema}.article_topic_assignments ata
-                              ON a.id = ata.article_id
-                            WHERE a.content IS NOT NULL
-                              AND LENGTH(a.content) > 100
-                            GROUP BY a.id
-                            HAVING COUNT(ata.id) = 0
-                                OR COALESCE(AVG(ata.confidence_score), 0) < %s
-                        ) t
-                        LIMIT 1
-                        """,
-                        (conf,),
-                    )
-                if cur.fetchone():
-                    return True
-        return False
-    except Exception as e:
-        logger.debug("topic_clustering_has_pending_work: %s", e)
-        return False
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
-
-
-def storyline_assembly_has_pending_work() -> bool:
-    """Unlinked recent articles in any pipeline domain (matches storyline_assembly backlog)."""
-    try:
-        from services.storyline_assembly_service import domains_needing_assembly
-
-        return bool(domains_needing_assembly())
-    except Exception as e:
-        logger.debug("storyline_assembly_has_pending_work: %s", e)
-        return False
 
 
 def _count_sentiment_analysis_pending() -> int:
@@ -1449,39 +1316,14 @@ def get_storyline_review_queue_pending_by_domain() -> Dict[str, int]:
 
 
 def _count_rag_enhancement_pending() -> int:
-    """Storylines due for RAG enhancement (stale or never enhanced)."""
-    conn = _get_conn()
-    if not conn:
-        return 0
-    total = 0
+    """Storylines due for RAG (first pass or new articles since last enhance)."""
     try:
-        for schema in get_pipeline_schema_names_active():
-            with conn.cursor() as cur:
-                cur.execute("SET LOCAL statement_timeout = '3s'")
-                cur.execute(
-                    f"""
-                    SELECT COUNT(*) FROM {schema}.storylines s
-                    WHERE s.status = 'active'
-                      AND EXISTS (
-                          SELECT 1 FROM {schema}.storyline_articles sa
-                          WHERE sa.storyline_id = s.id
-                      )
-                      AND (
-                          s.rag_enhanced_at IS NULL
-                          OR s.rag_enhanced_at < NOW() - INTERVAL '1 hour'
-                      )
-                    """
-                )
-                total += int(cur.fetchone()[0] or 0)
-        return total
+        from shared.rag_enhancement_eligibility import count_rag_enhancement_pending
+
+        return int(count_rag_enhancement_pending() or 0)
     except Exception as e:
         logger.debug("backlog rag_enhancement count: %s", e)
         return 0
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
 
 
 def _count_claims_to_facts_pending() -> int:
@@ -1624,7 +1466,8 @@ def _count_event_extraction_pending() -> int:
 
 
 def _count_entity_dossier_compile_pending() -> int:
-    """entity_profiles missing dossier or dossier older than stale window (matches dossier_compiler schedule)."""
+    """Profiles missing dossier or with upstream changes since compile (matches dossier_compiler)."""
+    from shared.entity_dossier_eligibility import sql_entity_dossier_needs_compile
     from shared.pipeline_domain_sql import pipeline_domain_any_sql
 
     conn = _get_conn()
@@ -1633,9 +1476,10 @@ def _count_entity_dossier_compile_pending() -> int:
     domain_sql, domain_keys = pipeline_domain_any_sql("ep.domain_key")
     if not domain_keys:
         return 0
+    needs_compile = sql_entity_dossier_needs_compile("ep", "ed")
     try:
         with conn.cursor() as cur:
-            cur.execute("SET LOCAL statement_timeout = '8s'")
+            cur.execute("SET LOCAL statement_timeout = '12s'")
             cur.execute(
                 f"""
                 SELECT COUNT(*) FROM intelligence.entity_profiles ep
@@ -1643,7 +1487,7 @@ def _count_entity_dossier_compile_pending() -> int:
                   ON ed.domain_key = ep.domain_key AND ed.entity_id = ep.canonical_entity_id
                 WHERE ep.canonical_entity_id IS NOT NULL
                   AND {domain_sql}
-                  AND (ed.id IS NULL OR ed.compilation_date < CURRENT_DATE - INTERVAL '7 days')
+                  AND {needs_compile}
                 """,
                 (domain_keys,),
             )
@@ -1797,10 +1641,8 @@ def _count_graph_connection_distillation_pending() -> int:
         return 0
 
 
-# Phases that should be skipped when backlog is 0 (avoid empty cycles)
-# document_processing omitted so it runs on interval even if backlog count is wrong (e.g. DB timeout)
-# content_refinement_queue omitted: must run on interval when idle so automation history updates;
-# empty queue completes in milliseconds.
+# Phases that should be skipped when backlog is 0 (avoid empty cycles).
+# Every phase in RAW_PENDING_COUNT_KEYS belongs here so workload scheduling never ticks on interval at zero.
 SKIP_WHEN_EMPTY = frozenset({
     "content_enrichment",
     "context_sync",
@@ -1808,6 +1650,8 @@ SKIP_WHEN_EMPTY = frozenset({
     "claim_extraction",
     "entity_profile_build",
     "investigation_report_refresh",
+    "document_processing",
+    "content_refinement_queue",
     "pending_db_flush",
     "nightly_enrichment_context",
     "metadata_enrichment",
@@ -1841,6 +1685,14 @@ if _missing_skip_pending:
         "backlog_metrics: SKIP_WHEN_EMPTY contains phases not in RAW_PENDING_COUNT_KEYS "
         f"(scheduler would starve them): {sorted(_missing_skip_pending)}. "
         "Add counts to _get_raw_pending_counts and extend RAW_PENDING_COUNT_KEYS."
+    )
+
+_missing_skip_raw = RAW_PENDING_COUNT_KEYS - SKIP_WHEN_EMPTY
+if _missing_skip_raw:
+    raise RuntimeError(
+        "backlog_metrics: RAW_PENDING_COUNT_KEYS phases missing from SKIP_WHEN_EMPTY "
+        f"(empty cycles at interval): {sorted(_missing_skip_raw)}. "
+        "Add each phase to SKIP_WHEN_EMPTY."
     )
 
 # When backlog exceeds this, use backlog-mode interval so we run more often

@@ -64,8 +64,6 @@ MAJOR_PHASE_ORDER_GPU_FIRST: tuple[str, ...] = (
     "entity_dossier_compile",
 )
 
-DB_HEAVY_PHASES = frozenset({"entity_dossier_compile", "entity_profile_build", "story_enhancement"})
-
 
 def _resolve_phase_order(*, use_popos_gpu: bool, explicit_phases: tuple[str, ...] | None) -> tuple[str, ...]:
     if explicit_phases:
@@ -330,13 +328,14 @@ def _run_dossier_compile(batch: int) -> int:
     from services.dossier_compiler_service import _run_scheduled_dossier_compiles
 
     batch = _clamp_batch(batch)
-    return int(_run_scheduled_dossier_compiles(batch, None, 7) or 0)
+    return int(_run_scheduled_dossier_compiles(batch, None) or 0)
 
 
 async def _run_profile_build(batch: int) -> int:
     from services.entity_profile_builder_service import run_profile_builder_batch
 
-    return int(await run_profile_builder_batch(limit=_clamp_build_batch(batch)) or 0)
+    result = await run_profile_builder_batch(limit=_clamp_build_batch(batch))
+    return int(result.updated or 0)
 
 
 async def _run_story_enhancement(
@@ -444,7 +443,12 @@ async def _run_event_extraction(batch: int, resources: ResourceSnapshot) -> dict
     from shared.backlog_orchestration import sprint_gpu_only
     from shared.database.db_availability import schema_has_table
     from shared.domain_registry import get_pipeline_schema_names_active
-    from shared.event_extraction_runner import run_event_extraction_batch_drain
+    from shared.legacy_intake_rollback import legacy_intake_rollback_active, load_event_extraction_runner
+
+    if not legacy_intake_rollback_active():
+        return await _run_unified_intake_extraction(batch, resources)
+
+    run_event_extraction_batch_drain = load_event_extraction_runner().run_event_extraction_batch_drain
     from shared.pipeline_batch_drain import phase_run_budget_seconds
 
     batch = _clamp_batch(batch)

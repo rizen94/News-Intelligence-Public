@@ -500,6 +500,75 @@ class ProactiveDetectionService(DomainAwareService):
             return False
 
         title = (emerging.get("title") or "Emerging story")[:300]
+        key_kw = emerging.get("key_keywords") or []
+        key_ent = emerging.get("key_entities") or []
+
+        try:
+            from services.narrative_first_linking_service import (
+                attach_articles_to_storyline,
+                find_narrative_storyline_match,
+                narrative_linking_enabled,
+            )
+
+            if narrative_linking_enabled():
+                narrative_match = find_narrative_storyline_match(
+                    self.domain,
+                    article_ids=unlinked,
+                    entity_names=key_ent,
+                    title_hint=title,
+                )
+                if narrative_match is not None:
+                    added = attach_articles_to_storyline(
+                        self.domain,
+                        narrative_match.storyline_id,
+                        unlinked,
+                        relevance_score=min(0.95, 0.55 + 0.05 * len(unlinked)),
+                    )
+                    if added:
+                        logger.info(
+                            "Proactive narrative-first: linked %s articles to storyline %s (%s)",
+                            added,
+                            narrative_match.storyline_id,
+                            narrative_match.match_source,
+                        )
+                        cur.execute(
+                            """
+                            UPDATE public.emerging_storylines
+                            SET status = 'confirmed',
+                                merged_into_storyline_id = %s,
+                                last_updated_at = NOW(),
+                                metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb
+                            WHERE id = %s
+                            """,
+                            (
+                                narrative_match.storyline_id,
+                                json.dumps(
+                                    {
+                                        "domain_schema": self.schema,
+                                        "storyline_id": narrative_match.storyline_id,
+                                        "narrative_first": True,
+                                        "match_source": narrative_match.match_source,
+                                    }
+                                ),
+                                emerging_row_id,
+                            ),
+                        )
+                        try:
+                            from services.storyline_automation_service import (
+                                StorylineAutomationService,
+                            )
+
+                            svc = StorylineAutomationService(domain=self.domain)
+                            for aid in unlinked:
+                                svc._merge_article_entities_to_storyline(
+                                    cur, narrative_match.storyline_id, aid
+                                )
+                        except Exception as merge_err:
+                            logger.debug("narrative-first entity merge: %s", merge_err)
+                        return True
+        except Exception as e:
+            logger.debug("Proactive narrative-first: %s", e)
+
         cur.execute(
             f"""
             SELECT 1 FROM {self.schema}.storylines
@@ -514,8 +583,6 @@ class ProactiveDetectionService(DomainAwareService):
             return False
 
         desc = emerging.get("description") or ""
-        key_kw = emerging.get("key_keywords") or []
-        key_ent = emerging.get("key_entities") or []
         settings_json = json.dumps({"min_quality_tier": 2, "source": "proactive_detection_promote"})
 
         automation_mode = "auto_approve"

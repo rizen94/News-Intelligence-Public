@@ -425,7 +425,11 @@ def _remove_article(conn, schema_name: str, article_id: int) -> None:
             pass
 
 
-def enrich_articles_batch(batch_size: int = 20) -> int:
+def enrich_articles_batch(
+    batch_size: int = 20,
+    *,
+    scoped_ids_by_schema: dict[str, list[int]] | None = None,
+) -> int:
     """
     Drain enrichment backlog: select by enrichment_status/attempts, fetch with trafilatura (10s timeout),
     update status and attempts; keep RSS content on failure; prune after 3 attempts.
@@ -467,7 +471,15 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
         pairs = list(pipeline_url_schema_pairs())
         if not pairs:
             return 0
-        n_domains = len(pairs)
+        if scoped_ids_by_schema:
+            work_pairs = [
+                (dk, sch)
+                for dk, sch in pairs
+                if scoped_ids_by_schema.get(sch)
+            ]
+        else:
+            work_pairs = pairs
+        n_domains = max(1, len(work_pairs))
         share = max(1, (batch_size + n_domains - 1) // n_domains)
         _ca_ord = sql_order_created_at()
         batch_commit_every = 10
@@ -479,23 +491,44 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                 conn.commit()
                 pending_commits = 0
 
-        for domain_key, schema_name in pairs:
+        for domain_key, schema_name in work_pairs:
             if remaining <= 0:
                 break
-            fetch_limit = min(share, remaining)
+            scoped_ids = None
+            if scoped_ids_by_schema:
+                scoped_ids = scoped_ids_by_schema.get(schema_name) or []
+                if not scoped_ids:
+                    continue
+                fetch_limit = len(scoped_ids)
+            else:
+                fetch_limit = min(share, remaining)
             with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    SELECT id, url, content, created_at, enrichment_status
-                    FROM {schema_name}.articles
-                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
-                      AND COALESCE(enrichment_attempts, 0) < 3
-                      AND url IS NOT NULL AND url != ''
-                    ORDER BY COALESCE(enrichment_attempts, 0) ASC, created_at {_ca_ord}
-                    LIMIT %s
-                    """,
-                    (fetch_limit,),
-                )
+                if scoped_ids:
+                    cur.execute(
+                        f"""
+                        SELECT id, url, content, created_at, enrichment_status
+                        FROM {schema_name}.articles
+                        WHERE id = ANY(%s)
+                          AND (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
+                          AND COALESCE(enrichment_attempts, 0) < 3
+                          AND url IS NOT NULL AND url != ''
+                        ORDER BY COALESCE(enrichment_attempts, 0) ASC, created_at {_ca_ord}
+                        """,
+                        (scoped_ids,),
+                    )
+                else:
+                    cur.execute(
+                        f"""
+                        SELECT id, url, content, created_at, enrichment_status
+                        FROM {schema_name}.articles
+                        WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
+                          AND COALESCE(enrichment_attempts, 0) < 3
+                          AND url IS NOT NULL AND url != ''
+                        ORDER BY COALESCE(enrichment_attempts, 0) ASC, created_at {_ca_ord}
+                        LIMIT %s
+                        """,
+                        (fetch_limit,),
+                    )
                 rows = cur.fetchall()
 
             for article_id, url, existing_content, created_at, row_status in rows:

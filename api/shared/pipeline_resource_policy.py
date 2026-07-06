@@ -528,6 +528,14 @@ def refinement_phase_allowed(
         return True
     if env_str("PIPELINE_REFINEMENT_ANYTIME", "").lower() in ("1", "true", "yes"):
         return True
+    if phase_name == "entity_profile_build":
+        try:
+            from shared.spine_phase_order import spine_pipeline_ordered_active
+
+            if spine_pipeline_ordered_active():
+                return True
+        except Exception:
+            pass
     try:
         from services.pipeline_schedule_service import in_nightly_heavy_window
 
@@ -627,8 +635,19 @@ def configure_pipeline_resources() -> None:
     env_setdefault("STORYLINE_AUTO_ENQUEUE_NARRATIVE_FINISHER", "0")
     env_setdefault("CONTENT_REFINEMENT_API_ENQUEUE_ONLY", "true")
     env_setdefault("STORYLINE_ASSEMBLY_RUN_PROACTIVE", "false")
-    env_setdefault("ASSEMBLY_PIPELINE_MODE", "shadow")
+    env_setdefault("ASSEMBLY_PIPELINE_MODE", "ordered")
+    env_setdefault("SPINE_PIPELINE_MODE", "ordered")
+    env_setdefault("ARTICLE_SIGNAL_ENABLED", "true")
+    env_setdefault("RSS_FEED_SILENCE_ENABLED", "true")
+    env_setdefault("RSS_FEED_SILENCE_DRY_RUN", "true")
     env_setdefault("EDITORIAL_ROOM_LOOP_ENABLED", "true")
+
+    try:
+        from shared.ollama_extraction_model_resolver import resolve_extraction_models_at_startup
+
+        resolve_extraction_models_at_startup()
+    except Exception as e:
+        logger.warning("pipeline_resource_policy: extraction model resolve failed: %s", e)
 
     try:
         from shared.services.ollama_model_caller import reset_ollama_model_caller
@@ -638,9 +657,10 @@ def configure_pipeline_resources() -> None:
         pass
 
     logger.info(
-        "pipeline_resource_policy: popos=%s gpu_host=%s bulk_phases=%s refinement_phases=%s",
+        "pipeline_resource_policy: popos=%s gpu_host=%s extraction_model=%s bulk_phases=%s refinement_phases=%s",
         pop,
         env_str("OLLAMA_GPU_HOST", pop),
+        env_str("OLLAMA_MODEL_EXTRACTION", ""),
         sum(1 for p in PHASE_POLICIES.values() if p.tier == Tier.BULK),
         sum(1 for p in PHASE_POLICIES.values() if p.tier == Tier.REFINEMENT),
     )

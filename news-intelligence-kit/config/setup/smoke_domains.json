@@ -1,0 +1,24 @@
+[
+  {
+    "domain_key": "sports",
+    "schema_name": "sports",
+    "display_name": "Sports",
+    "description": "Sports news for validation",
+    "rss": {
+      "feeds": [
+        {"url": "https://www.espn.com/espn/rss/news", "title": "ESPN Top"}
+      ]
+    }
+  },
+  {
+    "domain_key": "entertainment",
+    "schema_name": "entertainment",
+    "display_name": "Entertainment",
+    "description": "Pop culture and entertainment",
+    "rss": {
+      "feeds": [
+        {"url": "https://variety.com/feed/", "title": "Variety"}
+      ]
+    }
+  }
+]
