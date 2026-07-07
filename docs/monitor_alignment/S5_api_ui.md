@@ -22,9 +22,10 @@ Monitor poll every ~30s:
 | Activity `task_name` | `phase_key` | |
 | Pulse `phase_name` | `phase_key` | |
 | Column "Runs (1h)" | `phase_run` count | From SQL not activity |
-| "Total queue" | `queue_depth` | `pending_records` | Per-phase depth only — **do not sum across phases** (units differ; correlated work overlaps). |
-| "Runs to clear" | `estimated_phase_runs` | Today: `batches_to_drain` |
-| "First pass" | `pipeline_pass` backlog | Not run success |
+| "queue_depth" | `queue_depth` | `pending_records` | Per-phase actionable depth — **do not sum across phases**. Subtitle shows `scheduling_backlog` when it differs. |
+| "Runs to clear" | `estimated_phase_runs` | `batches_to_drain` |
+| "First pass" | `first_pass_depth` | `pending_first_pass` |
+| "Retry" | `retry_depth` | `pending_retry` |
 
 ## Confusion hotspots
 

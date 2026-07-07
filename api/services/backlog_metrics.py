@@ -472,16 +472,7 @@ def _claim_extraction_min_text_length() -> int:
 
 
 def _count_content_enrichment_backlog() -> int:
-    """Articles pending enrichment; uses queue COUNT when SPINE_USE_WORK_QUEUES."""
-    try:
-        from services.spine_work_queue_service import count_all_pending, spine_work_queues_enabled
-
-        if spine_work_queues_enabled():
-            q = count_all_pending("content_enrichment")
-            if q > 0:
-                return q
-    except Exception:
-        pass
+    """Articles pending enrichment (eligibility SQL — not spine queue table depth)."""
     conn = _get_conn()
     if not conn:
         return 0
@@ -586,34 +577,17 @@ def _count_claim_extraction_backlog() -> int:
     conn = _get_conn()
     if not conn:
         return 0
-    min_text = _claim_extraction_min_text_length()
-    pass_sql = ""
-    if phase_backlog_uses_pass_marker("claim_extraction"):
-        pass_sql = f" AND ({sql_context_pass_null('claim_extraction', 'c')}) "
-    gap_sql = ""
     try:
-        from services.claim_extraction_service import claim_extraction_gap_fill_sql
+        from services.claim_extraction_service import sql_claim_extraction_eligible
 
-        gap_sql = claim_extraction_gap_fill_sql()
-    except Exception:
-        pass
-    try:
+        eligible = sql_claim_extraction_eligible("c")
         with conn.cursor() as cur:
             cur.execute("SET LOCAL statement_timeout = '60s'")
             cur.execute(
                 f"""
                 SELECT COUNT(*) FROM intelligence.contexts c
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM intelligence.extracted_claims ec
-                    WHERE ec.context_id = c.id
-                )
-                  AND (
-                      LENGTH(COALESCE(c.content, '')) + LENGTH(COALESCE(c.title, ''))
-                  ) >= %s
-                  {pass_sql}
-                  {gap_sql}
-                """,
-                (min_text,),
+                WHERE {eligible}
+                """
             )
             return int(cur.fetchone()[0] or 0)
     except Exception as e:
@@ -885,15 +859,6 @@ def _count_entity_extraction_pending() -> int:
 
 def _count_unified_intake_extraction_pending() -> int:
     """Articles needing unified LLM (excludes legacy-complete marker backfill)."""
-    try:
-        from services.spine_work_queue_service import count_all_pending, spine_work_queues_enabled
-
-        if spine_work_queues_enabled():
-            q = count_all_pending("unified_intake_extraction")
-            if q > 0:
-                return q
-    except Exception:
-        pass
     from config.settings import unified_intake_extraction_enabled
     from shared.pipeline_resource_policy import intake_extraction_suppressed
     from shared.unified_intake_backlog import (

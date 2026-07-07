@@ -89,9 +89,36 @@ def _schedule_allowed(force: bool) -> bool:
     return automation_phase_allowed("entity_extraction")
 
 
-def _pending_for_phase(phase: str) -> int:
+def _queue_depth_for_phase(phase: str) -> int:
+    """Actionable queue depth for phase (same semantics as Monitor queue_depth)."""
     mod = _get_backlog_metrics_module()
     return int(mod.get_all_pending_counts().get(phase) or 0)
+
+
+def _pending_for_phase(phase: str) -> int:
+    """Deprecated alias for _queue_depth_for_phase."""
+    return _queue_depth_for_phase(phase)
+
+
+def _format_phase_queue_line(phase: str, depth: int) -> str:
+    """Log queue_depth; for unified intake include inventory when it differs."""
+    if phase != "unified_intake_extraction":
+        return f"Phase {phase}: queue_depth={depth}"
+    try:
+        from shared.pipeline_queue_counts import get_unified_intake_breakdown
+
+        b = get_unified_intake_breakdown()
+        inv = int(b["inventory_missing_pass"])
+        spine = int(b["spine_queue_depth"])
+        extra = []
+        if inv != depth:
+            extra.append(f"inventory_missing_pass={inv}")
+        if spine and spine != depth:
+            extra.append(f"spine_queue_depth={spine}")
+        suffix = f" ({', '.join(extra)})" if extra else ""
+        return f"Phase {phase}: queue_depth={depth}{suffix}"
+    except Exception:
+        return f"Phase {phase}: queue_depth={depth}"
 
 
 def _log_nri_watermark_lag() -> None:
@@ -424,8 +451,8 @@ def _run_bulk_catchup(args: argparse.Namespace) -> int:
 
     print("=== Bulk catch-up ===")
     for phase in phases:
-        pending = _pending_for_phase(phase)
-        print(f"Phase {phase}: pending={pending}")
+        pending = _queue_depth_for_phase(phase)
+        print(_format_phase_queue_line(phase, pending))
         if args.dry_run:
             continue
         if pending <= args.floor and phase not in ("embeddings_worker",):
@@ -439,11 +466,11 @@ def _run_bulk_catchup(args: argparse.Namespace) -> int:
         stall_count = 0
         last_pending = pending
         while loops < args.loops:
-            pending = _pending_for_phase(phase)
+            pending = _queue_depth_for_phase(phase)
             if pending <= args.floor:
                 break
             loops += 1
-            print(f"  {phase} loop {loops} pending={pending}")
+            print(f"  {phase} loop {loops} queue_depth={pending}")
             try:
                 result = _execute_phase(phase, args)
                 print(f"    result: {result}")
@@ -491,7 +518,7 @@ def _run_bulk_catchup(args: argparse.Namespace) -> int:
         state["phases"][phase] = {
             "status": "done",
             "loops": loops,
-            "pending_after": _pending_for_phase(phase),
+            "pending_after": _queue_depth_for_phase(phase),
         }
         _save_checkpoint(state)
 

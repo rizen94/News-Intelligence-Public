@@ -12,11 +12,13 @@
 ```
 GET processing_progress:
     rows = SQL COUNT automation_run_history WHERE is_measurable_run_history_row(...)
-    pending = backlog_metrics.get_all_pending_counts()  # cached ~90s
+    queue_depths = pipeline_queue_counts.get_all_phase_queue_depths()  # cached ~90s
+    scheduling_backlog = backlog_metrics.get_all_backlog_counts()
     for phase in phases:
         runs_1h = rows[phase].r1h
-        pending_records = pending[phase]
-        batches_to_drain = ceil(pending_records / estimated_batch_per_run)
+        queue_depth = queue_depths[phase]
+        scheduling_backlog_excess = scheduling_backlog[phase]
+        estimated_phase_runs = ceil(queue_depth / estimated_batch_per_run)
 ```
 
 ## Term table
@@ -25,8 +27,9 @@ GET processing_progress:
 |-----------|-----------|--------|
 | `phase_name` | `phase_key` | SQL GROUP BY |
 | `runs_1h` / `runs_24h` | `phase_run` count | Measurable history rows |
-| `pending_records` | `queue_depth` | backlog_metrics + work_queues max |
-| `batches_to_drain` | `estimated_phase_runs` | ceil(pending / batch size) |
+| `pending_records` | `queue_depth` | `pipeline_queue_counts` / snapshot `queue_depths` |
+| `batches_to_drain` | `estimated_phase_runs` | ceil(queue_depth / batch size) |
+| `backlog` (snapshot) | `scheduling_backlog` | `get_all_backlog_counts()` |
 | `estimated_batch_per_run` | rows per phase_run | measured_24h or config |
 | `pass_rate_24h` | `run_success_rate_24h` | success / completions (not pipeline pass) |
 | `pending_first_pass` | `pipeline_pass` backlog | pass marker SQL — separate domain |

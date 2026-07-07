@@ -76,6 +76,48 @@ def sql_order_coalesce_pub_created(alias: str = "a") -> str:
     return f"COALESCE({alias}.published_at, {alias}.created_at) {direction} NULLS LAST"
 
 
+def unified_intake_value_priority_order_enabled() -> bool:
+    """Catch-up: process high-signal / high-quality articles before marginal rows."""
+    raw = env_str("UNIFIED_INTAKE_VALUE_PRIORITY_ORDER", "").strip().lower()
+    if raw in ("1", "true", "yes"):
+        return True
+    if raw in ("0", "false", "no"):
+        return False
+    return env_str("BULK_CATCHUP_ACTIVE", "").lower() in ("1", "true", "yes")
+
+
+def sql_credibility_tier_rank(alias: str = "a") -> str:
+    """Lower rank = higher editorial priority (tier_1 first)."""
+    return f"""CASE COALESCE({alias}.metadata #>> '{{source_credibility,tier}}', 'tier_3')
+        WHEN 'tier_1' THEN 0
+        WHEN 'tier_2' THEN 1
+        ELSE 2
+    END"""
+
+
+def sql_order_unified_intake_value_priority(alias: str = "a") -> str:
+    """
+    Value-first drain: tier_1 → tier_2 → tier_3, then quality_score DESC
+    (articles near the ~0.55 gate processed last), then FIFO by publish time.
+    """
+    tier = sql_credibility_tier_rank(alias)
+    pub = f"COALESCE({alias}.published_at, {alias}.created_at) ASC NULLS LAST"
+    return f"{tier} ASC, COALESCE({alias}.quality_score, 0) DESC, {pub}"
+
+
+def unified_intake_row_value_sort_key(row: tuple) -> tuple:
+    """
+    Sort key for fetched rows with optional trailing (quality_score, cred_tier).
+    Row layout: id, title, content, published_at, storyline_id [, quality_score, cred_tier].
+    """
+    quality = float(row[5]) if len(row) > 5 and row[5] is not None else 0.0
+    tier = str(row[6]) if len(row) > 6 and row[6] is not None else "tier_3"
+    tier_rank = {"tier_1": 0, "tier_2": 1}.get(tier, 2)
+    pub = row[3]
+    pub_ord = pub.timestamp() if hasattr(pub, "timestamp") else 0.0
+    return (tier_rank, -quality, pub_ord)
+
+
 def _parse_iso_utc(s: str) -> datetime | None:
     s = (s or "").strip().replace("Z", "+00:00")
     if not s:

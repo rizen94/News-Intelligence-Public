@@ -17,7 +17,12 @@ from shared.bulk_catchup_llm_routing import (
     dual_lane_extraction_active,
 )
 from shared.domain_registry import pipeline_url_schema_pairs
-from shared.pipeline_article_selection import sql_order_coalesce_pub_created
+from shared.pipeline_article_selection import (
+    sql_order_coalesce_pub_created,
+    sql_order_unified_intake_value_priority,
+    unified_intake_row_value_sort_key,
+    unified_intake_value_priority_order_enabled,
+)
 from shared.pipeline_batch_drain import (
     DrainStallTracker,
     RunBudget,
@@ -97,7 +102,18 @@ async def run_unified_intake_extraction_batch_drain(
 
         defer_signal_light_phase_batch("topic_clustering", per_domain_limit=per_domain * 2)
     ml_ready = sql_ml_ready_and_content_bounds("a")
-    order = sql_order_coalesce_pub_created("a")
+    value_priority = unified_intake_value_priority_order_enabled()
+    order = (
+        sql_order_unified_intake_value_priority("a")
+        if value_priority
+        else sql_order_coalesce_pub_created("a")
+    )
+    select_quality = (
+        ", COALESCE(a.quality_score, 0), "
+        "COALESCE(a.metadata #>> '{source_credibility,tier}', 'tier_3')"
+        if value_priority
+        else ""
+    )
     domains = list(pipeline_url_schema_pairs())
 
     def _backfill_legacy_complete() -> int:
@@ -117,9 +133,6 @@ async def run_unified_intake_extraction_batch_drain(
                 logger.warning("unified_intake legacy backfill %s: %s", schema_name, e)
         return n
 
-    order = sql_order_coalesce_pub_created("a")
-    domains = list(pipeline_url_schema_pairs())
-
     from services.spine_work_queue_service import (
         claim_fair_share_batch,
         count_all_pending,
@@ -133,6 +146,8 @@ async def run_unified_intake_extraction_batch_drain(
         if use_spine_work_queues is None
         else bool(use_spine_work_queues)
     )
+    if value_priority:
+        queues_active = False
     queue_claim_batch = max(per_domain * max(1, len(domains)), 60)
 
     def _fetch_one_schema(schema_name: str, article_ids: list[int] | None = None) -> list[tuple]:
@@ -179,6 +194,7 @@ async def run_unified_intake_extraction_batch_drain(
                                ORDER BY sa.added_at DESC NULLS LAST
                                LIMIT 1
                            ) AS storyline_id
+                           {select_quality}
                     FROM {schema_name}.articles a
                     WHERE {where_sql}
                       {id_clause}
@@ -255,6 +271,9 @@ async def run_unified_intake_extraction_batch_drain(
             for domain_key, schema_name in domains:
                 for row in domain_articles.get(schema_name, []):
                     pending_rows.append((domain_key, schema_name, row))
+
+            if value_priority and pending_rows:
+                pending_rows.sort(key=lambda item: unified_intake_row_value_sort_key(item[2]))
 
             if not pending_rows:
                 if round_backfill == 0:

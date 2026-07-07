@@ -20,9 +20,10 @@ Processing phases are **not** driven by a 5s scheduler tick, harmony cooldowns, 
 | Enqueue / replan | `api/services/pipeline_controller.py` |
 | Run budgets (circuit breakers) | `pipeline_controller` section in `orchestrator_governance.yaml`, `api/shared/pipeline_batch_drain.py` |
 | Phase policies (host, lane, resource class) | `api/shared/pipeline_resource_policy.py` |
-| Backlog counts | `api/services/backlog_metrics.py` → `get_all_pending_counts()` |
+| Backlog counts | `pipeline_queue_counts.get_all_phase_queue_depths()` (alias `get_all_pending_counts()`) |
+| Scheduling excess | `backlog_metrics.get_all_backlog_counts()` → `scheduling_backlog` on pulse / automation status |
 | Nightly idle detection | `api/services/nightly_phase_idle.py` → `phase_has_pending_work()` |
-| Monitor status | `GET /api/system_monitoring/automation/status` — `pipeline_controller`, `db_pools`, `pending_counts` |
+| Monitor status | `GET /api/system_monitoring/automation/status` — `queue_depths`, `scheduling_backlog`, `in_memory_queue_depth` (legacy: `pending_counts`, `backlog_counts`, `combined_queue_depth`) |
 
 ## Defunct env vars (ignore)
 

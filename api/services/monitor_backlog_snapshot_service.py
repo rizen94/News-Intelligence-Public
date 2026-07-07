@@ -47,12 +47,12 @@ def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] |
     try:
         from services.backlog_metrics import (
             get_all_backlog_counts,
-            get_all_pending_counts,
             get_storyline_review_queue_pending,
             get_storyline_review_queue_pending_by_domain,
         )
+        from shared.pipeline_queue_counts import get_all_phase_queue_depths
 
-        pending = {k: int(v) for k, v in get_all_pending_counts().items()}
+        pending = {k: int(v) for k, v in get_all_phase_queue_depths().items()}
         backlog = {k: int(v) for k, v in get_all_backlog_counts().items()}
         operator_metrics = {
             "storyline_review_queue_pending": get_storyline_review_queue_pending(),
@@ -116,13 +116,23 @@ def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] |
             queue_audit = build_queue_audit(pending)
         except Exception as e:
             logger.warning("monitor_backlog_snapshot queue_audit failed: %s", e)
+        unified_intake_breakdown: dict[str, int] | None = None
+        try:
+            from shared.pipeline_queue_counts import get_unified_intake_breakdown
+
+            unified_intake_breakdown = dict(get_unified_intake_breakdown())
+        except Exception as e:
+            logger.warning("monitor_backlog_snapshot unified_intake_breakdown failed: %s", e)
         payload: dict[str, Any] = {
             "refreshed_at_utc": refreshed_at,
             "interval_seconds": interval,
+            "queue_depths": pending,
+            "scheduling_backlog": backlog,
             "pending": pending,
             "backlog": backlog,
             "operator_metrics": operator_metrics,
             "queue_audit": queue_audit,
+            "unified_intake_breakdown": unified_intake_breakdown,
             "work_queues": work_queues,
             "signal_lane_metrics": signal_lane_metrics,
             "feed_health_metrics": feed_health_metrics,

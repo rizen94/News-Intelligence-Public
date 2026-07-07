@@ -15,7 +15,7 @@ from typing import Any, TypedDict
 
 logger = logging.getLogger(__name__)
 
-MONITOR_SCHEMA_VERSION = "1.0"
+MONITOR_SCHEMA_VERSION = "1.1"
 
 # Merged from phase_batch_run_history, processing_progress, conductor_run_history, pipeline_controller.
 THROUGHPUT_COUNT_KEYS: tuple[str, ...] = (

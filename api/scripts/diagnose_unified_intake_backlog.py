@@ -31,11 +31,22 @@ def main() -> None:
     from config.runtime import env_str
     from services.backlog_metrics import _get_raw_pending_counts
     from services.phase_work_queue_metrics import get_phase_work_queue
+    from shared.pipeline_queue_counts import get_unified_intake_breakdown, verify_unified_intake_alignment
+    from shared.queue_audit import build_queue_audit
 
     print("UNIFIED_INTAKE_EXTRACTION_ENABLED=", env_str("UNIFIED_INTAKE_EXTRACTION_ENABLED", "(unset)"))
     print("intake_extraction_suppressed (unified active)=", intake_extraction_suppressed())
     masked = _get_raw_pending_counts()
-    print("Monitor pending (masked):", masked.get("unified_intake_extraction"))
+    print("queue_depth (masked):", masked.get("unified_intake_extraction"))
+    breakdown = get_unified_intake_breakdown()
+    print("actionable_unified_intake:", breakdown.get("actionable_unified_intake"))
+    print("inventory_missing_pass:", breakdown.get("inventory_missing_pass"))
+    print("legacy_backfill_eligible:", breakdown.get("legacy_backfill_eligible"))
+    print("spine_queue_depth:", breakdown.get("spine_queue_depth"))
+    alignment = verify_unified_intake_alignment(masked)
+    print("matches_actionable_sql:", alignment.get("matches_actionable_sql"))
+    audit = build_queue_audit(masked)
+    print("queue_audit:", audit.get("phases", {}).get("unified_intake_extraction"))
     print("phase_work_queue (masked):", get_phase_work_queue("unified_intake_extraction"))
     for ph in ("entity_extraction", "event_extraction", "sentiment_analysis", "quality_scoring"):
         print(f"Monitor pending {ph}:", masked.get(ph))

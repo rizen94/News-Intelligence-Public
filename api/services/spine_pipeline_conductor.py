@@ -144,11 +144,19 @@ async def _drain_spine_phase(
     if shadow:
         try:
             from services.backlog_metrics import get_all_backlog_counts
+            from shared.pipeline_queue_counts import get_phase_queue_depth
 
-            pending = int(get_all_backlog_counts().get(phase, 0) or 0)
+            queue_depth = int(get_phase_queue_depth(phase))
+            scheduling_backlog = int(get_all_backlog_counts().get(phase, 0) or 0)
         except Exception:
-            pending = -1
-        return {"shadow": True, "pending": pending}
+            queue_depth = -1
+            scheduling_backlog = -1
+        return {
+            "shadow": True,
+            "queue_depth": queue_depth,
+            "pending": queue_depth,
+            "scheduling_backlog": scheduling_backlog,
+        }
 
     if phase == "content_enrichment":
         return await _drain_enrichment(automation, budget_seconds=cycle_budget_seconds)

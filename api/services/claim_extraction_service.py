@@ -179,7 +179,7 @@ def _subject_matches_seeded_pool(cur, domain_key: str, subject_text: str) -> boo
     return bool(cur.fetchone())
 
 
-def claim_extraction_gap_fill_sql() -> str:
+def claim_extraction_gap_fill_sql(alias: str = "c") -> str:
     """When fusion is on, only contexts linked to unified-cleared articles."""
     try:
         from shared.spine_phase_order import fused_claim_extraction_gap_fill_only
@@ -188,7 +188,7 @@ def claim_extraction_gap_fill_sql() -> str:
             return ""
     except Exception:
         return ""
-    return """
+    return f"""
         AND EXISTS (
             SELECT 1
             FROM intelligence.article_to_context atc
@@ -198,9 +198,31 @@ def claim_extraction_gap_fill_sql() -> str:
                 FROM information_schema.schemata s
                 WHERE s.schema_name = d.schema_name
             ) _s ON true
-            WHERE atc.context_id = c.id
+            WHERE atc.context_id = {alias}.id
               AND atc.article_id IS NOT NULL
         )
+    """
+
+
+def sql_claim_extraction_eligible(alias: str = "c") -> str:
+    """Contexts claim_extraction automation would select (min text + pass-null + gap-fill)."""
+    from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_context_pass_null
+
+    min_len = claim_extraction_min_text_len()
+    pass_sql = ""
+    if phase_backlog_uses_pass_marker("claim_extraction"):
+        pass_sql = f" AND ({sql_context_pass_null('claim_extraction', alias)}) "
+    gap_sql = claim_extraction_gap_fill_sql(alias)
+    return f"""
+        NOT EXISTS (
+            SELECT 1 FROM intelligence.extracted_claims ec
+            WHERE ec.context_id = {alias}.id
+        )
+        AND (
+            LENGTH(COALESCE({alias}.content, '')) + LENGTH(COALESCE({alias}.title, ''))
+        ) >= {min_len}
+        {pass_sql}
+        {gap_sql}
     """
 
 
@@ -890,31 +912,21 @@ class ClaimExtractionBatchResult(NamedTuple):
 
 
 def get_context_ids_without_claims(limit: int = 50) -> list[int]:
-    """Return context IDs that have no rows in extracted_claims, for batch processing."""
-    from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_context_pass_null
-
+    """Return context IDs eligible for claim_extraction batch processing."""
     conn = get_db_connection()
     if not conn:
         return []
-    min_len = claim_extraction_min_text_len()
-    pass_sql = ""
-    if phase_backlog_uses_pass_marker("claim_extraction"):
-        pass_sql = f" AND ({sql_context_pass_null('claim_extraction', 'c')}) "
+    eligible = sql_claim_extraction_eligible("c")
     try:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
                 SELECT c.id FROM intelligence.contexts c
-                LEFT JOIN intelligence.extracted_claims ec ON ec.context_id = c.id
-                WHERE ec.id IS NULL
-                  AND (
-                      LENGTH(COALESCE(c.content, '')) + LENGTH(COALESCE(c.title, ''))
-                  ) >= %s
-                  {pass_sql}
+                WHERE {eligible}
                 ORDER BY c.created_at DESC
                 LIMIT %s
                 """,
-                (min_len, limit),
+                (limit,),
             )
             return [r[0] for r in cur.fetchall()]
     finally:
@@ -927,12 +939,10 @@ def get_context_claim_backlog_stats() -> dict[str, int]:
 
     - total_no_claims: any context with zero claim rows (terminal inventory / completeness;
       includes pass-markered outcomes — not automation backlog)
-    - actionable_no_claims: matches backlog_metrics / claim_extraction batch selection
+    - actionable_no_claims: matches backlog_metrics / claim_extraction batch selection (gap-fill when fusion on)
     - passed_no_claims: has pass marker outcome no_claims_after_filters, still no claims
     - text_too_short: no claims and below min text length
     """
-    from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_context_pass_null
-
     out = {
         "total_no_claims": 0,
         "actionable_no_claims": 0,
@@ -943,9 +953,7 @@ def get_context_claim_backlog_stats() -> dict[str, int]:
     if not conn:
         return out
     min_len = claim_extraction_min_text_len()
-    pass_sql = ""
-    if phase_backlog_uses_pass_marker("claim_extraction"):
-        pass_sql = f" AND ({sql_context_pass_null('claim_extraction', 'c')}) "
+    eligible = sql_claim_extraction_eligible("c")
     try:
         with conn.cursor() as cur:
             cur.execute("SET LOCAL statement_timeout = '120s'")
@@ -961,15 +969,8 @@ def get_context_claim_backlog_stats() -> dict[str, int]:
             cur.execute(
                 f"""
                 SELECT COUNT(*) FROM intelligence.contexts c
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM intelligence.extracted_claims ec WHERE ec.context_id = c.id
-                )
-                  AND (
-                      LENGTH(COALESCE(c.content, '')) + LENGTH(COALESCE(c.title, ''))
-                  ) >= %s
-                  {pass_sql}
-                """,
-                (min_len,),
+                WHERE {eligible}
+                """
             )
             out["actionable_no_claims"] = int(cur.fetchone()[0] or 0)
             cur.execute(

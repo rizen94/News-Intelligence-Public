@@ -25,6 +25,10 @@ import psycopg2.errors
 from shared.article_text_metrics import compute_word_count
 
 
+def _rss_ingest_min_quality_score() -> float:
+    return max(0.0, min(1.0, env_float("RSS_INGEST_MIN_QUALITY_SCORE", 0.38)))
+
+
 def _utc_aware(dt):
     """Return a timezone-aware datetime in UTC. Feed and DB datetimes may be naive or aware."""
     if dt is None:
@@ -1844,11 +1848,12 @@ def collect_rss_feeds() -> int:
                             )
 
                             # Filter by minimum quality score
-                            if quality_score < 0.3:
+                            min_quality = _rss_ingest_min_quality_score()
+                            if quality_score < min_quality:
                                 filtered_quality += 1
                                 excluded_count += 1
                                 logger.debug(
-                                    f"Article excluded (quality score {quality_score:.2f} < 0.3): {title[:60]}..."
+                                    f"Article excluded (quality score {quality_score:.2f} < {min_quality}): {title[:60]}..."
                                 )
                                 _rss_entry_savepoint_release(feed_cur)
                                 continue
@@ -2292,7 +2297,7 @@ def collect_rss_feeds() -> int:
             if total_filtered_ads > 0:
                 logger.info(f"     - Advertisements: {total_filtered_ads}")
             if total_filtered_quality > 0:
-                logger.info(f"     - Low quality score (<0.3): {total_filtered_quality}")
+                logger.info(f"     - Low quality score (<{_rss_ingest_min_quality_score()}): {total_filtered_quality}")
             if total_filtered_impact > 0:
                 logger.info(f"     - Low impact score (<0.25): {total_filtered_impact}")
             # Content exclusion (sports/entertainment) is the remainder
@@ -2411,9 +2416,10 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                     quality_score, title, content, url
                 )
 
-                if quality_score < 0.3:
+                min_quality = _rss_ingest_min_quality_score()
+                if quality_score < min_quality:
                     logger.debug(
-                        f"Skipping article (quality score {quality_score:.2f} < 0.3): {title[:60]}..."
+                        f"Skipping article (quality score {quality_score:.2f} < {min_quality}): {title[:60]}..."
                     )
                     _rss_entry_savepoint_release(cur)
                     continue

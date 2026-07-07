@@ -30,12 +30,12 @@ entity_tracking:
 # Phase 2 T2.3: quality thresholds for prioritization
 quality_thresholds:
   min_quality_score: 0.5
-  min_importance_for_processing: 0.45
+  min_importance_for_processing: 0.50
 
 # Signal-first article lanes — see docs/SIGNAL_FIRST_OPS.md and shared/article_signal_gate.py
 signal_first:
   article_signal_enabled: true
-  article_signal_full_min_quality: 0.45
+  article_signal_full_min_quality: 0.50
   article_signal_trending_top_n: 15
   target_full_llm_ratio_min: 0.15
   target_full_llm_ratio_max: 0.35
@@ -43,8 +43,8 @@ signal_first:
 # RSS feed warn-then-auto silencing — see services/rss_feed_health_service.py
 rss_feed_health:
   enabled: true
-  dry_run: true
-  min_quality: 0.45
+  dry_run: false
+  min_quality: 0.50
   zero_yield_days: 14
   low_signal_days: 30
   low_signal_min_articles: 10

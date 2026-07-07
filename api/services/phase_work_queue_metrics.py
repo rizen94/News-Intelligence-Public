@@ -1,7 +1,7 @@
 """
 Per-phase work queue breakdown for Monitor: first pass vs retry vs intake-window backlog.
 
-``total_pending`` matches ``backlog_metrics.get_all_pending_counts()`` (scheduler eligibility).
+``total_pending`` matches ``pipeline_queue_counts.get_all_phase_queue_depths()`` (scheduler eligibility).
 ``first_pass`` = never completed a successful/cleared pass for that phase.
 ``retry_pending`` = attempted but still needs another pass (failed / legacy false-clear).
 ``intake_first_pass`` = first-pass items created within the intake window (grows with RSS, shrinks on catch-up).
@@ -609,9 +609,9 @@ def get_phase_work_queue(phase_name: str, *, pending_total: int | None = None) -
     if pending_total is not None:
         return _queue_from_pending_total(phase_name, pending_total)
     try:
-        from services.backlog_metrics import get_all_pending_counts
+        from shared.pipeline_queue_counts import get_all_phase_queue_depths
 
-        total = int(get_all_pending_counts().get(phase_name, 0) or 0)
+        total = int(get_all_phase_queue_depths().get(phase_name, 0) or 0)
     except Exception:
         total = 0
     return _queue_from_pending_total(phase_name, total)
@@ -621,15 +621,15 @@ def get_all_phase_work_queues(
     pending_totals: dict[str, int] | None = None,
 ) -> dict[str, PhaseWorkQueue]:
     """
-    Breakdown for all phases in ``pending_totals`` (or fresh ``get_all_pending_counts()``).
+    Breakdown for all phases in ``pending_totals`` (or fresh ``get_all_phase_queue_depths()``).
     Handlers run for phases with specific SQL; others inherit totals-only breakdown.
     """
     if pending_totals is None:
         try:
-            from services.backlog_metrics import get_all_pending_counts
+            from shared.pipeline_queue_counts import get_all_phase_queue_depths
 
             pending_totals = {
-                k: int(v) for k, v in get_all_pending_counts().items()
+                k: int(v) for k, v in get_all_phase_queue_depths().items()
             }
         except Exception:
             pending_totals = {}
@@ -655,6 +655,9 @@ def get_all_phase_work_queues(
                 q = _queue_from_pending_total(phase, total)
         else:
             q = _queue_from_pending_total(phase, total)
+        if total is not None and isinstance(q, dict):
+            q = dict(q)
+            q["total_pending"] = int(total)
         out[phase] = q
     return out
 

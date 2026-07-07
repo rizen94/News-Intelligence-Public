@@ -100,4 +100,5 @@ def get_streaming_status() -> dict[str, Any]:
         "active_streams": 0,
         "last_urgent_at": _last_urgent_at,
         "queue_depth": _urgent_queue_depth,
+        "urgent_queue_depth": _urgent_queue_depth,
     }

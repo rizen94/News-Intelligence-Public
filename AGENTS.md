@@ -39,6 +39,12 @@ Context for AI assistants. Use project terminology consistently.
 | Investigation API | **`/api/investigation/*`** | — |
 | Tracking discovery API | **`GET /api/tracking/discovery`** | Widow headless + OWUI thin client |
 | Event reconciliation API | **`GET /api/event_reconciliation`** | Read-only tracked ↔ chronological ↔ storyline |
+| Per-phase queue depth (Monitor, bulk catch-up) | **`queue_depth`** / `pipeline_queue_counts.get_all_phase_queue_depths()` | `pending_records`, `pending_counts`, spine queue depth |
+| Scheduler excess backlog | **`scheduling_backlog`** / `get_all_backlog_counts()` | summing phase queues |
+| Unified LLM work remaining | **`actionable_unified_intake`** | `inventory_missing_pass`, `total_missing_unified_pass` (inventory) |
+| Spine queue table depth | **`spine_queue_depth`** (informational) | using as operator ETA |
+| AutomationManager task queues | **`in_memory_queue_depth`** | DB `queue_depth` |
+| Realtime urgent ingest queue | **`urgent_queue_depth`** | pipeline `queue_depth` |
 
 ---
 
@@ -60,6 +66,7 @@ Context for AI assistants. Use project terminology consistently.
 | Spine SQL tail | `api/services/spine_sql_tail_service.py` |
 | Pipeline controller (scheduling SSOT) | `api/services/pipeline_controller.py` |
 | Monitor run vocabulary (activity ↔ run history SSOT) | `api/shared/monitor_run_vocabulary.py`, `docs/MONITOR_REPORTING_AND_METRICS.md`, `docs/monitor_alignment/` |
+| Pipeline queue depth vocabulary (queue_depth SSOT) | `api/shared/pipeline_queue_vocabulary.py`, `api/shared/pipeline_queue_counts.py`, `api/shared/monitor_dimension_metrics.py`, `scripts/verify_pipeline_queue_alignment.py` |
 | Spine conductor (drain helpers) | `api/services/spine_pipeline_conductor.py` |
 | Link indexer (post-spine pass 0) | `api/services/link_indexer_service.py` |
 | Assembly conductor (drain helpers) | `api/services/assembly_conductor_service.py` |

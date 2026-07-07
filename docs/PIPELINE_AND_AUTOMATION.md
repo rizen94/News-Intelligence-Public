@@ -10,7 +10,7 @@
 |---------|----------|
 | Task names, `depends_on`, phase numbers, default intervals | `api/services/automation_manager.py` → `self.schedules` |
 | Per-task implementation | Same file → `async def _execute_<task_name>` (grep `_execute_`) |
-| Pending / backlog counts (what "has work" means) | `api/services/backlog_metrics.py` → `_count_*` helpers, `BATCH_SIZE_PER_TASK`, `SKIP_WHEN_EMPTY` |
+| Pending / backlog counts (what "has work" means) | `api/services/backlog_metrics.py` → `_count_*` helpers, `BATCH_SIZE_PER_TASK`, `SKIP_WHEN_EMPTY`; **queue_depth SSOT** also `api/shared/pipeline_queue_counts.py` |
 | Unified intake backlog (actionable vs legacy backfill) | `api/shared/unified_intake_backlog.py` → `get_unified_intake_backlog_stats()`, `sql_actionable_unified_intake()` |
 | Unified intake automation drain | `api/shared/unified_intake_extraction_runner.py` |
 | Dual-lane PopOS + Widow extraction routing | `api/shared/bulk_catchup_llm_routing.py`, `api/shared/pipeline_resource_policy.py` |
@@ -91,7 +91,7 @@ This section states **what "good" means per layer**, **what we deliberately igno
 | Mechanism | Role |
 |-----------|------|
 | **`SKIP_WHEN_EMPTY`** (`backlog_metrics.py`) | Phases in this set **do not enqueue** when pending count is 0 — avoids empty LLM/DB cycles. Omitted phases (e.g. `document_processing`, `content_refinement_queue`) still tick on interval so stuck work or "idle completion" is visible. |
-| **Workload-driven scheduling** (`automation_manager`) | If a phase has pending work (`get_all_pending_counts`), it becomes eligible every tick (subject to cooldown + `depends_on`), not only on its idle interval. |
+| **Workload-driven scheduling** (`automation_manager`) | If a phase has `queue_depth > 0` (`get_all_phase_queue_depths`), it becomes eligible every tick (subject to cooldown + `depends_on`), not only on its idle interval. |
 | **`depends_on`** | **Scheduling order only**: a task is not eligible until dependencies have run at least once in the manager's history window; it does *not* mean "upstream must be empty." Downstream backlog counts are the real "is there work?" signal. |
 | **Collection throttle** | When the configured downstream pending sum exceeds `COLLECTION_THROTTLE_PENDING_THRESHOLD`, **`collection_cycle` is not scheduled** (entire cycle) so quality-sensitive steps can drain — **quality before volume**. Standalone enrichment and nightly drain still run. |
 | **Pipeline domain scope** | Per-domain automation loops use **`get_pipeline_active_domain_keys()`** / **`pipeline_url_schema_pairs()`** so paused legacy silos are not enriched, synced, or story-processed. |
@@ -164,7 +164,7 @@ When enabled, **`unified_intake_extraction`** replaces scheduled **`entity_extra
 | `SPINE_SQL_TAIL_BATCH_LIMIT` | `200` | Pass 2 SQL batch size (claims_to_facts, profile link, fast topic) |
 | `UNIFIED_INTAKE_LEGACY_AWARE_BACKLOG` | `true` | Count/schedule only articles needing unified LLM; legacy-complete → pass-marker backfill |
 | `UNIFIED_INTAKE_BACKLOG_STATS_TTL_SECONDS` | `300` | Cache TTL for heavy unified backlog stats query |
-| `BACKLOG_CACHE_TTL_SECONDS` | `90` | Cache TTL for `get_all_pending_counts()` (single-flight lock prevents thundering herd) |
+| `BACKLOG_CACHE_TTL_SECONDS` | `90` | Cache TTL for `get_all_phase_queue_depths()` / `get_all_pending_counts()` (single-flight lock prevents thundering herd) |
 | `ENTITY_PROFILE_BUILD_ANYTIME` | unset | Bypass profile build gating |
 | `ENTITY_PROFILE_BUILD_UPSTREAM_GATE` | `true` | Per-profile upstream SQL filter |
 
@@ -172,9 +172,11 @@ When enabled, **`unified_intake_extraction`** replaces scheduled **`entity_extra
 
 | Metric | Meaning |
 |--------|---------|
-| `total_missing_unified_pass` | Inventory — any eligible article without unified pass marker |
+| `inventory_missing_pass` | Inventory — any eligible article without unified pass marker (`total_missing_unified_pass` legacy alias) |
 | `legacy_backfill_eligible` | Marker-only backfill (no GPU) |
-| `actionable_unified_intake` | **Monitor `pending_records` and automation selection** |
+| `actionable_unified_intake` | **Monitor `queue_depth` and automation selection** |
+
+**Queue depth SSOT:** `api/shared/pipeline_queue_counts.py` (`get_phase_queue_depth`, `get_all_phase_queue_depths`). Vocabulary: `api/shared/pipeline_queue_vocabulary.py`. Regression: `scripts/verify_pipeline_queue_alignment.py`. Do not use spine queue table depth as operator ETA.
 
 Bulk marker backfill: `PYTHONPATH=api python3 api/scripts/backfill_unified_intake_pass_from_legacy.py`. Diagnostic: `api/scripts/diagnose_unified_intake_backlog_detail.py`.
 
@@ -258,7 +260,7 @@ Single source of truth: `api/shared/article_processing_gates.py`.
 
 ## Phase Reference: Automation Tasks
 
-Below: **Task** = scheduler key in `schedules`. **Backlog key** = name in `backlog_metrics` / `get_all_pending_counts` when applicable. **"Selection logic"** is a short summary — see `_execute_*` and linked services for exact SQL.
+Below: **Task** = scheduler key in `schedules`. **Backlog key** = name in `pipeline_queue_counts` / `get_all_phase_queue_depths` when applicable. **"Selection logic"** is a short summary — see `_execute_*` and linked services for exact SQL.
 
 ### Phase 0 — Ingestion and Drains
 

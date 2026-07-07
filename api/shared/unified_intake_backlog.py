@@ -136,6 +136,7 @@ def _query_unified_intake_backlog_stats() -> dict[str, int]:
 
     out = {
         "total_missing_unified_pass": 0,
+        "inventory_missing_pass": 0,
         "legacy_backfill_eligible": 0,
         "actionable_unified_intake": 0,
     }
@@ -162,6 +163,7 @@ def _query_unified_intake_backlog_stats() -> dict[str, int]:
                     out["total_missing_unified_pass"] += int(row[0] or 0)
                     out["legacy_backfill_eligible"] += int(row[1] or 0)
                     out["actionable_unified_intake"] += int(row[2] or 0)
+        out["inventory_missing_pass"] = out["total_missing_unified_pass"]
     except Exception as e:
         logger.warning("get_unified_intake_backlog_stats: %s", e)
     finally:

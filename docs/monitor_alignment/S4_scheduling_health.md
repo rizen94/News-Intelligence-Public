@@ -9,8 +9,8 @@
 
 ```
 on_replan:
-    pending = get_all_pending_counts()
-    phase_health = assess_all_phase_health(pending, history, activity_feed)
+    queue_depths = get_all_phase_queue_depths()  # alias: get_all_pending_counts()
+    phase_health = assess_all_phase_health(queue_depths, history, activity_feed)
     for phase where health in (stalled, failing):
         stall_holds[phase] = stall_hold_replans()  # log stall_yield
     desired = pick_next_phases(..., skip health=stalled)

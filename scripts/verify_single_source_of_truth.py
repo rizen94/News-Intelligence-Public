@@ -116,6 +116,20 @@ def main() -> int:
             print(f"  - {v}")
         return 1
 
+    align_script = ROOT / "scripts" / "verify_pipeline_queue_alignment.py"
+    if align_script.is_file():
+        import subprocess
+
+        proc = subprocess.run(
+            [sys.executable, str(align_script)],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            print(proc.stdout or proc.stderr or "verify_pipeline_queue_alignment failed")
+            return proc.returncode
+
     print("SSOT check passed (critical paths clean)")
     return 0
 

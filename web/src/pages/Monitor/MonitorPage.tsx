@@ -69,13 +69,25 @@ const PENDING_METRICS_MAX_AGE_MS = 16 * 60 * 1000;
 type PhaseRow = {
   phase_name?: string;
   pending_records?: number | null;
+  queue_depth?: number | null;
   pending_first_pass?: number | null;
+  first_pass_depth?: number | null;
   pending_retry?: number | null;
+  retry_depth?: number | null;
+  scheduling_backlog?: number | null;
   intake_first_pass?: number | null;
   [key: string]: unknown;
 };
 
-/** Sort automation phases by first-pass queue (desc), then total pending, then name. */
+function phaseQueueDepth(p: PhaseRow): number {
+  return Number(p.queue_depth ?? p.pending_records ?? 0);
+}
+
+function phaseFirstPassDepth(p: PhaseRow): number {
+  return Number(p.first_pass_depth ?? p.pending_first_pass ?? phaseQueueDepth(p));
+}
+
+/** Sort automation phases by first-pass queue (desc), then queue_depth, then name. */
 function isMonitorVisiblePhase(p: { scheduling_status?: string; phase_name?: string }): boolean {
   return p.scheduling_status !== 'retired';
 }
@@ -88,11 +100,11 @@ function filterMonitorPhases<T extends PhaseRow & { scheduling_status?: string }
 
 function sortPhasesByPending<T extends PhaseRow>(phases: T[]): T[] {
   return [...phases].sort((a, b) => {
-    const fa = Number(a.pending_first_pass ?? a.pending_records ?? 0);
-    const fb = Number(b.pending_first_pass ?? b.pending_records ?? 0);
+    const fa = phaseFirstPassDepth(a);
+    const fb = phaseFirstPassDepth(b);
     if (fb !== fa) return fb - fa;
-    const pa = Number(a.pending_records ?? 0);
-    const pb = Number(b.pending_records ?? 0);
+    const pa = phaseQueueDepth(a);
+    const pb = phaseQueueDepth(b);
     if (pb !== pa) return pb - pa;
     const na = String(a.phase_name ?? '');
     const nb = String(b.phase_name ?? '');
@@ -167,10 +179,13 @@ type ProcessingPulsePhase = {
   /** DB-backed count of records not yet processed for this phase (pending queue). */
   pending_records?: number;
   queue_depth?: number;
+  scheduling_backlog?: number;
   /** Never cleared / first-time work for this phase. */
   pending_first_pass?: number;
+  first_pass_depth?: number;
   /** Attempted but needs another pass (retry / reprocess). */
   pending_retry?: number;
+  retry_depth?: number;
   /** First-pass items within intake window (fresh RSS backlog). */
   intake_first_pass?: number;
   work_queue_metric_kind?: string;
@@ -207,11 +222,15 @@ function formatPulseCount(n: number | null | undefined): string {
 }
 
 type QueueAuditPhase = {
+  queue_depth?: number;
   monitor_pending?: number;
   matches_automation_sql?: boolean;
+  matches_actionable_sql?: boolean;
   note?: string;
   error?: string;
   actionable_unified_intake?: number;
+  spine_queue_depth?: number;
+  inventory_missing_pass?: number;
   total_missing_unified_pass?: number;
   legacy_backfill_eligible?: number;
   automation_sql_recount?: number;
@@ -228,14 +247,23 @@ const QUEUE_AUDIT_PHASE_LABELS: Record<string, string> = {
 function formatQueueAuditCheck(phase: QueueAuditPhase): string {
   if (phase.error) return phase.error;
   const parts: string[] = [];
+  if (phase.spine_queue_depth != null && phase.spine_queue_depth > 0) {
+    const actionable =
+      phase.actionable_unified_intake ?? phase.queue_depth ?? phase.monitor_pending;
+    if (actionable != null && phase.spine_queue_depth !== actionable) {
+      parts.push(`spine queue ${formatPulseCount(phase.spine_queue_depth)} (operational only)`);
+    }
+  }
   if (phase.actionable_unified_intake != null) {
-    parts.push(`vs actionable_unified_intake ${formatPulseCount(phase.actionable_unified_intake)}`);
+    parts.push(`actionable ${formatPulseCount(phase.actionable_unified_intake)}`);
   }
   if (phase.automation_sql_recount != null) {
     parts.push(`vs automation SQL ${formatPulseCount(phase.automation_sql_recount)}`);
   }
-  if (phase.total_missing_unified_pass != null) {
-    parts.push(`broader inventory ${formatPulseCount(phase.total_missing_unified_pass)}`);
+  const inventory =
+    phase.inventory_missing_pass ?? phase.total_missing_unified_pass;
+  if (inventory != null) {
+    parts.push(`inventory ${formatPulseCount(inventory)}`);
   }
   if (phase.legacy_backfill_eligible != null && phase.legacy_backfill_eligible > 0) {
     parts.push(`legacy backfill ${formatPulseCount(phase.legacy_backfill_eligible)}`);
@@ -264,6 +292,12 @@ type ProcessingPulseState = {
     intake_window_hours?: number;
     operator_metrics?: Record<string, unknown>;
     queue_audit?: { phases?: Record<string, QueueAuditPhase> };
+    unified_intake_breakdown?: {
+      actionable_unified_intake?: number;
+      inventory_missing_pass?: number;
+      legacy_backfill_eligible?: number;
+      spine_queue_depth?: number;
+    };
     reporting_definitions?: Record<string, string>;
     dimensions?: ProcessingPulseDimension[];
     phase_dashboard?: ProcessingPulsePhase[];
@@ -348,13 +382,18 @@ function mergeProcessingPulseWithCachedPending(
         if (!c) return p;
         return {
           ...p,
-          pending_records: c.pending_records,
-          pending_first_pass: c.pending_first_pass,
-          pending_retry: c.pending_retry,
+          pending_records: c.queue_depth ?? c.pending_records,
+          queue_depth: c.queue_depth ?? c.pending_records,
+          scheduling_backlog: c.scheduling_backlog,
+          pending_first_pass: c.first_pass_depth ?? c.pending_first_pass,
+          first_pass_depth: c.first_pass_depth ?? c.pending_first_pass,
+          pending_retry: c.retry_depth ?? c.pending_retry,
+          retry_depth: c.retry_depth ?? c.pending_retry,
           intake_first_pass: c.intake_first_pass,
           work_queue_metric_kind: c.work_queue_metric_kind,
           estimated_batch_per_run: c.estimated_batch_per_run,
-          batches_to_drain: c.batches_to_drain,
+          batches_to_drain: c.estimated_phase_runs ?? c.batches_to_drain,
+          estimated_phase_runs: c.estimated_phase_runs ?? c.batches_to_drain,
         };
       })
     )
@@ -518,13 +557,18 @@ export default function MonitorPage() {
                 if (!row) return p;
                 return {
                   ...p,
-                  pending_records: row.pending_records,
-                  pending_first_pass: row.pending_first_pass,
-                  pending_retry: row.pending_retry,
+                  pending_records: row.queue_depth ?? row.pending_records,
+                  queue_depth: row.queue_depth ?? row.pending_records,
+                  scheduling_backlog: row.scheduling_backlog,
+                  pending_first_pass: row.first_pass_depth ?? row.pending_first_pass,
+                  first_pass_depth: row.first_pass_depth ?? row.pending_first_pass,
+                  pending_retry: row.retry_depth ?? row.pending_retry,
+                  retry_depth: row.retry_depth ?? row.pending_retry,
                   intake_first_pass: row.intake_first_pass,
                   work_queue_metric_kind: row.work_queue_metric_kind,
                   estimated_batch_per_run: row.estimated_batch_per_run,
-                  batches_to_drain: row.batches_to_drain,
+                  batches_to_drain: row.estimated_phase_runs ?? row.batches_to_drain,
+                  estimated_phase_runs: row.estimated_phase_runs ?? row.batches_to_drain,
                 };
               })
             )
@@ -1358,9 +1402,9 @@ export default function MonitorPage() {
                       <TableCell>Phase</TableCell>
                       <TableCell
                         align='right'
-                        title='Eligible pending work for this phase only (scheduler queue depth). Units differ by phase — do not sum across rows.'
+                        title='queue_depth: actionable work remaining (same eligibility SQL automation uses). scheduling_backlog is excess beyond one batch tick.'
                       >
-                        Total queue
+                        queue_depth
                       </TableCell>
                       <TableCell
                         align='right'
@@ -1444,10 +1488,21 @@ export default function MonitorPage() {
                             )}
                           </TableCell>
                           <TableCell align='right'>
-                            {formatPulseCount(p.pending_records ?? 0)}
+                            {formatPulseCount(phaseQueueDepth(p))}
+                            {(p.scheduling_backlog ?? 0) > 0 &&
+                              (p.scheduling_backlog ?? 0) !== phaseQueueDepth(p) && (
+                                <Typography
+                                  component='span'
+                                  variant='caption'
+                                  color='text.secondary'
+                                  sx={{ display: 'block' }}
+                                >
+                                  sched {formatPulseCount(p.scheduling_backlog)}
+                                </Typography>
+                              )}
                           </TableCell>
                           <TableCell align='right'>
-                            {(p.pending_first_pass ?? p.pending_records ?? 0) > 0 ? (
+                            {phaseFirstPassDepth(p) > 0 ? (
                               <Typography
                                 component='span'
                                 variant='body2'
@@ -1455,9 +1510,7 @@ export default function MonitorPage() {
                                   (p.intake_first_pass ?? 0) > 0 ? 'info.main' : 'text.primary'
                                 }
                               >
-                                {formatPulseCount(
-                                  p.pending_first_pass ?? p.pending_records ?? 0
-                                )}
+                                {formatPulseCount(phaseFirstPassDepth(p))}
                               </Typography>
                             ) : (
                               formatPulseCount(0)
@@ -1572,30 +1625,50 @@ export default function MonitorPage() {
                         color='text.secondary'
                         sx={{ display: 'block', mb: 0.75 }}
                       >
-                        Queue audit — independent SQL cross-checks for Total queue (not duplicate
+                        Queue audit — independent SQL cross-checks for queue_depth (not duplicate
                         totals). Mismatch means investigate backlog_metrics vs inventory definitions.
                       </Typography>
                       <Table size='small' sx={{ '& td': { py: 0.5 } }}>
                         <TableHead>
                           <TableRow>
                             <TableCell>Phase</TableCell>
-                            <TableCell align='right'>Total queue</TableCell>
+                            <TableCell align='right'>queue_depth</TableCell>
+                            <TableCell align='right'>Actionable</TableCell>
+                            <TableCell align='right'>Spine queue</TableCell>
+                            <TableCell align='right'>Inventory</TableCell>
                             <TableCell align='center'>SQL match</TableCell>
                             <TableCell>Cross-check</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
                           {Object.entries(processingPulse.data.queue_audit.phases).map(
-                            ([key, row]) => (
+                            ([key, row]) => {
+                              const depth = row.queue_depth ?? row.monitor_pending ?? 0;
+                              const actionable = row.actionable_unified_intake;
+                              const spine = row.spine_queue_depth;
+                              const inventory =
+                                row.inventory_missing_pass ?? row.total_missing_unified_pass;
+                              const sqlMatch =
+                                row.matches_actionable_sql ?? row.matches_automation_sql;
+                              return (
                               <TableRow key={key}>
                                 <TableCell>{QUEUE_AUDIT_PHASE_LABELS[key] ?? key}</TableCell>
                                 <TableCell align='right'>
-                                  {formatPulseCount(row.monitor_pending ?? 0)}
+                                  {formatPulseCount(depth)}
+                                </TableCell>
+                                <TableCell align='right'>
+                                  {actionable != null ? formatPulseCount(actionable) : '—'}
+                                </TableCell>
+                                <TableCell align='right'>
+                                  {spine != null && spine > 0 ? formatPulseCount(spine) : '—'}
+                                </TableCell>
+                                <TableCell align='right'>
+                                  {inventory != null ? formatPulseCount(inventory) : '—'}
                                 </TableCell>
                                 <TableCell align='center'>
                                   {row.error ? (
                                     '—'
-                                  ) : row.matches_automation_sql ? (
+                                  ) : sqlMatch ? (
                                     <Typography component='span' color='success.main'>
                                       yes
                                     </Typography>
@@ -1611,7 +1684,8 @@ export default function MonitorPage() {
                                   </Typography>
                                 </TableCell>
                               </TableRow>
-                            )
+                            );
+                            }
                           )}
                         </TableBody>
                       </Table>

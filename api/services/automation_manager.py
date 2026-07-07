@@ -5523,6 +5523,12 @@ class AutomationManager:
             }
         except Exception as e:
             out["llm_routing"] = {"error": str(e)}
+        try:
+            from shared.pipeline_queue_vocabulary import add_automation_status_aliases
+
+            out = add_automation_status_aliases(out)
+        except Exception:
+            pass
         return out
 
     def get_metrics(self) -> dict[str, Any]:

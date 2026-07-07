@@ -1070,11 +1070,11 @@ class PipelineController:
 
         pending: dict[str, int] = {}
         try:
-            from services.backlog_metrics import get_all_pending_counts
+            from shared.pipeline_queue_counts import get_all_phase_queue_depths
 
-            pending = get_all_pending_counts()
+            pending = get_all_phase_queue_depths()
         except Exception as e:
-            logger.debug("get_all_pending_counts: %s", e)
+            logger.debug("get_all_phase_queue_depths: %s", e)
 
         for phase, count in pending.items():
             hist = self._pending_history[phase]

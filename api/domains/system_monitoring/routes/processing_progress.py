@@ -97,10 +97,9 @@ def _unified_pending_count(
     pending_m: dict[str, int],
     wq: dict[str, Any],
 ) -> int:
-    """Align Total queue with work-queue breakdown when bespoke SQL counts differ."""
-    pend_raw = int(pending_m.get(phase_name, 0) or 0)
-    wq_total = int(wq.get("total_pending", 0) or 0)
-    return max(pend_raw, wq_total)
+    """queue_depth from backlog_metrics kernel (work-queue breakdown is first_pass/retry only)."""
+    _ = wq
+    return int(pending_m.get(phase_name, 0) or 0)
 
 
 def _norm_phase_name(raw: Any) -> str | None:
@@ -188,20 +187,14 @@ def _json_safe_float(value: Any, *, ndigits: int = 1) -> float | None:
 
 def _build_dimension_throughput(cur) -> list[dict[str, Any]]:
     """Heavy cross-schema throughput counts (Monitor fast path skips this)."""
+    from shared.monitor_dimension_metrics import apply_dimension_backlogs
+    from shared.pipeline_queue_counts import get_all_phase_queue_depths
+
+    queue_depths = get_all_phase_queue_depths()
     dimensions: list[dict[str, Any]] = []
-    article_backlog = 0
     enriched_1h = enriched_24h = enriched_7d = 0
-    for schema in get_schema_names_active():
+    for schema in get_pipeline_schema_names_active():
         try:
-            cur.execute(
-                f"""
-                SELECT COUNT(*) FROM {schema}.articles
-                WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
-                  AND COALESCE(enrichment_attempts, 0) < 3
-                  AND url IS NOT NULL AND url != ''
-                """
-            )
-            article_backlog += cur.fetchone()[0] or 0
             cur.execute(
                 f"""
                 SELECT
@@ -224,14 +217,13 @@ def _build_dimension_throughput(cur) -> list[dict[str, Any]]:
         {
             "id": "articles_enriched",
             "label": "Articles enriched",
-            "backlog": article_backlog,
+            "backlog": 0,
             "last_1h": enriched_1h,
             "last_24h": enriched_24h,
             "last_7d": enriched_7d,
         }
     )
 
-    context_backlog = 0
     context_backlog_breakdown: dict[str, int] = {}
     ctx_claim_1h = ctx_claim_24h = ctx_claim_7d = 0
     ctx_created_1h = ctx_created_24h = ctx_created_7d = 0
@@ -240,14 +232,8 @@ def _build_dimension_throughput(cur) -> list[dict[str, Any]]:
             from services.claim_extraction_service import get_context_claim_backlog_stats
 
             context_backlog_breakdown = get_context_claim_backlog_stats()
-            context_backlog = int(
-                context_backlog_breakdown.get("actionable_no_claims", 0) or 0
-            )
         except Exception:
             context_backlog_breakdown = {}
-            from services.backlog_metrics import _count_claim_extraction_backlog
-
-            context_backlog = int(_count_claim_extraction_backlog() or 0)
         cur.execute(
             """
             SELECT
@@ -283,10 +269,10 @@ def _build_dimension_throughput(cur) -> list[dict[str, Any]]:
         {
             "id": "contexts_claimed",
             "label": "Contexts → claims (actionable queue)",
-            "backlog": context_backlog,
+            "backlog": 0,
             "backlog_breakdown": context_backlog_breakdown or None,
             "backlog_note": (
-                "backlog = actionable_no_claims (matches claim_extraction automation); "
+                "backlog = queue_depth(claim_extraction); matches automation eligibility. "
                 "backlog_breakdown.total_no_claims is terminal inventory, not work to do"
             ),
             "last_1h": ctx_claim_1h,
@@ -305,22 +291,8 @@ def _build_dimension_throughput(cur) -> list[dict[str, Any]]:
         }
     )
 
-    ep_backlog = ep_any_1h = ep_any_24h = ep_any_7d = 0
+    ep_any_1h = ep_any_24h = ep_any_7d = 0
     try:
-        from shared.entity_profile_eligibility import sql_entity_profile_needs_build
-
-        ep_needs = sql_entity_profile_needs_build("ep")
-        cur.execute(
-            f"""
-            SELECT COUNT(*) FROM intelligence.entity_profiles ep
-            WHERE {ep_needs}
-              AND EXISTS (
-                  SELECT 1 FROM intelligence.context_entity_mentions cem
-                  WHERE cem.entity_profile_id = ep.id
-              )
-            """
-        )
-        ep_backlog = cur.fetchone()[0] or 0
         cur.execute(
             """
             SELECT
@@ -340,23 +312,15 @@ def _build_dimension_throughput(cur) -> list[dict[str, Any]]:
         {
             "id": "entity_profiles_touched",
             "label": "Entity profiles updated",
-            "backlog": ep_backlog,
+            "backlog": 0,
             "last_1h": ep_any_1h,
             "last_24h": ep_any_24h,
             "last_7d": ep_any_7d,
         }
     )
 
-    docs_backlog = docs_1h = docs_24h = docs_7d = 0
+    docs_1h = docs_24h = docs_7d = 0
     try:
-        cur.execute(
-            """
-            SELECT COUNT(*) FROM intelligence.processed_documents
-            WHERE (extracted_sections IS NULL OR extracted_sections = '[]')
-              AND (metadata IS NULL OR (metadata->'processing'->>'permanent_failure') IS DISTINCT FROM 'true')
-            """
-        )
-        docs_backlog = cur.fetchone()[0] or 0
         cur.execute(
             """
             SELECT
@@ -377,31 +341,16 @@ def _build_dimension_throughput(cur) -> list[dict[str, Any]]:
         {
             "id": "documents_extracted",
             "label": "PDFs / documents extracted",
-            "backlog": docs_backlog,
+            "backlog": 0,
             "last_1h": docs_1h,
             "last_24h": docs_24h,
             "last_7d": docs_7d,
         }
     )
 
-    storyline_backlog = syn_1h = syn_24h = syn_7d = 0
+    syn_1h = syn_24h = syn_7d = 0
     for _dk, schema in pipeline_url_schema_pairs():
         try:
-            cur.execute(
-                f"""
-                SELECT COUNT(*) FROM {schema}.storylines s
-                JOIN (SELECT storyline_id, COUNT(*) AS c FROM {schema}.storyline_articles GROUP BY storyline_id) sa
-                  ON sa.storyline_id = s.id AND sa.c >= 3
-                WHERE s.synthesized_content IS NULL
-                   OR EXISTS (
-                     SELECT 1 FROM {schema}.storyline_articles sa2
-                     JOIN {schema}.articles a ON a.id = sa2.article_id
-                     WHERE sa2.storyline_id = s.id
-                     AND a.created_at > COALESCE(s.synthesized_at, '1970-01-01'::timestamptz)
-                   )
-                """
-            )
-            storyline_backlog += cur.fetchone()[0] or 0
             cur.execute(
                 f"""
                 SELECT
@@ -424,13 +373,13 @@ def _build_dimension_throughput(cur) -> list[dict[str, Any]]:
         {
             "id": "storylines_synthesized",
             "label": "Storylines synthesized",
-            "backlog": storyline_backlog,
+            "backlog": 0,
             "last_1h": syn_1h,
             "last_24h": syn_24h,
             "last_7d": syn_7d,
         }
     )
-    return dimensions
+    return apply_dimension_backlogs(dimensions, queue_depths)
 
 
 def compute_processing_progress_response(
@@ -711,6 +660,7 @@ def compute_processing_progress_response(
     snapshot_signal_lane_metrics: dict[str, Any] = {}
     snapshot_feed_health_metrics: dict[str, Any] = {}
     snapshot_queue_audit: dict[str, Any] = {}
+    snapshot_unified_intake_breakdown: dict[str, int] | None = None
     work_queues_m: dict[str, Any] = {}
     intake_window_hours: int | None = None
     pending_included = pending_metrics_source in ("live", "snapshot")
@@ -730,10 +680,12 @@ def compute_processing_progress_response(
         try:
             from services.backlog_metrics import (
                 get_all_backlog_counts,
-                get_all_pending_counts,
+                invalidate_backlog_metrics_cache,
             )
+            from shared.pipeline_queue_counts import get_all_phase_queue_depths
 
-            pending_m = {k: int(v) for k, v in get_all_pending_counts().items()}
+            invalidate_backlog_metrics_cache()
+            pending_m = {k: int(v) for k, v in get_all_phase_queue_depths().items()}
             backlog_m = {k: int(v) for k, v in get_all_backlog_counts().items()}
             pending_metrics_as_of_utc = now_iso
         except Exception as e:
@@ -753,14 +705,33 @@ def compute_processing_progress_response(
             if not snap:
                 snap = refresh_monitor_backlog_snapshot(force=True)
             if snap:
-                pending_m = {k: int(v) for k, v in (snap.get("pending") or {}).items()}
-                backlog_m = {k: int(v) for k, v in (snap.get("backlog") or {}).items()}
+                pending_m = {
+                    k: int(v)
+                    for k, v in (
+                        snap.get("queue_depths")
+                        or snap.get("pending")
+                        or {}
+                    ).items()
+                }
+                backlog_m = {
+                    k: int(v)
+                    for k, v in (
+                        snap.get("scheduling_backlog")
+                        or snap.get("backlog")
+                        or {}
+                    ).items()
+                }
                 pending_metrics_as_of_utc = snap.get("refreshed_at_utc") or now_iso
                 snapshot_operator_metrics = dict(snap.get("operator_metrics") or {})
                 work_queues_m = dict(snap.get("work_queues") or {})
                 snapshot_signal_lane_metrics = dict(snap.get("signal_lane_metrics") or {})
                 snapshot_feed_health_metrics = dict(snap.get("feed_health_metrics") or {})
                 snapshot_queue_audit = dict(snap.get("queue_audit") or {})
+                raw_uib = snap.get("unified_intake_breakdown")
+                if isinstance(raw_uib, dict):
+                    snapshot_unified_intake_breakdown = {
+                        k: int(v) for k, v in raw_uib.items()
+                    }
                 raw_intake = snap.get("intake_window_hours")
                 if raw_intake is not None:
                     try:
@@ -832,6 +803,7 @@ def compute_processing_progress_response(
         pend = _unified_pending_count(name, pending_m, wq)
         row["pending_records"] = pend
         row["queue_depth"] = pend
+        row["scheduling_backlog"] = int(backlog_m.get(name, 0) or 0)
         row["scheduling_status"] = _phase_scheduling_status(name)
         try:
             from shared.pipeline_resource_policy import intake_phase_scheduled
@@ -874,6 +846,9 @@ def compute_processing_progress_response(
             and bsize > 0
             and runs_24h == 0
         )
+        from shared.pipeline_queue_vocabulary import add_queue_depth_aliases
+
+        row = add_queue_depth_aliases(row)
         phase_dashboard.append(row)
         if name in ("unified_intake_extraction", "claim_extraction", "entity_extraction") or pend >= 500:
             try:
@@ -906,6 +881,8 @@ def compute_processing_progress_response(
                 )
             except Exception:
                 pass
+
+    from shared.pipeline_queue_vocabulary import REPORTING_DEFINITIONS as QUEUE_VOCAB_DEFINITIONS
 
     reporting_definitions: dict[str, str] = {
         "monitor_schema_version": (
@@ -980,6 +957,7 @@ def compute_processing_progress_response(
             "Separate from storyline_automation pool depth (scheduler eligibility for suggest_only storylines)."
         ),
     }
+    reporting_definitions.update(QUEUE_VOCAB_DEFINITIONS)
 
     operator_metrics: dict[str, Any] = {}
     if pending_metrics_source == "snapshot" and snapshot_operator_metrics:
@@ -1030,6 +1008,7 @@ def compute_processing_progress_response(
             logger.debug("processing_progress feed_health_metrics: %s", e)
 
     queue_audit: dict[str, Any] = {}
+    unified_intake_breakdown: dict[str, int] | None = None
     if pending_included and pending_m:
         if snapshot_queue_audit:
             queue_audit = snapshot_queue_audit
@@ -1040,6 +1019,15 @@ def compute_processing_progress_response(
                 queue_audit = build_queue_audit(pending_m)
             except Exception as e:
                 logger.debug("processing_progress queue_audit: %s", e)
+        if snapshot_unified_intake_breakdown is not None:
+            unified_intake_breakdown = snapshot_unified_intake_breakdown
+        else:
+            try:
+                from shared.pipeline_queue_counts import get_unified_intake_breakdown
+
+                unified_intake_breakdown = dict(get_unified_intake_breakdown())
+            except Exception as e:
+                logger.debug("processing_progress unified_intake_breakdown: %s", e)
 
     try:
         from shared.monitor_pulse_debug import monitor_pulse_debug
@@ -1076,6 +1064,7 @@ def compute_processing_progress_response(
             "feed_health_metrics": feed_health_metrics,
             "operator_metrics": operator_metrics,
             "queue_audit": queue_audit,
+            "unified_intake_breakdown": unified_intake_breakdown,
             "reporting_definitions": reporting_definitions,
             "monitor_schema_version": MONITOR_SCHEMA_VERSION,
             "dimension_throughput_included": include_dimension_throughput,

@@ -237,7 +237,11 @@ def get_backlog_status() -> dict[str, Any]:
             cur.execute("SET LOCAL statement_timeout = '3s'")
         except Exception:
             _rollback_db_connection(conn)
-        article_backlog = 0
+        from shared.monitor_dimension_metrics import get_dimension_backlog
+        from shared.pipeline_queue_counts import get_all_phase_queue_depths
+
+        queue_depths = get_all_phase_queue_depths()
+        article_backlog = get_dimension_backlog("articles_enriched", queue_depths)
         articles_created_24h = 0
         articles_short_created_24h = 0
         enriched_last_1h = 0
@@ -247,15 +251,6 @@ def get_backlog_status() -> dict[str, Any]:
 
         for schema in get_schema_names_active():
             try:
-                cur.execute(
-                    f"""
-                    SELECT COUNT(*) FROM {schema}.articles
-                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
-                      AND COALESCE(enrichment_attempts, 0) < 3
-                      AND url IS NOT NULL AND url != ''
-                    """
-                )
-                article_backlog += cur.fetchone()[0] or 0
                 cur.execute(
                     f"""
                     SELECT COUNT(*),
@@ -294,39 +289,8 @@ def get_backlog_status() -> dict[str, Any]:
             except Exception:
                 _rollback_db_connection(conn)
 
-        doc_backlog = 0
-        try:
-            cur.execute(
-                """
-                SELECT COUNT(*) FROM intelligence.processed_documents
-                WHERE (extracted_sections IS NULL OR extracted_sections = '[]')
-                  AND (metadata IS NULL OR (metadata->'processing'->>'permanent_failure') IS DISTINCT FROM 'true')
-                """
-            )
-            doc_backlog = cur.fetchone()[0] or 0
-        except Exception:
-            _rollback_db_connection(conn)
-
-        storyline_backlog = 0
-        for schema in get_schema_names_active():
-            try:
-                cur.execute(
-                    f"""
-                    SELECT COUNT(*) FROM {schema}.storylines s
-                    JOIN (SELECT storyline_id, COUNT(*) AS c FROM {schema}.storyline_articles GROUP BY storyline_id) sa
-                      ON sa.storyline_id = s.id AND sa.c >= 3
-                    WHERE s.synthesized_content IS NULL
-                       OR EXISTS (
-                         SELECT 1 FROM {schema}.storyline_articles sa2
-                         JOIN {schema}.articles a ON a.id = sa2.article_id
-                         WHERE sa2.storyline_id = s.id
-                         AND a.created_at > COALESCE(s.synthesized_at, '1970-01-01'::timestamptz)
-                       )
-                    """
-                )
-                storyline_backlog += cur.fetchone()[0] or 0
-            except Exception:
-                _rollback_db_connection(conn)
+        doc_backlog = get_dimension_backlog("documents_extracted", queue_depths)
+        storyline_backlog = get_dimension_backlog("storylines_synthesized", queue_depths)
 
         # Contexts: total, backlog (no claims yet), and throughput (contexts that got claims in last 1h/24h)
         context_total = 0
@@ -348,15 +312,9 @@ def get_backlog_status() -> dict[str, Any]:
                 from services.claim_extraction_service import get_context_claim_backlog_stats
 
                 context_backlog_breakdown = get_context_claim_backlog_stats()
-                context_backlog = context_backlog_breakdown.get("actionable_no_claims", 0)
             except Exception:
                 context_backlog_breakdown = {}
-                try:
-                    from services.backlog_metrics import _count_claim_extraction_backlog
-
-                    context_backlog = int(_count_claim_extraction_backlog() or 0)
-                except Exception:
-                    context_backlog = 0
+            context_backlog = get_dimension_backlog("contexts_claimed", queue_depths)
             cur.execute(
                 """
                 SELECT
@@ -416,7 +374,7 @@ def get_backlog_status() -> dict[str, Any]:
 
         # Entity profiles: total, backlog (empty sections or stale), throughput (updated with sections in last 1h/24h)
         entity_profile_total = 0
-        entity_profile_backlog = 0
+        entity_profile_backlog = get_dimension_backlog("entity_profiles_touched", queue_depths)
         entity_profiles_updated_last_1h = 0
         entity_profiles_updated_last_24h = 0
         entity_profiles_updated_4d = 0
@@ -424,22 +382,8 @@ def get_backlog_status() -> dict[str, Any]:
         entity_profiles_any_updated_last_24h = 0
         entity_profiles_any_updated_4d = 0
         try:
-            from shared.entity_profile_eligibility import sql_entity_profile_needs_build
-
-            entity_profile_needs_build = sql_entity_profile_needs_build("ep")
             cur.execute("SELECT COUNT(*) FROM intelligence.entity_profiles")
             entity_profile_total = cur.fetchone()[0] or 0
-            cur.execute(
-                f"""
-                SELECT COUNT(*) FROM intelligence.entity_profiles ep
-                WHERE {entity_profile_needs_build}
-                  AND EXISTS (
-                      SELECT 1 FROM intelligence.context_entity_mentions cem
-                      WHERE cem.entity_profile_id = ep.id
-                  )
-                """
-            )
-            entity_profile_backlog = cur.fetchone()[0] or 0
             cur.execute(
                 """
                 SELECT

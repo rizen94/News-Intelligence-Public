@@ -105,8 +105,11 @@ def _row_would_prune(
     if is_advertisement(t, ad_body, u):
         return True, "advertisement"
     if also_low_quality:
+        from collectors.rss_collector import _rss_ingest_min_quality_score
+
+        min_q = _rss_ingest_min_quality_score()
         q = calculate_article_quality_score(t, c, src, u)
-        if q < 0.3:
+        if q < min_q:
             return True, f"low_quality_{q:.2f}"
     return False, ""
 
