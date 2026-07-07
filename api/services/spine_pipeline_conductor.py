@@ -171,6 +171,7 @@ async def _drain_spine_phase(
 
 async def _drain_enrichment(automation: Any | None, *, budget_seconds: int = 120) -> dict[str, Any]:
     import asyncio
+    from datetime import datetime, timezone
 
     from services.article_content_enrichment_service import enrich_articles_batch
     from services.spine_work_queue_service import (
@@ -196,6 +197,7 @@ async def _drain_enrichment(automation: Any | None, *, budget_seconds: int = 120
         pass
     while not budget.expired():
         rounds += 1
+        round_started = datetime.now(timezone.utc)
         n = 0
         claimed: dict[str, list[int]] = {}
         use_queue_round = False
@@ -244,6 +246,16 @@ async def _drain_enrichment(automation: Any | None, *, budget_seconds: int = 120
             except Exception:
                 pass
         total += n
+        if n > 0:
+            round_finished = datetime.now(timezone.utc)
+            await persist_conductor_phase_run_async(
+                "content_enrichment",
+                round_started,
+                round_finished,
+                scheduler_path="spine_conductor",
+                loops_processed=rounds,
+                stats={"round_processed": n, "processed": n},
+            )
         if stall.record_round(processed=n, had_pending=had_pending):
             break
         if n == 0:

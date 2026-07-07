@@ -2958,6 +2958,9 @@ class AutomationManager:
     async def _execute_content_enrichment(self, task: Task):
         """Fetch full article text with trafilatura for articles with short content."""
         import asyncio
+        from datetime import datetime, timezone
+
+        from shared.services.phase_batch_run_history import record_phase_batch_completion_async
 
         try:
             from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
@@ -2974,6 +2977,7 @@ class AutomationManager:
 
         from services.article_content_enrichment_service import enrich_articles_batch
 
+        started = datetime.now(timezone.utc)
         try:
             async with self._content_enrichment_lock:
                 loop = asyncio.get_event_loop()
@@ -2981,7 +2985,15 @@ class AutomationManager:
                 enriched = await loop.run_in_executor(
                     None, lambda: enrich_articles_batch(batch_size=60)
                 )
-            if enriched and enriched > 0:
+            finished = datetime.now(timezone.utc)
+            enriched_n = int(enriched or 0)
+            if enriched_n > 0:
+                await record_phase_batch_completion_async(
+                    "content_enrichment",
+                    started,
+                    finished,
+                    stats={"round_processed": enriched_n, "processed": enriched_n},
+                )
                 ctrl = getattr(self, "pipeline_controller", None)
                 if ctrl is not None:
                     ctrl.request_replan()
@@ -3005,6 +3017,9 @@ class AutomationManager:
     async def _execute_document_processing(self, task: Task):
         """Process pending PDFs (download, extract text, sections, entities)."""
         import asyncio
+        from datetime import datetime, timezone
+
+        from shared.services.phase_batch_run_history import record_phase_batch_completion_async
 
         try:
             from services.backlog_metrics import get_backlog_count
@@ -3013,12 +3028,20 @@ class AutomationManager:
             # Process more per run when backlog is large (batch 10 + backlog over 20 → limit 25)
             backlog = get_backlog_count("document_processing") or 0
             limit = 25 if backlog > 20 else 15 if backlog > 10 else 10
+            started = datetime.now(timezone.utc)
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 None, lambda: process_unprocessed_documents(limit=limit)
             )
-            count = result.get("processed", 0) if isinstance(result, dict) else 0
+            finished = datetime.now(timezone.utc)
+            count = int(result.get("processed", 0) if isinstance(result, dict) else 0)
             if count > 0:
+                await record_phase_batch_completion_async(
+                    "document_processing",
+                    started,
+                    finished,
+                    stats={"round_processed": count, "processed": count},
+                )
                 logger.info(f"Document processing (v8): {count} documents processed")
         except Exception as e:
             logger.warning(f"Document processing failed: {e}")
@@ -3306,11 +3329,14 @@ class AutomationManager:
 
     async def _execute_claims_to_facts(self, task: Task):
         """Promote high-confidence extracted_claims to versioned_facts (activates story state chain)."""
+        from datetime import datetime, timezone
+
         from services.claim_extraction_service import (
             claims_to_facts_drain_enabled,
             drain_claims_to_facts_for_automation_task,
             promote_claims_to_versioned_facts,
         )
+        from shared.services.phase_batch_run_history import record_phase_batch_completion_async
 
         task.metadata = task.metadata or {}
         try:
@@ -3332,6 +3358,7 @@ class AutomationManager:
                         batches,
                     )
             else:
+                started = datetime.now(timezone.utc)
                 if per_batch is not None:
                     stats = await asyncio.to_thread(
                         promote_claims_to_versioned_facts,
@@ -3340,9 +3367,22 @@ class AutomationManager:
                     )
                 else:
                     stats = await asyncio.to_thread(promote_claims_to_versioned_facts)
+                finished = datetime.now(timezone.utc)
                 if not isinstance(stats, dict):
                     return
-                if stats.get("candidates", 0) == 0:
+                promoted = int(stats.get("promoted") or 0)
+                if promoted > 0:
+                    await record_phase_batch_completion_async(
+                        "claims_to_facts",
+                        started,
+                        finished,
+                        stats={
+                            "promoted": promoted,
+                            "round_processed": promoted,
+                            "processed": promoted,
+                        },
+                    )
+                elif stats.get("candidates", 0) == 0:
                     logger.debug("Claims to facts: no promotable claims in batch")
         except Exception as e:
             logger.warning(f"Claims to facts failed: {e}")
@@ -3393,6 +3433,10 @@ class AutomationManager:
 
     async def _execute_event_tracking(self, task: Task):
         """Populate tracked_events and event_chronicles from contexts (Phase 2.3 context-centric)."""
+        from datetime import datetime, timezone
+
+        from shared.services.phase_batch_run_history import record_phase_batch_completion_async
+
         try:
             from config.context_centric_config import is_context_centric_task_enabled
 
@@ -3403,9 +3447,21 @@ class AutomationManager:
         try:
             from services.event_tracking_service import run_event_tracking_batch
 
+            started = datetime.now(timezone.utc)
             # Higher limit to drain unlinked-context backlog; ~30 contexts/batch, 3 domains
-            total = await run_event_tracking_batch(limit=300)
+            total = int(await run_event_tracking_batch(limit=300) or 0)
+            finished = datetime.now(timezone.utc)
             if total > 0:
+                await record_phase_batch_completion_async(
+                    "event_tracking",
+                    started,
+                    finished,
+                    stats={
+                        "chronicle_entries": total,
+                        "round_processed": total,
+                        "processed": total,
+                    },
+                )
                 logger.info(f"Event tracking: {total} chronicle entries added")
         except Exception as e:
             logger.warning(f"Event tracking failed: {e}")
@@ -3505,6 +3561,10 @@ class AutomationManager:
 
     async def _execute_entity_dossier_compile(self, task: Task):
         """Compile entity dossiers (chronicle_data, relationships, positions) for entities missing or stale (Phase 2.6)."""
+        from datetime import datetime, timezone
+
+        from shared.services.phase_batch_run_history import record_phase_batch_completion_async
+
         try:
             from config.context_centric_config import is_context_centric_task_enabled
 
@@ -3517,15 +3577,30 @@ class AutomationManager:
         from services.dossier_compiler_service import _run_scheduled_dossier_compiles
 
         try:
+            started = datetime.now(timezone.utc)
             loop = asyncio.get_event_loop()
-            compiled = await loop.run_in_executor(
-                self._executor,
-                _run_scheduled_dossier_compiles,
-                max(1, min(100, int(env_str("ENTITY_DOSSIER_COMPILE_MAX", "20")))),
-                None,  # get_db_connection_fn -> use default
-                None,  # stale_days -> ENTITY_DOSSIER_STALE_DAYS / event-driven eligibility
+            compiled = int(
+                await loop.run_in_executor(
+                    self._executor,
+                    _run_scheduled_dossier_compiles,
+                    max(1, min(100, int(env_str("ENTITY_DOSSIER_COMPILE_MAX", "20")))),
+                    None,  # get_db_connection_fn -> use default
+                    None,  # stale_days -> ENTITY_DOSSIER_STALE_DAYS / event-driven eligibility
+                )
+                or 0
             )
+            finished = datetime.now(timezone.utc)
             if compiled > 0:
+                await record_phase_batch_completion_async(
+                    "entity_dossier_compile",
+                    started,
+                    finished,
+                    stats={
+                        "dossiers_compiled": compiled,
+                        "round_processed": compiled,
+                        "processed": compiled,
+                    },
+                )
                 logger.info(f"Entity dossier compile: {compiled} dossiers compiled")
         except Exception as e:
             logger.warning(f"Entity dossier compile failed: {e}")
@@ -3895,17 +3970,23 @@ class AutomationManager:
 
     async def _execute_graph_connection_distillation(self, task: Task):
         """Apply pending graph_connection_proposals (storyline merges, entity merges, M2M links)."""
+        from datetime import datetime, timezone
+
+        from shared.services.phase_batch_run_history import record_phase_batch_completion_async
+
         try:
             from services.graph_connection_processor_service import (
                 process_graph_connection_proposals_batch,
             )
 
+            started = datetime.now(timezone.utc)
             loop = asyncio.get_event_loop()
             stats = await loop.run_in_executor(
                 self.executor,
                 process_graph_connection_proposals_batch,
                 None,
             )
+            finished = datetime.now(timezone.utc)
             if stats and (
                 stats.get("storyline_merged")
                 or stats.get("storyline_links")
@@ -3916,6 +3997,26 @@ class AutomationManager:
                 or stats.get("rejected")
             ):
                 logger.info("Graph connection distillation: %s", stats)
+            processed = 0
+            if isinstance(stats, dict):
+                processed = sum(
+                    int(stats.get(k) or 0)
+                    for k in (
+                        "storyline_merged",
+                        "storyline_links",
+                        "entity_merged",
+                        "entity_links",
+                        "topic_links",
+                        "hyperedge_links",
+                    )
+                )
+            if processed > 0:
+                await record_phase_batch_completion_async(
+                    "graph_connection_distillation",
+                    started,
+                    finished,
+                    stats={"round_processed": processed, "processed": processed},
+                )
             if stats and stats.get("errors"):
                 logger.debug("Graph connection distillation errors: %s", stats["errors"])
         except Exception as e:

@@ -30,6 +30,13 @@ RUN_SUCCESS_RATE_24H = "run_success_rate_24h"
 PENDING_FIRST_PASS = "pending_first_pass"
 PENDING_RETRY = "pending_retry"
 COMBINED_QUEUE_DEPTH = "combined_queue_depth"
+ROWS_PER_RUN = "rows_per_run"
+MEASURED_ROWS_PER_RUN_24H = "measured_rows_per_run_24h"
+CONFIGURED_ROWS_PER_RUN = "configured_rows_per_run"
+ROWS_PER_RUN_SOURCE = "rows_per_run_source"
+ROWS_PER_RUN_SAMPLE_COUNT = "rows_per_run_sample_count"
+ESTIMATED_BATCH_PER_RUN = "estimated_batch_per_run"
+ESTIMATED_BATCH_PER_RUN_SOURCE = "estimated_batch_per_run_source"
 
 
 class UnifiedIntakeBreakdown(TypedDict):
@@ -88,6 +95,20 @@ REPORTING_DEFINITIONS: dict[str, str] = {
         "Realtime urgent-event in-memory queue depth (GET /api/realtime/streaming_status). "
         "Not pipeline queue_depth — unrelated to automation phase backlog."
     ),
+    "rows_per_run": (
+        "Rows consumed per phase run for ETA: measured_rows_per_run_24h when history samples exist, "
+        "else configured_rows_per_run from backlog_metrics batch heuristics."
+    ),
+    "measured_rows_per_run_24h": (
+        "Average iteration throughput from automation_run_history batch rows in the last 24 hours."
+    ),
+    "configured_rows_per_run": (
+        "Modeled rows per run from BATCH_SIZE_PER_TASK / env overrides when no measured samples."
+    ),
+    "rows_per_run_source": (
+        "measured_24h* | config_default | no_row_batch_model — how rows_per_run was chosen."
+    ),
+    "estimated_batch_per_run": "Alias for rows_per_run (legacy Monitor field name).",
 }
 
 
@@ -132,4 +153,57 @@ def add_queue_depth_aliases(row: dict[str, Any]) -> dict[str, Any]:
         out[FIRST_PASS_DEPTH] = out["pending_first_pass"]
     if "pending_retry" in out and RETRY_DEPTH not in out:
         out[RETRY_DEPTH] = out["pending_retry"]
+    return out
+
+
+_NO_ROW_BATCH_MODEL_PHASES = frozenset(
+    {
+        "nightly_enrichment_context",
+        "collection_cycle",
+        "mention_resolution",
+        "health_check",
+        "rss_feed_health",
+        "data_cleanup",
+        "cache_cleanup",
+        "pending_db_flush",
+    }
+)
+
+
+def apply_rows_per_run_fields(
+    row: dict[str, Any],
+    phase_name: str,
+    *,
+    configured: int,
+    measured: tuple[int, str, int] | None,
+) -> dict[str, Any]:
+    """Set canonical rows/run fields on a phase_dashboard row (mutates copy)."""
+    out = dict(row)
+    cfg = int(configured or 0)
+    out[CONFIGURED_ROWS_PER_RUN] = cfg if cfg > 0 else None
+
+    if phase_name in _NO_ROW_BATCH_MODEL_PHASES or cfg <= 0:
+        out[MEASURED_ROWS_PER_RUN_24H] = None
+        out[ROWS_PER_RUN] = None
+        out[ROWS_PER_RUN_SOURCE] = "no_row_batch_model"
+        out[ROWS_PER_RUN_SAMPLE_COUNT] = 0
+        out[ESTIMATED_BATCH_PER_RUN] = cfg
+        out[ESTIMATED_BATCH_PER_RUN_SOURCE] = "no_row_batch_model"
+        return out
+
+    if measured:
+        avg, source, sample_count = measured
+        out[MEASURED_ROWS_PER_RUN_24H] = avg
+        out[ROWS_PER_RUN] = avg
+        out[ROWS_PER_RUN_SOURCE] = source
+        out[ROWS_PER_RUN_SAMPLE_COUNT] = sample_count
+        out[ESTIMATED_BATCH_PER_RUN] = avg
+        out[ESTIMATED_BATCH_PER_RUN_SOURCE] = source
+    else:
+        out[MEASURED_ROWS_PER_RUN_24H] = None
+        out[ROWS_PER_RUN] = cfg
+        out[ROWS_PER_RUN_SOURCE] = "config_default"
+        out[ROWS_PER_RUN_SAMPLE_COUNT] = 0
+        out[ESTIMATED_BATCH_PER_RUN] = cfg
+        out[ESTIMATED_BATCH_PER_RUN_SOURCE] = "config_default"
     return out

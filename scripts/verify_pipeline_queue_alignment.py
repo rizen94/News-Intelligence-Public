@@ -47,6 +47,18 @@ def _static_regressions() -> list[str]:
         if '"queue_depth"' in ctext and "get_phase_queue_depth" not in ctext:
             errors.append(f"{rel}: shadow mode must use get_phase_queue_depth for queue_depth")
 
+    claim_path = API / "services" / "claim_extraction_service.py"
+    if claim_path.is_file():
+        ctext = claim_path.read_text(encoding="utf-8")
+        if re.search(
+            r'persist_automation_run_history\s*\(\s*["\']claims_to_facts["\']',
+            ctext,
+        ):
+            errors.append(
+                "claim_extraction_service: claims_to_facts must use record_phase_batch_completion "
+                "(not persist_automation_run_history with empty metadata)"
+            )
+
     return errors
 
 

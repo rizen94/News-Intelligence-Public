@@ -23,6 +23,7 @@ from shared.monitor_run_vocabulary import (
     MEANINGFUL_DURATION_SEC,
     MONITOR_SCHEMA_VERSION,
     RUN_HISTORY_SKIP_STATUSES,
+    query_measured_rows_per_run_by_phase,
     run_history_measurable_sql,
     throughput_from_payload,
 )
@@ -131,8 +132,8 @@ def _measured_count_from_payload(payload: dict[str, Any]) -> int | None:
 
 def _measured_batch_per_run_by_phase(
     rows: list[tuple[Any, Any]],
-) -> dict[str, tuple[int, str]]:
-    """Average rows processed per batch run from recent automation_run_history JSON payloads."""
+) -> dict[str, tuple[int, str, int]]:
+    """Fallback parser when SQL aggregation unavailable (tests / legacy error_message payloads)."""
     terminal_samples: dict[str, list[int]] = defaultdict(list)
     fallback_samples: dict[str, list[int]] = defaultdict(list)
     for raw_name, err in rows:
@@ -158,7 +159,7 @@ def _measured_batch_per_run_by_phase(
         elif status not in _SKIP_BATCH_STATUSES and status:
             fallback_samples[norm].append(n)
 
-    out: dict[str, tuple[int, str]] = {}
+    out: dict[str, tuple[int, str, int]] = {}
     for phase in set(terminal_samples) | set(fallback_samples):
         vals = terminal_samples.get(phase) or fallback_samples[phase]
         avg = max(1, int(round(sum(vals) / len(vals))))
@@ -167,7 +168,7 @@ def _measured_batch_per_run_by_phase(
             if phase in terminal_samples and len(terminal_samples[phase]) >= 1
             else ("measured_24h" if len(vals) >= 3 else "measured_24h_small_sample")
         )
-        out[phase] = (avg, source)
+        out[phase] = (avg, source, len(vals))
 
     return out
 
@@ -607,38 +608,46 @@ def compute_processing_progress_response(
             logger.debug("processing_progress hourly: %s", e)
             _rollback_conn(conn)
 
-        measured_batch_rows: list[tuple[Any, Any]] = []
+        measured_batch_by_phase: dict[str, tuple[int, str, int]] = {}
         try:
-            cur.execute(
-                """
-                SELECT phase_name,
-                       COALESCE(
-                           CASE
-                               WHEN metadata IS NOT NULL
-                                    AND metadata::text LIKE '%%"batch":%%'
-                               THEN metadata::text
-                           END,
-                           CASE
-                               WHEN error_message IS NOT NULL
-                                    AND error_message LIKE '%%"batch":%%'
-                               THEN error_message
-                           END
-                       ) AS payload
-                FROM automation_run_history
-                WHERE finished_at >= NOW() - INTERVAL '24 hours'
-                  AND success IS TRUE
-                  AND (
-                      (metadata IS NOT NULL AND metadata::text LIKE '%%"batch":%%')
-                      OR (error_message IS NOT NULL AND error_message LIKE '%%"batch":%%')
-                  )
-                ORDER BY finished_at DESC
-                LIMIT 500
-                """
-            )
-            measured_batch_rows = list(cur.fetchall() or [])
+            measured_batch_by_phase = query_measured_rows_per_run_by_phase(cur)
         except Exception as e:
-            logger.debug("processing_progress measured batch sample: %s", e)
-            _rollback_conn(conn)
+            logger.debug("processing_progress measured rows/run SQL: %s", e)
+        if not measured_batch_by_phase:
+            measured_batch_rows: list[tuple[Any, Any]] = []
+            try:
+                cur.execute(
+                    """
+                    SELECT phase_name,
+                           COALESCE(
+                               CASE
+                                   WHEN metadata IS NOT NULL
+                                        AND metadata::text LIKE '%%"batch":%%'
+                                   THEN metadata::text
+                               END,
+                               CASE
+                                   WHEN error_message IS NOT NULL
+                                        AND error_message LIKE '%%"batch":%%'
+                                   THEN error_message
+                               END
+                           ) AS payload
+                    FROM automation_run_history
+                    WHERE finished_at >= NOW() - INTERVAL '24 hours'
+                      AND success IS TRUE
+                      AND (
+                          (metadata IS NOT NULL AND metadata::text LIKE '%%"batch":%%')
+                          OR (error_message IS NOT NULL AND error_message LIKE '%%"batch":%%')
+                      )
+                    ORDER BY finished_at DESC
+                    LIMIT 500
+                    """
+                )
+                measured_batch_rows = list(cur.fetchall() or [])
+            except Exception as e:
+                logger.debug("processing_progress measured batch fallback: %s", e)
+                _rollback_conn(conn)
+            if measured_batch_rows:
+                measured_batch_by_phase = _measured_batch_per_run_by_phase(measured_batch_rows)
 
         cur.close()
         conn.close()
@@ -651,7 +660,6 @@ def compute_processing_progress_response(
         return {"success": False, "error": str(e)[:200], "data": None}
 
     phase_by_name = {p["phase_name"]: p for p in phases if p.get("phase_name")}
-    measured_batch_by_phase = _measured_batch_per_run_by_phase(measured_batch_rows)
     pending_m: dict[str, int] = {}
     backlog_m: dict[str, int] = {}
     pending_metrics_merge_error: str | None = None
@@ -821,14 +829,17 @@ def compute_processing_progress_response(
             row["pending_retry"] = int(wq.get("retry_pending", 0) or 0)
             row["intake_first_pass"] = int(wq.get("intake_first_pass", 0) or 0)
             row["work_queue_metric_kind"] = wq.get("metric_kind")
-        if name in measured_batch_by_phase:
-            bsize, bsource = measured_batch_by_phase[name]
-            row["estimated_batch_per_run"] = bsize
-            row["estimated_batch_per_run_source"] = bsource
-        else:
-            row["estimated_batch_per_run"] = int(get_batch(name))
-            row["estimated_batch_per_run_source"] = "config_default"
-        bsize = int(row["estimated_batch_per_run"])
+        from shared.pipeline_queue_vocabulary import apply_rows_per_run_fields
+
+        configured_batch = int(get_batch(name))
+        measured_tuple = measured_batch_by_phase.get(name)
+        row = apply_rows_per_run_fields(
+            row,
+            name,
+            configured=configured_batch,
+            measured=measured_tuple,
+        )
+        bsize = int(row.get("rows_per_run") or row.get("estimated_batch_per_run") or 0)
         if pend <= 0:
             row["batches_to_drain"] = 0
             row["estimated_phase_runs"] = 0
@@ -916,9 +927,13 @@ def compute_processing_progress_response(
             "Tracks fresh RSS intake backlog separately from historical all-time first-pass debt."
         ),
         "estimated_batch_per_run": (
-            "Rows consumed per run of the phase. Prefer measured_24h from recent batch "
-            "automation_run_history payloads when available; otherwise config default from backlog_metrics."
+            "Alias for rows_per_run. Prefer measured_rows_per_run_24h from recent batch "
+            "automation_run_history when available; otherwise configured_rows_per_run."
         ),
+        "rows_per_run": QUEUE_VOCAB_DEFINITIONS.get("rows_per_run", ""),
+        "measured_rows_per_run_24h": QUEUE_VOCAB_DEFINITIONS.get("measured_rows_per_run_24h", ""),
+        "configured_rows_per_run": QUEUE_VOCAB_DEFINITIONS.get("configured_rows_per_run", ""),
+        "rows_per_run_source": QUEUE_VOCAB_DEFINITIONS.get("rows_per_run_source", ""),
         "runs_1h": (
             "Meaningful completions in the last hour (excludes instant drain_started/phase_started markers). "
             "Counts each completed batch round (metadata.status=batch_round) or drain/phase finish with rows processed."

@@ -24,6 +24,7 @@ Monitor poll every ~30s:
 | Column "Runs (1h)" | `phase_run` count | From SQL not activity |
 | "queue_depth" | `queue_depth` | `pending_records` | Per-phase actionable depth — **do not sum across phases**. Subtitle shows `scheduling_backlog` when it differs. |
 | "Runs to clear" | `estimated_phase_runs` | `batches_to_drain` |
+| "Rows/run" | `rows_per_run` | `estimated_batch_per_run` | Measured 24h avg when `rows_per_run_source` starts with `measured_`; else `configured_rows_per_run` with `(config)` subtitle. `no_row_batch_model` → `—`. |
 | "First pass" | `first_pass_depth` | `pending_first_pass` |
 | "Retry" | `retry_depth` | `pending_retry` |
 

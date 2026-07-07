@@ -361,11 +361,25 @@ def _claims_to_facts_drain_max_zero_promote_batches() -> int:
     return max(1, n)
 
 
-def _persist_claims_to_facts_batch_run(started: datetime, finished: datetime) -> None:
+def _persist_claims_to_facts_batch_run(
+    started: datetime,
+    finished: datetime,
+    stats: dict[str, Any] | None = None,
+) -> None:
     try:
-        from shared.services.automation_run_history_writer import persist_automation_run_history
+        from shared.services.phase_batch_run_history import record_phase_batch_completion
 
-        persist_automation_run_history("claims_to_facts", started, finished, True, None)
+        promoted = int((stats or {}).get("promoted") or 0)
+        record_phase_batch_completion(
+            "claims_to_facts",
+            started,
+            finished,
+            stats={
+                "promoted": promoted,
+                "round_processed": promoted,
+                "processed": promoted,
+            },
+        )
     except Exception as e:
         logger.debug("claims_to_facts batch history persist failed: %s", e)
 
@@ -415,7 +429,12 @@ async def drain_claims_to_facts_for_automation_task(
         else:
             stats = await asyncio.to_thread(promote_claims_to_versioned_facts)
         batch_finished = datetime.now(timezone.utc)
-        await asyncio.to_thread(_persist_claims_to_facts_batch_run, batch_started, batch_finished)
+        await asyncio.to_thread(
+            _persist_claims_to_facts_batch_run,
+            batch_started,
+            batch_finished,
+            stats if isinstance(stats, dict) else None,
+        )
         batches += 1
 
         if not isinstance(stats, dict):
@@ -1101,12 +1120,29 @@ def _claim_drain_enforce_nightly_window() -> bool:
     return True
 
 
-def _persist_claim_extraction_batch_run(started: datetime, finished: datetime) -> None:
-    """One automation_run_history row per completed batch (drain keeps work in one scheduler task)."""
+def _persist_claim_extraction_batch_run(
+    started: datetime,
+    finished: datetime,
+    *,
+    claims_inserted: int = 0,
+    contexts_processed: int = 0,
+) -> None:
+    """One automation_run_history row per completed batch (when no automation on_batch callback)."""
     try:
-        from shared.services.automation_run_history_writer import persist_automation_run_history
+        from shared.services.phase_batch_run_history import record_phase_batch_completion
 
-        persist_automation_run_history("claim_extraction", started, finished, True, None)
+        rows = int(claims_inserted or contexts_processed or 0)
+        record_phase_batch_completion(
+            "claim_extraction",
+            started,
+            finished,
+            stats={
+                "claims_inserted": int(claims_inserted or 0),
+                "contexts_processed": int(contexts_processed or 0),
+                "round_processed": rows,
+            },
+            allow_empty=True,
+        )
     except Exception as e:
         logger.debug("claim_extraction batch history persist failed: %s", e)
 
@@ -1179,7 +1215,14 @@ async def drain_claim_extraction_for_automation_task(
         batch_started = datetime.now(timezone.utc)
         res = await run_claim_extraction_batch(limit=lim)
         batch_finished = datetime.now(timezone.utc)
-        await asyncio.to_thread(_persist_claim_extraction_batch_run, batch_started, batch_finished)
+        if on_batch_complete is None:
+            await asyncio.to_thread(
+                _persist_claim_extraction_batch_run,
+                batch_started,
+                batch_finished,
+                claims_inserted=res.claims_inserted,
+                contexts_processed=res.contexts_processed,
+            )
         batches += 1
         total_claims += res.claims_inserted
         if on_batch_complete is not None:

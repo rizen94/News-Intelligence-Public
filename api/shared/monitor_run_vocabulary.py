@@ -206,6 +206,73 @@ def run_history_measurable_sql(*, min_dur_param: str = "%(min_dur)s") -> str:
     )"""
 
 
+def metadata_batch_throughput_sql(*, metadata_expr: str = "metadata") -> str:
+    """SQL expression: max iteration throughput from a metadata jsonb column."""
+    keys_sql = ", ".join(
+        f"COALESCE(({metadata_expr}->>'{k}')::bigint, 0)" for k in ITERATION_THROUGHPUT_KEYS
+    )
+    return f"GREATEST({keys_sql})"
+
+
+def query_measured_rows_per_run_by_phase(cur, *, window_hours: int = 24) -> dict[str, tuple[int, str, int]]:
+    """
+    Average rows processed per batch run from automation_run_history (24h window).
+
+    Returns phase_name -> (avg_rows, source, sample_count).
+    """
+    throughput = metadata_batch_throughput_sql(metadata_expr="metadata")
+    terminal = ", ".join(f"'{s}'" for s in sorted({"drain_finished", "phase_finished"}))
+    skip = ", ".join(f"'{s}'" for s in sorted(RUN_HISTORY_SKIP_STATUSES | {RunHistoryStatus.PHASE_FAILED}))
+    measurable = run_history_measurable_sql(min_dur_param=str(MEANINGFUL_DURATION_SEC))
+    try:
+        cur.execute(
+            f"""
+            SELECT
+                phase_name,
+                COUNT(*)::int AS sample_count,
+                COALESCE(
+                    ROUND(AVG({throughput}))::int,
+                    0
+                ) AS avg_rows,
+                COUNT(*) FILTER (
+                    WHERE COALESCE(metadata->>'status', '') IN ({terminal})
+                )::int AS terminal_count
+            FROM automation_run_history
+            WHERE finished_at >= NOW() - INTERVAL '{int(window_hours)} hours'
+              AND success IS TRUE
+              AND metadata IS NOT NULL
+              AND (
+                  COALESCE((metadata->>'batch')::boolean, false)
+                  OR metadata->>'batch' = 'true'
+              )
+              AND COALESCE(metadata->>'status', '') NOT IN ({skip})
+              AND {measurable}
+              AND {throughput} > 0
+            GROUP BY phase_name
+            """
+        )
+        rows = cur.fetchall() or []
+    except Exception as e:
+        logger.debug("query_measured_rows_per_run_by_phase: %s", e)
+        return {}
+
+    out: dict[str, tuple[int, str, int]] = {}
+    for raw_name, sample_count, avg_rows, terminal_count in rows:
+        name = str(raw_name or "").strip()
+        if not name:
+            continue
+        count = int(sample_count or 0)
+        avg = max(1, int(avg_rows or 0))
+        if int(terminal_count or 0) >= 1:
+            source = "measured_24h_terminal"
+        elif count >= 3:
+            source = "measured_24h"
+        else:
+            source = "measured_24h_small_sample"
+        out[name] = (avg, source, count)
+    return out
+
+
 def normalize_phase_run_event(
     phase_key: str,
     iteration_index: int,

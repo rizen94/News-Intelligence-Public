@@ -194,8 +194,15 @@ type ProcessingPulsePhase = {
   /** ceil(unprocessed ÷ rows_per_run); null if no row-batch model. How many phase runs to drain the queue. */
   batches_to_drain?: number | null;
   estimated_phase_runs?: number | null;
-  /** Modeled rows consumed per scheduled run (not measured from history). */
-  estimated_batch_per_run?: number;
+  /** ETA driver: measured 24h avg when available, else config batch size. */
+  rows_per_run?: number | null;
+  measured_rows_per_run_24h?: number | null;
+  configured_rows_per_run?: number | null;
+  rows_per_run_source?: string;
+  rows_per_run_sample_count?: number;
+  /** Legacy alias for rows_per_run. */
+  estimated_batch_per_run?: number | null;
+  estimated_batch_per_run_source?: string;
   runs_1h?: number;
   runs_24h?: number;
   runs_7d?: number;
@@ -219,6 +226,35 @@ function formatPulseCount(n: number | null | undefined): string {
     return Number.isInteger(k) ? `${k}k` : `${k.toFixed(1)}k`;
   }
   return `${n}`;
+}
+
+function phaseRowsPerRunSource(p: ProcessingPulsePhase): string | undefined {
+  return p.rows_per_run_source ?? p.estimated_batch_per_run_source;
+}
+
+function formatRowsPerRunCell(p: ProcessingPulsePhase): {
+  main: string;
+  subtitle?: string;
+  muted?: boolean;
+} {
+  const source = phaseRowsPerRunSource(p);
+  if (source === 'no_row_batch_model') {
+    return { main: '—' };
+  }
+  const sampleCount = p.rows_per_run_sample_count ?? 0;
+  if (source?.startsWith('measured_')) {
+    const val = p.measured_rows_per_run_24h ?? p.rows_per_run ?? p.estimated_batch_per_run;
+    return {
+      main: formatPulseCount(val),
+      subtitle: `n=${sampleCount} in 24h`,
+    };
+  }
+  const cfg = p.configured_rows_per_run ?? p.estimated_batch_per_run ?? p.rows_per_run;
+  return {
+    main: formatPulseCount(cfg),
+    subtitle: '(config)',
+    muted: true,
+  };
 }
 
 type QueueAuditPhase = {
@@ -391,7 +427,14 @@ function mergeProcessingPulseWithCachedPending(
           retry_depth: c.retry_depth ?? c.pending_retry,
           intake_first_pass: c.intake_first_pass,
           work_queue_metric_kind: c.work_queue_metric_kind,
-          estimated_batch_per_run: c.estimated_batch_per_run,
+          rows_per_run: c.rows_per_run ?? c.estimated_batch_per_run,
+          measured_rows_per_run_24h: c.measured_rows_per_run_24h,
+          configured_rows_per_run: c.configured_rows_per_run,
+          rows_per_run_source: c.rows_per_run_source ?? c.estimated_batch_per_run_source,
+          rows_per_run_sample_count: c.rows_per_run_sample_count,
+          estimated_batch_per_run: c.rows_per_run ?? c.estimated_batch_per_run,
+          estimated_batch_per_run_source:
+            c.rows_per_run_source ?? c.estimated_batch_per_run_source,
           batches_to_drain: c.estimated_phase_runs ?? c.batches_to_drain,
           estimated_phase_runs: c.estimated_phase_runs ?? c.batches_to_drain,
         };
@@ -566,7 +609,15 @@ export default function MonitorPage() {
                   retry_depth: row.retry_depth ?? row.pending_retry,
                   intake_first_pass: row.intake_first_pass,
                   work_queue_metric_kind: row.work_queue_metric_kind,
-                  estimated_batch_per_run: row.estimated_batch_per_run,
+                  rows_per_run: row.rows_per_run ?? row.estimated_batch_per_run,
+                  measured_rows_per_run_24h: row.measured_rows_per_run_24h,
+                  configured_rows_per_run: row.configured_rows_per_run,
+                  rows_per_run_source:
+                    row.rows_per_run_source ?? row.estimated_batch_per_run_source,
+                  rows_per_run_sample_count: row.rows_per_run_sample_count,
+                  estimated_batch_per_run: row.rows_per_run ?? row.estimated_batch_per_run,
+                  estimated_batch_per_run_source:
+                    row.rows_per_run_source ?? row.estimated_batch_per_run_source,
                   batches_to_drain: row.estimated_phase_runs ?? row.batches_to_drain,
                   estimated_phase_runs: row.estimated_phase_runs ?? row.batches_to_drain,
                 };
@@ -1426,9 +1477,12 @@ export default function MonitorPage() {
                       </TableCell>
                       <TableCell
                         align='right'
-                        title='Modeled number of queue rows each scheduled run takes (backlog_metrics; not measured from last run)'
+                        title={
+                          processingPulse.data.reporting_definitions?.rows_per_run ??
+                          'Rows per phase run: measured 24h average when batch history exists, else configured batch size'
+                        }
                       >
-                        Rows/run (est.)
+                        Rows/run
                       </TableCell>
                       <TableCell
                         align='right'
@@ -1535,7 +1589,30 @@ export default function MonitorPage() {
                             )}
                           </TableCell>
                           <TableCell align='right'>
-                            {formatPulseCount(p.estimated_batch_per_run ?? 0)}
+                            {(() => {
+                              const cell = formatRowsPerRunCell(p);
+                              if (cell.subtitle) {
+                                return (
+                                  <Box sx={{ lineHeight: 1.2 }}>
+                                    <Typography
+                                      component='span'
+                                      variant='body2'
+                                      color={cell.muted ? 'text.secondary' : 'text.primary'}
+                                    >
+                                      {cell.main}
+                                    </Typography>
+                                    <Typography
+                                      component='div'
+                                      variant='caption'
+                                      color='text.secondary'
+                                    >
+                                      {cell.subtitle}
+                                    </Typography>
+                                  </Box>
+                                );
+                              }
+                              return cell.main;
+                            })()}
                           </TableCell>
                           <TableCell align='right'>
                             {(() => {
