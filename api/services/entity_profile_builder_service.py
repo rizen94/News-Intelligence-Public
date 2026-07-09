@@ -81,6 +81,11 @@ def get_entity_profile_build_parallel() -> int:
     return max(1, min(12, n))
 
 
+def entity_profile_build_llm_batch_size() -> int:
+    """Profiles per LLM call in batched mode (default 30, range 5–50)."""
+    return max(5, min(50, _env_int("ENTITY_PROFILE_BUILD_LLM_BATCH_SIZE", 30)))
+
+
 def entity_profile_build_drain_enabled() -> bool:
     """Single automation task loops batches until idle (default). Set ENTITY_PROFILE_BUILD_DRAIN=false for one batch only."""
     return env_str("ENTITY_PROFILE_BUILD_DRAIN", "true").lower() not in (
@@ -99,6 +104,156 @@ def _sections_empty(sections: Any) -> bool:
     if isinstance(sections, str):
         return sections.strip() in ("", "[]")
     return False
+
+
+def _build_batched_profile_prompt(profile_data: list[dict]) -> str:
+    """Build a prompt for processing multiple profiles in a single LLM call."""
+    prompt_parts = [
+        """You are an expert entity-profile writer. For each of the following entities, output a JSON object with keys "sections" (list of objects with "title" and "content") and "relationships" (list of objects with "target" and "relation").
+Return a JSON array in the same order as the input, where each element corresponds to one entity.
+
+Each section object should have:
+- "title": string (section heading)
+- "content": string (1-3 sentences)
+
+Each relationship object should have:
+- "target": string (the other entity or topic)
+- "relation": string (describing the relationship)
+
+If relationships are not clear from context, return an empty array for "relationships".
+
+"""
+    ]
+    for i, data in enumerate(profile_data, 1):
+        prompt_parts.append(
+            f"""Entity {i}:
+Name: {data['name']}
+Type: {data['etype']}
+Context excerpts:
+{data['combined']}
+
+"""
+        )
+    prompt_parts.append(
+        "Return ONLY a valid JSON array with one element per entity in the same order as above."
+    )
+    return "\n".join(prompt_parts)
+
+
+def _normalize_batched_profile_item(item: Any) -> tuple[list, list] | None:
+    if not isinstance(item, dict):
+        return None
+    sections = item.get("sections", [])
+    relationships = item.get("relationships", [])
+    if not isinstance(sections, list):
+        sections = []
+    valid_sections = []
+    for section in sections:
+        if isinstance(section, dict) and "title" in section and "content" in section:
+            valid_sections.append(
+                {
+                    "title": str(section["title"])[:200],
+                    "content": str(section["content"])[:1000],
+                }
+            )
+    if not valid_sections:
+        return None
+    if not isinstance(relationships, list):
+        relationships = []
+    valid_relationships = []
+    for rel in relationships:
+        if isinstance(rel, dict) and "target" in rel and "relation" in rel:
+            valid_relationships.append(
+                {
+                    "target": str(rel["target"])[:200],
+                    "relation": str(rel["relation"])[:100],
+                }
+            )
+    return valid_sections, valid_relationships
+
+
+def _parse_batched_response(raw_response: str, expected_count: int) -> list[tuple[list, list] | None]:
+    """
+    Parse the LLM's response expecting a JSON array of profile results.
+
+    Returns a list of (sections, relationships) tuples, or None for failed parses.
+    """
+    try:
+        parsed: Any = json.loads(raw_response.strip())
+        if not isinstance(parsed, list):
+            start = raw_response.find("[")
+            end = raw_response.rfind("]") + 1
+            if start < 0 or end <= start:
+                parsed = None
+            else:
+                parsed = json.loads(raw_response[start:end])
+        if isinstance(parsed, list):
+            results: list[tuple[list, list] | None] = []
+            for item in parsed[:expected_count]:
+                results.append(_normalize_batched_profile_item(item))
+            while len(results) < expected_count:
+                results.append(None)
+            return results[:expected_count]
+
+        results = []
+        pos = 0
+        while pos < len(raw_response) and len(results) < expected_count:
+            obj_start = raw_response.find("{", pos)
+            if obj_start == -1:
+                break
+            obj_end = _find_matching_brace(raw_response, obj_start)
+            if obj_end == -1:
+                break
+            try:
+                obj_text = raw_response[obj_start : obj_end + 1]
+                data = json.loads(obj_text)
+                results.append(_normalize_batched_profile_item(data))
+                pos = obj_end + 1
+            except json.JSONDecodeError:
+                pos = obj_start + 1
+        while len(results) < expected_count:
+            results.append(None)
+        return results[:expected_count]
+    except (json.JSONDecodeError, ValueError, IndexError) as e:
+        logger.debug("Failed to parse batched response: %s", e)
+        return [None] * expected_count
+
+
+def _find_matching_brace(text: str, start_pos: int) -> int:
+    """Find the matching closing brace for an opening brace at start_pos."""
+    if start_pos >= len(text) or text[start_pos] != "{":
+        return -1
+    
+    depth = 0
+    in_string = False
+    escape_next = False
+    
+    for i in range(start_pos, len(text)):
+        char = text[i]
+        
+        if escape_next:
+            escape_next = False
+            continue
+            
+        if char == "\\":
+            escape_next = True
+            continue
+            
+        if char == '"' and not escape_next:
+            in_string = not in_string
+            continue
+            
+        if in_string:
+            continue
+            
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+                
+    return -1
 
 
 def get_contexts_for_entity_profile(entity_profile_id: int, limit: int = 75) -> list[tuple]:
@@ -120,6 +275,94 @@ def get_contexts_for_entity_profile(entity_profile_id: int, limit: int = 75) -> 
                 (entity_profile_id, limit),
             )
             return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def _get_profiles_metadata_batch(profile_ids: list[int]) -> dict[int, tuple[Any, Any, Any]]:
+    """Return {id: (canonical_name, entity_type, sections_raw)} in one query."""
+    if not profile_ids:
+        return {}
+    conn = get_db_connection()
+    if not conn:
+        return {}
+    try:
+        with conn.cursor() as cur:
+            _set_profile_build_statement_timeout(cur)
+            cur.execute(
+                """
+                SELECT ep.id, ep.metadata->>'canonical_name',
+                       ep.metadata->>'entity_type', ep.sections
+                FROM intelligence.entity_profiles ep
+                WHERE ep.id = ANY(%s)
+                """,
+                (profile_ids,),
+            )
+            return {row[0]: (row[1], row[2], row[3]) for row in cur.fetchall()}
+    finally:
+        conn.close()
+
+
+def get_contexts_for_entity_profiles_batch(
+    profile_ids: list[int],
+    per_profile_limit: int,
+) -> dict[int, list[tuple]]:
+    """Single query: {entity_profile_id: [(context_id, title, content), ...]}."""
+    if not profile_ids:
+        return {}
+    conn = get_db_connection()
+    if not conn:
+        return {}
+    try:
+        with conn.cursor() as cur:
+            _set_profile_build_statement_timeout(cur)
+            cur.execute(
+                """
+                SELECT sub.entity_profile_id, sub.context_id, sub.title, sub.content
+                FROM (
+                    SELECT cem.entity_profile_id, c.id AS context_id, c.title, c.content,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY cem.entity_profile_id
+                               ORDER BY c.created_at DESC
+                           ) AS rn
+                    FROM intelligence.context_entity_mentions cem
+                    JOIN intelligence.contexts c ON c.id = cem.context_id
+                    WHERE cem.entity_profile_id = ANY(%s)
+                ) sub
+                WHERE sub.rn <= %s
+                """,
+                (profile_ids, per_profile_limit),
+            )
+            out: dict[int, list[tuple]] = {pid: [] for pid in profile_ids}
+            for row in cur.fetchall():
+                pid, ctx_id, title, content = row
+                out.setdefault(pid, []).append((ctx_id, title, content))
+            return out
+    finally:
+        conn.close()
+
+
+def _persist_profile_sections_batch(
+    updates: list[tuple[int, list, list]],
+) -> None:
+    """Write sections/relationships for many profiles in one DB connection."""
+    if not updates:
+        return
+    conn = get_db_connection()
+    if not conn:
+        return
+    try:
+        with conn.cursor() as cur:
+            for profile_id, sections, relationships in updates:
+                cur.execute(
+                    """
+                    UPDATE intelligence.entity_profiles
+                    SET sections = %s, relationships_summary = %s, updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (json.dumps(sections), json.dumps(relationships), profile_id),
+                )
+        conn.commit()
     finally:
         conn.close()
 
@@ -345,6 +588,28 @@ def _entity_profile_upstream_gate_enabled() -> bool:
     return env_str("ENTITY_PROFILE_BUILD_UPSTREAM_GATE", "true").lower() in ("1", "true", "yes")
 
 
+def _entity_profile_upstream_gate_for_select() -> bool:
+    """Upstream EXISTS is expensive; skip during bulk catchup unless explicitly enabled."""
+    if not _entity_profile_upstream_gate_enabled():
+        return False
+    try:
+        from config.runtime import env_bool
+
+        if env_bool("BULK_CATCHUP_ACTIVE", False):
+            return env_bool("ENTITY_PROFILE_BUILD_UPSTREAM_GATE_CATCHUP", False)
+    except Exception:
+        pass
+    return True
+
+
+def _profile_build_db_timeout_ms() -> int:
+    return max(5000, _env_int("ENTITY_PROFILE_BUILD_DB_TIMEOUT_MS", 600000))
+
+
+def _set_profile_build_statement_timeout(cur) -> None:
+    cur.execute("SET LOCAL statement_timeout = %s", (str(_profile_build_db_timeout_ms()),))
+
+
 def get_entity_profile_ids_to_build(limit: int = 20) -> list[int]:
     """Return buildable profile IDs: pipeline-active domains with context mentions."""
     from shared.entity_profile_eligibility import sql_entity_profile_needs_build
@@ -357,7 +622,7 @@ def get_entity_profile_ids_to_build(limit: int = 20) -> list[int]:
     if not domain_keys:
         return []
     upstream_sql = ""
-    if _entity_profile_upstream_gate_enabled():
+    if _entity_profile_upstream_gate_for_select():
         upstream_sql = f" AND {sql_entity_profile_upstream_cleared_exists()} "
     needs_build = sql_entity_profile_needs_build("ep")
     if entity_profile_build_priority_first_pass():
@@ -368,6 +633,7 @@ def get_entity_profile_ids_to_build(limit: int = 20) -> list[int]:
         order_sql = "ep.updated_at ASC NULLS FIRST"
     try:
         with conn.cursor() as cur:
+            _set_profile_build_statement_timeout(cur)
             cur.execute(
                 f"""
                 SELECT ep.id FROM intelligence.entity_profiles ep
@@ -393,7 +659,16 @@ async def run_profile_builder_batch(
     *,
     on_profile_built: Callable[[int, int], Awaitable[None]] | None = None,
 ) -> ProfileBuilderBatchResult:
-    """Build or refresh up to `limit` entity profiles."""
+    """Build or refresh up to `limit` entity profiles (batched LLM + batched DB by default)."""
+    return await run_profile_builder_batch_batched(limit=limit, on_profile_built=on_profile_built)
+
+
+async def _run_profile_builder_batch_parallel(
+    limit: int = 15,
+    *,
+    on_profile_built: Callable[[int, int], Awaitable[None]] | None = None,
+) -> ProfileBuilderBatchResult:
+    """Per-profile parallel path (used by unit tests and per-profile fallback)."""
     ids = get_entity_profile_ids_to_build(limit=limit)
     if not ids:
         return ProfileBuilderBatchResult(updated=0, attempted=0)
@@ -430,7 +705,7 @@ async def run_profile_builder_batch(
 
     if updated > 0:
         logger.info(
-            "Entity profile builder: %s processed, %s updated (%s fast, %s full)",
+            "Entity profile builder (parallel): %s processed, %s updated (%s fast, %s full)",
             len(ids),
             updated,
             fast_updated,
@@ -442,6 +717,166 @@ async def run_profile_builder_batch(
         fast_updated=fast_updated,
         full_updated=full_updated,
         contexts_used=contexts_used,
+    )
+
+
+def _prepare_profile_data_for_batch(ids: list[int]) -> list[dict]:
+    """Load metadata + contexts for many profiles using two batched DB queries."""
+    fast_limit = entity_profile_build_fast_context_limit()
+    full_limit = entity_profile_build_full_context_limit()
+    fetch_limit = max(fast_limit, full_limit)
+
+    metadata = _get_profiles_metadata_batch(ids)
+    contexts_by_id = get_contexts_for_entity_profiles_batch(ids, fetch_limit)
+
+    profile_data: list[dict] = []
+    for entity_profile_id in ids:
+        meta = metadata.get(entity_profile_id)
+        if not meta:
+            continue
+        canonical_name, entity_type, sections_raw = meta
+        is_first_pass = _sections_empty(sections_raw)
+        ctx_limit = fast_limit if is_first_pass else full_limit
+        contexts = (contexts_by_id.get(entity_profile_id) or [])[:ctx_limit]
+        if not contexts:
+            continue
+        combined = _combined_from_contexts(
+            contexts,
+            preview_len=600,
+            max_chars=3000,
+            include_source_id=True,
+        )
+        profile_data.append(
+            {
+                "id": entity_profile_id,
+                "name": canonical_name or f"Entity {entity_profile_id}",
+                "etype": entity_type or "entity",
+                "combined": combined,
+                "is_first_pass": is_first_pass,
+                "contexts_used": len(contexts),
+            }
+        )
+    return profile_data
+
+
+async def _process_batched_profile_chunk(
+    chunk: list[dict],
+    llm: LLMService,
+    *,
+    on_profile_built: Callable[[int, int], Awaitable[None]] | None,
+    updated_so_far: int,
+) -> ProfileBuilderBatchResult:
+    """One LLM call for up to N profiles; per-profile fallback on parse failure."""
+    updated = 0
+    fast_updated = 0
+    full_updated = 0
+    total_contexts = 0
+
+    try:
+        batched_prompt = _build_batched_profile_prompt(chunk)
+        raw_response = await llm._call_ollama(ModelType.LLAMA_8B, batched_prompt)
+        results = _parse_batched_response(raw_response, len(chunk))
+    except Exception as e:
+        logger.warning("Batched profile chunk LLM failed (%s), falling back per profile", e)
+        results = [None] * len(chunk)
+
+    db_updates: list[tuple[int, list, list]] = []
+    fallback_ids: list[int] = []
+    for data, result in zip(chunk, results):
+        if result is not None:
+            sections, relationships = result
+            db_updates.append((data["id"], sections, relationships))
+            updated += 1
+            total_contexts += data["contexts_used"]
+            if data["is_first_pass"]:
+                fast_updated += 1
+            else:
+                full_updated += 1
+        else:
+            fallback_ids.append(data["id"])
+
+    if db_updates:
+        _persist_profile_sections_batch(db_updates)
+        if on_profile_built is not None:
+            for i in range(len(db_updates)):
+                await on_profile_built(updated_so_far + i + 1, updated_so_far + i + 1)
+
+    for entity_profile_id in fallback_ids:
+        result = await build_profile_sections(entity_profile_id)
+        if not result.success:
+            continue
+        updated += 1
+        total_contexts += result.contexts_used
+        if result.tier == "fast":
+            fast_updated += 1
+        else:
+            full_updated += 1
+        if on_profile_built is not None:
+            await on_profile_built(updated_so_far + updated, updated_so_far + updated)
+
+    return ProfileBuilderBatchResult(
+        updated=updated,
+        attempted=len(chunk),
+        fast_updated=fast_updated,
+        full_updated=full_updated,
+        contexts_used=total_contexts,
+    )
+
+
+async def run_profile_builder_batch_batched(
+    limit: int = 15,
+    *,
+    on_profile_built: Callable[[int, int], Awaitable[None]] | None = None,
+) -> ProfileBuilderBatchResult:
+    """
+    Build profiles using chunked batched LLM calls (~30 profiles/call by default)
+    and two batched DB queries for metadata + contexts.
+    """
+    ids = get_entity_profile_ids_to_build(limit=limit)
+    if not ids:
+        return ProfileBuilderBatchResult(updated=0, attempted=0)
+
+    profile_data = _prepare_profile_data_for_batch(ids)
+    if not profile_data:
+        return ProfileBuilderBatchResult(updated=0, attempted=len(ids))
+
+    chunk_size = entity_profile_build_llm_batch_size()
+    llm = LLMService()
+    updated = 0
+    fast_updated = 0
+    full_updated = 0
+    total_contexts = 0
+
+    for chunk_start in range(0, len(profile_data), chunk_size):
+        chunk = profile_data[chunk_start : chunk_start + chunk_size]
+        chunk_result = await _process_batched_profile_chunk(
+            chunk,
+            llm,
+            on_profile_built=on_profile_built,
+            updated_so_far=updated,
+        )
+        updated += chunk_result.updated
+        fast_updated += chunk_result.fast_updated
+        full_updated += chunk_result.full_updated
+        total_contexts += chunk_result.contexts_used
+
+    if updated > 0:
+        logger.info(
+            "Entity profile builder (batched): %s ids, %s LLM-ready, %s updated "
+            "(%s fast, %s full, chunk_size=%s)",
+            len(ids),
+            len(profile_data),
+            updated,
+            fast_updated,
+            full_updated,
+            chunk_size,
+        )
+    return ProfileBuilderBatchResult(
+        updated=updated,
+        attempted=len(ids),
+        fast_updated=fast_updated,
+        full_updated=full_updated,
+        contexts_used=total_contexts,
     )
 
 

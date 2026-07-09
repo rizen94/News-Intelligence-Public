@@ -175,6 +175,35 @@ def _probe_nvidia_smi_ssh(host: str, user: str) -> dict[str, Any] | None:
         return None
 
 
+def _ollama_ps_vram_headroom(vram_pct: float | None, models_loaded: int) -> float:
+    """Headroom when only Ollama /api/ps is available.
+
+    VRAM reported there is mostly static model weights, not batch/compute pressure.
+    Treat VRAM below ~78% as healthy so auto-tune can ramp build batch during catchup.
+    """
+    from config.runtime import env_str
+
+    if models_loaded == 0:
+        return 0.95
+    if vram_pct is None:
+        return 0.60
+    try:
+        pressure_start = float(env_str("MAJOR_CATCHUP_OLLAMA_PSVRAM_PRESSURE_START", "78"))
+    except ValueError:
+        pressure_start = 78.0
+    try:
+        critical = float(env_str("MAJOR_CATCHUP_OLLAMA_PSVRAM_CRITICAL", "90"))
+    except ValueError:
+        critical = 90.0
+    if vram_pct <= pressure_start:
+        return 0.65
+    if vram_pct >= critical:
+        return max(0.05, (100.0 - vram_pct) / 25.0)
+    span = max(1.0, critical - pressure_start)
+    t = (vram_pct - pressure_start) / span
+    return max(0.05, 0.65 - t * 0.40)
+
+
 def _probe_gpu_via_ollama(ollama_url: str) -> dict[str, Any] | None:
     """VRAM / load proxy when nvidia-smi on the GPU host is unreachable."""
     from config.runtime import env_str
@@ -197,7 +226,9 @@ def _probe_gpu_via_ollama(ollama_url: str) -> dict[str, Any] | None:
         if not models:
             util_pct = 0.0
         else:
-            util_pct = min(100.0, max(35.0, (vram_pct or 35.0) * 0.85 + len(models) * 8.0))
+            # ollama-ps does not report GPU utilization; leave util unknown so headroom
+            # uses VRAM occupancy instead of a synthetic floor that blocks auto-tune.
+            util_pct = None
         host, _ = _parse_ollama_host(base)
         return {
             "gpu_utilization_percent": util_pct,
@@ -207,6 +238,7 @@ def _probe_gpu_via_ollama(ollama_url: str) -> dict[str, Any] | None:
             "gpu_memory_total_mb": total_mb,
             "source": f"ollama-ps:{host}",
             "ollama_models_loaded": len(models),
+            "gpu_metrics_estimated": bool(models),
         }
     except Exception as e:
         logger.debug("ollama ps probe %s: %s", base, e)
@@ -285,9 +317,17 @@ def sample_resources() -> ResourceSnapshot:
     db_headroom = max(0.0, min(1.0, 1.0 - db_worker_util))
 
     gpu_util = gpu_raw.get("gpu_utilization_percent")
-    gpu_headroom = (
-        max(0.0, min(1.0, 1.0 - (float(gpu_util) / 100.0))) if gpu_util is not None else 0.55
-    )
+    gpu_vram = gpu_raw.get("gpu_vram_percent")
+    probe_src = str(gpu_raw.get("source") or "")
+    if probe_src.startswith("ollama-ps:"):
+        gpu_headroom = _ollama_ps_vram_headroom(
+            float(gpu_vram) if gpu_vram is not None else None,
+            int(gpu_raw.get("ollama_models_loaded") or 0),
+        )
+    elif gpu_util is not None:
+        gpu_headroom = max(0.0, min(1.0, 1.0 - float(gpu_util) / 100.0))
+    else:
+        gpu_headroom = 0.55
     cpu_llm_headroom = (
         max(0.0, min(1.0, 1.0 - ((cpu_llm_cpu or 0.0) / 100.0))) if _routing.dual_lane else 1.0
     )
@@ -350,14 +390,8 @@ def headroom_for_track(track: str, resources: ResourceSnapshot) -> float:
             resources.db_headroom,
         )
     if track == TRACK_BUILD:
-        parts = [
-            resources.gpu_llm_headroom,
-            resources.local_memory_headroom,
-            resources.db_headroom,
-        ]
-        if _routing.dual_lane:
-            parts.append(resources.cpu_llm_headroom)
-        return min(parts)
+        # PopOS GPU LLM only — Widow CPU/RAM are not batch-sizing signals for this track.
+        return resources.gpu_llm_headroom
     if track == TRACK_LOCAL:
         return min(
             resources.local_cpu_headroom,
@@ -368,11 +402,7 @@ def headroom_for_track(track: str, resources: ResourceSnapshot) -> float:
         # Skip memory % — Linux file cache often reads high while dossier fast mode is DB-bound.
         return min(resources.local_cpu_headroom, resources.db_headroom)
     if track == TRACK_GPU:
-        return min(
-            resources.gpu_llm_headroom,
-            resources.local_memory_headroom,
-            resources.db_headroom,
-        )
+        return resources.gpu_llm_headroom
     return resources.phase_headroom("story_enhancement")
 
 
@@ -425,7 +455,7 @@ def tune_batch_track(
         decrease = True
         reasons.append(f"headroom<{tuning_config['decrease_headroom']}")
 
-    memory_sensitive = (TRACK_ENRICH, TRACK_LOCAL, TRACK_BUILD, TRACK_GPU)
+    memory_sensitive = (TRACK_ENRICH, TRACK_LOCAL)
     if track in memory_sensitive:
         if mem_pct >= float(tuning_config["memory_critical_pct"]):
             decrease = True
@@ -454,6 +484,12 @@ def tune_batch_track(
         if resources.gpu_probe_source == "unavailable":
             can_increase = False
             reasons.append("gpu_metrics_unavailable")
+        elif resources.gpu_probe_source.startswith("ollama-ps:"):
+            meta["gpu_vram_pct"] = resources.gpu_vram_percent
+            vram = resources.gpu_vram_percent
+            if vram is not None and vram >= 90.0:
+                can_increase = False
+                reasons.append("gpu_vram>=90%")
 
     if can_increase and current < batch_max:
         new_batch = min(batch_max, current + step)

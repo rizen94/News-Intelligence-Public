@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -23,6 +24,9 @@ drain_entity_profile_build = epb.drain_entity_profile_build
 entity_profile_build_drain_enabled = epb.entity_profile_build_drain_enabled
 get_entity_profile_build_parallel = epb.get_entity_profile_build_parallel
 run_profile_builder_batch = epb.run_profile_builder_batch
+_run_profile_builder_batch_parallel = epb._run_profile_builder_batch_parallel
+_parse_batched_response = epb._parse_batched_response
+_prepare_profile_data_for_batch = epb._prepare_profile_data_for_batch
 
 
 def test_sections_empty():
@@ -142,7 +146,7 @@ def test_parallel_batch_limits_concurrency(monkeypatch):
             side_effect=_slow_build,
         ),
     ):
-        result = asyncio.run(run_profile_builder_batch(limit=4))
+        result = asyncio.run(_run_profile_builder_batch_parallel(limit=4))
 
     assert result.updated == 4
     assert result.fast_updated == 4
@@ -198,3 +202,40 @@ def test_get_entity_profile_build_parallel_default(monkeypatch):
     assert get_entity_profile_build_parallel() == 3
     monkeypatch.setenv("ENTITY_PROFILE_BUILD_PARALLEL", "5")
     assert get_entity_profile_build_parallel() == 5
+
+
+def test_parse_batched_response_array():
+    raw = json.dumps(
+        [
+            {
+                "sections": [{"title": "Summary", "content": "A leader in tech."}],
+                "relationships": [{"target": "Acme", "relation": "CEO of"}],
+            },
+            {"sections": [], "relationships": []},
+        ]
+    )
+    results = _parse_batched_response(raw, 2)
+    assert results[0] is not None
+    assert results[0][0][0]["title"] == "Summary"
+    assert results[1] is None
+
+
+def test_prepare_profile_data_uses_batched_db(monkeypatch):
+    monkeypatch.setenv("ENTITY_PROFILE_BUILD_FAST_CONTEXT_LIMIT", "5")
+    metadata = {
+        1: ("Acme", "organization", None),
+        2: ("Jane", "person", [{"title": "Summary", "content": "existing"}]),
+    }
+    contexts = {
+        1: [(10, "T1", "C1")],
+        2: [(20, "T2", "C2"), (21, "T3", "C3")],
+    }
+    with (
+        patch.object(epb, "_get_profiles_metadata_batch", return_value=metadata),
+        patch.object(epb, "get_contexts_for_entity_profiles_batch", return_value=contexts),
+    ):
+        data = _prepare_profile_data_for_batch([1, 2])
+    assert len(data) == 2
+    assert data[0]["name"] == "Acme"
+    assert data[0]["is_first_pass"] is True
+    assert data[1]["is_first_pass"] is False
