@@ -1218,7 +1218,7 @@ class StorylineAutomationService(DomainAwareService):
             return False, "below_quality"
 
         semantic_raw = article.get("semantic_score")
-        if semantic_raw is not None and source == "rag":
+        if semantic_raw is not None:
             if float(semantic_raw) < min_semantic:
                 return False, "below_semantic"
 

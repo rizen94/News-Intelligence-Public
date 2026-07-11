@@ -205,6 +205,12 @@ async def _llm_review_storyline_group(
     if not items:
         return stats
 
+    # Track consecutive parse failures to eventually mark items as needs_manual_review
+    # Threshold: after 3 consecutive failures, mark as needs_manual_review
+    MAX_CONSECUTIVE_FAILURES = 3
+    failure_counts: Dict[int, int] = defaultdict(int)
+    items_to_process = items.copy()
+
     storyline_title = items[0]["storyline_title"]
     storyline_summary = items[0]["storyline_summary"]
     block_lines = []
@@ -234,12 +240,26 @@ async def _llm_review_storyline_group(
     except Exception as e:
         logger.warning("storyline_review_agent LLM failed storyline=%s: %s", storyline_title[:40], e)
         stats["errors"] += len(items)
+        # Increment failure count for all items since the entire batch failed
+        for item in items:
+            failure_counts[item["suggestion_id"]] += 1
         return stats
 
     reviews = _parse_agent_reviews(raw)
     if not reviews:
         stats["skipped"] += len(items)
+        # Increment failure count for all items since parsing failed completely
+        for item in items:
+            failure_counts[item["suggestion_id"]] += 1
         return stats
+
+    # Process successful reviews
+    reviewed_suggestion_ids = {rev.get("suggestion_id") for rev in reviews if rev.get("suggestion_id") is not None}
+    for item in items:
+        sid = item["suggestion_id"]
+        if sid in reviewed_suggestion_ids:
+            # Reset failure count on successful parse
+            failure_counts[sid] = 0
 
     domain_key = items[0].get("_domain_key", "")
     schema = items[0].get("_schema", "")
@@ -294,8 +314,8 @@ async def _llm_review_storyline_group(
                         stats["rejected"] += 1
                     else:
                         stats["skipped"] += 1
-        if not dry_run:
-            conn.commit()
+            if not dry_run:
+                conn.commit()
     except Exception as e:
         conn.rollback()
         logger.warning("storyline_review_agent apply: %s", e)
@@ -305,6 +325,44 @@ async def _llm_review_storyline_group(
             conn.close()
         except Exception:
             pass
+
+    # After processing, check for items that have exceeded max consecutive failures
+    # and mark them as needs_manual_review
+    for item in items:
+        sid = item["suggestion_id"]
+        if failure_counts[sid] >= MAX_CONSECUTIVE_FAILURES:
+            # Mark this item as needs_manual_review instead of leaving it pending
+            if not dry_run:
+                try:
+                    conn = get_db_connection()
+                    if conn:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                """
+                                UPDATE public.storyline_article_suggestions
+                                SET status = 'needs_manual_review', reviewed_at = %s, review_notes = %s
+                                WHERE id = %s AND domain_key = %s AND status = 'pending'
+                                """,
+                                (datetime.now(), f"auto:max_consecutive_failures({failure_counts[sid]})", sid, domain_key),
+                            )
+                            if cur.rowcount > 0:
+                                logger.info(
+                                    "Marked suggestion %s as needs_manual_review after %s consecutive failures",
+                                    sid,
+                                    failure_counts[sid],
+                                )
+                                # Don't count this as skipped/error since we're handling it specially
+                            conn.commit()
+                        except Exception as e:
+                            logger.warning("Failed to mark suggestion %s as needs_manual_review: %s", sid, e)
+                            if conn:
+                                conn.rollback()
+                        finally:
+                            if conn:
+                                conn.close()
+                else:
+                    # In dry run, just count it as skipped for stats purposes
+                    stats["skipped"] += 1
 
     return stats
 
