@@ -40,8 +40,9 @@ _ASSEMBLY_DEFER_WHEN_HEAVY: frozenset[str] = frozenset(
 
 def _intake_heavy_threshold() -> int:
     try:
-        return max(500, int(env_str("ASSEMBLY_DEFER_INTAKE_BACKLOG", "3000")))
-    except (TypeError, ValueError):
+        from services.pipeline_controller import unified_intake_defer_threshold
+        return max(500, unified_intake_defer_threshold())
+    except (TypeError, ValueError, ImportError):
         return 3000
 
 
@@ -86,6 +87,7 @@ def _pick_assembly_phase(backlog: dict[str, int]) -> tuple[str | None, dict[str,
         "intake_backlog": intake,
         "profile_backlog": profile,
         "heavy_defer": heavy,
+        "deferred_phases": [],
         "candidates": [],
     }
     scored: list[tuple[str, float]] = []
@@ -109,10 +111,19 @@ def _pick_assembly_phase(backlog: dict[str, int]) -> tuple[str | None, dict[str,
         pass
 
     defer_dossier_fp = _defer_dossier_profile_first_pass_threshold()
+    # Prefer first-pass profile build over dossier retries while the profile queue is deep.
+    defer_dossier = profile_first_pass >= defer_dossier_fp and dossier_retry > 0
 
     for phase in _assembly_phases_eligible():
         work = int(backlog.get(phase) or 0)
         if work <= 0:
+            continue
+        if heavy and phase in _ASSEMBLY_DEFER_WHEN_HEAVY:
+            meta["deferred_phases"].append(phase)
+            continue
+        if defer_dossier and phase == "entity_dossier_compile":
+            meta["deferred_phases"].append(phase)
+            meta["dossier_deferred_for_profile_first_pass"] = True
             continue
         batch = max(1, int(get_per_run_batch_size_for_phase(phase) or 25))
         score = work / batch
@@ -120,6 +131,8 @@ def _pick_assembly_phase(backlog: dict[str, int]) -> tuple[str | None, dict[str,
         meta["candidates"].append({"phase": phase, "work": work, "score": round(score, 2)})
 
     if not scored:
+        # Stay idle on assembly when only deferred narrative phases have work —
+        # spine/controller can spend PopOS cycles on intake/profile drain instead.
         return None, meta
 
     scored.sort(key=lambda x: (-x[1], x[0]))
@@ -183,75 +196,6 @@ def _entity_dossier_compile_limit() -> int:
         return tuned
     except Exception:
         return default
-
-
-async def run_assembly_conductor_cycle(
-    automation: Any | None = None,
-    *,
-    budget_seconds: int | None = None,
-) -> dict[str, Any]:
-    mode = assembly_pipeline_mode()
-    stats: dict[str, Any] = {"mode": mode, "steps": {}}
-
-    if mode == "shadow":
-        try:
-            from services.backlog_metrics import get_all_backlog_counts
-
-            backlog = get_all_backlog_counts()
-        except Exception:
-            backlog = {}
-        phase, pick_meta = _pick_assembly_phase(backlog)
-        stats["pick"] = pick_meta
-        if phase is None:
-            stats["skipped"] = "no_pending_work"
-            return stats
-        stats["phase"] = phase
-        step_stats = await _drain_assembly_phase(
-            phase, automation=automation, shadow=True
-        )
-        stats["steps"][phase] = step_stats
-        logger.info("assembly conductor shadow would run %s: %s", phase, step_stats)
-        return stats
-
-    if not _assembly_phase_lock.locked():
-        async with _assembly_phase_lock:
-            return await _run_one_assembly_phase(automation, stats)
-    stats["skipped"] = "phase_in_flight"
-    logger.debug("assembly conductor skipping cycle — prior phase still running")
-    return stats
-
-
-async def _run_one_assembly_phase(
-    automation: Any | None,
-    stats: dict[str, Any],
-) -> dict[str, Any]:
-    try:
-        from services.backlog_metrics import get_all_backlog_counts
-
-        backlog = get_all_backlog_counts()
-    except Exception:
-        backlog = {}
-
-    phase, pick_meta = _pick_assembly_phase(backlog)
-    stats["pick"] = pick_meta
-
-    if phase is None:
-        stats["skipped"] = "no_pending_work"
-        logger.debug("assembly conductor idle — no assembly phase with pending work")
-        return stats
-
-    stats["phase"] = phase
-    step_stats = await _drain_assembly_phase(phase, automation=automation, shadow=False)
-    stats["steps"][phase] = step_stats
-    logger.info("assembly conductor finished %s: %s", phase, step_stats)
-
-    try:
-        from services.assembly_throughput_metrics import record_assembly_cycle
-
-        record_assembly_cycle(stats)
-    except Exception:
-        pass
-    return stats
 
 
 async def _drain_assembly_phase(
@@ -518,6 +462,3 @@ async def _run_editorial_room_loop() -> dict[str, Any]:
     return await run_editorial_room_loop(shadow=False)
 
 
-def assembly_phase_should_suppress_scheduler(phase_name: str) -> bool:
-    """Retired — PipelineController owns assembly phase scheduling."""
-    return False

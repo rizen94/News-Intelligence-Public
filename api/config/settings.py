@@ -51,7 +51,7 @@ RAM_SAFETY_MARGIN_GB = 8.0
 OLLAMA_MODEL_PRIMARY = os.environ.get("OLLAMA_MODEL_PRIMARY", "llama3.1:8b")
 OLLAMA_MODEL_SECONDARY = os.environ.get("OLLAMA_MODEL_SECONDARY", "mistral-nemo:12b")
 OLLAMA_MODEL_PHI = os.environ.get("OLLAMA_MODEL_PHI", "phi3.5:latest")
-OLLAMA_MODEL_EXTRACTION = os.environ.get("OLLAMA_MODEL_EXTRACTION", "llama3.1:8b")
+OLLAMA_MODEL_EXTRACTION = os.environ.get("OLLAMA_MODEL_EXTRACTION", "qwen2.5:7b")
 
 MODELS = {
     "embedding": os.environ.get("OLLAMA_MODEL_EMBEDDING", "nomic-embed-text"),
@@ -372,10 +372,10 @@ def fast_ner_enabled() -> bool:
 
 def fast_ner_backend() -> str:
     """spacy | gliner | both | auto (spacy then gliner if available)."""
-    raw = (os.environ.get("FAST_NER_BACKEND", "both") or "both").strip().lower()
+    raw = (os.environ.get("FAST_NER_BACKEND", "spacy") or "spacy").strip().lower()
     if raw in ("spacy", "gliner", "both", "auto"):
         return raw
-    return "both"
+    return "spacy"
 
 
 def fast_ner_max_chars() -> int:

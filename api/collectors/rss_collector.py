@@ -180,14 +180,14 @@ def _update_feed_fetch_stats(
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 
-# Add parent directory to path for service imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from shared.article_processing_gates import (
+# Add project root to path for service imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
+from api.shared.article_processing_gates import (
     article_eligible_for_context,
     finalize_rss_enrichment_after_inline,
     rss_item_passes_ingest_gates,
 )
-from services.bias_detection_service import calculate_domain_bias_score
+from api.services.bias_detection_service import calculate_domain_bias_score
 
 # Credit-card / banking product native ads and CNN commerce verticals (Underscored, etc.).
 # Used by is_advertisement and quality scoring — not hard news.
@@ -510,6 +510,44 @@ def _rss_should_fetch_fulltext(body: str | None, url: str | None) -> bool:
     if env_str("RSS_ALWAYS_FETCH_FULLTEXT", "").strip().lower() in ("1", "true", "yes"):
         return True
     return _rss_plain_text_len(body) < _rss_fulltext_fetch_threshold()
+
+
+def _rss_existing_body_skips_inline_fetch(
+    existing_content: str | None,
+    existing_enrichment: str | None,
+) -> bool:
+    """True when DB already has enriched or long body — avoid re-fetch on URL refresh cycles."""
+    status = (existing_enrichment or "").strip().lower()
+    if status == "enriched":
+        return True
+    return _rss_plain_text_len(existing_content) >= _rss_fulltext_fetch_threshold()
+
+
+def _rss_prefer_store_body_on_update(
+    feed_body: str | None,
+    existing_content: str | None,
+    existing_enrichment: str | None,
+    url: str | None,
+) -> str:
+    """
+    Choose body for same-URL updates without redundant trafilatura.
+    Never replace a long/enriched DB body with a shorter feed snippet or failed fetch.
+    Skip inline fulltext when existing content is enriched or long enough.
+    """
+    feed = feed_body or ""
+    existing = existing_content or ""
+    if _rss_existing_body_skips_inline_fetch(existing, existing_enrichment):
+        # Skip inline fetch; only use feed body if it's meaningfully longer than existing.
+        feed_len = _rss_plain_text_len(feed)
+        db_len = _rss_plain_text_len(existing)
+        if feed_len >= _rss_fulltext_fetch_threshold() and feed_len > int(db_len * 1.1):
+            return feed
+        return existing
+    # Otherwise, attempt inline fetch and use result if successful, else keep existing if longer.
+    store, _, ok = _maybe_inline_fetch_article_body(feed, url)
+    if not ok and _rss_plain_text_len(existing) > _rss_plain_text_len(store):
+        return existing
+    return store
 
 
 def _rss_entry_savepoint_release(feed_cur) -> None:
@@ -1906,6 +1944,19 @@ def collect_rss_feeds() -> int:
                                     existing_enrichment,
                                     existing_created_at,
                                 ) = existing_by_url
+                                
+                                # PRIORITY 1 FIX: Skip update entirely if DB already has enriched/long body
+                                # and feed body is just a snippet. Never overwrite enriched content with snippets.
+                                if _rss_existing_body_skips_inline_fetch(existing_content, existing_enrichment):
+                                    # Only update if feed provides meaningfully longer content (not just snippet vs enriched)
+                                    feed_len = _rss_plain_text_len(content or "")
+                                    db_len = _rss_plain_text_len(existing_content)
+                                    if not (feed_len >= _rss_fulltext_fetch_threshold() and feed_len > int(db_len * 1.1)):
+                                        # DB body is already enriched/long; feed body is snippet → skip update entirely
+                                        duplicates_rejected += 1
+                                        _rss_entry_savepoint_release(feed_cur)
+                                        continue
+                                
                                 new_content_hash = hashlib.md5((content or "").encode()).hexdigest()
                                 existing_content_hash = (
                                     hashlib.md5((existing_content or "").encode()).hexdigest()
@@ -1924,122 +1975,129 @@ def collect_rss_feeds() -> int:
                                     or feed_says_newer
                                     or not (existing_content or "").strip()
                                 )
-                                if should_update:
-                                    store_content, _, _ = _maybe_inline_fetch_article_body(
-                                        content, url
-                                    )
-                                    raw_bias = calculate_domain_bias_score(
-                                        domain_key, title, store_content, feed_name
-                                    )
-                                    bias_score = (raw_bias + 1) / 2 if raw_bias is not None else 0.5
-                                    bias_score = max(0.0, min(1.0, bias_score))
-                                    quality_score = max(0.0, min(1.0, quality_score))
-                                    store_wc = compute_word_count(store_content)
-                                    if cred_meta:
-                                        try:
-                                            feed_cur.execute(
-                                                f"""
-                                                UPDATE {schema_name}.articles SET
-                                                title = %s, content = %s, summary = %s, published_at = %s,
-                                                source_domain = %s, quality_score = %s, bias_score = %s,
-                                                word_count = %s,
-                                                metadata = COALESCE(metadata, '{{}}'::jsonb) || %s::jsonb,
-                                                updated_at = NOW()
-                                                WHERE id = %s
-                                                """,
-                                                (
-                                                    title,
-                                                    store_content,
-                                                    None,
-                                                    published_date,
-                                                    feed_name,
-                                                    quality_score,
-                                                    bias_score,
-                                                    store_wc,
-                                                    json.dumps({"source_credibility": cred_meta}),
-                                                    existing_id,
-                                                ),
-                                            )
-                                        except psycopg2.errors.UndefinedColumn:
-                                            feed_cur.execute(
-                                                f"""
-                                                UPDATE {schema_name}.articles SET
-                                                title = %s, content = %s, summary = %s, published_at = %s,
-                                                source_domain = %s, quality_score = %s, bias_score = %s,
-                                                word_count = %s, updated_at = NOW()
-                                                WHERE id = %s
-                                                """,
-                                                (
-                                                    title,
-                                                    store_content,
-                                                    None,
-                                                    published_date,
-                                                    feed_name,
-                                                    quality_score,
-                                                    bias_score,
-                                                    store_wc,
-                                                    existing_id,
-                                                ),
-                                            )
-                                    else:
-                                        feed_cur.execute(
-                                            f"""
-                                            UPDATE {schema_name}.articles SET
-                                            title = %s, content = %s, summary = %s, published_at = %s,
-                                            source_domain = %s, quality_score = %s, bias_score = %s,
-                                            word_count = %s, updated_at = NOW()
-                                            WHERE id = %s
-                                            """,
-                                            (
-                                                title,
-                                                store_content,
-                                                None,
-                                                published_date,
-                                                feed_name,
-                                                quality_score,
-                                                bias_score,
-                                                store_wc,
-                                                existing_id,
-                                            ),
-                                        )
-                                    articles_updated += 1
-                                    # Nested savepoint: queue + context must not abort the UPDATE in sp_article.
-                                    feed_cur.execute("SAVEPOINT sp_aux")
-                                    try:
-                                        feed_cur.execute(
-                                            f"""
-                                            INSERT INTO {schema_name}.topic_extraction_queue
-                                            (article_id, status, priority, created_at)
-                                            VALUES (%s, 'pending', 2, NOW())
-                                            ON CONFLICT (article_id) DO UPDATE SET status = 'pending', priority = 2, created_at = NOW()
-                                        """,
-                                            (existing_id,),
-                                        )
-                                        from services.context_processor_service import (
-                                            ensure_context_for_article,
-                                        )
+if should_update:
+        store_content = _rss_prefer_store_body_on_update(
+            content,
+            existing_content,
+            existing_enrichment,
+            url,
+        )
+        # Skip update if content is essentially unchanged to avoid unnecessary work
+        if store_content.strip() == existing_content.strip():
+            duplicates_rejected += 1
+            _rss_entry_savepoint_release(feed_cur)
+            continue
+            
+        raw_bias = calculate_domain_bias_score(
+            domain_key, title, store_content, feed_name
+        )
+        bias_score = (raw_bias + 1) / 2 if raw_bias is not None else 0.5
+        bias_score = max(0.0, min(1.0, bias_score))
+        quality_score = max(0.0, min(1.0, quality_score))
+        store_wc = compute_word_count(store_content)
+        if cred_meta:
+            try:
+                feed_cur.execute(
+                    f"""
+                    UPDATE {schema_name}.articles SET
+                    title = %s, content = %s, summary = %s, published_at = %s,
+                    source_domain = %s, quality_score = %s, bias_score = %s,
+                    word_count = %s,
+                    metadata = COALESCE(metadata, '{{}}'::jsonb) || %s::jsonb,
+                    updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (
+                        title,
+                        store_content,
+                        None,
+                        published_date,
+                        feed_name,
+                        quality_score,
+                        bias_score,
+                        store_wc,
+                        json.dumps({"source_credibility": cred_meta}),
+                        existing_id,
+                    ),
+                )
+            except psycopg2.errors.UndefinedColumn:
+                feed_cur.execute(
+                    f"""
+                    UPDATE {schema_name}.articles SET
+                    title = %s, content = %s, summary = %s, published_at = %s,
+                    source_domain = %s, quality_score = %s, bias_score = %s,
+                    word_count = %s, updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (
+                        title,
+                        store_content,
+                        None,
+                        published_date,
+                        feed_name,
+                        quality_score,
+                        bias_score,
+                        store_wc,
+                        existing_id,
+                    ),
+                )
+        else:
+            feed_cur.execute(
+                f"""
+                UPDATE {schema_name}.articles SET
+                title = %s, content = %s, summary = %s, published_at = %s,
+                source_domain = %s, quality_score = %s, bias_score = %s,
+                word_count = %s, updated_at = NOW()
+                WHERE id = %s
+                """,
+                (
+                    title,
+                    store_content,
+                    None,
+                    published_date,
+                    feed_name,
+                    quality_score,
+                    bias_score,
+                    store_wc,
+                    existing_id,
+                ),
+            )
+        articles_updated += 1
+        # Nested savepoint: queue + context must not abort the UPDATE in sp_article.
+        feed_cur.execute("SAVEPOINT sp_aux")
+        try:
+            feed_cur.execute(
+                f"""
+                INSERT INTO {schema_name}.topic_extraction_queue
+                (article_id, status, priority, created_at)
+                VALUES (%s, 'pending', 2, NOW())
+                ON CONFLICT (article_id) DO NOTHING
+            """,
+                (existing_id,),
+            )
+            from services.context_processor_service import (
+                ensure_context_for_article,
+            )
 
-                                        if article_eligible_for_context(
-                                            store_content,
-                                            existing_enrichment,
-                                            existing_created_at,
-                                        ):
-                                            ensure_context_for_article(domain_key, existing_id)
-                                        feed_cur.execute("RELEASE SAVEPOINT sp_aux")
-                                    except Exception as aux_err:
-                                        logger.debug(
-                                            "Queue/context skip (updated article %s): %s",
-                                            existing_id,
-                                            aux_err,
-                                        )
-                                        try:
-                                            feed_cur.execute("ROLLBACK TO SAVEPOINT sp_aux")
-                                        except Exception:
-                                            pass
-                                else:
-                                    duplicates_rejected += 1
-                                _rss_entry_savepoint_release(feed_cur)
-                                continue
+            if article_eligible_for_context(
+                store_content,
+                existing_enrichment,
+                existing_created_at,
+            ):
+                ensure_context_for_article(domain_key, existing_id)
+            feed_cur.execute("RELEASE SAVEPOINT sp_aux")
+        except Exception as aux_err:
+            logger.debug(
+                "Queue/context skip (updated article %s): %s",
+                existing_id,
+                aux_err,
+            )
+            try:
+                feed_cur.execute("ROLLBACK TO SAVEPOINT sp_aux")
+            except Exception:
+                pass
+        _rss_entry_savepoint_release(feed_cur)
+        continue
                             # Check for duplicate by title + source (different URL = different article, skip)
                             feed_cur.execute(
                                 f"""

@@ -180,6 +180,35 @@ _POPOS_OVERFLOW_PRIORITY: tuple[str, ...] = (
     "event_extraction",
 )
 
+# While unified intake has pending work, do not co-enqueue these on OOM overflow.
+_POPOS_OVERFLOW_DEFER_WHILE_INTAKE: frozenset[str] = frozenset(
+    {
+        "storyline_assembly",
+        "storyline_discovery",
+        "pattern_recognition",
+        "entity_dossier_compile",
+    }
+)
+
+# Residual assembly/event alone must not keep the full catchup enqueue path forever.
+_CATCHUP_DRIVER_PHASES: frozenset[str] = frozenset(
+    {
+        "unified_intake_extraction",
+        "content_enrichment",
+        "context_sync",
+        "claim_extraction",
+        "entity_extraction",
+        "event_extraction",
+        "document_processing",
+        "content_refinement_queue",
+        "entity_profile_build",
+        "ml_processing",
+        "sentiment_analysis",
+        "quality_scoring",
+        "metadata_enrichment",
+    }
+)
+
 # Lightweight Widow work safe during memory pressure (DB/SQL, no model load).
 _LIGHT_WIDOW_DURING_PRESSURE: tuple[str, ...] = (
     "pending_db_flush",
@@ -205,7 +234,12 @@ def failing_error_repeat_passes() -> int:
 
 
 def stall_hold_replans() -> int:
-    return max(1, _cfg_int("stall_hold_replans", 1))
+    return max(1, _cfg_int("stall_hold_replans", 8))
+
+
+def unified_intake_defer_threshold() -> int:
+    """Minimum unified_intake_extraction pending count to defer other GPU phases."""
+    return max(1, _cfg_int("unified_intake_defer_threshold", 50))
 
 
 def catchup_phases() -> frozenset[str]:
@@ -221,7 +255,7 @@ def is_catchup_active(pending: dict[str, int]) -> bool:
 
     if extract_bulk_pending_total(pending) > catchup_clear_threshold():
         return True
-    for phase in catchup_phases():
+    for phase in _CATCHUP_DRIVER_PHASES:
         if int(pending.get(phase, 0) or 0) > 0:
             return True
     if _spine_sql_tail_should_run(pending):
@@ -627,22 +661,6 @@ def _phase_eligible(
         pass
 
     try:
-        from services.spine_pipeline_conductor import spine_phase_should_suppress_scheduler
-
-        if spine_phase_should_suppress_scheduler(phase):
-            return False
-    except Exception:
-        pass
-
-    try:
-        from services.assembly_conductor_service import assembly_phase_should_suppress_scheduler
-
-        if assembly_phase_should_suppress_scheduler(phase):
-            return False
-    except Exception:
-        pass
-
-    try:
         from config.runtime import env_str
         from shared.database.db_availability import is_automation_db_ready
 
@@ -735,12 +753,18 @@ def _pick_widow_oom_popos_overflow(
             continue
         if int(pending.get(phase, 0) or 0) <= 0:
             continue
+        intake_pending = int(pending.get("unified_intake_extraction", 0) or 0)
+        if intake_pending > unified_intake_defer_threshold() and phase in _POPOS_OVERFLOW_DEFER_WHILE_INTAKE:
+            continue
         _add(phase)
 
     for phase in popos_phases:
         if phase in desired or phase in _POPOS_OVERFLOW_PRIORITY:
             continue
         if int(pending.get(phase, 0) or 0) <= 0:
+            continue
+        intake_pending = int(pending.get("unified_intake_extraction", 0) or 0)
+        if intake_pending > unified_intake_defer_threshold() and phase in _POPOS_OVERFLOW_DEFER_WHILE_INTAKE:
             continue
         _add(phase)
 
@@ -773,7 +797,9 @@ def _pick_widow_oom_popos_overflow(
 
     asm_phase, _asm_meta = _pick_assembly_phase(pending)
     if asm_phase and asm_phase in popos_phases:
-        _add(asm_phase)
+        intake_pending = int(pending.get("unified_intake_extraction", 0) or 0)
+        if not (intake_pending > unified_intake_defer_threshold() and asm_phase in _POPOS_OVERFLOW_DEFER_WHILE_INTAKE):
+            _add(asm_phase)
 
     return desired, branch
 
@@ -866,31 +892,10 @@ def host_lane_at_cap(automation: Any, phase: str, *, hosts: dict[str, Any] | Non
 
 
 def _pick_assembly_phase(backlog: dict[str, int]) -> tuple[str | None, dict[str, Any]]:
-    from services.backlog_metrics import get_per_run_batch_size_for_phase
-    from shared.assembly_phase_order import POST_SPINE_PHASE_ORDER, editorial_room_loop_enabled
+    """SSOT: deferral + scoring live in assembly_conductor_service."""
+    from services.assembly_conductor_service import _pick_assembly_phase as _asm_pick
 
-    meta: dict[str, Any] = {"candidates": []}
-    scored: list[tuple[str, float]] = []
-
-    phases: list[str] = []
-    for p in POST_SPINE_PHASE_ORDER:
-        if p == "editorial_room_loop" and not editorial_room_loop_enabled():
-            continue
-        phases.append(p)
-
-    for phase in phases:
-        work = int(backlog.get(phase) or 0)
-        if work <= 0:
-            continue
-        batch = max(1, int(get_per_run_batch_size_for_phase(phase) or 25))
-        scored.append((phase, work / batch))
-        meta["candidates"].append({"phase": phase, "work": work})
-
-    if not scored:
-        return None, meta
-    scored.sort(key=lambda x: (-x[1], x[0]))
-    meta["picked"] = scored[0][0]
-    return scored[0][0], meta
+    return _asm_pick(backlog)
 
 
 def pick_next_phases(

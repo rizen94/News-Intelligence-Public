@@ -7,6 +7,9 @@ Design:
 - **widow_db**: DB/HTTP only on Widow
 - **widow_fetch**: trafilatura / RSS / document fetch on Widow
 
+Steady-state unified intake LLM batch default is **6** articles per call (``UNIFIED_INTAKE_EXTRACTION_BATCH_SIZE``;
+see ``config.runtime.unified_intake_extraction_batch_size()``). Burn-down scripts may raise via catchup_defaults.
+
 PopOS RTX 5090: structured extraction + profile build LLM
 Widow GTX 1080 + CPU: overflow extraction, embeddings, light scoring
 """
@@ -93,8 +96,8 @@ PHASE_POLICIES: dict[str, PhasePolicy] = {
         "gpu_heavy",
         requires_llm=True,
         batched_llm=True,
-        default_batch=3,
-        default_parallel=6,
+        default_batch=6,
+        default_parallel=8,
         run_budget_seconds=900,
     ),
     "embeddings_worker": PhasePolicy(Host.WIDOW_CPU, Tier.BULK, "cpu", "db_heavy", default_batch=200),
@@ -169,13 +172,16 @@ PHASE_POLICIES: dict[str, PhasePolicy] = {
     "story_continuation": PhasePolicy(Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy"),
   # Tier 3 — intelligence (bulk structure, defer heavy narrative)
     "entity_profile_build": PhasePolicy(
-        Host.POPOS_GPU,
-        Tier.REFINEMENT,
-        "gpu",
+        # Widow local 8B: PopOS GPU frequently preempts profile batches (503 interactive),
+        # which collapses throughput on the largest backlog phase.
+        Host.WIDOW_CPU,
+        Tier.BULK,
+        "cpu",
         "gpu_heavy",
         requires_llm=True,
-        default_batch=25,
-        default_parallel=3,
+        default_batch=50,
+        default_parallel=5,
+        run_budget_seconds=900,
     ),
     "entity_organizer": PhasePolicy(Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy"),
     "graph_connection_distillation": PhasePolicy(Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy", default_batch=12),
@@ -389,6 +395,23 @@ _BULK_EXTRACT_COMPETE_DEFER_PHASES = frozenset(
     }
 )
 
+# Ordered-spine intake-first: defer these peers while unified backlog is high.
+_INTAKE_FIRST_GPU_DEFER_PHASES = frozenset(
+    {
+        "storyline_assembly",
+        "storyline_automation",
+        "entity_dossier_compile",
+        "topic_clustering",
+    }
+)
+
+
+def intake_first_gpu_defer_threshold() -> int:
+    try:
+        return max(0, int(env_str("INTAKE_FIRST_GPU_DEFER_THRESHOLD", "50")))
+    except ValueError:
+        return 50
+
 
 def bulk_extract_compete_defer_phase(
     phase_name: str,
@@ -398,10 +421,21 @@ def bulk_extract_compete_defer_phase(
     True when ``phase_name`` should not be scheduled because unified/claim extract
     backlog is high and this phase competes for workers or PopOS GPU.
     """
+    p = pending or {}
+    intake = int(p.get("unified_intake_extraction", 0) or 0)
+    intake_thresh = intake_first_gpu_defer_threshold()
+
     try:
         from shared.spine_phase_order import spine_pipeline_ordered_active
 
         if spine_pipeline_ordered_active():
+            # Prefer finishing unified intake before assembly/GPU peers burn PopOS slots.
+            if (
+                intake_thresh > 0
+                and intake >= intake_thresh
+                and phase_name in _INTAKE_FIRST_GPU_DEFER_PHASES
+            ):
+                return True
             return False
     except Exception:
         pass
@@ -419,7 +453,7 @@ def bulk_extract_compete_defer_phase(
         "pending_db_flush",
     ):
         return False
-    extract_left = extract_bulk_pending_total(pending)
+    extract_left = extract_bulk_pending_total(p)
     try:
         threshold = int(env_str("PIPELINE_BULK_EXTRACT_COMPETE_DEFER_THRESHOLD", "500"))
     except ValueError:
@@ -429,7 +463,7 @@ def bulk_extract_compete_defer_phase(
     if phase_name in _BULK_EXTRACT_COMPETE_DEFER_PHASES:
         return True
     if is_refinement_phase(phase_name):
-        return not refinement_phase_allowed(phase_name, pending)
+        return not refinement_phase_allowed(phase_name, p)
     return False
 
 
@@ -602,8 +636,10 @@ def configure_pipeline_resources() -> None:
     env_setdefault("OLLAMA_EXTRACTION_NUM_CTX", "8192")
     env_setdefault("AUTOMATION_USE_POPOS_GPU", "true")
     env_setdefault("AUTOMATION_DUAL_LANE", "true")
-    env_setdefault("AUTOMATION_GPU_PARALLEL", "3")
-    env_setdefault("AUTOMATION_CPU_PARALLEL", "2")
+    # PopOS RTX 5090 does the heavy lift; Widow GTX 1080 is overflow only.
+    env_setdefault("AUTOMATION_GPU_PARALLEL", "2")
+    env_setdefault("AUTOMATION_CPU_PARALLEL", "3")
+    env_setdefault("OLLAMA_GPU_CONCURRENCY", "2")
     env_setdefault("AUTOMATION_FIXED_RESOURCE_POLICY", "true")
     env_setdefault("PIPELINE_REFINEMENT_BULK_CLEAR_THRESHOLD", "50")
     env_setdefault("STORY_ENHANCEMENT_FACTS_ONLY", "true")
@@ -627,9 +663,14 @@ def configure_pipeline_resources() -> None:
     env_setdefault("ENTITY_EXTRACTION_RUN_BUDGET_SECONDS", "0")
     env_setdefault("DOSSIER_CATCHUP_SKIP_NARRATIVE", "true")
     env_setdefault("UNIFIED_INTAKE_EXTRACTION_ENABLED", "true")
-    env_setdefault("UNIFIED_INTAKE_EXTRACTION_BATCH_SIZE", "3")
-    env_setdefault("UNIFIED_INTAKE_EXTRACTION_PARALLEL", "6")
+    env_setdefault("UNIFIED_INTAKE_LEGACY_AWARE_BACKLOG", "true")
+    env_setdefault("UNIFIED_INTAKE_EXTRACTION_BATCH_SIZE", "6")
+    env_setdefault("UNIFIED_INTAKE_EXTRACTION_PARALLEL", "8")
     env_setdefault("UNIFIED_INTAKE_EXTRACTION_RUN_BUDGET_SECONDS", "0")
+    env_setdefault("FAST_NER_ENABLED", "true")
+    env_setdefault("FAST_NER_BACKEND", "spacy")
+    env_setdefault("ARTICLE_SIGNAL_FULL_MIN_QUALITY", "0.55")
+    env_setdefault("INTAKE_FIRST_GPU_DEFER_THRESHOLD", "50")
     env_setdefault("PIPELINE_DRAIN_STALL_ROUNDS", "3")
     env_setdefault("AUTO_ENQUEUE_COMPREHENSIVE_RAG", "0")
     env_setdefault("STORYLINE_AUTO_ENQUEUE_NARRATIVE_FINISHER", "0")
@@ -639,8 +680,11 @@ def configure_pipeline_resources() -> None:
     env_setdefault("SPINE_PIPELINE_MODE", "ordered")
     env_setdefault("ARTICLE_SIGNAL_ENABLED", "true")
     env_setdefault("RSS_FEED_SILENCE_ENABLED", "true")
-    env_setdefault("RSS_FEED_SILENCE_DRY_RUN", "true")
+    env_setdefault("RSS_FEED_SILENCE_DRY_RUN", "false")
     env_setdefault("EDITORIAL_ROOM_LOOP_ENABLED", "true")
+    env_setdefault("ENABLE_BROWSER_ENRICHMENT", "false")
+    env_setdefault("ENABLE_WAYBACK_ENRICHMENT", "false")
+    env_setdefault("ENABLE_ARCHIVETODAY_ENRICHMENT", "false")
 
     try:
         from shared.ollama_extraction_model_resolver import resolve_extraction_models_at_startup
