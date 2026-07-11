@@ -127,9 +127,12 @@ class ActivityFeedService:
                     continue
                 if int(active_by_phase.get(phase.strip(), 0) or 0) > 0:
                     continue
-                if self._is_stable_phase_id(activity_id):
-                    if int(self._stable_phase_refs.get(activity_id, 0) or 0) > 0:
-                        continue
+                # NOTE: we intentionally do NOT let a positive stable-phase refcount veto
+                # cleanup here. Reaching this point means AutomationManager authoritatively
+                # reports zero active workers for this phase, so any remaining refcount is a
+                # leaked reference (task cancelled/killed before its finally ran). Honouring it
+                # would keep a phantom "running" row alive forever; instead we let the age check
+                # below decide and reset the refcount when the row is reconciled.
                 started_raw = entry.get("started_at")
                 if not started_raw:
                     stale_ids.append(activity_id)

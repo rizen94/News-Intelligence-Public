@@ -2410,29 +2410,33 @@ class AutomationManager:
             lane_reason,
             resource_class,
         )
-        if not per_phase_slot_held:
-            self._running_tasks_by_phase[task.name] += 1
-        self._running_tasks_by_lane[effective_lane] += 1
         try:
-            from services.activity_feed_service import get_activity_feed
+            # Increment worker counters and register the activity-feed row INSIDE this try so
+            # the finally below always reverts them. Previously these ran before the try, so a
+            # cancellation in this window (replan/shutdown storm) leaked the per-phase counter
+            # and left an orphaned "running" row that the monitor showed forever.
+            if not per_phase_slot_held:
+                self._running_tasks_by_phase[task.name] += 1
+            self._running_tasks_by_lane[effective_lane] += 1
+            try:
+                from services.activity_feed_service import get_activity_feed
 
-            feed = get_activity_feed()
-            requested_id = (task.metadata or {}).get("requested_activity_id")
-            if requested_id:
-                feed.complete(requested_id, success=True)
-            message = self._activity_message(task)
-            feed.add_current(
-                self._activity_feed_activity_id(task),
-                message,
-                task_name=task.name,
-                domain=task.metadata.get("domain"),
-                storyline_id=task.metadata.get("storyline_id"),
-                loops_processed=0,
-            )
-        except Exception as e:
-            logger.debug("Activity feed add_current: %s", e)
+                feed = get_activity_feed()
+                requested_id = (task.metadata or {}).get("requested_activity_id")
+                if requested_id:
+                    feed.complete(requested_id, success=True)
+                message = self._activity_message(task)
+                feed.add_current(
+                    self._activity_feed_activity_id(task),
+                    message,
+                    task_name=task.name,
+                    domain=task.metadata.get("domain"),
+                    storyline_id=task.metadata.get("storyline_id"),
+                    loops_processed=0,
+                )
+            except Exception as e:
+                logger.debug("Activity feed add_current: %s", e)
 
-        try:
             # Execute task based on type
             if task.name == "collection_cycle":
                 await self._execute_collection_cycle(task)
