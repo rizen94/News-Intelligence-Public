@@ -11,7 +11,7 @@ import os
 import re
 import time
 from datetime import datetime, timezone
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from shared.database.connection import get_db_connection, get_db_connection_context
 from shared.domain_registry import (
@@ -531,6 +531,20 @@ def _claims_to_facts_article_entity_exact_subject_sql() -> str:
     return "(" + " OR ".join(clauses) + ")"
 
 
+def _claims_to_facts_context_mention_exact_subject_sql() -> str:
+    """``context_entity_mentions`` rows resolve via linked ``entity_profiles`` names (no ``mention_text`` column)."""
+    subj = "lower(trim(COALESCE(ec.subject_text, '')))"
+    return f"""EXISTS (
+    SELECT 1 FROM intelligence.context_entity_mentions cem
+    JOIN intelligence.entity_profiles ep ON ep.id = cem.entity_profile_id
+    WHERE cem.context_id = ec.context_id
+      AND (
+        lower(trim(COALESCE(ep.metadata->>'canonical_name', ''))) = {subj}
+        OR lower(trim(COALESCE(ep.metadata->>'display_name', ''))) = {subj}
+      )
+  )"""
+
+
 def claims_to_facts_resolvable_hint_predicate_sql() -> str:
     """
     Approximation of claims likely to resolve without fuzzy/trgm passes (context mention exact,
@@ -538,12 +552,9 @@ def claims_to_facts_resolvable_hint_predicate_sql() -> str:
     Used for Monitor ``pending_records`` so the number is closer to promotable work than raw SQL candidates.
     """
     ae = _claims_to_facts_article_entity_exact_subject_sql()
+    cem = _claims_to_facts_context_mention_exact_subject_sql()
     return f"""(
-  EXISTS (
-    SELECT 1 FROM intelligence.context_entity_mentions cem
-    WHERE cem.context_id = ec.context_id
-      AND lower(trim(cem.mention_text)) = lower(trim(COALESCE(ec.subject_text, '')))
-  )
+  {cem}
   OR EXISTS (
     SELECT 1 FROM intelligence.entity_profiles ep
     WHERE lower(trim(COALESCE(ep.metadata->>'canonical_name', ''))) = lower(trim(COALESCE(ec.subject_text, '')))
@@ -677,16 +688,26 @@ def insert_parsed_claims_for_context(
                     skipped_unseeded += 1
                     continue
                 adj_conf = max(0.0, min(1.0, float(confidence) * cred_mult))
+                # Compute claim fingerprint
+                claim_fingerprint = substring(
+                    sha256(
+                        (str(context_id) || '::' ||
+                        lower(regexp_replace(subject_text, '\s+', ' ', 'g')) || '::' ||
+                        lower(regexp_replace(predicate_text, '\s+', ' ', 'g')) || '::' ||
+                        lower(regexp_replace(object_text, '\s+', ' ', 'g')))
+                    ) from 1 for 64
+                )
                 if execute_with_savepoint(
                     cur,
                     conn,
                     f"claim_ins_{context_id}_{idx}",
                     """
                         INSERT INTO intelligence.extracted_claims
-                        (context_id, subject_text, predicate_text, object_text, confidence)
-                        VALUES (%s, %s, %s, %s, %s)
+                        (context_id, subject_text, predicate_text, object_text, confidence, claim_fingerprint)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (claim_fingerprint) DO NOTHING
                     """,
-                    (context_id, subject_text, predicate_text, object_text, adj_conf),
+                    (context_id, subject_text, predicate_text, object_text, adj_conf, claim_fingerprint),
                 ):
                     inserted += 1
                 else:
@@ -848,6 +869,7 @@ Keep each subject under ~80 characters when possible."""
     skipped_unseeded = 0
     strict_domains = _claim_extraction_strict_seeded_domain_keys()
     strict_seeded = bool(context_domain_key and context_domain_key in strict_domains)
+    cred_mult = max(0.0, min(1.0, float(cred_mult)))
     from shared.pg_savepoint import execute_with_savepoint
 
     try:
@@ -862,16 +884,26 @@ Keep each subject under ~80 characters when possible."""
                     skipped_unseeded += 1
                     continue
                 adj_conf = max(0.0, min(1.0, float(confidence) * cred_mult))
+                # Compute claim fingerprint
+                claim_fingerprint = substring(
+                    sha256(
+                        (str(context_id) || '::' ||
+                        lower(regexp_replace(subject_text, '\s+', ' ', 'g')) || '::' ||
+                        lower(regexp_replace(predicate_text, '\s+', ' ', 'g')) || '::' ||
+                        lower(regexp_replace(object_text, '\s+', ' ', 'g')))
+                    ) from 1 for 64
+                )
                 if execute_with_savepoint(
                     cur,
                     conn,
                     f"claim_llm_{context_id}_{idx}",
                     """
                         INSERT INTO intelligence.extracted_claims
-                        (context_id, subject_text, predicate_text, object_text, confidence)
-                        VALUES (%s, %s, %s, %s, %s)
+                        (context_id, subject_text, predicate_text, object_text, confidence, claim_fingerprint)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (claim_fingerprint) DO NOTHING
                     """,
-                    (context_id, subject_text, predicate_text, object_text, adj_conf),
+                    (context_id, subject_text, predicate_text, object_text, adj_conf, claim_fingerprint),
                 ):
                     inserted += 1
                 else:
@@ -1875,15 +1907,19 @@ def _resolve_claim_to_entity_profile(
                     """
                     SELECT cem.entity_profile_id
                     FROM intelligence.context_entity_mentions cem
+                    JOIN intelligence.entity_profiles ep ON ep.id = cem.entity_profile_id
                     WHERE cem.context_id = %s
-                      AND lower(trim(cem.mention_text)) = %s
+                      AND (
+                        lower(trim(COALESCE(ep.metadata->>'canonical_name', ''))) = %s
+                        OR lower(trim(COALESCE(ep.metadata->>'display_name', ''))) = %s
+                      )
                     LIMIT 1
                     """,
-                    (context_id, norm_lower),
+                    (context_id, norm_lower, norm_lower),
                 )
                 if pid:
                     return pid
-    
+
                 if slen >= 4:
                     if triple:
                         d1, d2, d3 = triple
@@ -1894,31 +1930,48 @@ def _resolve_claim_to_entity_profile(
                             JOIN intelligence.entity_profiles ep ON ep.id = cem.entity_profile_id
                             WHERE cem.context_id = %s
                               AND (
-                                lower(trim(cem.mention_text)) LIKE '%%' || %s || '%%'
-                                OR %s LIKE '%%' || lower(trim(cem.mention_text)) || '%%'
+                                lower(trim(COALESCE(ep.metadata->>'canonical_name', ''))) LIKE '%%' || %s || '%%'
+                                OR lower(trim(COALESCE(ep.metadata->>'display_name', ''))) LIKE '%%' || %s || '%%'
+                                OR %s LIKE '%%' || lower(trim(COALESCE(ep.metadata->>'canonical_name', ''))) || '%%'
+                                OR %s LIKE '%%' || lower(trim(COALESCE(ep.metadata->>'display_name', ''))) || '%%'
                               )
-                              AND length(trim(cem.mention_text)) >= 3
+                              AND GREATEST(
+                                char_length(trim(COALESCE(ep.metadata->>'canonical_name', ''))),
+                                char_length(trim(COALESCE(ep.metadata->>'display_name', '')))
+                              ) >= 3
                             ORDER BY CASE WHEN ep.domain_key IN (%s, %s, %s) THEN 0 ELSE 1 END,
-                              length(cem.mention_text) DESC
+                              GREATEST(
+                                char_length(trim(COALESCE(ep.metadata->>'canonical_name', ''))),
+                                char_length(trim(COALESCE(ep.metadata->>'display_name', '')))
+                              ) DESC
                             LIMIT 1
                             """,
-                            (context_id, norm_lower, norm_lower, d1, d2, d3),
+                            (context_id, norm_lower, norm_lower, norm_lower, norm_lower, d1, d2, d3),
                         )
                     else:
                         pid = _one_int(
                             """
                             SELECT cem.entity_profile_id
                             FROM intelligence.context_entity_mentions cem
+                            JOIN intelligence.entity_profiles ep ON ep.id = cem.entity_profile_id
                             WHERE cem.context_id = %s
                               AND (
-                                lower(trim(cem.mention_text)) LIKE '%%' || %s || '%%'
-                                OR %s LIKE '%%' || lower(trim(cem.mention_text)) || '%%'
+                                lower(trim(COALESCE(ep.metadata->>'canonical_name', ''))) LIKE '%%' || %s || '%%'
+                                OR lower(trim(COALESCE(ep.metadata->>'display_name', ''))) LIKE '%%' || %s || '%%'
+                                OR %s LIKE '%%' || lower(trim(COALESCE(ep.metadata->>'canonical_name', ''))) || '%%'
+                                OR %s LIKE '%%' || lower(trim(COALESCE(ep.metadata->>'display_name', ''))) || '%%'
                               )
-                              AND length(trim(cem.mention_text)) >= 3
-                            ORDER BY length(cem.mention_text) DESC
+                              AND GREATEST(
+                                char_length(trim(COALESCE(ep.metadata->>'canonical_name', ''))),
+                                char_length(trim(COALESCE(ep.metadata->>'display_name', '')))
+                              ) >= 3
+                            ORDER BY GREATEST(
+                                char_length(trim(COALESCE(ep.metadata->>'canonical_name', ''))),
+                                char_length(trim(COALESCE(ep.metadata->>'display_name', '')))
+                              ) DESC
                             LIMIT 1
                             """,
-                            (context_id, norm_lower, norm_lower),
+                            (context_id, norm_lower, norm_lower, norm_lower, norm_lower),
                         )
                     if pid:
                         return pid
@@ -2189,21 +2242,24 @@ def _resolve_claim_to_entity_profile(
                     SELECT cem.entity_profile_id
                     FROM intelligence.context_entity_mentions cem
                     JOIN intelligence.entity_profiles ep ON ep.id = cem.entity_profile_id
-                    WHERE lower(trim(cem.mention_text)) = %s
+                    WHERE lower(trim(COALESCE(ep.metadata->>'canonical_name', ''))) = %s
+                       OR lower(trim(COALESCE(ep.metadata->>'display_name', ''))) = %s
                     ORDER BY CASE WHEN ep.domain_key IN (%s, %s, %s) THEN 0 ELSE 1 END
                     LIMIT 1
                     """,
-                    (norm_lower, d1, d2, d3),
+                    (norm_lower, norm_lower, d1, d2, d3),
                 )
             else:
                 pid = _one_int(
                     """
                     SELECT DISTINCT cem.entity_profile_id
                     FROM intelligence.context_entity_mentions cem
-                    WHERE lower(trim(cem.mention_text)) = %s
+                    JOIN intelligence.entity_profiles ep ON ep.id = cem.entity_profile_id
+                    WHERE lower(trim(COALESCE(ep.metadata->>'canonical_name', ''))) = %s
+                       OR lower(trim(COALESCE(ep.metadata->>'display_name', ''))) = %s
                     LIMIT 1
                     """,
-                    (norm_lower,),
+                    (norm_lower, norm_lower),
                 )
             if pid:
                 return pid

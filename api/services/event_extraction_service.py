@@ -669,7 +669,7 @@ class EventExtractionService:
                         %(continuation_signals)s, %(date_precision)s,
                         %(event_sequence_position)s, %(temporal_status)s
                     )
-                    ON CONFLICT (event_id) DO NOTHING
+                    ON CONFLICT (event_fingerprint, source_article_id) DO NOTHING
                 """,
                 row,
             )

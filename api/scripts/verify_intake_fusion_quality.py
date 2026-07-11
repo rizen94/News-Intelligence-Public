@@ -129,7 +129,7 @@ def main() -> int:
     _load_env()
     parser = argparse.ArgumentParser(description="Intake fusion quality regression sample")
     parser.add_argument("--limit", type=int, default=100)
-    parser.add_argument("--dry-run", action="store_true", help="Only report DB baselines, no LLM")
+    parser.add_argument("--run", action="store_true", help="Run the fusion extraction (default: dry-run only)")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
@@ -158,7 +158,7 @@ def main() -> int:
         "fusion_rerun": None,
     }
 
-    if not args.dry_run:
+    if args.run:
         fusion = asyncio.run(_run_fusion_sample(articles))
         deltas = []
         for art in articles:
