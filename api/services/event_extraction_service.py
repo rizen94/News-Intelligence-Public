@@ -9,7 +9,7 @@ for story matching (Phase 3).
 Integration Point: Stores events in `chronological_events` table for downstream processing
 by Event Deduplication (Phase 4) and Story Continuation (Phase 5) phases.
 
-Error Handling: 
+Error Handling:
 - LLM processing failures are logged and skipped
 - Database connection issues trigger retry mechanisms
 - Invalid event formats are logged and skipped
@@ -393,7 +393,7 @@ class EventExtractionService:
                 events_by_article = self._parse_batch_json_response(raw_response)
 
             total_events = sum(len(v) for v in events_by_article.values())
-            
+
             logger.info(
                 "batch_event_extraction articles=%s model=%s events_found=%s",
                 len(articles),
@@ -416,7 +416,7 @@ class EventExtractionService:
                     # Find pub_date and storyline_id for this article_id
                     pub_date_for_article = next((a["pub_date"] for a in articles if a["article_id"] == aid), None)
                     storyline_id_for_article = next((a.get("storyline_id") for a in articles if a["article_id"] == aid), None)
-                    
+
                     evt = self._normalise_event(
                         raw_evt,
                         aid,
@@ -433,7 +433,7 @@ class EventExtractionService:
                 result[aid] = events
                 total_normalized += len(events)
                 logger.info(f"Article {aid}: extracted {len(events)} events (batch)")
-        
+
         return result
 
     def _parse_batch_json_response(self, response: str) -> dict[int, list[dict]]:

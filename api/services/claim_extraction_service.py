@@ -869,7 +869,6 @@ Keep each subject under ~80 characters when possible."""
     skipped_unseeded = 0
     strict_domains = _claim_extraction_strict_seeded_domain_keys()
     strict_seeded = bool(context_domain_key and context_domain_key in strict_domains)
-    cred_mult = max(0.0, min(1.0, float(cred_mult)))
     from shared.pg_savepoint import execute_with_savepoint
 
     try:
@@ -1901,7 +1900,7 @@ def _resolve_claim_to_entity_profile(
 
         for norm_lower in variants:
             slen = len(norm_lower)
-    
+
             if context_id is not None:
                 pid = _one_int(
                     """
@@ -1975,7 +1974,7 @@ def _resolve_claim_to_entity_profile(
                         )
                     if pid:
                         return pid
-    
+
             if ctx_article_id is not None and ctx_dk is not None:
                 schema = resolve_domain_schema(ctx_dk)
                 if schema in schemas:
@@ -2047,7 +2046,7 @@ def _resolve_claim_to_entity_profile(
                     )
                     if pid:
                         return pid
-    
+
             if triple:
                 d1, d2, d3 = triple
                 pid = _one_int(
@@ -2322,7 +2321,7 @@ def _resolve_claim_to_entity_profile(
                         _rollback_sp()
                 if best_pid is not None:
                     return best_pid
-    
+
                 try:
                     if triple:
                         d1, d2, d3 = triple
@@ -2405,4 +2404,3 @@ def _resolve_claim_to_entity_profile(
                 cur.execute(f"ROLLBACK TO SAVEPOINT {_SP}")
             except Exception:
                 pass
-
