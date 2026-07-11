@@ -70,6 +70,9 @@ const CommodityDashboard = React.lazy(() => import('./pages/Finance/CommodityDas
 const CreditSpreadDashboard = React.lazy(
   () => import('./pages/Finance/CreditSpreadDashboard')
 );
+const UsdPurchasingPowerTracker = React.lazy(
+  () => import('./pages/Finance/UsdPurchasingPowerTracker')
+);
 const FinancialAnalysis = React.lazy(() => import('./pages/Finance/FinancialAnalysis'));
 const FinancialAnalysisResult = React.lazy(() => import('./pages/Finance/FinancialAnalysisResult'));
 const TaskTraceViewer = React.lazy(() => import('./pages/Finance/TaskTraceViewer'));
@@ -352,11 +355,19 @@ function App() {
                       </DemoRouteGuard>
                     }
                   />
+                  <Route
+                    path='usd-purchasing-power-tracker'
+                    element={
+                      <DemoRouteGuard>
+                        <UsdPurchasingPowerTracker />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='*'
+                    element={<Navigate to={defaultDomainPath} replace />}
+                  />
                 </Route>
-                <Route
-                  path='*'
-                  element={<Navigate to={defaultDomainPath} replace />}
-                />
               </Routes>
                 </Suspense>
             </div>

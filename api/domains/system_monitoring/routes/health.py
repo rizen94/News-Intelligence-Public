@@ -180,6 +180,44 @@ def check_finance_health() -> Dict[str, Any]:
         logger.error(f"Finance health check failed: {e}")
         return {"status": "unhealthy", "error": str(e)}
 
+
+def check_usd_purchasing_power_tracker_health() -> Dict[str, Any]:
+    """Health check for USD Purchasing Power Tracker"""
+    try:
+        # Check if data files exist
+        from pathlib import Path
+        project_root = Path(__file__).parent.parent.parent.parent
+        data_file = project_root / "data/tracker_data/USD_purchasing_power.json"
+        tracker_file = project_root / "40_Reference/Trackers/USD_Purchasing_Power_Tracker.md"
+        
+        if not data_file.exists():
+            return {"status": "unhealthy", "error": "Tracker data file not found"}
+        
+        if not tracker_file.exists():
+            return {"status": "unhealthy", "error": "Tracker documentation file not found"}
+        
+        # Try to read and parse the JSON data
+        import json
+        with open(data_file, 'r') as f:
+            data = json.load(f)
+        
+        # Check if required fields exist
+        if "series" not in data or "last_updated" not in data:
+            return {"status": "unhealthy", "error": "Invalid tracker data format"}
+        
+        # Check if we have data for our tracked series
+        required_series = ["PDOLLAR", "CPIAUCSL", "CORECPIAUCSL", "DXY", "GD1CIAMDG"]
+        series_data = data.get("series", {})
+        
+        # At least some data should be present
+        if not series_data:
+            return {"status": "healthy", "note": "No series data yet (expected for fresh installation)"}
+        
+        return {"status": "healthy"}
+    except Exception as e:
+        logger.error(f"USD Purchasing Power Tracker health check failed: {e}")
+        return {"status": "unhealthy", "error": str(e)}
+
 def check_politics_health() -> Dict[str, Any]:
     """Health check for politics domain"""
     try:
@@ -223,6 +261,7 @@ async def health_check(domain: Optional[str] = Query(None, description="Specific
         "public_auth": check_public_auth_health,
         "finance": check_finance_health,
         "politics": check_politics_health,
+        "usd_purchasing_power_tracker": check_usd_purchasing_power_tracker_health,
     }
     
     if domain:

@@ -185,6 +185,14 @@ start_api() {
         fi
     fi
 
+    # Load environment variables from .env so DB_* matches ops config
+    if [ -f "$SCRIPT_DIR/.env" ]; then
+        set -o allexport
+        # shellcheck disable=SC1090
+        source "$SCRIPT_DIR/.env"
+        set +o allexport
+    fi
+
     # Check if virtual environment exists
     if [ ! -d "$SCRIPT_DIR/.venv" ]; then
         log "Creating virtual environment..."
@@ -206,10 +214,7 @@ start_api() {
         --host 0.0.0.0 \
         --port 8000 \
         --workers 2 \
-        --access-log >> "$API_LOG" \
-        --error-log >> "$API_LOG" \
-        --capture-handled-exceptions \
-        2>&1 &
+        >> "$API_LOG" 2>&1 &
     
     API_PID=$!
     echo $API_PID > "$LOG_DIR/api.pid"

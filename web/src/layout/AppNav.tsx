@@ -161,6 +161,13 @@ const NAV_SECTIONS: NavSection[] = [
         demoHidden: true,
       },
       {
+        path: 'usd-purchasing-power-tracker',
+        label: 'USD purchasing power',
+        icon: <ShowChartIcon />,
+        hrefDomain: 'finance',
+        demoHidden: true,
+      },
+      {
         path: 'trace',
         label: 'Task trace',
         icon: <TimelineIcon />,

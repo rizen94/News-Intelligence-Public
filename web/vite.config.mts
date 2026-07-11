@@ -16,10 +16,14 @@ export default defineConfig({
     port: 3000,
     host: true,
     strictPort: false,
-    // Proxy API requests to backend
+    // Proxy API requests to backend.
+    // On PopOS, localhost:8000 is often NOT NI (e.g. Dental Review). Default to Widow public API.
+    // Override with VITE_API_PROXY_TARGET=http://127.0.0.1:8000 when running NI API locally.
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target:
+          process.env.VITE_API_PROXY_TARGET ||
+          'https://news-intelligence-ag.duckdns.org',
         changeOrigin: true,
         secure: false,
         // Must exceed axios timeouts: processing_progress uses 300s; overview/pipeline 120s

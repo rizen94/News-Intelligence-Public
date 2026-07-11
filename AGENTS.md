@@ -90,6 +90,11 @@ Context for AI assistants. Use project terminology consistently.
 | Open WebUI DB explorer | Homelab `docs/NEWS_DB_EXPLORER_AGENT.md` — model `news-db-explorer` |
 | Human reviewer navigation | `docs/CODEBASE_MAP.md`, `docs/PIPELINE_AND_AUTOMATION.md`, `docs/CODE_REVIEW_AND_RUN_CAVEATS.md` |
 | Public HTTPS read-only demo | `docs/PUBLIC_DEPLOYMENT.md` (TLS, env, `NEWS_INTEL_DEMO_*`, `GET /api/public/demo_config`) |
+| USD Purchasing Power Tracker | `api/services/usd_purchasing_power_tracker_service.py`, `api/services/scheduler_service.py` |
+| USD Purchasing Power Tracker Data | `data/tracker_data/USD_purchasing_power.json` |
+| USD Purchasing Power Tracker Documentation | `40_Reference/Trackers/USD_Purchasing_Power_Tracker.md` |
+
+---
 
 ---
 
@@ -173,6 +178,11 @@ Context for AI assistants. Use project terminology consistently.
 ## Keeping Documentation Aligned
 
 When you change API routes or core behaviour, update `AGENTS.md`, relevant `docs/*.md`, and [PROJECT_STATUS.md](PROJECT_STATUS.md) if host/path authority changes.
+
+For the USD Purchasing Power Tracker, ensure the following documentation stays updated:
+- `40_Reference/Trackers/USD_Purchasing_Power_Tracker.md` - Main tracker documentation
+- API documentation for the scheduler service and tracker service
+- Any relevant sections in `docs/PIPELINE_AND_AUTOMATION.md` if integrating with pipeline schedules
 
 ---
 
