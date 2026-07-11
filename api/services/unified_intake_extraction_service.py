@@ -26,7 +26,11 @@ from shared.fast_ner_lane import (
     merge_entity_dicts,
 )
 from shared.database.connection import get_db_connection
-from shared.intake_fusion_schema import fusion_prompt_schema_block, normalize_topic_tags
+from shared.intake_fusion_schema import (
+    fusion_prompt_schema_block,
+    normalize_sentiment_label,
+    normalize_topic_tags,
+)
 from shared.pipeline_pass_marker import (
     infer_entity_extraction_terminal,
     infer_event_extraction_terminal,
@@ -41,11 +45,6 @@ logger = logging.getLogger(__name__)
 
 _EVENT_TYPES_STR = ", ".join(sorted(VALID_EVENT_TYPES))
 
-_JSON_RETRY_SUFFIX = (
-    "\n\nYour previous answer was not valid JSON. "
-    "Reply with ONLY a single JSON object mapping each required article_id to its extraction — "
-    "no markdown fences, no commentary before or after the object."
-)
 
 
 def _bulk_catchup_fast_path() -> bool:
@@ -140,6 +139,7 @@ class UnifiedIntakeExtractionService:
                 prompt,
                 kind=InvocationKind.STRUCTURED_EXTRACTION,
                 approx_prompt_chars=len(prompt),
+                batch_size=len(valid),
             )
             raw = (gen.text or "") if gen is not None else ""
             extraction_model = getattr(gen, "model", None)
@@ -148,28 +148,31 @@ class UnifiedIntakeExtractionService:
             return {}
         llm_elapsed = time.monotonic() - llm_t0
 
-        parsed_by_id = self._parse_batch_response(raw, article_ids=article_ids)
+        parsed_by_id
 
         if not parsed_by_id and valid:
             self._record_parse_retry("json_decode_fail")
-            try:
-                correction_t0 = time.monotonic()
-                gen_retry = await self._caller.generate(
-                    prompt + _JSON_RETRY_SUFFIX,
-                    kind=InvocationKind.STRUCTURED_EXTRACTION,
-                    approx_prompt_chars=len(prompt) + len(_JSON_RETRY_SUFFIX),
-                )
-                llm_elapsed += time.monotonic() - correction_t0
-                retry_raw = (gen_retry.text or "") if gen_retry is not None else ""
-                if getattr(gen_retry, "model", None):
-                    extraction_model = gen_retry.model
-                parsed_by_id = self._parse_batch_response(retry_raw, article_ids=article_ids)
-                if parsed_by_id:
-                    self._record_parse_retry("json_retry_suffix_recovered")
-            except Exception as e:
-                logger.warning("unified_intake JSON correction retry failed: %s", e)
+            if len(valid) > 1:
+                # Halve the batch and try each half
+                mid = len(valid) // 2
+                left = await self.extract_batch(valid[:mid])
+                right = await self.extract_batch(valid[mid:])
+                return {**left, **right}
 
         if not parsed_by_id and len(valid) > 1:
+            self._record_parse_retry("single_retry")
+            logger.warning(
+                "unified_intake batch JSON parse failed; trying %s single-article retries before split",
+                len(valid),
+            )
+            singles_out: dict[int, dict[str, Any]] = {}
+            for art in valid:
+                one = await self.extract_batch([art])
+                singles_out.update(one)
+            if singles_out:
+                self._record_parse_retry("single_retry_recovered")
+                return singles_out
+
             mid = len(valid) // 2
             self._record_parse_retry("split_retry")
             logger.warning(
@@ -418,7 +421,7 @@ Return ONLY valid JSON — no markdown fences, no text before or after the JSON 
 
             scoring = payload.get("scoring") if isinstance(payload.get("scoring"), dict) else {}
             sentiment_score = scoring.get("sentiment_score")
-            sentiment_label = scoring.get("sentiment_label")
+            sentiment_label = normalize_sentiment_label(scoring.get("sentiment_label"))
             quality_score = scoring.get("quality_score")
             cur.execute(
                 f"""

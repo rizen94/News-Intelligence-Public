@@ -8,18 +8,19 @@ Drains pending approve/reject decisions using:
 Reuses bulk approve/reject DB logic from storyline_automation_bulk.
 """
 
-from __future__ import annotations
+from collections import defaultdict
 
 import json
 import logging
 import re
 from datetime import datetime
-from typing import Any
+from typing import Any, Dict, List
 
 from config.runtime import env_int, env_str
 from shared.database.connection import get_db_connection
 from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 from shared.services.llm_service import LLMService, ModelType
+from shared.services.ollama_model_policy import InvocationKind
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +225,12 @@ async def _llm_review_storyline_group(
 
     llm = LLMService()
     try:
-        raw = await llm._call_ollama(ModelType.LLAMA_8B, prompt)
+        raw = await llm._call_ollama(
+            ModelType.LLAMA_8B,
+            prompt,
+            invocation_kind=InvocationKind.STRUCTURED_EXTRACTION,
+            batch_size=len(items),
+        )
     except Exception as e:
         logger.warning("storyline_review_agent LLM failed storyline=%s: %s", storyline_title[:40], e)
         stats["errors"] += len(items)

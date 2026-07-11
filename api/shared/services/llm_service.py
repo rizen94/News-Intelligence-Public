@@ -671,20 +671,22 @@ class LLMService:
         prompt: str,
         execution_lane: str | None = None,
         invocation_kind: Any | None = None,
+        batch_size: int = 1,
     ) -> str:
         """Make API call to Ollama with circuit breaker protection and lane-aware semaphores."""
         sem = _get_lane_semaphore(execution_lane or _llm_execution_lane.get(), self.dual_host_enabled)
         async with sem:
             return await self._call_ollama_impl(
-                model, prompt, execution_lane=execution_lane, invocation_kind=invocation_kind
+                model, prompt, execution_lane=execution_lane, invocation_kind=invocation_kind, batch_size=batch_size
             )
 
-    async def _call_ollama_impl(
+async def _call_ollama_impl(
         self,
         model: ModelType,
         prompt: str,
         execution_lane: str | None = None,
         invocation_kind: Any | None = None,
+        batch_size: int = 1,
     ) -> str:
         """Inner Ollama call (no semaphore). Routes 70B to popOS, smaller models to local GPU."""
         from services.circuit_breaker_service import get_circuit_breaker_service
@@ -712,7 +714,7 @@ class LLMService:
             opts: dict = {
                 "temperature": extraction_temperature_for_invocation(kind),
                 "top_p": 0.9,
-                "num_predict": num_predict_for_invocation(kind),
+                "num_predict": num_predict_for_invocation(kind, batch_size),
             }
             num_ctx = num_ctx_for_invocation(kind)
             if num_ctx is not None:
@@ -761,7 +763,7 @@ class LLMService:
         except Exception as e:
             if "circuit breaker" not in str(e).lower():
                 await cb._record_failure()
-            raise Exception(f"{cb_key} API error: {str(e)}")
+                raise Exception(f"{cb_key} API error: {str(e)}")
 
     async def get_model_status(self, timeout_seconds: float | None = None) -> dict[str, Any]:
         """

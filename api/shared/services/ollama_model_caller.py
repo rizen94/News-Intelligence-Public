@@ -81,11 +81,13 @@ class OllamaModelCaller:
         kind: InvocationKind,
         urgency: str = "standard",
         approx_prompt_chars: Optional[int] = None,
+        batch_size: Optional[int] = None,
     ) -> GenerationResult:
         """
         Run /api/generate with the model chosen by policy.
 
         approx_prompt_chars: defaults to len(prompt) for batch thresholding.
+        batch_size: number of items in the batch (for structured extraction token scaling).
         """
         chars = approx_prompt_chars if approx_prompt_chars is not None else len(prompt or "")
         model = self.resolve_text_model(kind, urgency, chars)
@@ -104,6 +106,7 @@ class OllamaModelCaller:
             prompt,
             execution_lane=self._execution_lane_for_kind(kind),
             invocation_kind=kind,
+            batch_size=batch_size,
         )
         out = text or ""
         # Do not cache empty responses — allows retry after transient failures

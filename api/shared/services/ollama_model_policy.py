@@ -124,7 +124,7 @@ def extraction_temperature_for_invocation(kind: InvocationKind | None) -> float:
     return 0.7
 
 
-def num_predict_for_invocation(kind: InvocationKind | None) -> int:
+def num_predict_for_invocation(kind: InvocationKind | None, batch_size: int = 1) -> int:
     """Token cap by invocation kind — avoids 2000-token budget on short extraction passes."""
     if kind is None:
         return 800
@@ -133,6 +133,13 @@ def num_predict_for_invocation(kind: InvocationKind | None) -> int:
         InvocationKind.FAST_SIMPLE,
         InvocationKind.REAL_TIME_UI,
     ):
+        if kind == InvocationKind.STRUCTURED_EXTRACTION:
+            # Scale with batch size: ~700 tokens/article, minimum 2048
+            try:
+                base = int(env_str("OLLAMA_EXTRACTION_NUM_PREDICT", "2048"))
+            except ValueError:
+                base = 2048
+            return max(base, 700 * batch_size)
         try:
             return int(env_str("OLLAMA_EXTRACTION_NUM_PREDICT", "2048"))
         except ValueError:
