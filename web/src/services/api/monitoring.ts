@@ -26,24 +26,28 @@ export const monitoringApi = {
     try {
       const response = await getApi().get(
         '/api/system_monitoring/monitoring/overview',
-        // API returns degraded JSON within ~12s; allow headroom for proxy + saturated API.
-        { timeout: 30000 }
+        // Server aims to answer (or degraded) within ~12s; keep client under that + proxy slack.
+        // Longer waits only mask a hung/dead upstream and freeze the Monitor banner.
+        { timeout: 15000 }
       );
       return response.data;
     } catch (error) {
       const err = error as Error & { code?: string };
       const msg = err.message || 'request failed';
+      const timedOut = /timeout/i.test(msg) || err.code === 'ECONNABORTED';
       Logger.apiError('Failed to fetch monitoring overview', err);
       return {
         success: true,
         degraded: true,
         connections: {
-          api: 'ok',
+          api: timedOut ? 'timeout' : 'error',
           database: 'unknown',
           webserver: { status: 'unknown' },
         },
         activities: { current: [], recent: [] },
-        error: `monitoring/overview: ${msg}`,
+        error: timedOut
+          ? 'monitoring/overview: API did not respond in 15s (host overloaded or API restarting)'
+          : `monitoring/overview: ${msg}`,
       };
     }
   },

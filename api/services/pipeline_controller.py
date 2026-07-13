@@ -31,6 +31,7 @@ _MAINTENANCE_PHASES = frozenset(
 # Long-running drain phases — dedupe when inflight >= cap.
 LONG_DRAIN_PHASES = frozenset(
     {
+        "collection_cycle",  # one ingest cycle at a time; drop stacked manual/governor copies
         "unified_intake_extraction",
         "claim_extraction",
         "entity_profile_build",

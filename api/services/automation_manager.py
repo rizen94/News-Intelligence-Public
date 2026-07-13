@@ -113,7 +113,7 @@ from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_s
 
 
 # Legacy enrichment-backlog-first flag — removed in v8.1 (PipelineController owns sequencing).
-OLLAMA_AUTOMATION_PHASES = frozenset(
+_OLLAMA_AUTOMATION_PHASES_FULL = frozenset(
     {
         "topic_clustering",
         "ml_processing",
@@ -154,6 +154,18 @@ OLLAMA_AUTOMATION_PHASES = frozenset(
         "storyline_enrichment",
     }
 )
+
+
+def _build_ollama_automation_phases() -> frozenset[str]:
+    from shared.legacy_intake_rollback import legacy_intake_rollback_active
+    from shared.pipeline_resource_policy import unified_superseded_automation_phases
+
+    if legacy_intake_rollback_active():
+        return _OLLAMA_AUTOMATION_PHASES_FULL
+    return frozenset(_OLLAMA_AUTOMATION_PHASES_FULL - unified_superseded_automation_phases())
+
+
+OLLAMA_AUTOMATION_PHASES = _build_ollama_automation_phases()
 # Phases whose main LLM path uses Widow CPU (rate-limited HTTP / light models).
 from shared.pipeline_resource_policy import cpu_structured_extraction_phases, db_heavy_phases as policy_db_heavy
 
@@ -268,6 +280,7 @@ AUTOMATION_PER_PHASE_CONCURRENT_CAP = int(
 )
 DEFAULT_AUTOMATION_PER_PHASE_CONCURRENT_CAP_PHASES = frozenset(
     {
+        "collection_cycle",  # hard guard: one ingest cycle (RSS/docs/queue) at a time
         "claim_extraction",
         "claims_to_facts",
         "event_extraction",
@@ -308,6 +321,12 @@ DEFAULT_AUTOMATION_PER_PHASE_CONCURRENT_CAP_PHASES = frozenset(
     }
 )
 
+# Built-in per-phase caps (env AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES merges on top).
+# collection_cycle stays at 1 even when the global cap is higher — avoid parallel RSS/doc sweeps.
+DEFAULT_AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES: dict[str, int] = {
+    "collection_cycle": 1,
+}
+
 
 def _per_phase_concurrent_cap_phase_names() -> frozenset[str]:
     raw = env_str("AUTOMATION_PER_PHASE_CONCURRENT_CAP_PHASES", "").strip()
@@ -320,11 +339,12 @@ def _per_phase_concurrent_cap_overrides() -> dict[str, int]:
     """
     Optional per-phase caps: AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES=claim_extraction:1,claims_to_facts:2
     Values are max concurrent workers for that phase (clamped to max_concurrent_tasks at use site). 0 = unlimited.
+    Built-in defaults (e.g. collection_cycle:1) apply unless overridden by env.
     """
+    out = dict(DEFAULT_AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES)
     raw = env_str("AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES", "").strip()
     if not raw:
-        return {}
-    out: dict[str, int] = {}
+        return out
     for part in raw.split(","):
         part = part.strip()
         if ":" not in part:
@@ -346,12 +366,12 @@ def _per_phase_nightly_cap_mult_exclude() -> frozenset[str]:
     AUTOMATION_PER_PHASE_CONCURRENT_NIGHTLY_MULT during the unified nightly window.
 
     Default excludes claim_extraction so nightly catch-up does not spawn e.g. 8× huge LLM batches
-    that stall for hours and stack the asyncio queue.
+    that stall for hours and stack the asyncio queue. collection_cycle stays at 1 (no parallel cycles).
     """
     raw = env_str("AUTOMATION_PER_PHASE_NIGHTLY_MULT_EXCLUDE", "").strip()
     if raw:
         return frozenset(x.strip() for x in raw.split(",") if x.strip())
-    return frozenset({"claim_extraction"})
+    return frozenset({"claim_extraction", "collection_cycle"})
 
 
 # Ollama tasks normally yield when a non-polling browser request hit the API recently; storyline
@@ -385,7 +405,7 @@ DOWNTIME_POLL_SLEEP = 30  # Seconds to sleep when data load is active (before re
 # v8: Pipeline-ordered analysis (run after each collection_cycle)
 # Events moved to Step 1 (Extraction) — foundational entities should feed intelligence phases
 # Fact verification moved to Step 1 — verification precedes intelligence synthesis
-ANALYSIS_PIPELINE_STEPS: tuple[tuple[str, ...], ...] = (
+_ANALYSIS_PIPELINE_STEPS_FULL: tuple[tuple[str, ...], ...] = (
     # Step 0: Foundation
     (
         "nightly_enrichment_context",
@@ -433,6 +453,23 @@ ANALYSIS_PIPELINE_STEPS: tuple[tuple[str, ...], ...] = (
         "data_cleanup",
     ),
 )
+
+
+def _build_analysis_pipeline_steps() -> tuple[tuple[str, ...], ...]:
+    from shared.legacy_intake_rollback import legacy_intake_rollback_active
+    from shared.pipeline_resource_policy import unified_superseded_automation_phases
+
+    if legacy_intake_rollback_active():
+        return _ANALYSIS_PIPELINE_STEPS_FULL
+    skip = unified_superseded_automation_phases()
+    return tuple(
+        tuple(p for p in step if p not in skip)
+        for step in _ANALYSIS_PIPELINE_STEPS_FULL
+        if any(p not in skip for p in step)
+    )
+
+
+ANALYSIS_PIPELINE_STEPS = _build_analysis_pipeline_steps()
 
 def _env_int(name: str, default: int, minimum: int = 1) -> int:
     """Parse int env var with safe fallback and floor."""
@@ -1314,6 +1351,11 @@ class AutomationManager:
         }
 
         self._apply_automation_disabled_schedules()
+        self._apply_legacy_intake_schedule_suppression()
+        from shared.retired_phase_registry import apply_retired_schedule_suppression
+
+        apply_retired_schedule_suppression(self.schedules)
+        self._apply_entity_enrichment_schedule_dedupe()
 
         # Performance metrics
         self.metrics = {
@@ -1376,6 +1418,76 @@ class AutomationManager:
                     sched_name,
                     new_deps,
                 )
+
+    def _apply_legacy_intake_schedule_suppression(self) -> None:
+        """Disable legacy per-phase intake schedules superseded by unified_intake_extraction."""
+        from shared.legacy_intake_rollback import legacy_intake_rollback_active
+        from shared.pipeline_resource_policy import unified_superseded_automation_phases
+
+        if legacy_intake_rollback_active():
+            return
+        disabled = unified_superseded_automation_phases()
+        for name in disabled:
+            if name in self.schedules:
+                self.schedules[name]["enabled"] = False
+                logger.info(
+                    "Automation schedule %s disabled (superseded by unified_intake_extraction)",
+                    name,
+                )
+        for sched_name, sched in self.schedules.items():
+            deps = list(sched.get("depends_on") or [])
+            new_deps = [d for d in deps if d not in disabled]
+            if new_deps != deps:
+                sched["depends_on"] = new_deps
+                logger.debug(
+                    "Automation: %s depends_on stripped legacy intake phases: %s",
+                    sched_name,
+                    new_deps,
+                )
+
+    def _apply_retired_phase_schedule_suppression(self) -> None:
+        """Disable schedules for features.yaml retired phases (enabled:false with phase_name)."""
+        from shared.retired_phase_registry import retired_automation_phases
+
+        disabled = retired_automation_phases()
+        if not disabled:
+            return
+        for name in disabled:
+            if name in self.schedules and self.schedules[name].get("enabled", True):
+                self.schedules[name]["enabled"] = False
+                logger.info(
+                    "Automation schedule %s disabled (features.yaml retired phase)",
+                    name,
+                )
+        for sched_name, sched in self.schedules.items():
+            deps = list(sched.get("depends_on") or [])
+            new_deps = [d for d in deps if d not in disabled]
+            if new_deps != deps:
+                sched["depends_on"] = new_deps
+                logger.debug(
+                    "Automation: %s depends_on stripped retired phases: %s",
+                    sched_name,
+                    new_deps,
+                )
+
+    def _apply_entity_enrichment_schedule_dedupe(self) -> None:
+        """story_enhancement orchestrator already runs entity enrichment batches."""
+        se = self.schedules.get("story_enhancement") or {}
+        ee = self.schedules.get("entity_enrichment")
+        if ee and se.get("enabled", True):
+            ee["enabled"] = False
+            logger.info(
+                "Automation schedule entity_enrichment disabled (owned by story_enhancement)"
+            )
+            for sched_name, sched in self.schedules.items():
+                deps = list(sched.get("depends_on") or [])
+                if "entity_enrichment" in deps:
+                    sched["depends_on"] = [d for d in deps if d != "entity_enrichment"]
+                    logger.debug(
+                        "Automation: %s depends_on stripped entity_enrichment: %s",
+                        sched_name,
+                        sched["depends_on"],
+                    )
 
     def _automation_queue_depth(self) -> int:
         """Approximate pending tasks in worker queues (scheduled + governor-requested)."""
@@ -3086,37 +3198,20 @@ class AutomationManager:
                 await self._execute_rss_processing(dummy)
             except Exception as e:
                 logger.warning(f"Collection cycle RSS step failed: {e}")
-        # 2. Content enrichment — loop until drained or cap (nightly pipeline window: nightly_enrichment_context owns this)
-        skip_enrich_nightly = False
+        # 2. Content enrichment — PipelineController schedules standalone content_enrichment
         try:
             from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
 
             skip_enrich_nightly = in_nightly_pipeline_window_est()
         except Exception:
-            pass
-        loops_processed = 0
+            skip_enrich_nightly = False
         if not skip_enrich_nightly:
-            max_enrich_iters = 30
-            for _ in range(max_enrich_iters):
-                if not get_all_pending_counts:
-                    break
-                try:
-                    counts = get_all_pending_counts()
-                    if (counts.get("content_enrichment") or 0) == 0:
-                        break
-                except Exception:
-                    break
-                try:
-                    await self._execute_content_enrichment(dummy)
-                    loops_processed += 1
-                    await self._record_phase_batch_loop(
-                        task,
-                        loops_processed=loops_processed,
-                        step="content_enrichment",
-                    )
-                except Exception as e:
-                    logger.warning(f"Collection cycle enrichment step failed: {e}")
-                    break
+            try:
+                ctrl = getattr(self, "pipeline_controller", None)
+                if ctrl is not None:
+                    ctrl.request_replan()
+            except Exception as e:
+                logger.debug("collection_cycle post-RSS replan: %s", e)
         # 3. Document collection (skip during backfill pause — avoid adding new external documents)
         if not backfill_pause:
             try:
@@ -3126,6 +3221,7 @@ class AutomationManager:
         else:
             logger.info("Collection cycle: skipping document collection (PIPELINE_BACKFILL_MODE pause)")
         # 4. Document processing — loop until drained or cap
+        loops_processed = 0
         max_doc_iters = 20
         for _ in range(max_doc_iters):
             if not get_all_pending_counts:
@@ -4690,11 +4786,11 @@ class AutomationManager:
         if not legacy_intake_rollback_active():
             logger.debug("sentiment_analysis skipped (folded into unified intake)")
             return
-        from services.ai_processing_service import get_ai_service
+        from shared.legacy_intake_rollback import load_ai_processing_service
         from shared.pipeline_batch_drain import RunBudget, phase_batch_limit, phase_run_budget_seconds
         from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_article_phase_pass, sql_article_pass_null
 
-        ai_service = get_ai_service()
+        ai_service = load_ai_processing_service().get_ai_service()
         analyzed_count = 0
         batch_rounds = 0
         per_schema_limit = phase_batch_limit("sentiment_analysis", 100, env_suffix="BATCH_LIMIT")
@@ -5266,9 +5362,9 @@ class AutomationManager:
         if not legacy_intake_rollback_active():
             logger.debug("quality_scoring skipped (folded into unified intake)")
             return
-        from services.ai_processing_service import get_ai_service
+        from shared.legacy_intake_rollback import load_ai_processing_service
 
-        ai_service = get_ai_service()
+        ai_service = load_ai_processing_service().get_ai_service()
         scored_count = 0
 
         ml_ready = sql_ml_ready_and_content_bounds()

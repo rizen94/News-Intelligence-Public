@@ -155,3 +155,22 @@ def test_discard_redundant_claim_extraction_at_cap(monkeypatch):
     )
     mgr._running_tasks_by_phase["claim_extraction"] = 2
     assert mgr._discard_redundant_claim_extraction_when_at_cap(t2, 2) is False
+
+
+def test_collection_cycle_concurrent_cap_defaults_to_one(monkeypatch):
+    monkeypatch.delenv("AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES", raising=False)
+    monkeypatch.setattr(am, "AUTOMATION_PER_PHASE_CONCURRENT_CAP", 8)
+    mgr = AutomationManager(get_db_config())
+    now = datetime.now(timezone.utc)
+    t = Task(
+        id="cc1",
+        name="collection_cycle",
+        priority=TaskPriority.NORMAL,
+        status=TaskStatus.PENDING,
+        created_at=now,
+        metadata={"scheduled": True},
+    )
+    assert mgr._per_phase_execute_concurrent_cap(t) == 1
+    mgr._running_tasks_by_phase["collection_cycle"] = 1
+    assert mgr._discard_redundant_drain_when_at_cap(t, 1) is True
+    assert mgr._should_skip_redundant_phase_request("collection_cycle") is True

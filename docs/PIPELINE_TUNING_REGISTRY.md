@@ -28,7 +28,7 @@ Canonical map of **who reads what**, known **conflicts**, and **defunct** knobs 
 | `AUTOMATION_MAX_CONCURRENT_TASKS` | 12 | Phase worker pool size | Main throughput cap |
 | `AUTOMATION_MAX_SCHEDULED_DEPTH_PER_PHASE` | 1 | Queued duplicates per phase | Prevents asyncio queue explosion |
 | `AUTOMATION_PER_PHASE_CONCURRENT_CAP` | 2 | Same phase parallel runs | Long GPU drain occupies cap |
-| `AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES` | — | e.g. `claim_extraction:1` | |
+| `AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES` | `collection_cycle:1` built-in | e.g. `claim_extraction:1` | **`collection_cycle` defaults to 1** so stacked Monitor triggers cannot run parallel RSS/doc sweeps; set `collection_cycle:0` to disable |
 | `AUTOMATION_QUEUE_SOFT_CAP` | **0** (off) | Pause enqueue when deep queue | Prefer caps above |
 | `AUTOMATION_DB_POOL_PRESSURE_GATE_ENABLED` | true | Defer replans when worker pool hot | See `connection.automation_db_pool_should_defer_phase` |
 | `AUTOMATION_DB_WORKER_UTILIZATION_SKIP_THRESHOLD` | 0.82 | Pool util threshold | |
@@ -73,16 +73,16 @@ When `ASSEMBLY_PIPELINE_MODE=ordered`, batch-capable phases loop until cycle bud
 | `event_tracking` | `ASSEMBLY_EVENT_TRACKING_CYCLE_BUDGET_SECONDS` (120) | `EVENT_TRACKING_ASSEMBLY_BATCH_LIMIT` / `EVENT_TRACKING_ASSEMBLY_BATCH_MAX` (300) |
 | `graph_connection_distillation` | `ASSEMBLY_GRAPH_CONNECTION_DISTILLATION_CYCLE_BUDGET_SECONDS` (60) | processor default |
 
-**Automation drain (v10.1+):** When `ENTITY_PROFILE_BUILD_DRAIN=true` (default), each scheduled `entity_profile_build` task loops batches until idle or `ENTITY_PROFILE_BUILD_RUN_BUDGET_SECONDS` / assembly cycle budget. Parallel in-flight profiles: `ENTITY_PROFILE_BUILD_PARALLEL` (default 3). First-pass (empty sections) uses fast single-LLM path (`ENTITY_PROFILE_BUILD_FAST_CONTEXT_LIMIT`, default 15); refresh builds use full iterative path (`ENTITY_PROFILE_BUILD_FULL_CONTEXT_LIMIT`, default 75).
+**Automation drain (v10.1+):** When `ENTITY_PROFILE_BUILD_DRAIN=true` (default), each scheduled `entity_profile_build` task loops batches until idle or `ENTITY_PROFILE_BUILD_RUN_BUDGET_SECONDS` / assembly cycle budget. Parallel in-flight profiles: `ENTITY_PROFILE_BUILD_PARALLEL` (default 3). First-pass (empty sections) uses fast single-LLM path (`ENTITY_PROFILE_BUILD_FAST_CONTEXT_LIMIT`, default 15); refresh builds use a richer single-LLM path (`ENTITY_PROFILE_BUILD_FULL_CONTEXT_LIMIT`, default 40). Multi-LLM iterative chunking only runs when refresh context count exceeds `ENTITY_PROFILE_BUILD_ITERATIVE_MIN_CONTEXTS` (default 50) — with defaults, refreshes stay single-LLM.
 
 | Env | Default | Purpose |
 |-----|---------|---------|
 | `ENTITY_PROFILE_BUILD_DRAIN` | `true` | Multi-batch drain per scheduler task |
 | `ENTITY_PROFILE_BUILD_PARALLEL` | `3` | Concurrent profiles per batch |
 | `ENTITY_PROFILE_BUILD_FAST_CONTEXT_LIMIT` | `15` | Context cap for first_pass (single LLM) |
-| `ENTITY_PROFILE_BUILD_FULL_CONTEXT_LIMIT` | `75` | Context cap for refresh builds |
+| `ENTITY_PROFILE_BUILD_FULL_CONTEXT_LIMIT` | `40` | Context cap for refresh builds (keep ≤ iterative min for single-LLM) |
 | `ENTITY_PROFILE_BUILD_PRIORITY_FIRST_PASS` | `true` | Dequeue empty-section profiles first |
-| `ENTITY_PROFILE_BUILD_ITERATIVE_MIN_CONTEXTS` | `30` | Iterative chunking only on refresh path above this count |
+| `ENTITY_PROFILE_BUILD_ITERATIVE_MIN_CONTEXTS` | `50` | Iterative multi-LLM chunking only above this count |
 | `ENTITY_PROFILE_BUILD_RUN_BUDGET_SECONDS` | `0` (unlimited) | Optional automation task wall-clock cap |
 
 Dossier defer: `ASSEMBLY_DEFER_DOSSIER_PROFILE_FIRST_PASS` (default 8000) uses profile **first-pass** count; dossier **retry** backlog above that threshold can still run compile.
@@ -178,6 +178,8 @@ ENTITY_PROFILE_BUILD_LIMIT=100
 ENTITY_PROFILE_BUILD_PARALLEL=3
 ENTITY_PROFILE_BUILD_DRAIN=true
 ENTITY_PROFILE_BUILD_FAST_CONTEXT_LIMIT=15
+ENTITY_PROFILE_BUILD_FULL_CONTEXT_LIMIT=40
+ENTITY_PROFILE_BUILD_ITERATIVE_MIN_CONTEXTS=50
 ENTITY_PROFILE_BUILD_PRIORITY_FIRST_PASS=true
 ENTITY_DOSSIER_COMPILE_MAX=80
 ASSEMBLY_CONDUCTOR_IDLE_SECONDS=30
