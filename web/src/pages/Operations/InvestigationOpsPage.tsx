@@ -3,11 +3,12 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Alert, Button, Stack, Typography } from '@mui/material';
+import { Alert, Button, Collapse, Stack, Typography } from '@mui/material';
 import ArrowBack from '@mui/icons-material/ArrowBack';
 import {
   investigationApi,
 } from '@/services/api/investigationApi';
+import { intelligenceApi } from '@/services/api/intelligence';
 import type {
   NriEntityBridge,
   NriLoopRun,
@@ -25,6 +26,32 @@ import {
   UiBadge,
 } from '@/components/ui';
 
+type BridgeRow = {
+  id: string;
+  domain_1: string;
+  domain_2: string;
+  correlation_type?: string;
+  correlation_strength?: number | null;
+  as_of_date?: string | null;
+  event_count?: number;
+  entity_count?: number;
+  top_entities?: Array<{ entity_profile_id: number; display_name: string }>;
+};
+
+type BridgeEntity = {
+  entity_profile_id: number;
+  frequency: number;
+  last_seen?: string | null;
+  display_name?: string;
+  domain_key?: string | null;
+};
+
+type TrendPoint = {
+  as_of_date?: string | null;
+  correlation_strength?: number | null;
+  event_count?: number;
+};
+
 export default function InvestigationOpsPage() {
   const { domain } = useDomain();
   const navigate = useNavigate();
@@ -33,6 +60,11 @@ export default function InvestigationOpsPage() {
   const [ftmCache, setFtmCache] = useState<Record<string, number>>({});
   const [crossDomain, setCrossDomain] = useState<NriParkedCrossDomain[]>([]);
   const [bridgeQa, setBridgeQa] = useState<NriEntityBridge[]>([]);
+  const [bridges, setBridges] = useState<BridgeRow[]>([]);
+  const [expandedBridge, setExpandedBridge] = useState<string | null>(null);
+  const [bridgeTrend, setBridgeTrend] = useState<TrendPoint[]>([]);
+  const [bridgeEntities, setBridgeEntities] = useState<BridgeEntity[]>([]);
+  const [bridgeDetailLoading, setBridgeDetailLoading] = useState(false);
   const [health, setHealth] = useState<Record<string, unknown> | null>(null);
   const [loadErrors, setLoadErrors] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,6 +80,7 @@ export default function InvestigationOpsPage() {
         investigationApi.getHealth(),
         investigationApi.getParkedCrossDomain({ exclude_generic: true, limit: 10 }),
         investigationApi.getBridgeQaAudit({ domain_key: domain, qa_status: 'suspect', limit: 15 }),
+        intelligenceApi.getCrossDomainBridges(20),
       ]);
       const labels = [
         'resolution stats',
@@ -56,6 +89,7 @@ export default function InvestigationOpsPage() {
         'health',
         'cross-domain parked',
         'bridge QA',
+        'cross-domain bridges',
       ];
       const errors: string[] = [];
       results.forEach((result, index) => {
@@ -67,13 +101,22 @@ export default function InvestigationOpsPage() {
       });
       setLoadErrors(errors);
 
-      const [s, loops, ftm, h, cd, qa] = results;
+      const [s, loops, ftm, h, cd, qa, br] = results;
       if (s.status === 'fulfilled') setStats(s.value);
       if (loops.status === 'fulfilled') setLoopRuns(loops.value?.items ?? []);
       if (ftm.status === 'fulfilled') setFtmCache(ftm.value?.bridged_by_dataset ?? {});
       if (h.status === 'fulfilled') setHealth(h.value ?? null);
       if (cd.status === 'fulfilled') setCrossDomain(cd.value?.items ?? []);
       if (qa.status === 'fulfilled') setBridgeQa(qa.value?.items ?? []);
+      if (br.status === 'fulfilled') {
+        const raw = br.value?.data?.bridges ?? br.value?.bridges ?? [];
+        setBridges(
+          (Array.isArray(raw) ? raw : []).map((row: Omit<BridgeRow, 'id'>) => ({
+            ...row,
+            id: `${row.domain_1}__${row.domain_2}`,
+          }))
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -82,6 +125,31 @@ export default function InvestigationOpsPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const openBridgeDetail = useCallback(
+    async (row: BridgeRow) => {
+      const key = row.id;
+      if (expandedBridge === key) {
+        setExpandedBridge(null);
+        return;
+      }
+      setExpandedBridge(key);
+      setBridgeDetailLoading(true);
+      setBridgeTrend([]);
+      setBridgeEntities([]);
+      try {
+        const [trendRes, entRes] = await Promise.all([
+          intelligenceApi.getCrossDomainBridgeTrend(row.domain_1, row.domain_2, 90),
+          intelligenceApi.getCrossDomainBridgeEntities(row.domain_1, row.domain_2, 20, 90),
+        ]);
+        setBridgeTrend(trendRes?.data?.series ?? trendRes?.series ?? []);
+        setBridgeEntities(entRes?.data?.entities ?? entRes?.entities ?? []);
+      } finally {
+        setBridgeDetailLoading(false);
+      }
+    },
+    [expandedBridge]
+  );
 
   const byStatus = stats?.by_status ?? {};
   const ftmRows = Object.entries(ftmCache).map(([dataset, count]) => ({
@@ -142,6 +210,7 @@ export default function InvestigationOpsPage() {
               tone='warning'
             />
             <StatCard label='Entity bridges' value={stats?.entity_bridge_count ?? '—'} />
+            <StatCard label='Live domain bridges' value={bridges.length} />
             <StatCard label='Watermark lag' value={stats?.watermark_lag ?? '—'} />
             <StatCard
               label='Backfill'
@@ -165,6 +234,131 @@ export default function InvestigationOpsPage() {
               }
             />
           </StatCardRow>
+
+          <UiCard title='Cross-domain bridges' sx={{ mb: 3 }}>
+            {bridges.length === 0 ? (
+              <Typography variant='body2' color='text.secondary'>
+                No live bridges yet. Run cross_domain_synthesis to populate daily snapshots.
+              </Typography>
+            ) : (
+              <>
+                <DataTable
+                  rows={bridges}
+                  rowKey={row => row.id}
+                  columns={[
+                    {
+                      key: 'pair',
+                      header: 'Pair',
+                      render: row => `${row.domain_1} ↔ ${row.domain_2}`,
+                    },
+                    {
+                      key: 'str',
+                      header: 'Strength',
+                      render: row =>
+                        row.correlation_strength != null
+                          ? row.correlation_strength.toFixed(2)
+                          : '—',
+                    },
+                    {
+                      key: 'asof',
+                      header: 'As of',
+                      render: row => row.as_of_date ?? '—',
+                    },
+                    {
+                      key: 'ev',
+                      header: 'Events',
+                      render: row => row.event_count ?? 0,
+                    },
+                    {
+                      key: 'ent',
+                      header: 'Top entities',
+                      render: row =>
+                        (row.top_entities ?? [])
+                          .map(e => e.display_name)
+                          .filter(Boolean)
+                          .slice(0, 3)
+                          .join(', ') || '—',
+                    },
+                    {
+                      key: 'act',
+                      header: '',
+                      render: row => (
+                        <Button size='small' onClick={() => openBridgeDetail(row)}>
+                          {expandedBridge === row.id ? 'Hide' : 'Details'}
+                        </Button>
+                      ),
+                    },
+                  ]}
+                />
+                <Collapse in={Boolean(expandedBridge)}>
+                  <Stack spacing={1} sx={{ mt: 2 }}>
+                    {bridgeDetailLoading ? (
+                      <Typography variant='body2' color='text.secondary'>
+                        Loading trend and entities…
+                      </Typography>
+                    ) : (
+                      <>
+                        <Typography variant='subtitle2'>
+                          Trend (last {bridgeTrend.length} days with data)
+                        </Typography>
+                        {bridgeTrend.length === 0 ? (
+                          <Typography variant='body2' color='text.secondary'>
+                            No daily history for this pair yet.
+                          </Typography>
+                        ) : (
+                          <Typography
+                            variant='body2'
+                            color='text.secondary'
+                            sx={{ fontFamily: 'monospace' }}
+                          >
+                            {bridgeTrend
+                              .slice(-14)
+                              .map(
+                                p =>
+                                  `${p.as_of_date ?? '?'}:${
+                                    p.correlation_strength != null
+                                      ? p.correlation_strength.toFixed(2)
+                                      : '—'
+                                  }`
+                              )
+                              .join(' · ')}
+                          </Typography>
+                        )}
+                        <Typography variant='subtitle2'>Recurring bridge entities</Typography>
+                        {bridgeEntities.length === 0 ? (
+                          <Typography variant='body2' color='text.secondary'>
+                            No recurring entities in recent snapshots (entity arrays are often
+                            sparse).
+                          </Typography>
+                        ) : (
+                          <DataTable
+                            rows={bridgeEntities.map(e => ({
+                              ...e,
+                              id: e.entity_profile_id,
+                            }))}
+                            columns={[
+                              {
+                                key: 'n',
+                                header: 'Entity',
+                                render: row =>
+                                  row.display_name ?? `profile:${row.entity_profile_id}`,
+                              },
+                              { key: 'f', header: 'Frequency', render: row => row.frequency },
+                              {
+                                key: 'ls',
+                                header: 'Last seen',
+                                render: row => row.last_seen ?? '—',
+                              },
+                            ]}
+                          />
+                        )}
+                      </>
+                    )}
+                  </Stack>
+                </Collapse>
+              </>
+            )}
+          </UiCard>
 
           <UiCard title='Bridge QA — suspect links' sx={{ mb: 3 }}>
             {bridgeQa.length === 0 ? (

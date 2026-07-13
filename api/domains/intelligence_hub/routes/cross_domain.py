@@ -9,6 +9,9 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Path, Query
 from services.cross_domain_service import (
+    get_cross_domain_bridge_entities,
+    get_cross_domain_bridge_trend,
+    get_cross_domain_bridges,
     get_cross_domain_correlations,
     get_meta_storylines,
     get_unified_timeline,
@@ -50,6 +53,10 @@ def get_intelligence_cross_domain_correlations(
     domain_2: str | None = Query(None),
     since: int | None = Query(None, description="Only correlations discovered in last N days"),
     limit: int = Query(50, ge=1, le=200),
+    latest_only: bool | None = Query(
+        None,
+        description="One row per pair (default true when since is unset)",
+    ),
 ) -> dict[str, Any]:
     """List cross-domain correlation rows with optional filters."""
     result = get_cross_domain_correlations(
@@ -57,12 +64,78 @@ def get_intelligence_cross_domain_correlations(
         domain_2=domain_2,
         since_days=since,
         limit=limit,
+        latest_only=latest_only,
     )
     if not result.get("success"):
         return {"success": False, "data": None, "message": result.get("error", "Unknown error")}
     return {
         "success": True,
         "data": {"correlations": result.get("correlations", [])},
+        "message": None,
+    }
+
+
+@router.get("/cross_domain_bridges")
+def get_intelligence_cross_domain_bridges(
+    limit: int = Query(50, ge=1, le=100),
+) -> dict[str, Any]:
+    """Latest snapshot per domain pair (live bridges)."""
+    result = get_cross_domain_bridges(limit=limit)
+    if not result.get("success"):
+        return {"success": False, "data": None, "message": result.get("error", "Unknown error")}
+    return {
+        "success": True,
+        "data": {"bridges": result.get("bridges", [])},
+        "message": None,
+    }
+
+
+@router.get("/cross_domain_bridges/{domain_1}/{domain_2}/trend")
+def get_intelligence_cross_domain_bridge_trend(
+    domain_1: str = Path(..., description="First domain key"),
+    domain_2: str = Path(..., description="Second domain key"),
+    days: int = Query(90, ge=1, le=365),
+) -> dict[str, Any]:
+    """Daily strength / event_count series for a domain pair."""
+    result = get_cross_domain_bridge_trend(domain_1=domain_1, domain_2=domain_2, days=days)
+    if not result.get("success"):
+        return {"success": False, "data": None, "message": result.get("error", "Unknown error")}
+    return {
+        "success": True,
+        "data": {
+            "domain_1": result.get("domain_1"),
+            "domain_2": result.get("domain_2"),
+            "days": result.get("days"),
+            "series": result.get("series", []),
+        },
+        "message": None,
+    }
+
+
+@router.get("/cross_domain_bridges/{domain_1}/{domain_2}/entities")
+def get_intelligence_cross_domain_bridge_entities(
+    domain_1: str = Path(..., description="First domain key"),
+    domain_2: str = Path(..., description="Second domain key"),
+    limit: int = Query(20, ge=1, le=100),
+    lookback_days: int = Query(90, ge=1, le=365),
+) -> dict[str, Any]:
+    """Recurring bridge entities for a domain pair (frequency across recent snapshots)."""
+    result = get_cross_domain_bridge_entities(
+        domain_1=domain_1,
+        domain_2=domain_2,
+        limit=limit,
+        lookback_days=lookback_days,
+    )
+    if not result.get("success"):
+        return {"success": False, "data": None, "message": result.get("error", "Unknown error")}
+    return {
+        "success": True,
+        "data": {
+            "domain_1": result.get("domain_1"),
+            "domain_2": result.get("domain_2"),
+            "lookback_days": result.get("lookback_days"),
+            "entities": result.get("entities", []),
+        },
         "message": None,
     }
 

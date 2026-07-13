@@ -4,6 +4,7 @@ Populates intelligence.cross_domain_correlations; supports unified timeline.
 See docs/DATA_PIPELINE_ENHANCEMENTS_ROADMAP.md.
 """
 
+import json
 import logging
 import uuid
 from datetime import date, timedelta
@@ -211,7 +212,8 @@ def run_cross_domain_synthesis(
                 rec.get("correlation_type") == "entity_overlap"
                 and existing.get("correlation_type") == "temporal"
             ):
-                existing["correlation_type"] = "mixed"
+                # CHECK allows entity_overlap | temporal | thematic (not "mixed")
+                existing["correlation_type"] = "thematic"
 
     if not seen_pairs:
         return {"success": True, "correlation_id": None, "correlations": [], "meta_storylines": []}
@@ -228,37 +230,55 @@ def run_cross_domain_synthesis(
     try:
         with conn.cursor() as cur:
             for pair, rec in seen_pairs.items():
-                strength = min(
-                    1.0, 0.5 + 0.1 * (len(rec["event_ids"]) + len(rec["entity_profile_ids"]))
-                )
+                event_ids = list(rec["event_ids"])[:100]
+                entity_ids = list(rec["entity_profile_ids"])[:100]
+                strength = min(1.0, 0.5 + 0.1 * (len(event_ids) + len(entity_ids)))
                 if strength < correlation_threshold:
                     continue
                 cor_id = uuid.uuid4()
+                meta = {
+                    "time_window_days": int(time_window_days),
+                    "event_count": len(event_ids),
+                    "entity_count": len(entity_ids),
+                }
                 cur.execute(
                     """
                     INSERT INTO intelligence.cross_domain_correlations
-                    (correlation_id, domain_1, domain_2, entity_profile_ids, event_ids, correlation_strength, correlation_type)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    (correlation_id, domain_1, domain_2, entity_profile_ids, event_ids,
+                     correlation_strength, correlation_type, as_of_date, discovered_at, metadata)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_DATE, NOW(), %s::jsonb)
+                    ON CONFLICT (domain_1, domain_2, correlation_type, as_of_date)
+                    DO UPDATE SET
+                        entity_profile_ids = EXCLUDED.entity_profile_ids,
+                        event_ids = EXCLUDED.event_ids,
+                        correlation_strength = EXCLUDED.correlation_strength,
+                        discovered_at = NOW(),
+                        metadata = EXCLUDED.metadata
+                    RETURNING correlation_id
                     """,
                     (
-                        cor_id,
+                        str(cor_id),
                         rec["domain_1"],
                         rec["domain_2"],
-                        rec["entity_profile_ids"][:100],
-                        rec["event_ids"][:100],
+                        entity_ids,
+                        event_ids,
                         strength,
                         rec["correlation_type"],
+                        json.dumps(meta),
                     ),
                 )
+                row = cur.fetchone()
+                out_id = str(row[0]) if row else str(cor_id)
                 inserted.append(
                     {
-                        "correlation_id": str(cor_id),
+                        "correlation_id": out_id,
                         "domain_1": rec["domain_1"],
                         "domain_2": rec["domain_2"],
-                        "event_ids": rec["event_ids"],
-                        "entity_profile_ids": rec["entity_profile_ids"],
+                        "event_ids": event_ids,
+                        "entity_profile_ids": entity_ids,
                         "correlation_strength": strength,
                         "correlation_type": rec["correlation_type"],
+                        "as_of_date": None,
                     }
                 )
         conn.commit()
@@ -321,8 +341,15 @@ def get_cross_domain_correlations(
     domain_2: str | None = None,
     since_days: int | None = None,
     limit: int = 50,
+    latest_only: bool | None = None,
 ) -> dict[str, Any]:
-    """Read correlation rows with optional filters."""
+    """Read correlation rows with optional filters.
+
+    When ``latest_only`` is True (default if ``since_days`` is unset), return at most
+    one row per (domain_1, domain_2) — the newest ``as_of_date``.
+    """
+    if latest_only is None:
+        latest_only = since_days is None
     conn = get_db_connection()
     if not conn:
         return {"success": False, "correlations": [], "error": "Database connection failed"}
@@ -330,44 +357,68 @@ def get_cross_domain_correlations(
         conditions = ["1=1"]
         args: list[Any] = []
         if domain_1:
-            conditions.append("domain_1 = %s")
+            conditions.append("c.domain_1 = %s")
             args.append(domain_1)
         if domain_2:
-            conditions.append("domain_2 = %s")
+            conditions.append("c.domain_2 = %s")
             args.append(domain_2)
         if since_days is not None:
-            conditions.append("discovered_at >= NOW() - INTERVAL '1 day' * %s")
+            conditions.append("c.discovered_at >= NOW() - INTERVAL '1 day' * %s")
             args.append(since_days)
+        where_sql = " AND ".join(conditions)
         args.append(limit)
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT correlation_id, domain_1, domain_2, entity_profile_ids, event_ids,
-                       correlation_strength, correlation_type, discovered_at, metadata
-                FROM intelligence.cross_domain_correlations
-                WHERE """
-                + " AND ".join(conditions)
-                + """
-                ORDER BY discovered_at DESC
+        if latest_only:
+            sql = f"""
+                SELECT c.correlation_id, c.domain_1, c.domain_2, c.entity_profile_ids, c.event_ids,
+                       c.correlation_strength, c.correlation_type, c.discovered_at, c.metadata,
+                       c.as_of_date
+                FROM (
+                    SELECT DISTINCT ON (domain_1, domain_2)
+                           correlation_id, domain_1, domain_2, entity_profile_ids, event_ids,
+                           correlation_strength, correlation_type, discovered_at, metadata, as_of_date
+                    FROM intelligence.cross_domain_correlations
+                    ORDER BY domain_1, domain_2, as_of_date DESC NULLS LAST,
+                             discovered_at DESC NULLS LAST
+                ) c
+                WHERE {where_sql}
+                ORDER BY c.correlation_strength DESC NULLS LAST, c.as_of_date DESC NULLS LAST
                 LIMIT %s
-                """,
-                tuple(args),
-            )
+                """
+        else:
+            sql = f"""
+                SELECT c.correlation_id, c.domain_1, c.domain_2, c.entity_profile_ids, c.event_ids,
+                       c.correlation_strength, c.correlation_type, c.discovered_at, c.metadata,
+                       c.as_of_date
+                FROM intelligence.cross_domain_correlations c
+                WHERE {where_sql}
+                ORDER BY c.discovered_at DESC
+                LIMIT %s
+                """
+        with conn.cursor() as cur:
+            cur.execute(sql, tuple(args))
             rows = cur.fetchall()
         conn.close()
         correlations = []
         for r in rows:
+            event_ids = list(r[4]) if r[4] else []
+            entity_ids = list(r[3]) if r[3] else []
+            meta = r[8] or {}
+            if not isinstance(meta, dict):
+                meta = {}
             correlations.append(
                 {
                     "correlation_id": str(r[0]),
                     "domain_1": r[1],
                     "domain_2": r[2],
-                    "entity_profile_ids": list(r[3]) if r[3] else [],
-                    "event_ids": list(r[4]) if r[4] else [],
+                    "entity_profile_ids": entity_ids,
+                    "event_ids": event_ids,
                     "correlation_strength": float(r[5]) if r[5] is not None else None,
                     "correlation_type": r[6],
                     "discovered_at": r[7].isoformat() if r[7] else None,
-                    "metadata": r[8] or {},
+                    "metadata": meta,
+                    "as_of_date": str(r[9]) if r[9] else None,
+                    "event_count": int(meta.get("event_count") or len(event_ids)),
+                    "entity_count": int(meta.get("entity_count") or len(entity_ids)),
                 }
             )
         return {"success": True, "correlations": correlations}
@@ -378,6 +429,215 @@ def get_cross_domain_correlations(
         except Exception:
             pass
         return {"success": False, "correlations": [], "error": str(e)}
+
+
+def _normalize_pair(domain_1: str, domain_2: str) -> tuple[str, str]:
+    d1 = (domain_1 or "").strip().lower()
+    d2 = (domain_2 or "").strip().lower()
+    return (d1, d2) if d1 <= d2 else (d2, d1)
+
+
+def get_cross_domain_bridges(limit: int = 50) -> dict[str, Any]:
+    """Latest snapshot per domain pair (live bridges), with top entity display names."""
+    result = get_cross_domain_correlations(latest_only=True, limit=limit)
+    if not result.get("success"):
+        return {"success": False, "bridges": [], "error": result.get("error")}
+    bridges = []
+    profile_ids: list[int] = []
+    for c in result.get("correlations", []):
+        ids = [int(x) for x in (c.get("entity_profile_ids") or [])[:10] if x is not None]
+        profile_ids.extend(ids)
+        bridges.append(
+            {
+                "domain_1": c["domain_1"],
+                "domain_2": c["domain_2"],
+                "correlation_type": c.get("correlation_type"),
+                "correlation_strength": c.get("correlation_strength"),
+                "as_of_date": c.get("as_of_date"),
+                "discovered_at": c.get("discovered_at"),
+                "event_count": c.get("event_count", 0),
+                "entity_count": c.get("entity_count", 0),
+                "entity_profile_ids": ids,
+                "correlation_id": c.get("correlation_id"),
+                "top_entities": [],
+            }
+        )
+    name_by_id: dict[int, str] = {}
+    uniq_ids = list(dict.fromkeys(profile_ids))[:200]
+    if uniq_ids:
+        conn = get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT id,
+                               COALESCE(
+                                 metadata->>'canonical_name',
+                                 sections->'identity'->>'canonical_name',
+                                 sections->>'canonical_name',
+                                 'profile:' || id::text
+                               )
+                        FROM intelligence.entity_profiles
+                        WHERE id = ANY(%s)
+                        """,
+                        (uniq_ids,),
+                    )
+                    for row in cur.fetchall():
+                        name_by_id[int(row[0])] = row[1] or f"profile:{row[0]}"
+            except Exception as e:
+                logger.debug("get_cross_domain_bridges entity names: %s", e)
+            finally:
+                conn.close()
+    for b in bridges:
+        names = []
+        for eid in b["entity_profile_ids"][:3]:
+            names.append(
+                {
+                    "entity_profile_id": eid,
+                    "display_name": name_by_id.get(eid, f"profile:{eid}"),
+                }
+            )
+        b["top_entities"] = names
+    return {"success": True, "bridges": bridges}
+
+
+def get_cross_domain_bridge_trend(
+    domain_1: str,
+    domain_2: str,
+    days: int = 90,
+) -> dict[str, Any]:
+    """Daily strength + event_count series for a domain pair."""
+    d1, d2 = _normalize_pair(domain_1, domain_2)
+    days = max(1, min(int(days or 90), 365))
+    conn = get_db_connection()
+    if not conn:
+        return {"success": False, "series": [], "error": "Database connection failed"}
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT as_of_date, correlation_strength, correlation_type,
+                       COALESCE(
+                         (metadata->>'event_count')::int,
+                         COALESCE(array_length(event_ids, 1), 0)
+                       ) AS event_count,
+                       COALESCE(
+                         (metadata->>'entity_count')::int,
+                         COALESCE(array_length(entity_profile_ids, 1), 0)
+                       ) AS entity_count
+                FROM intelligence.cross_domain_correlations
+                WHERE domain_1 = %s AND domain_2 = %s
+                  AND as_of_date >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                ORDER BY as_of_date ASC
+                """,
+                (d1, d2, days),
+            )
+            rows = cur.fetchall()
+        conn.close()
+        series = [
+            {
+                "as_of_date": str(r[0]) if r[0] else None,
+                "correlation_strength": float(r[1]) if r[1] is not None else None,
+                "correlation_type": r[2],
+                "event_count": int(r[3] or 0),
+                "entity_count": int(r[4] or 0),
+            }
+            for r in rows
+        ]
+        return {
+            "success": True,
+            "domain_1": d1,
+            "domain_2": d2,
+            "days": days,
+            "series": series,
+        }
+    except Exception as e:
+        logger.warning("get_cross_domain_bridge_trend: %s", e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return {"success": False, "series": [], "error": str(e)}
+
+
+def get_cross_domain_bridge_entities(
+    domain_1: str,
+    domain_2: str,
+    limit: int = 20,
+    lookback_days: int = 90,
+) -> dict[str, Any]:
+    """Recurring entity_profile_ids across recent snapshots for a pair."""
+    d1, d2 = _normalize_pair(domain_1, domain_2)
+    limit = max(1, min(int(limit or 20), 100))
+    lookback_days = max(1, min(int(lookback_days or 90), 365))
+    conn = get_db_connection()
+    if not conn:
+        return {"success": False, "entities": [], "error": "Database connection failed"}
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH exploded AS (
+                    SELECT unnest(entity_profile_ids) AS entity_profile_id, as_of_date
+                    FROM intelligence.cross_domain_correlations
+                    WHERE domain_1 = %s AND domain_2 = %s
+                      AND as_of_date >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                      AND entity_profile_ids IS NOT NULL
+                      AND cardinality(entity_profile_ids) > 0
+                ),
+                ranked AS (
+                    SELECT entity_profile_id,
+                           COUNT(*)::int AS frequency,
+                           MAX(as_of_date) AS last_seen
+                    FROM exploded
+                    WHERE entity_profile_id IS NOT NULL
+                    GROUP BY entity_profile_id
+                    ORDER BY COUNT(*) DESC, MAX(as_of_date) DESC
+                    LIMIT %s
+                )
+                SELECT r.entity_profile_id,
+                       r.frequency,
+                       r.last_seen,
+                       ep.domain_key,
+                       COALESCE(
+                         ep.metadata->>'canonical_name',
+                         ep.sections->'identity'->>'canonical_name',
+                         ep.sections->>'canonical_name'
+                       ) AS display_name
+                FROM ranked r
+                LEFT JOIN intelligence.entity_profiles ep ON ep.id = r.entity_profile_id
+                ORDER BY r.frequency DESC, r.last_seen DESC NULLS LAST
+                """,
+                (d1, d2, lookback_days, limit),
+            )
+            rows = cur.fetchall()
+        conn.close()
+        entities = [
+            {
+                "entity_profile_id": int(r[0]),
+                "frequency": int(r[1] or 0),
+                "last_seen": str(r[2]) if r[2] else None,
+                "domain_key": r[3],
+                "display_name": r[4] or f"profile:{r[0]}",
+            }
+            for r in rows
+            if r[0] is not None
+        ]
+        return {
+            "success": True,
+            "domain_1": d1,
+            "domain_2": d2,
+            "lookback_days": lookback_days,
+            "entities": entities,
+        }
+    except Exception as e:
+        logger.warning("get_cross_domain_bridge_entities: %s", e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return {"success": False, "entities": [], "error": str(e)}
 
 
 def get_unified_timeline(

@@ -472,4 +472,48 @@ export const intelligenceApi = {
       return { success: false, error: (error as any).message };
     }
   },
+
+  /** Latest cross-domain bridge snapshots (one per domain pair). */
+  async getCrossDomainBridges(limit: number = 20) {
+    try {
+      const response = await getApi().get('/api/intelligence/cross_domain_bridges', {
+        params: { limit },
+      });
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to get cross-domain bridges', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  async getCrossDomainBridgeTrend(domain1: string, domain2: string, days: number = 90) {
+    try {
+      const response = await getApi().get(
+        `/api/intelligence/cross_domain_bridges/${encodeURIComponent(domain1)}/${encodeURIComponent(domain2)}/trend`,
+        { params: { days } }
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to get cross-domain bridge trend', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  async getCrossDomainBridgeEntities(
+    domain1: string,
+    domain2: string,
+    limit: number = 20,
+    lookbackDays: number = 90
+  ) {
+    try {
+      const response = await getApi().get(
+        `/api/intelligence/cross_domain_bridges/${encodeURIComponent(domain1)}/${encodeURIComponent(domain2)}/entities`,
+        { params: { limit, lookback_days: lookbackDays } }
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to get cross-domain bridge entities', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
 };
