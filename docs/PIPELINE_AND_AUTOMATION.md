@@ -153,14 +153,14 @@ When enabled, **`unified_intake_extraction`** replaces scheduled **`entity_extra
 |-----|---------|------|
 | `UNIFIED_INTAKE_EXTRACTION_ENABLED` | `true` | Opt-out: set `false` or `LEGACY_INTAKE_EXTRACTION_ENABLED=true` for per-phase intake |
 | `FAST_NER_ENABLED` | `true` | spaCy + GLiNER pre-pass before LLM entity fan-out |
-| `FAST_NER_BACKEND` | `both` | `spacy`, `gliner`, `both`, or `auto` |
+| `FAST_NER_BACKEND` | `spacy` | `spacy`, `gliner`, `both`, or `auto` |
 | `CONTEXT_CHUNKING_ENABLED` | `true` | Semantic multi-chunk contexts for long articles |
-| `UNIFIED_INTAKE_EXTRACTION_BATCH_SIZE` | `3` | Articles per LLM call (`scripts/run_baseline_catchup.sh` mirrors this default) |
+| `UNIFIED_INTAKE_EXTRACTION_BATCH_SIZE` | `6` | Articles per LLM call (`scripts/run_baseline_catchup.sh` mirrors this default) |
 | `UNIFIED_INTAKE_EXTRACTION_PARALLEL` | `6` | Concurrent batch lanes |
 | `UNIFIED_INTAKE_EXTRACTION_RUN_BUDGET_SECONDS` | `0` | **0 = unlimited** drain until idle or stall; positive = circuit breaker only |
 | `PIPELINE_DRAIN_STALL_ROUNDS` | `3` | Consecutive zero-progress rounds before yield |
 | `INTAKE_FUSION_ENABLED` | `true` | Extended schema (`topic_tags`, `storyline_hints`) + SQL tail |
-| `SPINE_PIPELINE_MODE` | `legacy` | `ordered` = spine conductor owns enrich→fuse→sql_tail; `shadow` = log only |
+| `SPINE_PIPELINE_MODE` | `legacy` | `ordered`/`shadow` retained for drain-helper compatibility; **scheduling loop retired** — `pipeline_controller` owns enqueue |
 | `SPINE_SQL_TAIL_BATCH_LIMIT` | `200` | Pass 2 SQL batch size (claims_to_facts, profile link, fast topic) |
 | `UNIFIED_INTAKE_LEGACY_AWARE_BACKLOG` | `true` | Count/schedule only articles needing unified LLM; legacy-complete → pass-marker backfill |
 | `UNIFIED_INTAKE_BACKLOG_STATS_TTL_SECONDS` | `300` | Cache TTL for heavy unified backlog stats query |
@@ -194,7 +194,9 @@ When `INTAKE_FUSION_ENABLED=true` (default with unified intake):
 
 Drains use **stall detection** (`PIPELINE_DRAIN_STALL_ROUNDS`) instead of wall-clock budgets. Steady-state `*_RUN_BUDGET_SECONDS=0` means drain until pending floor.
 
-`SPINE_PIPELINE_MODE=ordered` runs enrich → fuse → sql tail via `spine_pipeline_conductor` and suppresses competing spine phase enqueues. Rollback: `INTAKE_FUSION_ENABLED=false`, `SPINE_PIPELINE_MODE=legacy`.
+`SPINE_PIPELINE_MODE=ordered` runs enrich → fuse → sql tail via spine **drain helpers** (`spine_pipeline_conductor._drain_*`); **PipelineController** schedules phases — not the retired `run_spine_conductor_cycle` loop. Rollback: `INTAKE_FUSION_ENABLED=false`, `SPINE_PIPELINE_MODE=legacy`.
+
+**Intake-first catchup (phase priority vs FIFO articles):** Article batches stay **FIFO** (`PIPELINE_ARTICLE_SELECTION_ORDER=fifo`) so old rows inside a phase are not starved. Separately, catchup **desired** phases prioritize the spine preprocess band (`content_enrichment` → `unified_intake_extraction` → `spine_sql_tail` → `document_processing` → `context_sync`, then `collection_cycle`) while the sum of core preprocess pending (enrichment + UIE + documents) exceeds `intake_preprocess_clear_threshold` (default 50, same as `catchup_clear_threshold`). Branch label `catchup_intake_first`. When that band is quiet, branch is `catchup_post_{popos_first|widow_first}` and post phases (profiles, mention resolution, assembly, etc.) resume by host-lane + backlog depth. See `INTAKE_PREPROCESS_*` in `api/shared/pipeline_resource_policy.py` and `_catchup_phases_by_backlog` in `api/services/pipeline_controller.py`.
 
 #### Post-spine assembly (link graph + editorial room, June 2026)
 
@@ -203,7 +205,7 @@ After spine completes, three passes replace ~25 competing automation phases:
 | Pass | Owner | LLM |
 |------|--------|-----|
 | 0 | `link_indexer_service` (hooked from `spine_sql_tail`) | No — entity edges, proposals, `story_entity_index` |
-| 1 | `assembly_conductor_service` (`ASSEMBLY_PIPELINE_MODE=ordered`) | Rare — distillation, event tail, continuation, assembly, automation, ambiguous entity resolve |
+| 1 | `assembly_conductor_service` drain helpers (`ASSEMBLY_PIPELINE_MODE=ordered`) | Rare — distillation, event tail, continuation, assembly, automation, ambiguous entity resolve; **scheduling via PipelineController** |
 | 2 | `editorial_room_loop_service` | Yes — iterative Ollama + vault `25_Connections/` |
 
 Env defaults (Widow rollout): `ASSEMBLY_PIPELINE_MODE=shadow` → `ordered`, `EDITORIAL_ROOM_LOOP_ENABLED=true`, `CONTENT_REFINEMENT_API_ENQUEUE_ONLY=true`, `AUTO_ENQUEUE_COMPREHENSIVE_RAG=0`.

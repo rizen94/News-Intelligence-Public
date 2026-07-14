@@ -280,7 +280,6 @@ post_spine_assembly:
     - daily_briefing_synthesis
     - digest_generation
     - storyline_synthesis
-    - rag_enhancement
     - storyline_enrichment
     - storyline_processing
     - investigation_report_refresh
@@ -299,6 +298,9 @@ post_spine_assembly:
 # Unified pipeline controller (v10.1+) — replaces scheduler tick + spine/assembly conductor loops.
 pipeline_controller:
   catchup_clear_threshold: 50
+  # When enrichment+UIE+document_processing pending sum exceeds this, catchup desired =
+  # intake/preprocess band only (post phases deferred). Defaults to catchup_clear_threshold.
+  intake_preprocess_clear_threshold: 50
   prefetch_multiplier: 2
   max_concurrent_widow_gpu_drains: 2  # PopOS LLM drains on Widow workers; default 2 when AUTOMATION_MAX_CONCURRENT_TASKS >= 4
   popos_overflow_util_max_pct: 85

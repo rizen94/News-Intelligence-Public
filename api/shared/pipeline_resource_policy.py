@@ -184,7 +184,9 @@ PHASE_POLICIES: dict[str, PhasePolicy] = {
         run_budget_seconds=900,
     ),
     "entity_organizer": PhasePolicy(Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy"),
-    "graph_connection_distillation": PhasePolicy(Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy", default_batch=12),
+    "graph_connection_distillation": PhasePolicy(
+        Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy", default_batch=50
+    ),
     "pattern_recognition": PhasePolicy(
         Host.POPOS_GPU, Tier.BULK, "gpu", "gpu_heavy", requires_llm=True
     ),
@@ -214,7 +216,7 @@ PHASE_POLICIES: dict[str, PhasePolicy] = {
         Host.POPOS_GPU, Tier.REFINEMENT, "gpu", "gpu_heavy", requires_llm=True
     ),
     "rag_enhancement": PhasePolicy(
-        Host.POPOS_HEAVY, Tier.REFINEMENT, "gpu", "gpu_heavy", requires_llm=True
+        Host.WIDOW_FETCH, Tier.REFINEMENT, "cpu", "cpu_light", default_batch=5
     ),
     "storyline_automation": PhasePolicy(
         Host.POPOS_GPU, Tier.REFINEMENT, "gpu", "gpu_heavy", requires_llm=True, default_batch=5
@@ -389,21 +391,79 @@ _BULK_EXTRACT_COMPETE_DEFER_PHASES = frozenset(
         "editorial_briefing_generation",
         "editorial_document_generation",
         "arc_report_generation",
-        "rag_enhancement",
         "storyline_synthesis",
         "daily_briefing_synthesis",
     }
 )
 
-# Ordered-spine intake-first: defer these peers while unified backlog is high.
+# Spine-shaped intake / preprocess band (FIFO article order unchanged; phase priority).
+# collection_cycle is last so downstream drains are preferred over flooding the inbox.
+INTAKE_PREPROCESS_ORDER: tuple[str, ...] = (
+    "content_enrichment",
+    "unified_intake_extraction",
+    "spine_sql_tail",
+    "document_processing",
+    "context_sync",
+    "collection_cycle",
+)
+INTAKE_PREPROCESS_PHASES: frozenset[str] = frozenset(INTAKE_PREPROCESS_ORDER)
+
+# Core queues that keep catchup in intake-first mode (sum vs clear threshold).
+_INTAKE_PREPROCESS_CORE_PHASES: frozenset[str] = frozenset(
+    {
+        "content_enrichment",
+        "unified_intake_extraction",
+        "document_processing",
+    }
+)
+
+# Narrow assembly/GPU peer defer while only UIE is hot (preprocess band otherwise clear).
 _INTAKE_FIRST_GPU_DEFER_PHASES = frozenset(
     {
         "storyline_assembly",
         "storyline_automation",
         "entity_dossier_compile",
-        "topic_clustering",
     }
 )
+
+# Never deferred by intake-preprocess gate (ops / drains that clear the spine).
+_INTAKE_PREPROCESS_DEFER_EXEMPT: frozenset[str] = frozenset(
+    {
+        *INTAKE_PREPROCESS_PHASES,
+        "health_check",
+        "pending_db_flush",
+        "rss_feed_health",
+    }
+)
+
+
+def intake_preprocess_clear_threshold() -> int:
+    """Pending sum on core preprocess phases above this → intake-first hard gate."""
+    try:
+        from config.orchestrator_governance import get_orchestrator_governance_config
+
+        cfg = get_orchestrator_governance_config().get("pipeline_controller") or {}
+        if isinstance(cfg, dict):
+            if cfg.get("intake_preprocess_clear_threshold") is not None:
+                return max(1, int(cfg["intake_preprocess_clear_threshold"]))
+            if cfg.get("catchup_clear_threshold") is not None:
+                return max(1, int(cfg["catchup_clear_threshold"]))
+    except Exception:
+        pass
+    try:
+        return max(1, int(env_str("INTAKE_PREPROCESS_CLEAR_THRESHOLD", "50")))
+    except ValueError:
+        return 50
+
+
+def intake_preprocess_pending(pending: dict[str, int] | None = None) -> int:
+    """Sum of core spine preprocess queue depths (enrichment + UIE + documents)."""
+    p = pending or {}
+    return sum(int(p.get(ph, 0) or 0) for ph in _INTAKE_PREPROCESS_CORE_PHASES)
+
+
+def intake_preprocess_hot(pending: dict[str, int] | None = None) -> bool:
+    return intake_preprocess_pending(pending) > intake_preprocess_clear_threshold()
 
 
 def intake_first_gpu_defer_threshold() -> int:
@@ -429,6 +489,9 @@ def bulk_extract_compete_defer_phase(
         from shared.spine_phase_order import spine_pipeline_ordered_active
 
         if spine_pipeline_ordered_active():
+            # Hard gate: while core preprocess backlog is hot, defer all post-band work.
+            if intake_preprocess_hot(p) and phase_name not in _INTAKE_PREPROCESS_DEFER_EXEMPT:
+                return True
             # Prefer finishing unified intake before assembly/GPU peers burn PopOS slots.
             if (
                 intake_thresh > 0
@@ -667,6 +730,8 @@ def configure_pipeline_resources() -> None:
     env_setdefault("UNIFIED_INTAKE_EXTRACTION_BATCH_SIZE", "6")
     env_setdefault("UNIFIED_INTAKE_EXTRACTION_PARALLEL", "8")
     env_setdefault("UNIFIED_INTAKE_EXTRACTION_RUN_BUDGET_SECONDS", "0")
+    env_setdefault("GRAPH_CONNECTION_DISTILLATION_BATCH", "50")
+    env_setdefault("ASSEMBLY_GRAPH_CONNECTION_DISTILLATION_CYCLE_BUDGET_SECONDS", "180")
     env_setdefault("FAST_NER_ENABLED", "true")
     env_setdefault("FAST_NER_BACKEND", "spacy")
     env_setdefault("ARTICLE_SIGNAL_FULL_MIN_QUALITY", "0.55")

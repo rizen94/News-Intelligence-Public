@@ -42,6 +42,7 @@ LONG_DRAIN_PHASES = frozenset(
         "spine_sql_tail",
         "document_processing",
         "context_sync",
+        "mention_resolution",  # CEM+Wikidata drain; dual workers race watermark + trip 429s
     }
 )
 
@@ -251,6 +252,21 @@ def catchup_phases() -> frozenset[str]:
     return (RAW_PENDING_COUNT_KEYS - skip) | extra
 
 
+def residual_assembly_pending_threshold() -> int:
+    """Min storyline_assembly pending to enqueue residual assembly when catchup drivers are clear."""
+    return max(25, _cfg_int("residual_assembly_pending_threshold", 100))
+
+
+def residual_topic_clustering_pending_threshold() -> int:
+    """Min topic_clustering pending to enqueue residual TC when catchup drivers are clear."""
+    return max(25, _cfg_int("residual_topic_clustering_pending_threshold", 100))
+
+
+def residual_mention_resolution_pending_threshold() -> int:
+    """Min mention_resolution pending to enqueue residual CEM drain when catchup drivers are clear."""
+    return max(25, _cfg_int("residual_mention_resolution_pending_threshold", 100))
+
+
 def is_catchup_active(pending: dict[str, int]) -> bool:
     from shared.pipeline_resource_policy import extract_bulk_pending_total
 
@@ -455,6 +471,38 @@ def _processed_count_from_row(row: dict[str, Any]) -> int:
     return throughput_from_payload(row, prefer_iteration=False)
 
 
+def _row_is_measurable_throughput(row: dict[str, Any]) -> bool:
+    """True when a history row carries batch throughput keys (not a bare task shell)."""
+    if not isinstance(row, dict):
+        return False
+    meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    keys = (
+        "round_processed",
+        "total_processed",
+        "items_processed",
+        "articles_processed",
+        "profiles_updated",
+        "processed",
+        "examined",
+        "contexts_processed",
+        "llm_processed",
+    )
+    for k in keys:
+        if row.get(k) is not None:
+            return True
+        if meta.get(k) is not None:
+            return True
+    if row.get("batch") is True or meta.get("batch") is True:
+        return True
+    if str(meta.get("status") or row.get("status") or "") in (
+        "batch_round",
+        "drain_finished",
+        "phase_finished",
+    ):
+        return True
+    return False
+
+
 def _activity_in_flight(activity_progress: dict[str, Any] | None) -> bool:
     """True when AutomationManager shows an active worker for this phase."""
     if not activity_progress:
@@ -495,10 +543,18 @@ def assess_phase_health(
         if all(h == pend for h in hist[-stall_backlog_unchanged_replans() :]):
             if run_history_rows:
                 zero_runs = 0
+                measurable = 0
                 for row in run_history_rows[: stall_zero_progress_passes()]:
+                    # Bare task-shell rows (metadata={}) are not evidence of a failed drain.
+                    if not _row_is_measurable_throughput(row):
+                        continue
+                    measurable += 1
                     if _processed_count_from_row(row) <= 0:
                         zero_runs += 1
-                if zero_runs >= stall_zero_progress_passes():
+                if (
+                    measurable >= stall_zero_progress_passes()
+                    and zero_runs >= stall_zero_progress_passes()
+                ):
                     return PhaseHealth(phase, "stalled", "flat backlog + zero-progress passes")
             else:
                 return PhaseHealth(phase, "stalled", "flat backlog snapshots")
@@ -514,6 +570,8 @@ def assess_phase_health(
                 return PhaseHealth(phase, "failing", errors[0][:80])
 
         for row in run_history_rows[:3]:
+            if not _row_is_measurable_throughput(row):
+                continue
             proc = _processed_count_from_row(row)
             if proc > 0:
                 return PhaseHealth(phase, "moving", f"processed={proc}")
@@ -817,6 +875,35 @@ def _catchup_order_policy(*, popos_ok: bool, mem_pressure: bool) -> str:
     return "widow_first"
 
 
+def _sort_post_phases_by_host(
+    post: list[tuple[str, int]],
+    *,
+    resources: Any | None,
+) -> list[str]:
+    """Host-lane preference then largest backlog within each lane."""
+    popos = _popos_gpu_phases()
+    cpu: list[tuple[str, int]] = []
+    gpu: list[tuple[str, int]] = []
+    for phase, count in post:
+        (gpu if phase in popos else cpu).append((phase, count))
+    cpu.sort(key=lambda x: (-x[1], x[0]))
+    gpu.sort(key=lambda x: (-x[1], x[0]))
+    popos_ok = popos_available_for_overflow(resources) if resources is not None else False
+    mem_pressure = widow_memory_pressure(resources) if resources is not None else False
+    if _catchup_order_policy(popos_ok=popos_ok, mem_pressure=mem_pressure) == "popos_first":
+        return [p for p, _ in gpu] + [p for p, _ in cpu]
+    return [p for p, _ in cpu] + [p for p, _ in gpu]
+
+
+def _sort_intake_preprocess_phases(intake: list[tuple[str, int]]) -> list[str]:
+    """Fixed spine preprocess order, then -pending within the same rank."""
+    from shared.pipeline_resource_policy import INTAKE_PREPROCESS_ORDER
+
+    order_idx = {name: i for i, name in enumerate(INTAKE_PREPROCESS_ORDER)}
+    intake.sort(key=lambda x: (order_idx.get(x[0], 999), -x[1], x[0]))
+    return [p for p, _ in intake]
+
+
 def _catchup_phases_by_backlog(
     pending: dict[str, int],
     automation: Any,
@@ -824,12 +911,22 @@ def _catchup_phases_by_backlog(
     stall_holds: dict[str, int],
     skip: frozenset[str] | None = None,
     resources: Any | None = None,
-) -> list[str]:
-    """Phases with pending work, ordered by host-balance policy then backlog depth."""
+) -> tuple[list[str], bool]:
+    """
+    Phases with pending work for catchup enqueue.
+
+    Returns ``(ordered_phases, intake_first)``.
+    When core preprocess pending exceeds the clear threshold, only the intake band is
+    returned (hard gate). Otherwise intake band (usually empty) then post band sorted by
+    host-lane + backlog depth.
+    """
+    from shared.pipeline_resource_policy import (
+        INTAKE_PREPROCESS_PHASES,
+        intake_preprocess_hot,
+    )
+
     skip = skip or frozenset()
-    popos = _popos_gpu_phases()
-    cpu: list[tuple[str, int]] = []
-    gpu: list[tuple[str, int]] = []
+    eligible: list[tuple[str, int]] = []
 
     for phase in catchup_phases():
         if phase in skip:
@@ -844,15 +941,16 @@ def _catchup_phases_by_backlog(
                 continue
         if not _phase_eligible(phase, automation, pending, stall_holds=stall_holds):
             continue
-        (gpu if phase in popos else cpu).append((phase, count))
+        eligible.append((phase, count))
 
-    cpu.sort(key=lambda x: (-x[1], x[0]))
-    gpu.sort(key=lambda x: (-x[1], x[0]))
-    popos_ok = popos_available_for_overflow(resources) if resources is not None else False
-    mem_pressure = widow_memory_pressure(resources) if resources is not None else False
-    if _catchup_order_policy(popos_ok=popos_ok, mem_pressure=mem_pressure) == "popos_first":
-        return [p for p, _ in gpu] + [p for p, _ in cpu]
-    return [p for p, _ in cpu] + [p for p, _ in gpu]
+    intake_rows = [(p, c) for p, c in eligible if p in INTAKE_PREPROCESS_PHASES]
+    post_rows = [(p, c) for p, c in eligible if p not in INTAKE_PREPROCESS_PHASES]
+    intake_sorted = _sort_intake_preprocess_phases(intake_rows)
+    intake_first = intake_preprocess_hot(pending)
+    if intake_first:
+        return intake_sorted, True
+    post_sorted = _sort_post_phases_by_host(post_rows, resources=resources)
+    return intake_sorted + post_sorted, False
 
 
 def max_concurrent_widow_cpu_drains(automation: Any) -> int:
@@ -963,6 +1061,43 @@ def pick_next_phases(
             interval = int(sched.get("interval") or 86400)
             if last is None or (datetime.now(timezone.utc) - last).total_seconds() >= interval:
                 maint.append("rss_feed_health")
+        # Residual assembly: spine drivers clear but unlinked backlog remains, and intake
+        # is below the GPU-defer threshold so assembly is eligible to run.
+        assembly_pending = int(pending.get("storyline_assembly", 0) or 0)
+        intake_pending = int(pending.get("unified_intake_extraction", 0) or 0)
+        if (
+            assembly_pending >= residual_assembly_pending_threshold()
+            and intake_pending < unified_intake_defer_threshold()
+            and not mem_pressure
+            and _phase_eligible(
+                "storyline_assembly", automation, pending, stall_holds=stall_holds
+            )
+        ):
+            maint.append("storyline_assembly")
+            return maint, "residual_assembly"
+        # Residual topic_clustering: only when actionable (signal-full) pending is real.
+        # Inventory-wide pass-null without signal eligibility must not thrash maintenance.
+        tc_pending = int(pending.get("topic_clustering", 0) or 0)
+        if (
+            tc_pending >= residual_topic_clustering_pending_threshold()
+            and not mem_pressure
+            and _phase_eligible(
+                "topic_clustering", automation, pending, stall_holds=stall_holds
+            )
+        ):
+            maint.append("topic_clustering")
+            return maint, "residual_topic_clustering"
+        # Residual mention_resolution: CEM-after-watermark backlog with no catchup driver signal.
+        mr_pending = int(pending.get("mention_resolution", 0) or 0)
+        if (
+            mr_pending >= residual_mention_resolution_pending_threshold()
+            and not mem_pressure
+            and _phase_eligible(
+                "mention_resolution", automation, pending, stall_holds=stall_holds
+            )
+        ):
+            maint.append("mention_resolution")
+            return maint, "residual_mention_resolution"
         return maint, "maintenance"
 
     desired: list[str] = []
@@ -991,21 +1126,30 @@ def pick_next_phases(
         }
     )
     popos_ok = popos_available_for_overflow(resources)
-    branch = f"catchup_{_catchup_order_policy(popos_ok=popos_ok, mem_pressure=mem_pressure)}"
+    host_policy = _catchup_order_policy(popos_ok=popos_ok, mem_pressure=mem_pressure)
 
-    for phase in _catchup_phases_by_backlog(
+    phases, intake_first = _catchup_phases_by_backlog(
         pending,
         automation,
         stall_holds=stall_holds,
         skip=skip,
         resources=resources,
-    ):
+    )
+    branch = (
+        "catchup_intake_first"
+        if intake_first
+        else f"catchup_post_{host_policy}"
+    )
+
+    for phase in phases:
         _add(phase)
 
+    # Collection last among intake-capable work (throttle already blocks flood).
     if _collection_allowed(pending, automation) and not mem_pressure:
         _add("collection_cycle")
 
-    if int(pending.get("pending_db_flush", 0) or 0) > 0:
+    # Flush only when post-processing is allowed (intake band quiet).
+    if not intake_first and int(pending.get("pending_db_flush", 0) or 0) > 0:
         _add("pending_db_flush")
 
     return desired, branch
@@ -1141,13 +1285,51 @@ class PipelineController:
         for phase, health in self.phase_health.items():
             if health.status in ("stalled", "failing"):
                 self.stalled_phases[phase] = health.detail
-                self._stall_holds[phase] = stall_hold_replans()
-                logger.info(
-                    "PipelineController stall_yield:%s status=%s detail=%s",
-                    phase,
-                    health.status,
-                    health.detail,
-                )
+                # Do not refresh an existing hold each replan — that permanently
+                # lockouts phases whose backlog stays flat while they are ineligible.
+                if phase not in self._stall_holds:
+                    self._stall_holds[phase] = stall_hold_replans()
+                    logger.info(
+                        "PipelineController stall_yield:%s status=%s detail=%s hold=%s",
+                        phase,
+                        health.status,
+                        health.detail,
+                        self._stall_holds[phase],
+                    )
+                else:
+                    # #region agent log
+                    try:
+                        import json
+                        import time
+                        from pathlib import Path
+
+                        _p = Path(
+                            "/home/pete/Documents/projects/News Intelligence/"
+                            ".cursor/debug-0b2a10.log"
+                        )
+                        _p.parent.mkdir(parents=True, exist_ok=True)
+                        with _p.open("a", encoding="utf-8") as _f:
+                            _f.write(
+                                json.dumps(
+                                    {
+                                        "sessionId": "0b2a10",
+                                        "hypothesisId": "H_stall_hold_refresh",
+                                        "location": "pipeline_controller.py:_update_stall_holds",
+                                        "message": "stall_hold_retained",
+                                        "data": {
+                                            "phase": phase,
+                                            "status": health.status,
+                                            "detail": health.detail,
+                                            "hold_remaining": self._stall_holds.get(phase),
+                                        },
+                                        "timestamp": int(time.time() * 1000),
+                                    }
+                                )
+                                + "\n"
+                            )
+                    except Exception:
+                        pass
+                    # #endregion
         expired = [p for p, n in self._stall_holds.items() if n <= 0]
         for p in expired:
             del self._stall_holds[p]
