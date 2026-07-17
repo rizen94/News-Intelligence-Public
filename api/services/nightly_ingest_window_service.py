@@ -39,7 +39,7 @@ import asyncio
 import logging
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -484,7 +484,7 @@ async def run_nightly_unified_pipeline_drain(
             stats["stopped_reason"] = "outside_window_after_lock"
             return stats
 
-        from services.article_content_enrichment_service import enrich_articles_batch
+        from shared.content_enrichment_drain import run_content_enrichment_batch
         from services.backlog_metrics import get_all_pending_counts, invalidate_backlog_metrics_cache
         from services.context_processor_service import sync_domain_articles_to_contexts
         from services.content_refinement_queue_service import process_nightly_gpu_refinement_drain
@@ -523,14 +523,36 @@ async def run_nightly_unified_pipeline_drain(
                     break
                 if pe == 0:
                     break
+                enrich_started = datetime.now(timezone.utc)
                 n = int(
                     await loop.run_in_executor(
-                        None, lambda bs=enrich_bs: enrich_articles_batch(batch_size=bs)
+                        None, lambda bs=enrich_bs: run_content_enrichment_batch(batch_size=bs)
                     )
                 )
+                enrich_finished = datetime.now(timezone.utc)
                 enrich_i += 1
                 stats["enrichment_batches"] += 1
                 stats["enrichment_articles"] += n
+                # Attribute productive nightly batches to content_enrichment runs_1h
+                # (standalone CE task no-ops during this window).
+                if n > 0:
+                    try:
+                        from shared.services.phase_batch_run_history import (
+                            record_phase_batch_completion,
+                        )
+
+                        await loop.run_in_executor(
+                            None,
+                            lambda s=enrich_started, f=enrich_finished, nn=n: record_phase_batch_completion(
+                                "content_enrichment",
+                                s,
+                                f,
+                                stats={"round_processed": nn, "processed": nn},
+                                scheduler_path="nightly_unified_pipeline",
+                            ),
+                        )
+                    except Exception as e:
+                        logger.debug("Nightly enrichment run history: %s", e)
                 if n == 0:
                     logger.warning(
                         "Nightly enrichment: batch processed 0 articles while backlog reported %s pending; "

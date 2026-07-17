@@ -3158,16 +3158,30 @@ class AutomationManager:
     async def _execute_content_enrichment(self, task: Task):
         """Fetch full article text with trafilatura for articles with short content."""
         import asyncio
-        from datetime import datetime, timezone
 
-        from shared.services.phase_batch_run_history import record_phase_batch_completion_async
-
+        task.metadata = task.metadata or {}
         try:
             from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
 
-            if in_nightly_pipeline_window_est() and not (task.metadata or {}).get(
+            if in_nightly_pipeline_window_est() and not task.metadata.get(
                 "nightly_sequential_drain"
             ):
+                # Standalone CE no-ops overnight; nightly_enrichment_context owns the drain.
+                # Skip outer history so Monitor Recent activity is not paired with a non-measurable
+                # sub-1s empty row that leaves runs_1h unchanged.
+                task.metadata["skip_automation_run_history"] = True
+                try:
+                    from services.activity_feed_service import get_activity_feed
+
+                    get_activity_feed().update_current_progress(
+                        self._activity_feed_activity_id(task),
+                        message=(
+                            "Content enrichment deferred "
+                            "(nightly pipeline owns drain)"
+                        ),
+                    )
+                except Exception:
+                    pass
                 logger.debug(
                     "Content enrichment: nightly pipeline window — handled by nightly_enrichment_context"
                 )
@@ -3177,7 +3191,8 @@ class AutomationManager:
 
         from shared.content_enrichment_drain import run_content_enrichment_batch
 
-        started = datetime.now(timezone.utc)
+        # Batch row is the measurable runs_1h signal; skip empty outer task row.
+        task.metadata["skip_automation_run_history"] = True
         try:
             default_bs = 60
             try:
@@ -3193,16 +3208,15 @@ class AutomationManager:
                 enriched = await loop.run_in_executor(
                     None, lambda bs=enrich_bs: run_content_enrichment_batch(batch_size=bs)
                 )
-            finished = datetime.now(timezone.utc)
             enriched_n = int(enriched or 0)
-            if enriched_n > 0:
-                await record_phase_batch_completion_async(
-                    "content_enrichment",
-                    started,
-                    finished,
-                    stats={"round_processed": enriched_n, "processed": enriched_n},
-                )
-                # notify_worker_done() already triggers replan; no duplicate request_replan
+            # Always emit batch_round (allow_empty via _BATCH_RUN_HISTORY_PHASES) so idle /
+            # fast completions still increment runs_1h — matching activity "ran Xm ago".
+            await self._record_phase_batch_loop(
+                task,
+                loops_processed=1,
+                round_processed=enriched_n,
+                processed=enriched_n,
+            )
         except Exception as e:
             logger.warning(f"Content enrichment failed: {e}")
 
