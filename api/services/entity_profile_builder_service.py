@@ -779,6 +779,21 @@ async def _process_batched_profile_chunk(
         raw_response = await llm._call_ollama(ModelType.LLAMA_8B, batched_prompt)
         results = _parse_batched_response(raw_response, len(chunk))
     except Exception as e:
+        err = str(e).lower()
+        # Proxy preemption / hard timeout: per-profile fallback multiplies the same
+        # contested LOW-priority path (can hang past run budget with CLOSE-WAIT sockets).
+        if "preempt" in err or "503" in err or "timed out" in err or "timeout" in err:
+            logger.warning(
+                "Batched profile chunk LLM failed (%s); skipping per-profile fallback",
+                e,
+            )
+            return ProfileBuilderBatchResult(
+                updated=0,
+                attempted=len(chunk),
+                fast_updated=0,
+                full_updated=0,
+                contexts_used=0,
+            )
         logger.warning("Batched profile chunk LLM failed (%s), falling back per profile", e)
         results = [None] * len(chunk)
 
@@ -955,7 +970,20 @@ async def drain_entity_profile_build(
 
     while not budget.expired():
         rounds += 1
-        batch_result = await run_profile_builder_batch(limit=limit)
+        rem = budget.remaining
+        try:
+            batch_result = await asyncio.wait_for(
+                run_profile_builder_batch(limit=limit),
+                timeout=max(5.0, rem),
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "entity_profile_build drain stopped: budget exhausted mid-batch "
+                "(round=%s remaining was %.0fs)",
+                rounds,
+                rem,
+            )
+            break
         total_updated += batch_result.updated
         total_fast += batch_result.fast_updated
         total_full += batch_result.full_updated
