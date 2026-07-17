@@ -169,30 +169,8 @@ _WIDOW_RAM_HEAVY_PHASES = frozenset(
     }
 )
 
-# PopOS GPU phases preferred when Widow is under memory pressure (ordered).
-_POPOS_OVERFLOW_PRIORITY: tuple[str, ...] = (
-    "unified_intake_extraction",
-    "claim_extraction",
-    "entity_profile_build",
-    "entity_dossier_compile",
-    "fact_verification",
-    "pattern_recognition",
-    "storyline_discovery",
-    "storyline_assembly",
-    "event_extraction",
-)
-
-# While unified intake has pending work, do not co-enqueue these on OOM overflow.
-_POPOS_OVERFLOW_DEFER_WHILE_INTAKE: frozenset[str] = frozenset(
-    {
-        "storyline_assembly",
-        "storyline_discovery",
-        "pattern_recognition",
-        "entity_dossier_compile",
-    }
-)
-
 # Residual assembly/event alone must not keep the full catchup enqueue path forever.
+# Include the largest post-intake drains so catchup stays on while they have work.
 _CATCHUP_DRIVER_PHASES: frozenset[str] = frozenset(
     {
         "unified_intake_extraction",
@@ -204,6 +182,8 @@ _CATCHUP_DRIVER_PHASES: frozenset[str] = frozenset(
         "document_processing",
         "content_refinement_queue",
         "entity_profile_build",
+        "mention_resolution",
+        "storyline_assembly",
         "ml_processing",
         "sentiment_analysis",
         "quality_scoring",
@@ -214,7 +194,8 @@ _CATCHUP_DRIVER_PHASES: frozenset[str] = frozenset(
 # Lightweight Widow work safe during memory pressure (DB/SQL, no model load).
 _LIGHT_WIDOW_DURING_PRESSURE: tuple[str, ...] = (
     "pending_db_flush",
-    "health_check",
+    # health_check is owned by AutomationManager._standalone_health_check_loop —
+    # never enqueue via PipelineController (completion→replan→health_check thrash).
     "context_sync",
     "entity_profile_sync",
     "spine_sql_tail",
@@ -265,6 +246,16 @@ def residual_topic_clustering_pending_threshold() -> int:
 def residual_mention_resolution_pending_threshold() -> int:
     """Min mention_resolution pending to enqueue residual CEM drain when catchup drivers are clear."""
     return max(25, _cfg_int("residual_mention_resolution_pending_threshold", 100))
+
+
+def residual_entity_profile_build_pending_threshold() -> int:
+    """Min entity_profile_build pending to enqueue residual EPB when catchup drivers are clear."""
+    return max(25, _cfg_int("residual_entity_profile_build_pending_threshold", 100))
+
+
+def residual_assembly_widow_fallback_stale_sec() -> float:
+    """PopOS assembly/worker heartbeat age above this allows Widow residual assembly."""
+    return float(max(60, _cfg_int("residual_assembly_widow_fallback_stale_sec", 600)))
 
 
 def is_catchup_active(pending: dict[str, int]) -> bool:
@@ -434,6 +425,7 @@ def host_state_dict(resources: Any) -> dict[str, Any]:
             **widow,
             "memory_pressure": widow_memory_pressure(resources),
             "memory_critical": widow_memory_critical(resources),
+            "process_rss_mb": _widow_process_rss_mb(),
         },
         "popos": popos,
         "routing": {
@@ -444,12 +436,31 @@ def host_state_dict(resources: Any) -> dict[str, Any]:
                 widow_memory_pressure(resources)
                 or widow_memory_critical(resources)
             ),
+            "remote_owned_phases": sorted(_remote_owned_phases_list()),
         },
         "lane_pools": {
             "active": popos_available_for_overflow(resources),
             "max_popos_gpu_drains": max_concurrent_widow_gpu_drains(),
         },
     }
+
+
+def _widow_process_rss_mb() -> float | None:
+    try:
+        from shared.process_memory import process_rss_mb
+
+        return process_rss_mb()
+    except Exception:
+        return None
+
+
+def _remote_owned_phases_list() -> list[str]:
+    try:
+        from shared.remote_phase_worker import remote_owned_phases
+
+        return sorted(remote_owned_phases())
+    except Exception:
+        return []
 
 
 def _normalize_error(err: str | None) -> str:
@@ -556,8 +567,9 @@ def assess_phase_health(
                     and zero_runs >= stall_zero_progress_passes()
                 ):
                     return PhaseHealth(phase, "stalled", "flat backlog + zero-progress passes")
-            else:
-                return PhaseHealth(phase, "stalled", "flat backlog snapshots")
+            # Flat backlog with no measurable drain attempts is "unknown", not stalled —
+            # otherwise never-scheduled phases (zero runs_1h) are permanently blackholed.
+            return PhaseHealth(phase, "unknown", "flat backlog awaiting schedule")
 
     if run_history_rows:
         errors: list[str] = []
@@ -663,14 +675,47 @@ def _phase_eligible(
     pending: dict[str, int],
     *,
     stall_holds: dict[str, int],
+    ignore_remote_ownership: bool = False,
 ) -> bool:
     if stall_holds.get(phase, 0) > 0:
         return False
+    try:
+        from shared.remote_phase_worker import phase_owned_by_remote_worker
+
+        if not ignore_remote_ownership and phase_owned_by_remote_worker(phase):
+            return False
+    except Exception:
+        pass
+    try:
+        from config.runtime import env_str
+        from shared.process_memory import process_rss_mb
+
+        raw_block = (env_str("AUTOMATION_BLOCK_PHASES", "") or "").strip()
+        if raw_block and phase in {x.strip() for x in raw_block.split(",") if x.strip()}:
+            return False
+        pause_mb = float(env_str("AUTOMATION_RSS_PAUSE_MB", "1800") or "1800")
+        rss = process_rss_mb()
+        from shared.process_memory import AUTOMATION_RSS_PAUSE_EXEMPT_PHASES
+
+        if rss is not None and rss >= pause_mb and phase not in AUTOMATION_RSS_PAUSE_EXEMPT_PHASES:
+            return False
+    except Exception:
+        pass
     if phase not in automation.schedules:
         return False
     schedule = automation.schedules[phase]
+    # Remote-owned schedules are disabled on Widow; residual Widow fallback may
+    # still enqueue when ignore_remote_ownership=True and PopOS worker is stale.
     if not schedule.get("enabled", True):
-        return False
+        if not ignore_remote_ownership:
+            return False
+        try:
+            from shared.remote_phase_worker import phase_owned_by_remote_worker
+
+            if not phase_owned_by_remote_worker(phase):
+                return False
+        except Exception:
+            return False
 
     from services.backlog_metrics import SKIP_WHEN_EMPTY
 
@@ -785,11 +830,11 @@ def _pick_widow_oom_popos_overflow(
     catchup: bool,
 ) -> tuple[list[str], str]:
     """
-    When Widow RAM is under pressure and PopOS is available, enqueue PopOS GPU phases
-    plus lightweight Widow DB work — skip RSS/enrichment/collection that spike RSS.
+    When Widow RAM is under pressure and PopOS is available: schedule **light Widow
+    DB work only**. Do not enqueue Host.POPOS_GPU / LLM-heavy phases onto
+    AutomationManager — ownership CSV + the PopOS worker process own those drains.
     """
     desired: list[str] = []
-    popos_phases = _popos_gpu_phases()
     branch = "widow_oom_popos_overflow"
 
     def _skip_health(phase: str) -> bool:
@@ -801,45 +846,27 @@ def _pick_widow_oom_popos_overflow(
             return
         if phase in _WIDOW_RAM_HEAVY_PHASES:
             return
+        # Never place popos_preferring work on Widow under pressure (even if not yet
+        # remote-owned — that was the false-overflow RAM trap).
+        if phase in _popos_gpu_phases():
+            return
         if not _phase_eligible(phase, automation, pending, stall_holds=stall_holds):
             return
         if _skip_health(phase):
             return
         desired.append(phase)
 
-    for phase in _POPOS_OVERFLOW_PRIORITY:
-        if phase not in popos_phases:
-            continue
-        if int(pending.get(phase, 0) or 0) <= 0:
-            continue
-        intake_pending = int(pending.get("unified_intake_extraction", 0) or 0)
-        if intake_pending > unified_intake_defer_threshold() and phase in _POPOS_OVERFLOW_DEFER_WHILE_INTAKE:
-            continue
-        _add(phase)
-
-    for phase in popos_phases:
-        if phase in desired or phase in _POPOS_OVERFLOW_PRIORITY:
-            continue
-        if int(pending.get(phase, 0) or 0) <= 0:
-            continue
-        intake_pending = int(pending.get("unified_intake_extraction", 0) or 0)
-        if intake_pending > unified_intake_defer_threshold() and phase in _POPOS_OVERFLOW_DEFER_WHILE_INTAKE:
-            continue
-        _add(phase)
-
     for phase in _LIGHT_WIDOW_DURING_PRESSURE:
-        if phase == "health_check":
-            if not catchup and _phase_eligible(
-                phase, automation, pending, stall_holds=stall_holds
-            ):
-                _add(phase)
-            continue
         if phase == "spine_sql_tail":
             if _spine_sql_tail_should_run(pending):
                 _add(phase)
             continue
         if int(pending.get(phase, 0) or 0) > 0:
             _add(phase)
+
+    # Safe DB resolver when RSS pause gate still allows it.
+    if int(pending.get("mention_resolution", 0) or 0) > 0:
+        _add("mention_resolution")
 
     if not catchup:
         sched = automation.schedules.get("rss_feed_health") or {}
@@ -850,15 +877,6 @@ def _pick_widow_oom_popos_overflow(
             interval = int(sched.get("interval") or 86400)
             if last is None or (datetime.now(timezone.utc) - last).total_seconds() >= interval:
                 _add("rss_feed_health")
-        if desired:
-            return desired, branch
-        return desired, branch
-
-    asm_phase, _asm_meta = _pick_assembly_phase(pending)
-    if asm_phase and asm_phase in popos_phases:
-        intake_pending = int(pending.get("unified_intake_extraction", 0) or 0)
-        if not (intake_pending > unified_intake_defer_threshold() and asm_phase in _POPOS_OVERFLOW_DEFER_WHILE_INTAKE):
-            _add(asm_phase)
 
     return desired, branch
 
@@ -875,24 +893,76 @@ def _catchup_order_policy(*, popos_ok: bool, mem_pressure: bool) -> str:
     return "widow_first"
 
 
+# Ordering among structure-band peers (lower index = earlier).
+_STRUCTURE_CATCHUP_PRIORITY: tuple[str, ...] = (
+    "mention_resolution",
+    "entity_profile_build",
+    "storyline_assembly",
+    "storyline_automation",
+    "event_tracking",
+    "graph_connection_distillation",
+)
+
+
+def _structure_catchup_hot(pending: dict[str, int] | None) -> bool:
+    """Delegate to resource policy (shared threshold + pending phases)."""
+    from shared.pipeline_resource_policy import structure_catchup_hot
+
+    return structure_catchup_hot(pending)
+
+
 def _sort_post_phases_by_host(
     post: list[tuple[str, int]],
     *,
     resources: Any | None,
+    pending: dict[str, int] | None = None,
 ) -> list[str]:
-    """Host-lane preference then largest backlog within each lane."""
+    """Work-band order, then host lane within each band, then backlog depth.
+
+    Bands: 1 structure/new-material → 2 bulk analysis → 3 refinement filler.
+    Host lane (popos_first / widow_first) applies inside a band only.
+    When structure catchup is hot: drop refinement band only (keep mention_resolution).
+    """
+    from shared.pipeline_resource_policy import (
+        post_intake_work_band,
+        structure_catchup_hot,
+    )
+
     popos = _popos_gpu_phases()
-    cpu: list[tuple[str, int]] = []
-    gpu: list[tuple[str, int]] = []
-    for phase, count in post:
-        (gpu if phase in popos else cpu).append((phase, count))
-    cpu.sort(key=lambda x: (-x[1], x[0]))
-    gpu.sort(key=lambda x: (-x[1], x[0]))
+    rows = list(post)
+    structure_hot = structure_catchup_hot(pending)
+    if structure_hot:
+        # Drop refinement filler (band 3); keep structure-band peers and CEM
+        # (including storyline_automation even though it is Tier.REFINEMENT).
+        rows = [
+            (ph, c)
+            for ph, c in rows
+            if ph == "mention_resolution" or post_intake_work_band(ph) != 3
+        ]
+
+    prio = {name: i for i, name in enumerate(_STRUCTURE_CATCHUP_PRIORITY)}
     popos_ok = popos_available_for_overflow(resources) if resources is not None else False
     mem_pressure = widow_memory_pressure(resources) if resources is not None else False
-    if _catchup_order_policy(popos_ok=popos_ok, mem_pressure=mem_pressure) == "popos_first":
-        return [p for p, _ in gpu] + [p for p, _ in cpu]
-    return [p for p, _ in cpu] + [p for p, _ in gpu]
+    host_policy = _catchup_order_policy(popos_ok=popos_ok, mem_pressure=mem_pressure)
+    # Lower rank = preferred for this host policy.
+    def _host_lane_rank(phase: str) -> int:
+        is_gpu = phase in popos
+        if host_policy == "popos_first":
+            return 0 if is_gpu else 1
+        return 0 if not is_gpu else 1
+
+    def _sort_key(item: tuple[str, int]) -> tuple[int, int, int, int, str]:
+        phase, count = item
+        return (
+            post_intake_work_band(phase),
+            _host_lane_rank(phase),
+            prio.get(phase, 100),
+            -int(count or 0),
+            phase,
+        )
+
+    rows.sort(key=_sort_key)
+    return [p for p, _ in rows]
 
 
 def _sort_intake_preprocess_phases(intake: list[tuple[str, int]]) -> list[str]:
@@ -916,12 +986,13 @@ def _catchup_phases_by_backlog(
     Phases with pending work for catchup enqueue.
 
     Returns ``(ordered_phases, intake_first)``.
-    When core preprocess pending exceeds the clear threshold, only the intake band is
-    returned (hard gate). Otherwise intake band (usually empty) then post band sorted by
-    host-lane + backlog depth.
+    When core preprocess pending exceeds the clear threshold, intake band is first
+    (soft intake-first), then eligible structure-band / mention_resolution work is
+    still appended so EPB/MR are not starved. Otherwise full post band follows intake.
     """
     from shared.pipeline_resource_policy import (
         INTAKE_PREPROCESS_PHASES,
+        STRUCTURE_BAND_PHASES,
         intake_preprocess_hot,
     )
 
@@ -948,8 +1019,19 @@ def _catchup_phases_by_backlog(
     intake_sorted = _sort_intake_preprocess_phases(intake_rows)
     intake_first = intake_preprocess_hot(pending)
     if intake_first:
-        return intake_sorted, True
-    post_sorted = _sort_post_phases_by_host(post_rows, resources=resources)
+        # Co-schedule structure + CEM; do not exclusive-return intake-only.
+        co_rows = [
+            (p, c)
+            for p, c in post_rows
+            if p in STRUCTURE_BAND_PHASES or p == "mention_resolution"
+        ]
+        post_sorted = _sort_post_phases_by_host(
+            co_rows, resources=resources, pending=pending
+        )
+        return intake_sorted + post_sorted, True
+    post_sorted = _sort_post_phases_by_host(
+        post_rows, resources=resources, pending=pending
+    )
     return intake_sorted + post_sorted, False
 
 
@@ -988,6 +1070,53 @@ def host_lane_at_cap(automation: Any, phase: str, *, hosts: dict[str, Any] | Non
     else:
         cap = max_concurrent_widow_cpu_drains(automation)
     return host_lane_pipeline_depth(automation, lane) >= cap
+
+
+def _popos_remote_worker_stale(*, max_age_sec: float | None = None) -> bool:
+    """True when PopOS phase-worker heartbeat is missing, not alive, or older than stale threshold."""
+    stale_sec = (
+        float(max_age_sec)
+        if max_age_sec is not None
+        else residual_assembly_widow_fallback_stale_sec()
+    )
+    try:
+        from services.pipeline_phase_heartbeat_service import popos_worker_status_summary
+
+        summary = popos_worker_status_summary()
+        if not summary.get("alive"):
+            return True
+        age = summary.get("age_sec")
+        if age is None:
+            return True
+        return float(age) > stale_sec
+    except Exception:
+        # Fail open: allow Widow residual so backlog cannot strand forever.
+        return True
+
+
+def _widow_residual_assembly_fallback_allowed(
+    automation: Any,
+    pending: dict[str, int],
+    *,
+    stall_holds: dict[str, int],
+) -> bool:
+    """Remote-owned assembly may run on Widow only when the PopOS worker is stale."""
+    try:
+        from shared.remote_phase_worker import phase_owned_by_remote_worker
+
+        if not phase_owned_by_remote_worker("storyline_assembly"):
+            return False
+    except Exception:
+        return False
+    if not _popos_remote_worker_stale():
+        return False
+    return _phase_eligible(
+        "storyline_assembly",
+        automation,
+        pending,
+        stall_holds=stall_holds,
+        ignore_remote_ownership=True,
+    )
 
 
 def _pick_assembly_phase(backlog: dict[str, int]) -> tuple[str | None, dict[str, Any]]:
@@ -1045,8 +1174,7 @@ def pick_next_phases(
 
     if not catchup:
         maint: list[str] = []
-        if _phase_eligible("health_check", automation, pending, stall_holds=stall_holds):
-            maint.append("health_check")
+        # Do not schedule health_check here — standalone loop owns it (avoids ~1Hz replan thrash).
         for phase in ("context_sync", "entity_profile_sync", "pending_db_flush"):
             if int(pending.get(phase, 0) or 0) > 0 and _phase_eligible(
                 phase, automation, pending, stall_holds=stall_holds
@@ -1069,12 +1197,18 @@ def pick_next_phases(
             assembly_pending >= residual_assembly_pending_threshold()
             and intake_pending < unified_intake_defer_threshold()
             and not mem_pressure
-            and _phase_eligible(
-                "storyline_assembly", automation, pending, stall_holds=stall_holds
-            )
         ):
-            maint.append("storyline_assembly")
-            return maint, "residual_assembly"
+            if _phase_eligible(
+                "storyline_assembly", automation, pending, stall_holds=stall_holds
+            ):
+                maint.append("storyline_assembly")
+                return maint, "residual_assembly"
+            # Remote-owned on Widow: only take over if PopOS assembly worker is stale.
+            if _widow_residual_assembly_fallback_allowed(
+                automation, pending, stall_holds=stall_holds
+            ):
+                maint.append("storyline_assembly")
+                return maint, "residual_assembly_widow_fallback"
         # Residual topic_clustering: only when actionable (signal-full) pending is real.
         # Inventory-wide pass-null without signal eligibility must not thrash maintenance.
         tc_pending = int(pending.get("topic_clustering", 0) or 0)
@@ -1098,13 +1232,20 @@ def pick_next_phases(
         ):
             maint.append("mention_resolution")
             return maint, "residual_mention_resolution"
+        # Residual entity_profile_build: profiles waiting while catchup drivers are clear.
+        epb_pending = int(pending.get("entity_profile_build", 0) or 0)
+        if (
+            epb_pending >= residual_entity_profile_build_pending_threshold()
+            and not mem_pressure
+            and _phase_eligible(
+                "entity_profile_build", automation, pending, stall_holds=stall_holds
+            )
+        ):
+            maint.append("entity_profile_build")
+            return maint, "residual_entity_profile_build"
         return maint, "maintenance"
 
     desired: list[str] = []
-
-    def _skip_health(phase: str) -> bool:
-        h = phase_health.get(phase)
-        return h is not None and h.status in ("stalled", "failing")
 
     def _add(phase: str) -> None:
         if phase in desired:
@@ -1113,7 +1254,11 @@ def pick_next_phases(
             return
         if not _phase_eligible(phase, automation, pending, stall_holds=stall_holds):
             return
-        if _skip_health(phase):
+        # Only hard-skip repeat-error "failing" health. "stalled" (flat backlog) is
+        # already time-boxed via stall_holds — skipping both layers blackholes
+        # never-run queues (mention_resolution / entity_profile_build / assembly).
+        h = phase_health.get(phase)
+        if h is not None and h.status == "failing":
             return
         desired.append(phase)
 
@@ -1187,6 +1332,8 @@ class PipelineController:
     _pending_history: dict[str, list[int]] = field(default_factory=lambda: defaultdict(list))
     _running: bool = False
     _catchup_was_active: bool = False
+    _replan_debounce_handle: asyncio.TimerHandle | None = field(default=None, repr=False)
+    _replan_immediate: bool = field(default=False, repr=False)
 
     async def run(self, automation: Any) -> None:
         self._running = True
@@ -1199,16 +1346,50 @@ class PipelineController:
             except asyncio.TimeoutError:
                 pass
             self.replan_event.clear()
+            self._replan_immediate = False
             try:
                 await self._replan(automation)
             except Exception:
                 logger.exception("PipelineController replan failed")
         logger.info("PipelineController stopped")
 
+    def _replan_debounce_seconds(self) -> float:
+        try:
+            from config.runtime import env_str
+
+            return max(0.0, float(env_str("PIPELINE_REPLAN_DEBOUNCE_SECONDS", "3") or 3))
+        except (TypeError, ValueError):
+            return 3.0
+
     def notify_worker_done(self) -> None:
-        self.replan_event.set()
+        """Coalesce completion-driven replans (default 3s debounce)."""
+        gap = self._replan_debounce_seconds()
+        if gap <= 0:
+            self.replan_event.set()
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.replan_event.set()
+            return
+        if self._replan_debounce_handle is not None:
+            return
+
+        def _fire() -> None:
+            self._replan_debounce_handle = None
+            self.replan_event.set()
+
+        self._replan_debounce_handle = loop.call_later(gap, _fire)
 
     def request_replan(self) -> None:
+        """Immediate replan (operator / collection kick) — bypasses debounce."""
+        self._replan_immediate = True
+        if self._replan_debounce_handle is not None:
+            try:
+                self._replan_debounce_handle.cancel()
+            except Exception:
+                pass
+            self._replan_debounce_handle = None
         self.replan_event.set()
 
     async def _replan(self, automation: Any) -> None:
@@ -1222,7 +1403,9 @@ class PipelineController:
         try:
             from shared.pipeline_queue_counts import get_all_phase_queue_depths
 
-            pending = get_all_phase_queue_depths()
+            # Must not block the uvicorn event loop — sync queue-depth SQL can take
+            # tens of seconds under relation locks and freezes Monitor overview.
+            pending = await asyncio.to_thread(get_all_phase_queue_depths)
         except Exception as e:
             logger.debug("get_all_phase_queue_depths: %s", e)
 
@@ -1260,6 +1443,7 @@ class PipelineController:
             plan_generation=gen,
             stall_holds=self._stall_holds,
             controller=self,
+            pending=pending,
         )
 
         lp = self.hosts.get("lane_pools")
@@ -1272,7 +1456,7 @@ class PipelineController:
             self.hosts["lane_pools"] = lp
 
         if desired:
-            logger.debug(
+            logger.info(
                 "PipelineController replan gen=%s branch=%s desired=%s catchup=%s",
                 gen,
                 branch,
@@ -1282,8 +1466,19 @@ class PipelineController:
 
     def _update_stall_holds(self) -> None:
         self.stalled_phases = {}
+        remote_owned = set(_remote_owned_phases_list())
         for phase, health in self.phase_health.items():
-            if health.status in ("stalled", "failing"):
+            # Remotely owned phases are drained off-box; Widow stall health is noise.
+            if phase in remote_owned:
+                self._stall_holds.pop(phase, None)
+                continue
+            if health.status == "stalled":
+                # Flat-backlog "stalled" is often caused by the hold itself (never
+                # scheduled → zero progress). Keep it visible but do not yield-lock.
+                self.stalled_phases[phase] = health.detail
+                self._stall_holds.pop(phase, None)
+                continue
+            if health.status == "failing":
                 self.stalled_phases[phase] = health.detail
                 # Do not refresh an existing hold each replan — that permanently
                 # lockouts phases whose backlog stays flat while they are ineligible.
@@ -1296,40 +1491,6 @@ class PipelineController:
                         health.detail,
                         self._stall_holds[phase],
                     )
-                else:
-                    # #region agent log
-                    try:
-                        import json
-                        import time
-                        from pathlib import Path
-
-                        _p = Path(
-                            "/home/pete/Documents/projects/News Intelligence/"
-                            ".cursor/debug-0b2a10.log"
-                        )
-                        _p.parent.mkdir(parents=True, exist_ok=True)
-                        with _p.open("a", encoding="utf-8") as _f:
-                            _f.write(
-                                json.dumps(
-                                    {
-                                        "sessionId": "0b2a10",
-                                        "hypothesisId": "H_stall_hold_refresh",
-                                        "location": "pipeline_controller.py:_update_stall_holds",
-                                        "message": "stall_hold_retained",
-                                        "data": {
-                                            "phase": phase,
-                                            "status": health.status,
-                                            "detail": health.detail,
-                                            "hold_remaining": self._stall_holds.get(phase),
-                                        },
-                                        "timestamp": int(time.time() * 1000),
-                                    }
-                                )
-                                + "\n"
-                            )
-                    except Exception:
-                        pass
-                    # #endregion
         expired = [p for p, n in self._stall_holds.items() if n <= 0]
         for p in expired:
             del self._stall_holds[p]

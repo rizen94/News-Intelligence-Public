@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import time
 from typing import Any
 
@@ -15,53 +14,63 @@ from nri_core.spine.resolution.lazy_mint import lazy_mint_on_miss
 NON_ENTITY_TYPES = frozenset({"subject"})
 
 
-def _insert_resolution(
-    context_id: int,
-    mention_text: str,
-    entity_profile_id: int | None,
-    ftm_id: str | None,
-    score: float,
-    tier: int,
-    status: str,
-) -> None:
-    with ni_reader.news_intel_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                f"""
-                INSERT INTO {T_RESOLVED_MENTIONS}
-                    (context_id, mention_text, entity_profile_id, ftm_id,
-                     match_score, match_tier, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (context_id, mention_text) DO UPDATE SET
-                    ftm_id = EXCLUDED.ftm_id,
-                    match_score = EXCLUDED.match_score,
-                    match_tier = EXCLUDED.match_tier,
-                    status = EXCLUDED.status,
-                    resolved_at = NOW()
-                """,
-                (context_id, mention_text, entity_profile_id, ftm_id, score, tier, status),
-            )
-        conn.commit()
+def _dedupe_rows_by_context_mention(
+    rows: list[tuple[Any, ...]],
+) -> tuple[list[tuple[Any, ...]], int]:
+    """Keep last row per (context_id, mention_text). Postgres rejects ON CONFLICT
+    DO UPDATE when the same constrained key appears twice in one INSERT."""
+    if not rows:
+        return rows, 0
+    by_key: dict[tuple[Any, Any], tuple[Any, ...]] = {}
+    for row in rows:
+        by_key[(row[0], row[1])] = row
+    deduped = list(by_key.values())
+    return deduped, len(rows) - len(deduped)
 
 
-def _park_mention(
-    context_id: int,
-    mention_text: str,
-    candidate_ftm_id: str | None,
-    score: float,
-    reason: str,
-) -> None:
-    with ni_reader.news_intel_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                f"""
-                INSERT INTO {T_PARKED_RESOLUTION}
-                    (context_id, mention_text, candidate_ftm_id, match_score, reason)
-                VALUES (%s, %s, %s, %s, %s)
-                """,
-                (context_id, mention_text, candidate_ftm_id, score, reason),
-            )
-        conn.commit()
+def _flush_resolutions(cur: Any, rows: list[tuple[Any, ...]]) -> None:
+    if not rows:
+        return
+    from psycopg2.extras import execute_values
+
+    rows, _ = _dedupe_rows_by_context_mention(rows)
+
+    execute_values(
+        cur,
+        f"""
+        INSERT INTO {T_RESOLVED_MENTIONS}
+            (context_id, mention_text, entity_profile_id, ftm_id,
+             match_score, match_tier, status)
+        VALUES %s
+        ON CONFLICT (context_id, mention_text) DO UPDATE SET
+            ftm_id = EXCLUDED.ftm_id,
+            match_score = EXCLUDED.match_score,
+            match_tier = EXCLUDED.match_tier,
+            status = EXCLUDED.status,
+            resolved_at = NOW()
+        """,
+        rows,
+        page_size=200,
+    )
+
+
+def _flush_parks(cur: Any, rows: list[tuple[Any, ...]]) -> None:
+    if not rows:
+        return
+    from psycopg2.extras import execute_values
+
+    rows, _dropped = _dedupe_rows_by_context_mention(rows)
+
+    execute_values(
+        cur,
+        f"""
+        INSERT INTO {T_PARKED_RESOLUTION}
+            (context_id, mention_text, candidate_ftm_id, match_score, reason)
+        VALUES %s
+        """,
+        rows,
+        page_size=200,
+    )
 
 
 def _should_skip_mention(mention: dict[str, Any]) -> bool:
@@ -72,14 +81,16 @@ def _should_skip_mention(mention: dict[str, Any]) -> bool:
     return entity_type in NON_ENTITY_TYPES
 
 
-def resolve_batch(limit: int = 200) -> dict[str, Any]:
+def resolve_batch(
+    limit: int = 200,
+    *,
+    budget_deadline_mono: float | None = None,
+) -> dict[str, Any]:
     cfg = get_config()
     if not cfg.write_resolved_mentions:
         return {"skipped": True, "reason": "NRI_WRITE_RESOLVED_MENTIONS=false"}
 
     require_prod_safety()
-    watermark = ni_reader.get_watermark("mention_resolver")
-    mentions = ni_reader.fetch_new_mentions(since_id=watermark, limit=limit)
 
     stats: dict[str, Any] = {
         "processed": 0,
@@ -87,47 +98,88 @@ def resolve_batch(limit: int = 200) -> dict[str, Any]:
         "parked": 0,
         "provisional": 0,
         "non_entity_topic": 0,
-        "last_id": watermark,
+        "rate_limited_stop": 0,
+        "budget_stop": 0,
+        "dup_skipped": 0,
+        "last_id": 0,
     }
+    resolution_rows: list[tuple[Any, ...]] = []
+    park_rows: list[tuple[Any, ...]] = []
+    bridge_jobs: list[dict[str, Any]] = []
+    seen_context_mention: set[tuple[Any, str]] = set()
+    watermark = 0
+    max_id = 0
+    mentions: list[dict[str, Any]] = []
+
+    # 1) Fetch only — release DB before Wikidata/HTTP (holding conn across HTTP hung flush).
+    with ni_reader.news_intel_connection() as conn:
+        watermark = ni_reader.get_watermark("mention_resolver", conn=conn)
+        mentions = ni_reader.fetch_new_mentions(since_id=watermark, limit=limit, conn=conn)
+        try:
+            conn.commit()
+        except Exception:
+            pass
+    stats["last_id"] = watermark
     max_id = watermark
 
+    # 2) Resolve in-memory (may call Wikidata / OpenSanctions).
     for mention in mentions:
-        max_id = max(max_id, int(mention["id"]))
+        if budget_deadline_mono is not None and time.monotonic() >= budget_deadline_mono:
+            stats["budget_stop"] = int(stats.get("budget_stop") or 0) + 1
+            break
+        mention_id = int(mention["id"])
+        mention_text_early = str(mention.get("mention_text") or "")
+        ctx_key = (int(mention["context_id"]), mention_text_early)
+        if ctx_key in seen_context_mention:
+            # Still advance watermark past duplicate CEM rows for same key.
+            stats["dup_skipped"] = int(stats.get("dup_skipped") or 0) + 1
+            stats["processed"] += 1
+            max_id = max(max_id, mention_id)
+            continue
+        seen_context_mention.add(ctx_key)
 
         if _should_skip_mention(mention):
-            _insert_resolution(
-                context_id=int(mention["context_id"]),
-                mention_text=mention["mention_text"],
-                entity_profile_id=mention.get("entity_profile_id"),
-                ftm_id=None,
-                score=0.0,
-                tier=0,
-                status="non_entity_topic",
+            resolution_rows.append(
+                (
+                    int(mention["context_id"]),
+                    mention["mention_text"],
+                    mention.get("entity_profile_id"),
+                    None,
+                    0.0,
+                    0,
+                    "non_entity_topic",
+                )
             )
             stats["non_entity_topic"] += 1
             stats["processed"] += 1
+            max_id = max(max_id, mention_id)
             continue
 
         mention_text = str(mention["mention_text"])
         if len(mention_text.strip()) > 0 and len(mention_text.strip()) < 4:
-            _insert_resolution(
-                context_id=int(mention["context_id"]),
-                mention_text=mention_text,
-                entity_profile_id=mention.get("entity_profile_id"),
-                ftm_id=None,
-                score=0.0,
-                tier=2,
-                status="parked",
+            resolution_rows.append(
+                (
+                    int(mention["context_id"]),
+                    mention_text,
+                    mention.get("entity_profile_id"),
+                    None,
+                    0.0,
+                    2,
+                    "parked",
+                )
+            )
+            park_rows.append(
+                (
+                    int(mention["context_id"]),
+                    mention_text,
+                    None,
+                    0.0,
+                    "mention_too_short",
+                )
             )
             stats["parked"] += 1
-            _park_mention(
-                int(mention["context_id"]),
-                mention_text,
-                None,
-                0.0,
-                "mention_too_short",
-            )
             stats["processed"] += 1
+            max_id = max(max_id, mention_id)
             continue
 
         result = match_mention(text=mention_text)
@@ -144,13 +196,15 @@ def resolve_batch(limit: int = 200) -> dict[str, Any]:
                 entity_profile_id=mention.get("entity_profile_id"),
                 entity_type=mention.get("entity_type"),
             )
+            if lazy.status == "rate_limited":
+                stats["rate_limited_stop"] = int(stats.get("rate_limited_stop") or 0) + 1
+                break
             if lazy.status == "provisional" and lazy.ftm_id:
                 ftm_id = lazy.ftm_id
                 score = lazy.score
                 status = "provisional"
                 stats["provisional"] += 1
 
-        # Downgrade auto_linked when bridge QA would reject the FtM pairing
         if status == "auto_linked" and ftm_id:
             from nri_core.evidence.bridge_qa import validate_bridge_link
 
@@ -167,47 +221,72 @@ def resolve_batch(limit: int = 200) -> dict[str, Any]:
                 park_reason = qa_reason
                 ftm_id = None
 
-        _insert_resolution(
-            context_id=int(mention["context_id"]),
-            mention_text=mention_text,
-            entity_profile_id=mention.get("entity_profile_id"),
-            ftm_id=ftm_id,
-            score=score,
-            tier=tier,
-            status=status,
+        resolution_rows.append(
+            (
+                int(mention["context_id"]),
+                mention_text,
+                mention.get("entity_profile_id"),
+                ftm_id,
+                score,
+                tier,
+                status,
+            )
         )
 
         if status == "auto_linked":
             stats["auto_linked"] += 1
             if mention.get("entity_profile_id") and ftm_id:
-                from nri_core.evidence.entity_bridge import bridge_auto_link
-
-                bridge_auto_link(
-                    entity_profile_id=int(mention["entity_profile_id"]),
-                    ftm_id=ftm_id,
-                    bridge_score=score,
-                    mention_text=mention_text,
-                    ni_canonical_name=mention.get("canonical_name"),
-                    ni_entity_type=mention.get("entity_type"),
-                    match_tier=tier,
+                bridge_jobs.append(
+                    {
+                        "entity_profile_id": int(mention["entity_profile_id"]),
+                        "ftm_id": ftm_id,
+                        "bridge_score": score,
+                        "mention_text": mention_text,
+                        "ni_canonical_name": mention.get("canonical_name"),
+                        "ni_entity_type": mention.get("entity_type"),
+                        "match_tier": tier,
+                    }
                 )
         elif status == "provisional":
-            pass  # provisional mints require human review — no entity_bridge
+            pass
         else:
             stats["parked"] += 1
             candidate = result.candidates[0]["id"] if result.candidates else None
-            _park_mention(
-                int(mention["context_id"]),
-                mention_text,
-                candidate,
-                result.score,
-                park_reason,
+            park_rows.append(
+                (
+                    int(mention["context_id"]),
+                    mention_text,
+                    candidate,
+                    result.score,
+                    park_reason,
+                )
             )
         stats["processed"] += 1
+        max_id = max(max_id, mention_id)
 
-    if max_id > watermark:
-        ni_reader.set_watermark("mention_resolver", max_id)
-    stats["last_id"] = max_id
+    # 3) Fresh connection for writes — advance watermark before optional bridges.
+    try:
+        with ni_reader.news_intel_connection() as conn:
+            with conn.cursor() as cur:
+                _flush_resolutions(cur, resolution_rows)
+                _flush_parks(cur, park_rows)
+            if max_id > watermark:
+                ni_reader.set_watermark("mention_resolver", max_id, conn=conn)
+            conn.commit()
+            stats["last_id"] = max_id
+    except Exception:
+        raise
+
+    # 4) Bridges after watermark commit; skip when budget-stopped (avoid long hang).
+    if bridge_jobs and not stats.get("budget_stop"):
+        from nri_core.evidence.entity_bridge import bridge_auto_link
+
+        for job in bridge_jobs[:50]:
+            try:
+                bridge_auto_link(**job)
+            except Exception:
+                pass
+
     return stats
 
 
@@ -242,8 +321,17 @@ def resolve_drain(
     creation rate without starving other Widow work.
     """
     batch_limit = int(limit) if limit is not None else _resolve_batch_limit()
+    try:
+        if get_config().lazy_mint_enabled:
+            # Smaller batches = more frequent watermark commits under Wikidata latency.
+            from config.runtime import mention_resolve_lazy_mint_batch_cap
+
+            batch_limit = min(batch_limit, mention_resolve_lazy_mint_batch_cap())
+    except Exception:
+        batch_limit = min(batch_limit, 250)
     budget = float(budget_seconds) if budget_seconds is not None else _resolve_drain_budget_seconds()
     t0 = time.monotonic()
+    deadline = (t0 + budget) if budget > 0 else None
     totals: dict[str, Any] = {
         "batches": 0,
         "processed": 0,
@@ -251,6 +339,8 @@ def resolve_drain(
         "parked": 0,
         "provisional": 0,
         "non_entity_topic": 0,
+        "rate_limited_stop": 0,
+        "budget_stop": 0,
         "last_id": ni_reader.get_watermark("mention_resolver"),
         "budget_seconds": budget,
         "batch_limit": batch_limit,
@@ -262,7 +352,7 @@ def resolve_drain(
         if budget > 0 and (time.monotonic() - t0) >= budget:
             break
 
-        stats = resolve_batch(limit=batch_limit)
+        stats = resolve_batch(limit=batch_limit, budget_deadline_mono=deadline)
         if stats.get("skipped"):
             totals["skipped"] = True
             totals["skip_reason"] = stats.get("reason")
@@ -270,10 +360,22 @@ def resolve_drain(
 
         processed = int(stats.get("processed") or 0)
         totals["batches"] += 1
-        for key in ("processed", "auto_linked", "parked", "provisional", "non_entity_topic"):
+        for key in (
+            "processed",
+            "auto_linked",
+            "parked",
+            "provisional",
+            "non_entity_topic",
+            "rate_limited_stop",
+            "budget_stop",
+        ):
             totals[key] = int(totals.get(key, 0) or 0) + int(stats.get(key) or 0)
         totals["last_id"] = stats.get("last_id", totals["last_id"])
 
+        if int(stats.get("rate_limited_stop") or 0) > 0:
+            break
+        if int(stats.get("budget_stop") or 0) > 0:
+            break
         if processed == 0:
             break
 

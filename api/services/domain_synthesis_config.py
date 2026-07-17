@@ -23,6 +23,34 @@ _CONFIG_PATH = os.path.join(
 _cached_raw: dict[str, Any] | None = None
 
 
+def _coerce_str_list(raw: Any) -> list[str]:
+    """Normalize YAML focus_areas / patterns: dict items become 'k: v' strings."""
+    if not raw:
+        return []
+    out: list[str] = []
+    for item in raw:
+        if item is None:
+            continue
+        if isinstance(item, str):
+            text = item.strip()
+            if text:
+                out.append(text)
+            continue
+        if isinstance(item, dict):
+            for k, v in item.items():
+                if v is None or v == "":
+                    text = str(k).strip()
+                else:
+                    text = f"{k}: {v}".strip()
+                if text:
+                    out.append(text)
+            continue
+        text = str(item).strip()
+        if text:
+            out.append(text)
+    return out
+
+
 @dataclass
 class TopicFilter:
     exclude_keywords: list[str] = field(default_factory=list)
@@ -68,6 +96,9 @@ class StorylineAutomationConfig:
     assembly_after_enrichment: bool = True
     unlinked_article_threshold: int = 25
     automation_batch_per_assembly: int = 20
+    min_relevance_score: float | None = None
+    min_semantic_score: float | None = None
+    min_quality_tier: int | None = None
 
 
 @dataclass
@@ -123,12 +154,12 @@ class DomainSynthesisConfig:
         parts: list[str] = []
         if self.llm_context:
             parts.append(self.llm_context.strip())
-        if self.focus_areas:
-            parts.append("Focus areas: " + "; ".join(self.focus_areas[:8]))
-        if self.storyline_patterns:
-            parts.append(
-                "Preferred storyline arcs: " + "; ".join(self.storyline_patterns[:6])
-            )
+        focus = _coerce_str_list(self.focus_areas)
+        if focus:
+            parts.append("Focus areas: " + "; ".join(focus[:8]))
+        patterns = _coerce_str_list(self.storyline_patterns)
+        if patterns:
+            parts.append("Preferred storyline arcs: " + "; ".join(patterns[:6]))
         return "\n".join(parts)
 
 
@@ -261,6 +292,9 @@ def _merge_storyline_development(
         ),
         credible_source_domains=[str(d).lower() for d in credible],
     )
+    _mq_raw = auto_dom.get("min_quality_tier", auto_def.get("min_quality_tier"))
+    _mr_raw = auto_dom.get("min_relevance_score", auto_def.get("min_relevance_score"))
+    _ms_raw = auto_dom.get("min_semantic_score", auto_def.get("min_semantic_score"))
     automation = StorylineAutomationConfig(
         default_mode=str(
             auto_dom.get("default_mode", auto_def.get("default_mode", "auto_approve"))
@@ -279,6 +313,9 @@ def _merge_storyline_development(
             auto_dom.get("automation_batch_per_assembly"),
             _int(auto_def.get("automation_batch_per_assembly"), 20),
         ),
+        min_relevance_score=float(_mr_raw) if _mr_raw is not None else None,
+        min_semantic_score=float(_ms_raw) if _ms_raw is not None else None,
+        min_quality_tier=_int(_mq_raw, 3) if _mq_raw is not None else None,
     )
     return StorylineDevelopmentConfig(
         discovery=discovery,
@@ -313,11 +350,11 @@ def get_domain_synthesis_config(domain_key: str) -> DomainSynthesisConfig:
 
     return DomainSynthesisConfig(
         domain_key=norm_key,
-        focus_areas=domain_raw.get("focus_areas", []),
+        focus_areas=_coerce_str_list(domain_raw.get("focus_areas", [])),
         macro_subject_axes=list(domain_raw.get("macro_subject_axes") or []),
         event_type_priorities=domain_raw.get("event_type_priorities", []),
         entity_type_weights=domain_raw.get("entity_type_weights", {}),
-        storyline_patterns=domain_raw.get("storyline_patterns", []),
+        storyline_patterns=_coerce_str_list(domain_raw.get("storyline_patterns", [])),
         editorial_sections=domain_raw.get("editorial_sections", []),
         topic_filter=topic_filter,
         llm_context=(domain_raw.get("llm_context") or "").strip(),

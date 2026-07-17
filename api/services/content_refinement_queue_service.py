@@ -474,6 +474,68 @@ def count_content_refinement_pending() -> int:
             pass
 
 
+def reclaim_stale_content_refinement_processing(
+    *,
+    older_than_hours: float | None = None,
+) -> int:
+    """
+    Mark long-stuck ``processing`` rows as ``failed`` so they cannot block operators
+    or confuse queue health. Safe for jobs abandoned after process crash / restart.
+    """
+    try:
+        from config.runtime import env_float
+
+        hours = float(
+            older_than_hours
+            if older_than_hours is not None
+            else env_float("CONTENT_REFINEMENT_STALE_PROCESSING_HOURS", 24.0)
+        )
+    except Exception:
+        hours = 24.0
+    hours = max(1.0, min(720.0, hours))
+    conn = get_db_connection()
+    if not conn:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE intelligence.content_refinement_queue
+                SET status = 'failed',
+                    error_message = COALESCE(
+                        NULLIF(TRIM(error_message), ''),
+                        'reclaimed_stale_processing'
+                    ) || ' [stale_processing>' || %s::text || 'h]',
+                    completed_at = COALESCE(completed_at, NOW())
+                WHERE status = 'processing'
+                  AND started_at IS NOT NULL
+                  AND started_at < NOW() - (%s || ' hours')::interval
+                """,
+                (str(int(hours)), str(hours)),
+            )
+            n = int(cur.rowcount or 0)
+        conn.commit()
+        if n:
+            logger.warning(
+                "content_refinement reclaim: marked %s stale processing rows failed (>%sh)",
+                n,
+                hours,
+            )
+        return n
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.warning("reclaim_stale_content_refinement_processing: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _claim_pending_batch(conn, limit: int) -> list[tuple[Any, ...]]:
     with conn.cursor() as cur:
         cur.execute(
@@ -547,6 +609,12 @@ async def _run_narrative_finisher(domain_key: str, storyline_id: int) -> None:
         persist_narrative_finish_to_db,
         run_narrative_finish_from_db,
     )
+    from services.storyline_rag_context_service import ensure_storyline_rag_context
+
+    try:
+        await ensure_storyline_rag_context(domain_key, storyline_id, timeout_seconds=45.0)
+    except Exception:
+        pass
 
     result = await run_narrative_finish_from_db(domain_key, storyline_id, parse_json=True)
     if not result.get("success"):
@@ -740,11 +808,20 @@ async def process_content_refinement_queue_batch(
         else _MAX_FINISHER_PER_CYCLE
     )
     cap_jobs = max_jobs_per_cycle if max_jobs_per_cycle is not None else _MAX_JOBS_PER_CYCLE
+    if max_jobs_per_cycle is None:
+        try:
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            cap_jobs, _meta = resolve_adaptive_batch("content_refinement_queue", int(cap_jobs))
+            cap_jobs = max(1, int(cap_jobs))
+        except Exception:
+            pass
     cap_claim = claim_batch if claim_batch is not None else _CLAIM_BATCH
 
+    reclaimed = reclaim_stale_content_refinement_processing()
     conn = get_db_connection()
     if not conn:
-        return {"processed": 0, "error": "no_db_connection"}
+        return {"processed": 0, "error": "no_db_connection", "reclaimed_stale": reclaimed}
 
     stats: dict[str, Any] = {
         "processed": 0,
@@ -752,6 +829,7 @@ async def process_content_refinement_queue_batch(
         "by_type": {},
         "pending_before": 0,
         "pending_after": 0,
+        "reclaimed_stale": reclaimed,
     }
     finisher_run = 0
     to_process: list[tuple[Any, ...]] = []

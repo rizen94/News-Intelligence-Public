@@ -82,11 +82,15 @@ def get_runtime_config() -> dict[str, Any]:
         # Mention resolver / automation
         "mention_resolve_batch_limit": _env_int("NRI_MENTION_RESOLVE_BATCH_LIMIT", 500),
         "mention_resolve_budget_seconds": _env_float(
-            "NRI_MENTION_RESOLVE_BUDGET_SECONDS", 900.0
+            "NRI_MENTION_RESOLVE_BUDGET_SECONDS", 1800.0
         ),
         "mention_resolution_run_budget_seconds": _env_float(
             "MENTION_RESOLUTION_RUN_BUDGET_SECONDS",
-            _env_float("NRI_MENTION_RESOLVE_BUDGET_SECONDS", 900.0),
+            _env_float("NRI_MENTION_RESOLVE_BUDGET_SECONDS", 1800.0),
+        ),
+        # Cap when lazy-mint is on (Wikidata); raise for catch-up vs historical 100.
+        "mention_resolve_lazy_mint_batch_cap": _env_int(
+            "NRI_MENTION_RESOLVE_LAZY_MINT_BATCH_CAP", 250
         ),
         # Ollama
         "ollama_host": _env("OLLAMA_HOST", "http://localhost:11434"),
@@ -96,6 +100,11 @@ def get_runtime_config() -> dict[str, Any]:
         "ollama_dual_host_routing_enabled": _env_bool(
             "OLLAMA_DUAL_HOST_ROUTING_ENABLED", True
         ),
+        # Quiver Quantitative API
+        "quiver_api_key": _env("QUIVER_API_KEY", ""),
+        "quiver_api_base_url": _env("QUIVER_API_BASE_URL", "https://api.quiverquant.com/beta"),
+        "quiver_collector_enabled": _env_bool("QUIVER_COLLECTOR_ENABLED", True),
+        "quiver_collection_interval_hours": _env_int("QUIVER_COLLECTION_INTERVAL_HOURS", 6),
     }
 
 
@@ -119,6 +128,10 @@ def mention_resolve_batch_limit() -> int:
 
 def mention_resolve_budget_seconds() -> float:
     return max(0.0, float(get_runtime_config()["mention_resolve_budget_seconds"]))
+
+
+def mention_resolve_lazy_mint_batch_cap() -> int:
+    return max(50, min(2000, int(get_runtime_config()["mention_resolve_lazy_mint_batch_cap"])))
 
 
 def ollama_host() -> str:
@@ -185,3 +198,37 @@ def env_pop(name: str, default: str | None = None) -> str | None:
 
 def env_setdefault(name: str, value: str) -> str:
     return os.environ.setdefault(name, value)
+
+
+def unified_intake_extraction_batch_size() -> int:
+    """Steady-state LLM batch for unified intake (default 6, cap 8)."""
+    try:
+        n = int(env_str("UNIFIED_INTAKE_EXTRACTION_BATCH_SIZE", "6"))
+    except (TypeError, ValueError):
+        n = 6
+    return max(1, min(8, n))
+
+
+def unified_intake_extraction_parallel() -> int:
+    """
+    Concurrent LLM waves for unified intake.
+
+    Caps to measured PopOS GPU concurrency (``OLLAMA_GPU_CONCURRENCY`` /
+    ``AUTOMATION_GPU_PARALLEL``) so waves do not queue-bomb Ollama.
+    """
+    try:
+        n = int(env_str("UNIFIED_INTAKE_EXTRACTION_PARALLEL", "8"))
+    except (TypeError, ValueError):
+        n = 8
+    caps: list[int] = []
+    for key in ("OLLAMA_GPU_CONCURRENCY", "AUTOMATION_GPU_PARALLEL"):
+        raw = env_str(key, "").strip()
+        if not raw:
+            continue
+        try:
+            caps.append(max(1, int(raw)))
+        except (TypeError, ValueError):
+            continue
+    if caps:
+        n = min(n, min(caps))
+    return max(1, min(16, n))

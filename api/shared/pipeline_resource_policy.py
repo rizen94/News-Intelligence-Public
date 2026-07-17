@@ -1,17 +1,20 @@
 """
-Hard-coded pipeline resource policy — where each phase runs and how it batches.
+Hard-coded pipeline resource policy — host lane + batch defaults.
+
+``Host.POPOS_GPU`` / ``POPOS_HEAVY`` mean **prefer PopOS execution** (Ollama on .99 and/or
+the PopOS phase worker). They are **not** process placement by themselves — Widow
+AutomationManager still runs a phase unless ``REMOTE_PHASE_WORKER_OWNED_PHASES`` disables it
+and ``scripts/run_popos_phase_worker.py`` claims the work.
 
 Design:
-- **bulk** tier: intake path, batched LLM on PopOS GPU (+ Widow CPU overflow), minimal passes
+- **bulk** tier: intake path; UIE preferably on PopOS worker + local 5090 Ollama
 - **refinement** tier: narrative/RAG/products — nightly window only unless bulk queue is clear
-- **widow_db**: DB/HTTP only on Widow
+- **widow_db**: DB/HTTP only on Widow (orchestrator host)
 - **widow_fetch**: trafilatura / RSS / document fetch on Widow
 
 Steady-state unified intake LLM batch default is **6** articles per call (``UNIFIED_INTAKE_EXTRACTION_BATCH_SIZE``;
-see ``config.runtime.unified_intake_extraction_batch_size()``). Burn-down scripts may raise via catchup_defaults.
-
-PopOS RTX 5090: structured extraction + profile build LLM
-Widow GTX 1080 + CPU: overflow extraction, embeddings, light scoring
+see ``config.runtime.unified_intake_extraction_batch_size()``). Raise ``UNIFIED_INTAKE_EXTRACTION_*``
+on the **PopOS worker** env, not on the Widow API.
 """
 
 from __future__ import annotations
@@ -207,7 +210,9 @@ PHASE_POLICIES: dict[str, PhasePolicy] = {
     "investigation_report_refresh": PhasePolicy(
         Host.POPOS_GPU, Tier.REFINEMENT, "gpu", "gpu_heavy", requires_llm=True, default_batch=8
     ),
-    "mention_resolution": PhasePolicy(Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy"),
+    "mention_resolution": PhasePolicy(
+        Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy", default_batch=250, run_budget_seconds=1800
+    ),
     # Refinement tier — end-of-pipeline only (nightly unless bulk clear)
     "story_enhancement": PhasePolicy(
         Host.POPOS_GPU, Tier.REFINEMENT, "gpu", "gpu_heavy", requires_llm=True
@@ -426,13 +431,16 @@ _INTAKE_FIRST_GPU_DEFER_PHASES = frozenset(
     }
 )
 
-# Never deferred by intake-preprocess gate (ops / drains that clear the spine).
+# Never deferred by intake-preprocess gate (ops / drains that clear the spine,
+# plus Widow-local structure drains that must not starve behind enrichment).
 _INTAKE_PREPROCESS_DEFER_EXEMPT: frozenset[str] = frozenset(
     {
         *INTAKE_PREPROCESS_PHASES,
         "health_check",
         "pending_db_flush",
         "rss_feed_health",
+        "mention_resolution",
+        "entity_profile_build",
     }
 )
 
@@ -587,6 +595,73 @@ def apply_intake_mode_pending_mask(counts: dict[str, int]) -> dict[str, int]:
     return out
 
 
+# Post-intake Band 1 — structure / new-material drains (before refinement filler).
+STRUCTURE_BAND_PHASES: frozenset[str] = frozenset(
+    {
+        "mention_resolution",
+        "entity_profile_build",
+        "storyline_assembly",
+        "storyline_automation",
+        "event_tracking",
+        "graph_connection_distillation",
+    }
+)
+
+# Pending sum used to decide when structure catchup is "hot" (defers refinement).
+_STRUCTURE_CATCHUP_PENDING_PHASES: frozenset[str] = frozenset(
+    {
+        "entity_profile_build",
+        "storyline_assembly",
+        "storyline_automation",
+    }
+)
+
+# Tier.REFINEMENT phases that still belong in the structure band (linking), not filler.
+_STRUCTURE_BAND_REFINEMENT_EXEMPT: frozenset[str] = frozenset({"storyline_automation"})
+
+
+def structure_catchup_refinement_defer_threshold() -> int:
+    """Defer Tier.REFINEMENT filler when structure pending sum is at/above this."""
+    try:
+        return max(1, int(env_str("STRUCTURE_CATCHUP_REFINEMENT_DEFER_THRESHOLD", "200")))
+    except ValueError:
+        return 200
+
+
+def structure_catchup_pending(pending: dict[str, int] | None = None) -> int:
+    p = pending or {}
+    return sum(int(p.get(ph, 0) or 0) for ph in _STRUCTURE_CATCHUP_PENDING_PHASES)
+
+
+def structure_catchup_hot(pending: dict[str, int] | None = None) -> bool:
+    return structure_catchup_pending(pending) >= structure_catchup_refinement_defer_threshold()
+
+
+def structure_catchup_defers_refinement(
+    phase_name: str,
+    pending: dict[str, int] | None = None,
+) -> bool:
+    """True when refinement filler should wait for structure / new-material drains."""
+    name = (phase_name or "").strip()
+    if not name or name in _STRUCTURE_BAND_REFINEMENT_EXEMPT:
+        return False
+    if name in STRUCTURE_BAND_PHASES and not is_refinement_phase(name):
+        return False
+    if not is_refinement_phase(name):
+        return False
+    return structure_catchup_hot(pending)
+
+
+def post_intake_work_band(phase_name: str) -> int:
+    """1=structure/new-material, 2=bulk analysis peers, 3=refinement filler."""
+    name = (phase_name or "").strip()
+    if name in STRUCTURE_BAND_PHASES:
+        return 1
+    if is_refinement_phase(name):
+        return 3
+    return 2
+
+
 def entity_profile_build_allowed(pending: dict[str, int] | None = None) -> bool:
     """Profile LLM build only when extract backlog is clear or nightly window."""
     try:
@@ -618,7 +693,8 @@ def refinement_phase_allowed(
     pending: dict[str, int] | None = None,
 ) -> bool:
     """
-    Refinement runs only in nightly heavy window, OR when bulk intake queue is clear.
+    Refinement filler runs in nightly heavy window, when bulk intake is clear,
+    and only when structure catchup is not hot (EPB / assembly / automation backlog).
     Override: PIPELINE_REFINEMENT_ANYTIME=true
     """
     if not is_refinement_phase(phase_name):
@@ -640,6 +716,10 @@ def refinement_phase_allowed(
             return True
     except Exception:
         pass
+    # Between intakes: do not burn GPU/workers on narrative refinement while
+    # structure / new-material drains still have meaningful backlog.
+    if structure_catchup_defers_refinement(phase_name, pending):
+        return False
     bulk_left = bulk_tier_pending_total(pending)
     try:
         threshold = int(env_str("PIPELINE_REFINEMENT_BULK_CLEAR_THRESHOLD", "50"))
@@ -689,17 +769,33 @@ def _ensure_popos_gpu_host(pop: str, local: str) -> None:
 
 
 def configure_pipeline_resources() -> None:
-    """Apply hard-coded batch/parallel defaults and PopOS routing at process start."""
+    """Apply hard-coded batch/parallel defaults and PopOS routing at process start.
+
+    Widow does not run a local Ollama. All LLM HTTP targets PopOS (RTX 5090)
+    unless this process is a PopOS phase worker (OLLAMA_HOST already local there).
+    """
     pop = env_str("OLLAMA_POP_OS_HOST", "").strip() or _POPOS_GPU_FALLBACK
     local = env_str("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
-    env_setdefault("OLLAMA_DUAL_HOST_ROUTING_ENABLED", "true")
+    # Widow must not target loopback Ollama (service is masked). Force PopOS.
+    _loopback = local.lower().startswith(("http://127.0.0.1:", "http://localhost:"))
+    if _loopback and pop:
+        pop_norm = pop.rstrip("/")
+        env_set("OLLAMA_HOST", pop_norm)
+        env_set("OLLAMA_URL", pop_norm)
+        env_set("OLLAMA_CPU_HOST", pop_norm)
+        local = pop_norm
+        logger.info(
+            "pipeline_resource_policy: OLLAMA_HOST -> %s (Widow has no local Ollama)",
+            pop_norm,
+        )
+    env_setdefault("OLLAMA_DUAL_HOST_ROUTING_ENABLED", "false")
     env_setdefault("OLLAMA_GPU_HOST", pop)
     env_setdefault("OLLAMA_CPU_HOST", local)
     _ensure_popos_gpu_host(pop, local)
     env_setdefault("OLLAMA_EXTRACTION_NUM_CTX", "8192")
     env_setdefault("AUTOMATION_USE_POPOS_GPU", "true")
-    env_setdefault("AUTOMATION_DUAL_LANE", "true")
-    # PopOS RTX 5090 does the heavy lift; Widow GTX 1080 is overflow only.
+    env_setdefault("AUTOMATION_DUAL_LANE", "false")
+    # PopOS RTX 5090 is the sole Ollama host for Widow-orchestrated work.
     env_setdefault("AUTOMATION_GPU_PARALLEL", "2")
     env_setdefault("AUTOMATION_CPU_PARALLEL", "3")
     env_setdefault("OLLAMA_GPU_CONCURRENCY", "2")
@@ -750,6 +846,11 @@ def configure_pipeline_resources() -> None:
     env_setdefault("ENABLE_BROWSER_ENRICHMENT", "false")
     env_setdefault("ENABLE_WAYBACK_ENRICHMENT", "false")
     env_setdefault("ENABLE_ARCHIVETODAY_ENRICHMENT", "false")
+    env_setdefault("ENTITY_STORE_FAST_PATH", "true")
+    env_setdefault("RSS_INLINE_FULLTEXT_ENABLED", "false")
+    env_setdefault("CONTENT_ENRICHMENT_FETCH_PARALLEL", "8")
+    env_setdefault("CONTENT_ENRICHMENT_PER_HOST_LIMIT", "2")
+    env_setdefault("PIPELINE_REPLAN_DEBOUNCE_SECONDS", "3")
 
     try:
         from shared.ollama_extraction_model_resolver import resolve_extraction_models_at_startup

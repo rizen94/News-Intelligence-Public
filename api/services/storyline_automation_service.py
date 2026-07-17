@@ -54,11 +54,18 @@ class StorylineAutomationService(DomainAwareService):
             "exclude_duplicates": True,  # Skip duplicate content
             "use_rag_expansion": True,  # Use RAG query expansion
             "rerank_results": True,  # Re-rank with multiple signals
-            "min_quality_tier": 2,  # 1=best, 4=worst; filter out worse
+            "min_quality_tier": 3,  # 1=best, 4=worst; filter out worse (was 2, too strict)
             "clickbait_threshold": 0.6,  # Reject if clickbait_probability > this
             "min_fact_density": 0.15,  # Reject if fact_density < this (when present)
             "require_named_sources": False,
         }
+        auto_cfg = self.domain_config.storyline_development.automation
+        if auto_cfg.min_relevance_score is not None:
+            self.default_settings["min_relevance_score"] = float(auto_cfg.min_relevance_score)
+        if auto_cfg.min_semantic_score is not None:
+            self.default_settings["min_semantic_score"] = float(auto_cfg.min_semantic_score)
+        if auto_cfg.min_quality_tier is not None:
+            self.default_settings["min_quality_tier"] = int(auto_cfg.min_quality_tier)
 
     def _apply_quality_gates(
         self,
@@ -69,7 +76,7 @@ class StorylineAutomationService(DomainAwareService):
         Filter articles by quality gates and compute quality_score for scoring.
         Returns (filtered_articles, filter_stats).
         """
-        min_tier = settings.get("min_quality_tier", 2)
+        min_tier = settings.get("min_quality_tier", 3)
         clickbait_threshold = settings.get("clickbait_threshold", 0.6)
         min_fact_density = settings.get("min_fact_density", 0.15)
         require_named_sources = settings.get("require_named_sources", False)
@@ -185,7 +192,7 @@ class StorylineAutomationService(DomainAwareService):
 
                     # Fetch key_entities and quality columns if they exist
                     key_entities = None
-                    min_quality_tier = 2
+                    min_quality_tier = 3  # Default to 3 (allow 1,2,3) instead of 2
                     try:
                         cur.execute(
                             f"""
@@ -197,7 +204,9 @@ class StorylineAutomationService(DomainAwareService):
                         if row and row[0]:
                             key_entities = row[0]
                         if row and len(row) > 1 and row[1] is not None:
-                            min_quality_tier = int(row[1])
+                            # Database default is 2, but for automation we want 3 as minimum
+                            db_tier = int(row[1])
+                            min_quality_tier = max(3, db_tier)  # Use 3 as floor for automation
                     except Exception:
                         try:
                             cur.execute(
@@ -223,6 +232,7 @@ class StorylineAutomationService(DomainAwareService):
                     else:
                         automation_settings = {}
                     settings = {**self.default_settings, **automation_settings}
+                    # Use storyline's min_quality_tier if not explicitly set in automation_settings
                     if "min_quality_tier" not in automation_settings:
                         settings["min_quality_tier"] = min_quality_tier
                     if enrichment_mode:
@@ -234,9 +244,12 @@ class StorylineAutomationService(DomainAwareService):
                         if hours_since_run < (automation_frequency_hours or 24):
                             return {
                                 "success": True,
+                                "skipped_frequency": True,
                                 "message": "Recent discovery run exists, use force_refresh=true to run again",
                                 "last_run": last_automation_run.isoformat(),
                                 "articles": [],
+                                "articles_found": 0,
+                                "articles_added": 0,
                             }
 
                     # Get existing article IDs to exclude from domain schema
@@ -259,6 +272,7 @@ class StorylineAutomationService(DomainAwareService):
                         search_entities,
                         search_keywords,
                     )
+
                     search_query = self._build_search_query(
                         title, description, analysis_summary, search_keywords, search_entities
                     )
@@ -487,28 +501,41 @@ class StorylineAutomationService(DomainAwareService):
         entities: list[str] | None,
     ) -> str:
         """Build search query from storyline context"""
-        query_parts = []
 
-        # Use title as primary query
-        if title:
-            query_parts.append(title)
+        def _as_str(value: Any) -> str | None:
+            if value is None:
+                return None
+            if isinstance(value, dict):
+                # YAML / JSON weirdness: {"Label": "detail"} → "Label: detail"
+                parts = [f"{k}: {v}" for k, v in value.items()]
+                text = "; ".join(parts).strip()
+                return text or None
+            text = str(value).strip()
+            return text or None
 
-        # Add explicit keywords
+        query_parts: list[str] = []
+
+        title_s = _as_str(title)
+        if title_s:
+            query_parts.append(title_s)
+
         if keywords:
-            query_parts.extend(keywords)
+            for kw in keywords:
+                s = _as_str(kw)
+                if s:
+                    query_parts.append(s)
 
-        # Add entities
         if entities:
-            query_parts.extend(entities)
+            for ent in entities:
+                s = _as_str(ent)
+                if s:
+                    query_parts.append(s)
 
-        # Use description/summary for context expansion
-        if description:
-            query_parts.append(description[:200])  # First 200 chars
+        desc_s = _as_str(description)
+        if desc_s:
+            query_parts.append(desc_s[:200])
 
-        # Combine into search query
-        query = " ".join(query_parts[:10])  # Limit to 10 terms
-
-        return query
+        return " ".join(query_parts[:10])
 
     def _collect_storyline_entities(
         self,
@@ -648,10 +675,16 @@ class StorylineAutomationService(DomainAwareService):
                 date_threshold = datetime.now() - timedelta(
                     days=settings.get("date_range_days", 90)
                 )
-                exclude_ids = list(existing_article_ids) if existing_article_ids else [-1]
+                # Only integer article ids may appear in a.id NOT IN (...).
+                exclude_ids = [
+                    int(x)
+                    for x in (existing_article_ids or [])
+                    if x is not None and str(x).strip().lstrip("-").isdigit()
+                ] or [-1]
 
                 entity_conditions = []
-                params = [date_threshold]
+                # SQL placeholder order: published_at, exclude ids, entity ILIKEs, exclude-keyword ILIKEs
+                params: list[Any] = [date_threshold, *exclude_ids]
 
                 for entity in entities[:20]:
                     pattern = f"%{entity}%"
@@ -675,7 +708,6 @@ class StorylineAutomationService(DomainAwareService):
                     if exclude_ids
                     else ""
                 )
-                params_with_exclude = params + exclude_ids
 
                 # Include quality columns when present (migration 164)
                 try:
@@ -691,7 +723,7 @@ class StorylineAutomationService(DomainAwareService):
                         ORDER BY a.published_at DESC, a.quality_score DESC
                         LIMIT %s
                     """,
-                        params_with_exclude + [max_results],
+                        params + [max_results],
                     )
                 except Exception as inner_exc:
                     logger.debug(
@@ -713,7 +745,7 @@ class StorylineAutomationService(DomainAwareService):
                         ORDER BY a.published_at DESC, a.quality_score DESC
                         LIMIT %s
                     """,
-                        params_with_exclude + [max_results],
+                        params + [max_results],
                     )
                 rows = cur.fetchall()
 
@@ -809,10 +841,15 @@ class StorylineAutomationService(DomainAwareService):
                 date_threshold = datetime.now() - timedelta(
                     days=settings.get("date_range_days", 90)
                 )
-                exclude_ids = list(existing_article_ids) if existing_article_ids else [-1]
+                exclude_ids = [
+                    int(x)
+                    for x in (existing_article_ids or [])
+                    if x is not None and str(x).strip().lstrip("-").isdigit()
+                ] or [-1]
                 placeholders = ",".join(["%s"] * len(canonical_entity_ids))
                 exclude_sql = f"AND a.id NOT IN ({','.join(['%s'] * len(exclude_ids))})"
-                params = [date_threshold] + canonical_entity_ids + exclude_ids
+                # Placeholder order follows SQL appearance: JOIN IN (...), published_at, NOT IN, keyword ILIKEs
+                params: list[Any] = list(canonical_entity_ids) + [date_threshold] + exclude_ids
                 exclude_clause = ""
                 if exclude_keywords:
                     for kw in exclude_keywords[:5]:
@@ -1438,10 +1475,20 @@ class StorylineAutomationService(DomainAwareService):
                                 # Check if this article should trigger consolidation
                                 # This is a simple check - in a real implementation, 
                                 # you might want to check article frequency or other criteria
-                                if added_count % 10 == 0:  # Every 10 articles, run consolidation
+                                if added_count % 10 == 0:  # Every 10 articles, optionally consolidate
                                     try:
-                                        from services.storyline_consolidation_service import consolidation_task
-                                        consolidation_task()
+                                        from config.runtime import env_bool
+
+                                        # Inline full multi-domain consolidation starves linking
+                                        # (often 0 merges, multi-minute). Default off; use
+                                        # consolidation_scheduler / operator API instead.
+                                        inline_cons = env_bool(
+                                            "STORYLINE_AUTOMATION_INLINE_CONSOLIDATION",
+                                            False,
+                                        )
+                                        if inline_cons:
+                                            from services.storyline_consolidation_service import consolidation_task
+                                            consolidation_task()
                                     except Exception as consolidation_error:
                                         logger.warning(f"Error running consolidation: {consolidation_error}")
                         except Exception as e:
