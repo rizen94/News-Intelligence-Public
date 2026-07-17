@@ -65,18 +65,48 @@ def investigation_entity_bridge(entity_profile_id: int) -> dict:
     return get_entity_bridge(entity_profile_id)
 
 
-@investigation_router.get("/investigation/bridge_qa/audit")
-def investigation_bridge_qa_audit(
-    domain_key: str | None = Query(None),
-    qa_status: str | None = Query(None),
-    limit: int = Query(50, ge=1, le=500),
-    offset: int = Query(0, ge=0),
+@investigation_router.get("/investigation/research_seeds")
+def investigation_research_seeds(
+    domains: list[str] | None = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    min_mentions: int = Query(3, ge=1, le=20),
 ) -> dict:
-    from nri_core.services.integration import audit_bridge_qa
+    from nri_core.services.integration import get_research_seeds
 
-    return audit_bridge_qa(
-        domain_key=domain_key, qa_status=qa_status, limit=limit, offset=offset
-    )
+    return get_research_seeds(domains=domains, limit=limit, min_mentions=min_mentions)
+
+
+@investigation_router.post("/investigation/research_seeds")
+def investigation_set_research_seeds(
+    body: dict = Body(...),
+) -> dict:
+    from nri_core.services.integration import set_research_seeds
+
+    ftm_ids = body.get("ftm_ids", [])
+    domains = body.get("domains", [])
+    return set_research_seeds(ftm_ids=ftm_ids, domains=domains)
+
+
+@investigation_router.get("/investigation/loop_summary")
+def investigation_loop_summary(
+    limit: int = Query(10, ge=1, le=50),
+) -> dict:
+    from services.nri_loop_summarizer import build_vault_index
+
+    # Build a comprehensive summary from recent loop runs
+    index = build_vault_index(hypothesis_limit=500, tracking_days=30)
+    return {"success": True, "summary": index}
+
+
+@investigation_router.get("/investigation/vault_index")
+def investigation_vault_index(
+    hypothesis_limit: int = Query(200, ge=1, le=1000),
+    tracking_days: int = Query(30, ge=1, le=90),
+) -> dict:
+    from services.nri_loop_summarizer import build_vault_index
+
+    index = build_vault_index(hypothesis_limit=hypothesis_limit, tracking_days=tracking_days)
+    return {"success": True, "index": index}
 
 
 @investigation_router.get("/investigation/entity_claims")

@@ -134,4 +134,5 @@ sudo systemctl enable --now nri-api.service nri-mention-resolver.timer  # if rev
 
 - [UNIFICATION_BASELINE.md](UNIFICATION_BASELINE.md) — pre-cutover inventory
 - [INVESTIGATION.md](INVESTIGATION.md) — product/API reference
+- [NRI_LOOP_OPERATOR_GUIDE.md](NRI_LOOP_OPERATOR_GUIDE.md) — unified operator manual for both loops
 - [WIDOW_BOOT_RESILIENCE.md](WIDOW_BOOT_RESILIENCE.md) — systemd units

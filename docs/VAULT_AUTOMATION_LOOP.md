@@ -4,6 +4,8 @@ Closed iterative loop: **Postgres canonical** → **Widow discovery API** → **
 
 See [STORYLINE_CANONICAL_MODEL.md](STORYLINE_CANONICAL_MODEL.md) for object roles and Phase 2 demotion.
 
+**See also**: [NRI_LOOP_OPERATOR_GUIDE.md](NRI_LOOP_OPERATOR_GUIDE.md) — unified manual for both Tracking Discovery Loop and NRI Shadow Hypothesis Loop, including architecture diagram, research direction, and vault output interpretation.
+
 ---
 
 ## Components

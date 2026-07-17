@@ -1,12 +1,12 @@
 # News Intelligence System — Agent Guidance
 
 > **HOST GUARDRAILS (read first)**
-> - **Migration complete (June 2026).** All NI development and queries belong on **Widow** (`192.168.93.101`).
-> - **Dev workspace:** `/home/pete/Documents/projects/News Intelligence` on Widow
-> - **Production runtime:** `/opt/news-intelligence` on Widow (API may run from here)
-> - **PopOS local copy** (`192.168.93.99`) is headed for NAS cold storage — do not treat it as authoritative.
-> - **Database:** NI owns `news_intel` on Widow. **Apps** use PgBouncer **`DB_PORT=6432`**; **admin/migrations** use direct Postgres **`:5432`**. Homelab Postgres MCP on PopOS reads it read-only — that is **not** Homelab's local Postgres on `:15432`.
-> - See [PROJECT_STATUS.md](PROJECT_STATUS.md) and [../PROJECT_BOUNDARIES.md](../PROJECT_BOUNDARIES.md).
+> - **Migration complete (June 2026).** Authoritative NI code/deploy: **Widow** (`192.168.93.101`) for API + DB; heavy phase drains prefer **PopOS** worker (`192.168.93.99`).
+> - **Dev workspace:** `/home/pete/Documents/projects/News Intelligence` (Widow or mirrored checkout)
+> - **Production runtime:** `/opt/news-intelligence` on Widow (API); PopOS worker uses the same tree + `.env.popos_worker`
+> - **PopOS** also hosts Homelab / Caddy / 5090 Ollama — cold-storage “NI copy” does not replace the PopOS phase worker role
+> - **Database:** NI owns `news_intel` on Widow. **Apps** (Widow API + PopOS worker) use PgBouncer **`DB_PORT=6432`**; **admin/migrations** use direct Postgres **`:5432`**. Homelab Postgres MCP remains **read-only** (`mcp_reader`) — not Homelab `:15432`
+> - See [PROJECT_STATUS.md](PROJECT_STATUS.md), [docs/POPOS_PHASE_WORKER.md](docs/POPOS_PHASE_WORKER.md), and [../PROJECT_BOUNDARIES.md](../PROJECT_BOUNDARIES.md).
 
 > **v10.1 (release/10.1):** Pipeline Exclusive Paths — feature registry, admission control, queue-based spine, conductor-only scheduling. Version SSOT: repo-root `VERSION`. New backend features must register in `api/config/features.yaml`. See [docs/UPGRADE_10.1.md](docs/UPGRADE_10.1.md) and [docs/FEATURE_REGISTRY.md](docs/FEATURE_REGISTRY.md).
 
@@ -65,6 +65,8 @@ Context for AI assistants. Use project terminology consistently.
 | Unified intake extraction runner | `api/shared/unified_intake_extraction_runner.py` |
 | Spine SQL tail | `api/services/spine_sql_tail_service.py` |
 | Pipeline controller (scheduling SSOT) | `api/services/pipeline_controller.py` |
+| PopOS phase worker (UIE / owned drains) | `scripts/run_popos_phase_worker.py`, `docs/POPOS_PHASE_WORKER.md` |
+| Remote phase ownership | `api/shared/remote_phase_worker.py` |
 | Monitor run vocabulary (activity ↔ run history SSOT) | `api/shared/monitor_run_vocabulary.py`, `docs/MONITOR_REPORTING_AND_METRICS.md`, `docs/monitor_alignment/` |
 | Pipeline queue depth vocabulary (queue_depth SSOT) | `api/shared/pipeline_queue_vocabulary.py`, `api/shared/pipeline_queue_counts.py`, `api/shared/monitor_dimension_metrics.py`, `scripts/verify_pipeline_queue_alignment.py` |
 | Spine conductor (drain helpers) | `api/services/spine_pipeline_conductor.py` |
@@ -85,7 +87,7 @@ Context for AI assistants. Use project terminology consistently.
 | API deprecation helper | `api/shared/api_deprecation.py` (HTTP 410 for retired global routes) |
 | Investigation package | `api/nri_core/` |
 | Config kernel | `api/config/runtime.py`, `database_targets.py`, `investigation_tables.py`, `schedulers.yaml` |
-| Investigation docs | `docs/INVESTIGATION.md`, `docs/UNIFICATION_CUTOVER.md` |
+| Investigation docs | `docs/INVESTIGATION.md`, `docs/UNIFICATION_CUTOVER.md`, `docs/NRI_LOOP_OPERATOR_GUIDE.md` |
 | Agent domain DB queries | `docs/AGENT_DOMAIN_DB_INSIGHTS.md` (Postgres MCP, per-silo SQL) |
 | Open WebUI DB explorer | Homelab `docs/NEWS_DB_EXPLORER_AGENT.md` — model `news-db-explorer` |
 | Human reviewer navigation | `docs/CODEBASE_MAP.md`, `docs/PIPELINE_AND_AUTOMATION.md`, `docs/CODE_REVIEW_AND_RUN_CAVEATS.md` |
@@ -126,7 +128,7 @@ Context for AI assistants. Use project terminology consistently.
 2. **Unified intake (`UNIFIED_INTAKE_EXTRACTION_ENABLED=true`, default):** one batched PopOS LLM pass fans out to entities, events, claims, sentiment/quality; inline context on enrich via `sync_context_from_article_after_content_change`. **Fast NER pre-pass** (`FAST_NER_ENABLED`, spaCy + optional GLiNER) seeds entities before LLM. **Context chunking** (`CONTEXT_CHUNKING_ENABLED`) splits long articles into `article` + `article_chunk` contexts. Legacy per-phase intake runs only when `LEGACY_INTAKE_EXTRACTION_ENABLED=true`. **Legacy-aware backlog** (`UNIFIED_INTAKE_LEGACY_AWARE_BACKLOG=true`, default): Monitor/automation count only articles still needing unified LLM; legacy-complete rows get pass-marker backfill without re-extraction (`api/shared/unified_intake_backlog.py`, `api/scripts/backfill_unified_intake_pass_from_legacy.py`). See [docs/PIPELINE_AND_AUTOMATION.md](docs/PIPELINE_AND_AUTOMATION.md).
 3. **Storyline:** create → add articles → queued refinement (`intelligence.content_refinement_queue`).
 4. **Events (v5):** extract → deduplicate → story continuation → alerts.
-5. **Ollama:** Model routing via `api/shared/services/ollama_model_caller.py`. **Widow** (`OLLAMA_HOST`, `:11434`) runs normal CPU- and GPU-lane work (8B, Qwen extraction, topic clustering, etc.). **PopOS** (`OLLAMA_POP_OS_HOST`, RTX 5090) is **GPU overflow** — `:70b` narrative finisher and models too large for Widow's GTX 1080. On Widow prod **`OLLAMA_DUAL_HOST_ROUTING_ENABLED=true`** splits overflow to PopOS; set `false` only when deliberately single-host.
+5. **Ollama:** Model routing via `api/shared/services/ollama_model_caller.py`. **Widow does not run Ollama** — all LLM HTTP from the Widow API targets **PopOS** (`OLLAMA_HOST` / `OLLAMA_POP_OS_HOST` → `http://192.168.93.99:11434`, RTX 5090). Dual-host CPU/GPU split is off on Widow (`OLLAMA_DUAL_HOST_ROUTING_ENABLED=false`). PopOS phase workers still use local `127.0.0.1:11434` on that host.
 6. **Public HTTPS:** PopOS Caddy → Widow nginx — see [docs/WIDOW_PUBLIC_STACK.md](docs/WIDOW_PUBLIC_STACK.md).
 7. **Widow (post-migration):** Full stack on Widow. AutomationManager runs on Widow API host. DB-adjacent cron per `docs/WIDOW_DB_ADJACENT_CRON.md`.
 

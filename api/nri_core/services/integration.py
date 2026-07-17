@@ -656,3 +656,172 @@ def get_ftm_cache_dataset_counts() -> dict[str, Any]:
         except Exception:
             pass
         return {"success": False, "error": str(e)}
+
+
+def get_research_seeds(
+    domains: list[str] | None = None,
+    limit: int = 20,
+    min_mentions: int = 3,
+) -> dict[str, Any]:
+    """
+    Suggest research seeds for NRI loop based on:
+    - Recent mention velocity (context_entity_mentions)
+    - Claim density (extracted_claims per entity)
+    - Cross-domain bridges (entity_bridge linking multiple domains)
+    - Vault coverage gaps (entities with hypotheses but no tracking)
+    """
+    conn = get_db_connection()
+    if not conn:
+        return {"success": False, "error": "Database connection failed"}
+
+    domain_filter = ""
+    params: list[Any] = []
+    if domains:
+        placeholders = ",".join(["%s"] * len(domains))
+        domain_filter = f"AND ep.domain_key IN ({placeholders})"
+        params.extend(domains)
+
+    try:
+        with conn.cursor() as cur:
+            # Get recent mention velocity per FTM entity
+            cur.execute(
+                f"""
+                WITH recent_mentions AS (
+                    SELECT
+                        rm.ftm_id,
+                        COUNT(*)::int AS mention_count,
+                        MAX(cm.created_at) AS latest_mention
+                    FROM {T_RESOLVED_MENTIONS} rm
+                    JOIN intelligence.context_entity_mentions cm ON cm.id = rm.context_id
+                    JOIN intelligence.entity_profiles ep ON ep.id = rm.entity_profile_id
+                    WHERE rm.ftm_id IS NOT NULL
+                      AND cm.created_at >= NOW() - INTERVAL '14 days'
+                      {domain_filter}
+                    GROUP BY rm.ftm_id
+                    HAVING COUNT(*) >= %s
+                ),
+                claim_density AS (
+                    SELECT
+                        ec.ftm_id,
+                        COUNT(*)::int AS claim_count
+                    FROM intelligence.extracted_claims ec
+                    JOIN intelligence.entity_profiles ep ON ep.id = ec.entity_profile_id
+                    WHERE ec.ftm_id IS NOT NULL
+                      {domain_filter}
+                    GROUP BY ec.ftm_id
+                ),
+                cross_domain AS (
+                    SELECT
+                        eb.ftm_id,
+                        COUNT(DISTINCT ep.domain_key)::int AS domain_count
+                    FROM {T_ENTITY_BRIDGE} eb
+                    JOIN intelligence.entity_profiles ep ON ep.id = eb.entity_profile_id
+                    WHERE eb.ftm_id IS NOT NULL
+                    GROUP BY eb.ftm_id
+                    HAVING COUNT(DISTINCT ep.domain_key) >= 2
+                ),
+                vault_coverage AS (
+                    SELECT
+                        hyp.subject_ftm_id AS ftm_id,
+                        COUNT(*)::int AS hyp_count,
+                        MAX(hyp.confidence) AS max_confidence
+                    FROM nri.hypotheses hyp
+                    WHERE hyp.status IN ('open', 'promoted')
+                    GROUP BY hyp.subject_ftm_id
+                )
+                SELECT
+                    rm.ftm_id,
+                    ep.metadata->>'canonical_name' AS canonical_name,
+                    ep.domain_key,
+                    rm.mention_count,
+                    cd.claim_count,
+                    COALESCE(xd.domain_count, 1) AS domain_count,
+                    COALESCE(vc.hyp_count, 0) AS hypothesis_count,
+                    COALESCE(vc.max_confidence, 0) AS max_hypothesis_confidence,
+                    rm.latest_mention
+                FROM recent_mentions rm
+                JOIN intelligence.entity_profiles ep ON ep.id = (
+                    SELECT id FROM intelligence.entity_profiles WHERE ftm_id = rm.ftm_id LIMIT 1
+                )
+                LEFT JOIN claim_density cd ON cd.ftm_id = rm.ftm_id
+                LEFT JOIN cross_domain xd ON xd.ftm_id = rm.ftm_id
+                LEFT JOIN vault_coverage vc ON vc.ftm_id = rm.ftm_id
+                ORDER BY rm.mention_count DESC, cd.claim_count DESC, xd.domain_count DESC
+                LIMIT %s
+                """,
+                (*params, min_mentions, limit),
+            )
+            cols = [d[0] for d in cur.description]
+            items = [dict(zip(cols, row)) for row in cur.fetchall()]
+
+        conn.close()
+
+        # Score and rank
+        for item in items:
+            velocity = item.get("mention_count", 0)
+            claims = item.get("claim_count", 0)
+            domains = item.get("domain_count", 1)
+            hyp = item.get("hypothesis_count", 0)
+
+            # Score: velocity * 1.5 + claims * 2 + cross_domain_bonus * 5 - vault_coverage_penalty
+            cross_bonus = 5 if domains >= 2 else 0
+            vault_penalty = min(hyp * 2, 10)  # don't over-penalize
+            item["score"] = round(velocity * 1.5 + claims * 2 + cross_bonus - vault_penalty, 2)
+            item["rationale"] = (
+                f"Velocity: {velocity}, Claims: {claims}, Domains: {domains}, Hypotheses: {hyp}"
+            )
+
+        items.sort(key=lambda x: x["score"], reverse=True)
+
+        return {
+            "success": True,
+            "items": items[:limit],
+            "criteria": {
+                "domains": domains,
+                "min_mentions": min_mentions,
+                "lookback_days": 14,
+            },
+        }
+    except Exception as e:
+        logger.warning("get_research_seeds: %s", e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return {"success": False, "error": str(e)}
+
+
+def set_research_seeds(ftm_ids: list[str], domains: list[str]) -> dict[str, Any]:
+    """
+    Store research seeds for NRI loop selector to pick up.
+    Writes to runtime config watermark or a dedicated seeds table.
+    """
+    # For now, write to a watermark that the selector can read
+    conn = get_db_connection()
+    if not conn:
+        return {"success": False, "error": "Database connection failed"}
+
+    try:
+        with conn.cursor() as cur:
+            # Use nri_watermarks table or create a simple seeds record
+            cur.execute(
+                f"""
+                INSERT INTO {T_WATERMARKS} (name, last_value, metadata, updated_at)
+                VALUES ('nri_research_seeds', 0, %s, NOW())
+                ON CONFLICT (name) DO UPDATE SET
+                    last_value = EXCLUDED.last_value + 1,
+                    metadata = EXCLUDED.metadata,
+                    updated_at = NOW()
+                """,
+                (json.dumps({"ftm_ids": ftm_ids, "domains": domains, "updated_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()},),),
+            )
+        conn.commit()
+        conn.close()
+        return {"success": True, "stored": {"ftm_ids": ftm_ids, "domains": domains}}
+    except Exception as e:
+        logger.warning("set_research_seeds: %s", e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return {"success": False, "error": str(e)}

@@ -26,6 +26,10 @@ NI and NRI are unified in-process after cutover — no standalone `:8010` API.
 | `GET /api/investigation/resolution_stats` | Resolver metrics |
 | `GET /api/investigation/loop_runs` | Shadow loop history |
 | `GET /api/investigation/ftm_cache_stats` | FtM cache by dataset |
+| `GET /api/investigation/research_seeds` | Suggested research targets (velocity, claims, cross-domain) |
+| `POST /api/investigation/research_seeds` | Seed research focus (FTM IDs, domains) |
+| `GET /api/investigation/loop_summary` | Aggregated loop run summary |
+| `GET /api/investigation/vault_index` | Consolidated vault inventory |
 
 Legacy shim **removed** (June 2026 cutover bake). Use `/api/investigation/*` only.
 
@@ -78,3 +82,4 @@ Component: `web/src/components/nri/FtmBridgePanel.tsx` (FtM bridge card on entit
 - Cutover: [UNIFICATION_CUTOVER.md](UNIFICATION_CUTOVER.md)
 - Baseline: [UNIFICATION_BASELINE.md](UNIFICATION_BASELINE.md)
 - System audit: [NI_NRI_SYSTEM_AUDIT_2026-06.md](NI_NRI_SYSTEM_AUDIT_2026-06.md)
+- **Operator Guide**: [NRI_LOOP_OPERATOR_GUIDE.md](NRI_LOOP_OPERATOR_GUIDE.md) — unified manual for both loops, vault outputs, research direction, and troubleshooting

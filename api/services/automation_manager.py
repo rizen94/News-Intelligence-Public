@@ -2991,7 +2991,15 @@ class AutomationManager:
             batch_started = task.metadata.get("_batch_run_started_at")
             if batch_started is None:
                 batch_started = task.started_at or batch_finished
+            # claim_extraction: never persist empty batch_rounds. Historical spam (~160/hr on
+            # Jul 15–16) came from allow_empty=True while PopOS cycled ~every 15–20s with a
+            # probe/batch race that wrote contexts=0 rows into automation_run_history.
             allow_empty = task.name in self._BATCH_RUN_HISTORY_PHASES
+            if task.name == "claim_extraction":
+                _ctx = int(stats.get("contexts_processed") or 0)
+                _cl = int(stats.get("claims_inserted") or 0)
+                if _ctx <= 0 and _cl <= 0:
+                    allow_empty = False
             should_emit_history = allow_empty or batch_stats_had_work(stats)
             event = normalize_phase_run_event(
                 task.name,
