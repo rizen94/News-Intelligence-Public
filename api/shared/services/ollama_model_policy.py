@@ -124,7 +124,9 @@ def extraction_temperature_for_invocation(kind: InvocationKind | None) -> float:
     return 0.7
 
 
-def num_predict_for_invocation(kind: InvocationKind | None, batch_size: int = 1) -> int:
+def num_predict_for_invocation(
+    kind: InvocationKind | None, batch_size: int | None = 1
+) -> int:
     """Token cap by invocation kind — avoids 2000-token budget on short extraction passes."""
     if kind is None:
         return 800
@@ -134,12 +136,19 @@ def num_predict_for_invocation(kind: InvocationKind | None, batch_size: int = 1)
         InvocationKind.REAL_TIME_UI,
     ):
         if kind == InvocationKind.STRUCTURED_EXTRACTION:
-            # Scale with batch size: ~700 tokens/article, minimum 2048
+            # Scale with batch size: ~700 tokens/article, minimum 2048.
+            # Callers often pass batch_size=None (single-doc); coerce before multiply.
+            try:
+                bs = int(batch_size) if batch_size is not None else 1
+            except (TypeError, ValueError):
+                bs = 1
+            if bs < 1:
+                bs = 1
             try:
                 base = int(env_str("OLLAMA_EXTRACTION_NUM_PREDICT", "2048"))
             except ValueError:
                 base = 2048
-            return max(base, 700 * batch_size)
+            return max(base, 700 * bs)
         try:
             return int(env_str("OLLAMA_EXTRACTION_NUM_PREDICT", "2048"))
         except ValueError:
@@ -159,22 +168,34 @@ def num_predict_for_invocation(kind: InvocationKind | None, batch_size: int = 1)
 
 
 def num_ctx_for_invocation(kind: InvocationKind | None) -> int | None:
-    """Cap context window for extraction — PopOS defaults to 32k which slows inference."""
-    import os
+    """Cap context window — large ctx on Widow forces ``--no-mmap`` and eats system RAM.
 
+    Widow GTX 1080 (8GB): keep extraction ctx modest so weights stay in VRAM.
+    PopOS 5090 can raise ``OLLAMA_EXTRACTION_NUM_CTX`` independently.
+    """
     if kind == InvocationKind.STRUCTURED_EXTRACTION:
         try:
-            return int(env_str("OLLAMA_EXTRACTION_NUM_CTX", "8192"))
+            # Default 8192 — PopOS 5090 is the sole extraction host; batch-of-6
+            # prompts (6×8k chars + schema) truncate under 2048 and trigger retries.
+            return max(512, min(8192, int(env_str("OLLAMA_EXTRACTION_NUM_CTX", "8192"))))
         except ValueError:
             return 8192
+    # Cap other Widow-local generations when explicitly configured.
+    raw = env_str("OLLAMA_DEFAULT_NUM_CTX", "").strip()
+    if raw:
+        try:
+            return max(512, min(8192, int(raw)))
+        except ValueError:
+            return None
     return None
 
 
 def keep_alive_for_invocation(kind: InvocationKind | None) -> str:
-    """Ollama model residency — longer for automation, shorter for UI."""
+    """Ollama model residency — short on Widow so RAM/VRAM recover between bursts."""
     if kind in (
         InvocationKind.REAL_TIME_UI,
         InvocationKind.INTERACTIVE_SUMMARY,
     ):
-        return "5m"
-    return "30m"
+        return env_str("OLLAMA_UI_KEEP_ALIVE", "2m").strip() or "2m"
+    # Automation default was 30m and kept 8B resident after profile/build bursts.
+    return env_str("OLLAMA_AUTOMATION_KEEP_ALIVE", "2m").strip() or "2m"

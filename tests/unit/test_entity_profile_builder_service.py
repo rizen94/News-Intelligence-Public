@@ -153,6 +153,64 @@ def test_parallel_batch_limits_concurrency(monkeypatch):
     assert peak <= 2
 
 
+def test_batched_path_honors_parallel_chunk_concurrency(monkeypatch):
+    """Live batched path must run LLM chunks concurrently when PARALLEL>1."""
+    monkeypatch.setenv("ENTITY_PROFILE_BUILD_PARALLEL", "2")
+    monkeypatch.setenv("ENTITY_PROFILE_BUILD_LLM_BATCH_SIZE", "5")
+    active = 0
+    peak = 0
+    lock = asyncio.Lock()
+
+    async def _slow_chunk(chunk, llm, *, on_profile_built, updated_so_far):
+        nonlocal active, peak
+        async with lock:
+            active += 1
+            peak = max(peak, active)
+        await asyncio.sleep(0.05)
+        async with lock:
+            active -= 1
+        return ProfileBuilderBatchResult(
+            updated=len(chunk),
+            attempted=len(chunk),
+            fast_updated=len(chunk),
+            contexts_used=len(chunk),
+        )
+
+    profile_data = [
+        {
+            "id": i,
+            "name": f"E{i}",
+            "etype": "person",
+            "combined": "x",
+            "is_first_pass": True,
+            "contexts_used": 1,
+        }
+        for i in range(1, 11)
+    ]
+
+    with (
+        patch.object(epb, "get_entity_profile_ids_to_build", return_value=list(range(1, 11))),
+        patch.object(epb, "_prepare_profile_data_for_batch", return_value=profile_data),
+        patch.object(epb, "_process_batched_profile_chunk", side_effect=_slow_chunk),
+        patch.object(epb, "LLMService"),
+    ):
+        result = asyncio.run(epb.run_profile_builder_batch_batched(limit=10))
+
+    assert result.updated == 10
+    assert peak >= 2
+    assert peak <= 2
+
+
+def test_entity_profile_build_budget_default_900(monkeypatch):
+    monkeypatch.delenv("ENTITY_PROFILE_BUILD_RUN_BUDGET_SECONDS", raising=False)
+    monkeypatch.delenv("ASSEMBLY_ENTITY_PROFILE_BUILD_CYCLE_BUDGET_SECONDS", raising=False)
+    with patch(
+        "shared.pipeline_batch_drain.phase_run_budget_seconds",
+        return_value=900,
+    ):
+        assert epb._entity_profile_build_budget_seconds(None) == 900
+
+
 def test_drain_stops_when_batch_updates_zero():
     batch_results = [
         ProfileBuilderBatchResult(updated=2, attempted=2, fast_updated=2),

@@ -18,16 +18,25 @@ logger = logging.getLogger(__name__)
 def _mention_backfill_limit() -> int:
     """Contexts per domain to refresh per round (link_context_to_article_entities)."""
     try:
-        return max(50, int(env_str("ENTITY_PROFILE_SYNC_MENTION_BACKFILL_LIMIT", "10000")))
+        # Keep small: hot-path sync must finish; large limits re-scanned the same rows for ~60s/round.
+        return max(50, min(2000, int(env_str("ENTITY_PROFILE_SYNC_MENTION_BACKFILL_LIMIT", "500"))))
     except ValueError:
-        return 10_000
+        return 500
 
 
 def _mention_backfill_rounds() -> int:
     try:
-        return max(1, min(50, int(env_str("ENTITY_PROFILE_SYNC_MENTION_BACKFILL_ROUNDS", "3"))))
+        return max(1, min(10, int(env_str("ENTITY_PROFILE_SYNC_MENTION_BACKFILL_ROUNDS", "1"))))
     except ValueError:
-        return 3
+        return 1
+
+
+def _mention_backfill_enabled() -> bool:
+    return env_str("ENTITY_PROFILE_SYNC_MENTION_BACKFILL", "true").lower() not in (
+        "0",
+        "false",
+        "no",
+    )
 
 
 def _schema_for_domain(domain_key: str) -> str:
@@ -158,22 +167,23 @@ def sync_domain_entity_profiles(domain_key: str) -> int:
                 backfill_context_entity_mentions_for_domain,
             )
 
-            lim = _mention_backfill_limit()
-            rounds = _mention_backfill_rounds()
-            total_bf = 0
-            for _ in range(rounds):
-                n = backfill_context_entity_mentions_for_domain(domain_key, limit=lim)
-                total_bf += n
-                if n <= 0:
-                    break
-            if total_bf > 0:
-                logger.info(
-                    "Entity profile sync %s: context_entity_mentions rounds=%s updated_contexts≈%s (limit/round=%s)",
-                    domain_key,
-                    rounds,
-                    total_bf,
-                    lim,
-                )
+            if _mention_backfill_enabled():
+                lim = _mention_backfill_limit()
+                rounds = _mention_backfill_rounds()
+                total_bf = 0
+                for _ in range(rounds):
+                    n = backfill_context_entity_mentions_for_domain(domain_key, limit=lim)
+                    total_bf += n
+                    if n <= 0:
+                        break
+                if total_bf > 0:
+                    logger.info(
+                        "Entity profile sync %s: context_entity_mentions rounds=%s updated_contexts≈%s (limit/round=%s)",
+                        domain_key,
+                        rounds,
+                        total_bf,
+                        lim,
+                    )
         except Exception as e:
             logger.debug("Entity profile sync backfill mentions: %s", e)
         return created

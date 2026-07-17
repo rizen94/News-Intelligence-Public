@@ -47,11 +47,13 @@ def entity_profile_build_fast_context_limit() -> int:
 
 
 def entity_profile_build_full_context_limit() -> int:
-    return max(1, min(150, _env_int("ENTITY_PROFILE_BUILD_FULL_CONTEXT_LIMIT", 75)))
+    # Keep below iterative_min by default so refreshes stay single-LLM (cheaper share).
+    return max(1, min(150, _env_int("ENTITY_PROFILE_BUILD_FULL_CONTEXT_LIMIT", 40)))
 
 
 def entity_profile_build_iterative_min_contexts() -> int:
-    return max(2, _env_int("ENTITY_PROFILE_BUILD_ITERATIVE_MIN_CONTEXTS", 30))
+    # Raised so multi-LLM chunk summarization only runs on very large refresh sets.
+    return max(2, _env_int("ENTITY_PROFILE_BUILD_ITERATIVE_MIN_CONTEXTS", 50))
 
 
 def entity_profile_build_priority_first_pass() -> bool:
@@ -831,6 +833,9 @@ async def run_profile_builder_batch_batched(
     """
     Build profiles using chunked batched LLM calls (~30 profiles/call by default)
     and two batched DB queries for metadata + contexts.
+
+    Honors ``ENTITY_PROFILE_BUILD_PARALLEL``: up to N LLM chunks run concurrently
+    (semaphore + gather). Set PARALLEL=1 to restore serial chunk awaits.
     """
     ids = get_entity_profile_ids_to_build(limit=limit)
     if not ids:
@@ -841,35 +846,65 @@ async def run_profile_builder_batch_batched(
         return ProfileBuilderBatchResult(updated=0, attempted=len(ids))
 
     chunk_size = entity_profile_build_llm_batch_size()
+    parallel = get_entity_profile_build_parallel()
     llm = LLMService()
+    chunks = [
+        profile_data[start : start + chunk_size]
+        for start in range(0, len(profile_data), chunk_size)
+    ]
+
     updated = 0
     fast_updated = 0
     full_updated = 0
     total_contexts = 0
+    progress_lock = asyncio.Lock()
+    sem = asyncio.Semaphore(parallel)
+    progress_count = 0
 
-    for chunk_start in range(0, len(profile_data), chunk_size):
-        chunk = profile_data[chunk_start : chunk_start + chunk_size]
-        chunk_result = await _process_batched_profile_chunk(
-            chunk,
-            llm,
-            on_profile_built=on_profile_built,
-            updated_so_far=updated,
-        )
-        updated += chunk_result.updated
-        fast_updated += chunk_result.fast_updated
-        full_updated += chunk_result.full_updated
-        total_contexts += chunk_result.contexts_used
+    async def _run_chunk(chunk: list[dict]) -> ProfileBuilderBatchResult:
+        nonlocal progress_count
+
+        async def _progress(_idx: int, _current_idx: int) -> None:
+            nonlocal progress_count
+            if on_profile_built is None:
+                return
+            async with progress_lock:
+                progress_count += 1
+                n = progress_count
+            await on_profile_built(n, n)
+
+        async with sem:
+            return await _process_batched_profile_chunk(
+                chunk,
+                llm,
+                on_profile_built=_progress if on_profile_built is not None else None,
+                updated_so_far=0,
+            )
+
+    results = await asyncio.gather(
+        *[_run_chunk(chunk) for chunk in chunks],
+        return_exceptions=True,
+    )
+    for result in results:
+        if isinstance(result, BaseException):
+            logger.warning("Batched profile chunk failed: %s", result)
+            continue
+        updated += result.updated
+        fast_updated += result.fast_updated
+        full_updated += result.full_updated
+        total_contexts += result.contexts_used
 
     if updated > 0:
         logger.info(
             "Entity profile builder (batched): %s ids, %s LLM-ready, %s updated "
-            "(%s fast, %s full, chunk_size=%s)",
+            "(%s fast, %s full, chunk_size=%s, parallel=%s)",
             len(ids),
             len(profile_data),
             updated,
             fast_updated,
             full_updated,
             chunk_size,
+            parallel,
         )
     return ProfileBuilderBatchResult(
         updated=updated,
@@ -885,14 +920,15 @@ def _entity_profile_build_budget_seconds(budget_seconds: int | None) -> int:
         return max(0, int(budget_seconds))
     from shared.pipeline_batch_drain import phase_run_budget_seconds
 
-    sec = phase_run_budget_seconds("entity_profile_build", default=600)
+    # Align with PhasePolicy.run_budget_seconds (900) when env/governance unset.
+    sec = phase_run_budget_seconds("entity_profile_build", default=900)
     if sec > 0:
         return sec
     try:
-        raw = env_str("ASSEMBLY_ENTITY_PROFILE_BUILD_CYCLE_BUDGET_SECONDS", "600")
+        raw = env_str("ASSEMBLY_ENTITY_PROFILE_BUILD_CYCLE_BUDGET_SECONDS", "900")
         return max(0, int(raw))
     except (TypeError, ValueError):
-        return 600
+        return 900
 
 
 async def drain_entity_profile_build(
