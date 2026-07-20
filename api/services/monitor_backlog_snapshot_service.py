@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -16,6 +17,8 @@ _STATE_KEY = "monitor_backlog_snapshot"
 
 _last_refresh_monotonic: float = 0.0
 _last_drain_refresh_monotonic: float = 0.0
+_refresh_lock = threading.Lock()
+_refresh_inflight = False
 
 
 def snapshot_interval_seconds() -> int:
@@ -37,11 +40,17 @@ def drain_refresh_interval_seconds() -> int:
 
 def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] | None:
     """Run heavy backlog_metrics queries once and persist to automation_state."""
-    global _last_refresh_monotonic
+    global _last_refresh_monotonic, _refresh_inflight
     interval = snapshot_interval_seconds()
     now_mono = time.monotonic()
     if not force and _last_refresh_monotonic and (now_mono - _last_refresh_monotonic) < interval:
         return read_monitor_backlog_snapshot(allow_stale=True)
+
+    with _refresh_lock:
+        if _refresh_inflight:
+            # Another worker is already rebuilding (~60–90s); serve last snapshot.
+            return read_monitor_backlog_snapshot(allow_stale=True)
+        _refresh_inflight = True
 
     t0 = time.monotonic()
     try:
@@ -54,6 +63,14 @@ def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] |
 
         pending = {k: int(v) for k, v in get_all_phase_queue_depths().items()}
         backlog = {k: int(v) for k, v in get_all_backlog_counts().items()}
+        if not pending:
+            prior = read_monitor_backlog_snapshot(allow_stale=True)
+            prior_n = len((prior or {}).get("queue_depths") or (prior or {}).get("pending") or {})
+            logger.warning(
+                "monitor_backlog_snapshot refresh got 0 phases — not overwriting prior (%d phases)",
+                prior_n,
+            )
+            return prior
         operator_metrics = {
             "storyline_review_queue_pending": get_storyline_review_queue_pending(),
             "storyline_review_queue_pending_by_domain": (
@@ -86,6 +103,7 @@ def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] |
         spine_throughput: dict[str, Any] = {}
         assembly_throughput: dict[str, Any] = {}
         vault_work_queue: dict[str, Any] = {}
+        intake_catchup_latency: dict[str, Any] = {}
         try:
             from services.spine_throughput_metrics import (
                 get_spine_throughput_snapshot,
@@ -96,6 +114,16 @@ def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] |
             spine_throughput = get_spine_throughput_snapshot()
         except Exception as e:
             logger.warning("monitor_backlog_snapshot spine_throughput failed: %s", e)
+        try:
+            from shared.intake_catchup_latency import (
+                compute_intake_catchup_latency,
+                record_intake_catchup_latency_sample,
+            )
+
+            intake_catchup_latency = compute_intake_catchup_latency(use_cache=False)
+            record_intake_catchup_latency_sample(intake_catchup_latency)
+        except Exception as e:
+            logger.warning("monitor_backlog_snapshot intake_catchup_latency failed: %s", e)
         try:
             from services.assembly_throughput_metrics import get_assembly_throughput_snapshot
 
@@ -137,6 +165,7 @@ def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] |
             "signal_lane_metrics": signal_lane_metrics,
             "feed_health_metrics": feed_health_metrics,
             "spine_throughput": spine_throughput,
+            "intake_catchup_latency": intake_catchup_latency,
             "assembly_throughput": assembly_throughput,
             "vault_work_queue": vault_work_queue,
             "intake_first_pass_sum": sum(
@@ -170,17 +199,25 @@ def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] |
             elapsed_ms,
         )
         try:
+            _append_snapshot_history(payload, elapsed_ms=elapsed_ms, phase_count=len(pending))
+        except Exception as hist_err:
+            logger.debug("monitor_backlog_snapshot history: %s", hist_err)
+        try:
             from domains.system_monitoring.routes.resource_dashboard import (
-                invalidate_processing_progress_fast_cache,
+                soft_expire_processing_progress_fast_cache,
             )
 
-            invalidate_processing_progress_fast_cache()
+            # Soft-expire (keep last phases) — hard invalidate caused perpetual warming banners.
+            soft_expire_processing_progress_fast_cache()
         except Exception as inv_err:
-            logger.debug("processing_progress fast cache invalidate: %s", inv_err)
+            logger.debug("processing_progress fast cache soft-expire: %s", inv_err)
         return payload
     except Exception as e:
         logger.warning("refresh_monitor_backlog_snapshot failed: %s", e)
         return read_monitor_backlog_snapshot(allow_stale=True)
+    finally:
+        with _refresh_lock:
+            _refresh_inflight = False
 
 
 def read_monitor_backlog_snapshot(*, allow_stale: bool = False) -> dict[str, Any] | None:
@@ -217,6 +254,48 @@ def read_monitor_backlog_snapshot(*, allow_stale: bool = False) -> dict[str, Any
     except Exception as e:
         logger.debug("read_monitor_backlog_snapshot: %s", e)
         return None
+
+
+def _append_snapshot_history(
+    payload: dict[str, Any],
+    *,
+    elapsed_ms: int,
+    phase_count: int,
+) -> None:
+    """Persist a history row for read-mostly trend / p95 analysis (Phase E)."""
+    from shared.database.connection import get_db_connection_context
+
+    queue_depths = payload.get("queue_depths") or payload.get("pending") or {}
+    backlog_counts = payload.get("backlog") or payload.get("backlog_counts") or {}
+    with get_db_connection_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO intelligence.monitor_backlog_snapshot_history (
+                    refreshed_at, elapsed_ms, phase_count, queue_depths, backlog_counts, payload
+                ) VALUES (NOW(), %s, %s, %s::jsonb, %s::jsonb, %s::jsonb)
+                """,
+                (
+                    elapsed_ms,
+                    phase_count,
+                    json.dumps(queue_depths),
+                    json.dumps(backlog_counts),
+                    json.dumps(
+                        {
+                            "refreshed_at_utc": payload.get("refreshed_at_utc"),
+                            "operator_metrics": payload.get("operator_metrics"),
+                        }
+                    ),
+                ),
+            )
+            # Retain ~14 days
+            cur.execute(
+                """
+                DELETE FROM intelligence.monitor_backlog_snapshot_history
+                WHERE refreshed_at < NOW() - INTERVAL '14 days'
+                """
+            )
+        conn.commit()
 
 
 def maybe_refresh_monitor_backlog_snapshot() -> None:

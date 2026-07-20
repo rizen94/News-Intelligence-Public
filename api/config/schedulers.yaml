@@ -71,6 +71,20 @@ schedulers:
     enabled: true
     note: Nightly feed yield review; warn-then-auto silencing (RSS_FEED_SILENCE_* env)
 
+  rolling_arc_refresh:
+    owner: automation_manager
+    interval_seconds: 86400
+    enabled: true
+    note: Phase B nightly rolling 12m arc chapterize (ROLLING_ARCS_ENABLED)
+
+  quiver_collector:
+    owner: automation_manager
+    interval_seconds: 21600  # 6 hours
+    enabled: true
+    note: Quiver Quantitative API - congress trades, gov contracts, lobbying, insider trades
+    domains: ["politics", "finance"]
+    condition: "QUIVER_COLLECTOR_ENABLED and QUIVER_API_KEY"
+
 # context_sync split-brain resolution: cron owns sync on Widow prod (see widow-db_adjacent)
 
 consolidation:

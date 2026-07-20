@@ -52,6 +52,21 @@ rss_feed_health:
   review_cycles: 3
   grace_days: 21
 
+# Phase E: per-phase retry + auto-silence — see services/phase_retry_silence_service.py
+phase_retry_policy:
+  enabled: true
+  dry_run: false
+  max_retries: 3
+  backoff_base_sec: 60
+  backoff_cap_sec: 300
+  silence_after_failing_streak: 3
+  phases: {}
+  # Example override:
+  # phases:
+  #   unified_intake_extraction:
+  #     max_retries: 2
+  #     silence_after_failing_streak: 4
+
 # Source credibility tiers — wired by shared.services.source_credibility_service
 # Consumers: RSS collector (quality_score scaling + articles.metadata.source_credibility),
 # context processor (copies into intelligence.contexts.metadata when present).
@@ -301,6 +316,17 @@ pipeline_controller:
   # When enrichment+UIE+document_processing pending sum exceeds this, catchup desired =
   # intake/preprocess band only (post phases deferred). Defaults to catchup_clear_threshold.
   intake_preprocess_clear_threshold: 50
+  # Flat scheduler mode thresholds (PIPELINE_FLAT_SCHEDULER, default on).
+  # Kill-switch: PIPELINE_FLAT_SCHEDULER=false restores legacy pick_next_phases tree.
+  modes:
+    intake_clear: 50
+    preprocess_stable: 5
+    structure_hot: 200
+    residual_min: 100
+    collection_downstream_max: 1200
+  # When preprocess-stable phases sum is at/below preprocess_stable and structure-band
+  # backlog remains → mode_postprocess (widow-first structure drains).
+  # Kill-switch: PIPELINE_POST_PROCESS_PREFERRED=false
   prefetch_multiplier: 2
   max_concurrent_widow_gpu_drains: 2  # PopOS LLM drains on Widow workers; default 2 when AUTOMATION_MAX_CONCURRENT_TASKS >= 4
   popos_overflow_util_max_pct: 85

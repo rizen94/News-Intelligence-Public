@@ -184,6 +184,9 @@ _CATCHUP_DRIVER_PHASES: frozenset[str] = frozenset(
         "entity_profile_build",
         "mention_resolution",
         "storyline_assembly",
+        "storyline_automation",
+        "event_tracking",
+        "graph_connection_distillation",
         "ml_processing",
         "sentiment_analysis",
         "quality_scoring",
@@ -235,21 +238,45 @@ def catchup_phases() -> frozenset[str]:
 
 def residual_assembly_pending_threshold() -> int:
     """Min storyline_assembly pending to enqueue residual assembly when catchup drivers are clear."""
+    try:
+        from shared.pipeline_admission import mode_residual_min
+
+        return mode_residual_min()
+    except Exception:
+        pass
     return max(25, _cfg_int("residual_assembly_pending_threshold", 100))
 
 
 def residual_topic_clustering_pending_threshold() -> int:
     """Min topic_clustering pending to enqueue residual TC when catchup drivers are clear."""
+    try:
+        from shared.pipeline_admission import mode_residual_min
+
+        return mode_residual_min()
+    except Exception:
+        pass
     return max(25, _cfg_int("residual_topic_clustering_pending_threshold", 100))
 
 
 def residual_mention_resolution_pending_threshold() -> int:
     """Min mention_resolution pending to enqueue residual CEM drain when catchup drivers are clear."""
+    try:
+        from shared.pipeline_admission import mode_residual_min
+
+        return mode_residual_min()
+    except Exception:
+        pass
     return max(25, _cfg_int("residual_mention_resolution_pending_threshold", 100))
 
 
 def residual_entity_profile_build_pending_threshold() -> int:
     """Min entity_profile_build pending to enqueue residual EPB when catchup drivers are clear."""
+    try:
+        from shared.pipeline_admission import mode_residual_min
+
+        return mode_residual_min()
+    except Exception:
+        pass
     return max(25, _cfg_int("residual_entity_profile_build_pending_threshold", 100))
 
 
@@ -572,14 +599,19 @@ def assess_phase_health(
             return PhaseHealth(phase, "unknown", "flat backlog awaiting schedule")
 
     if run_history_rows:
-        errors: list[str] = []
+        # Only the newest unbroken failure streak counts. A newer success must
+        # clear "failing" even when older same-error rows remain in the window.
+        consecutive_errors: list[str] = []
         for row in run_history_rows[: failing_error_repeat_passes() + 2]:
             if row.get("success") is False:
-                errors.append(_normalize_error(row.get("error_message")))
-        errors = [e for e in errors if e]
-        if len(errors) >= failing_error_repeat_passes():
-            if len(set(errors[: failing_error_repeat_passes()])) == 1:
-                return PhaseHealth(phase, "failing", errors[0][:80])
+                err = _normalize_error(row.get("error_message"))
+                if err:
+                    consecutive_errors.append(err)
+                continue
+            break
+        if len(consecutive_errors) >= failing_error_repeat_passes():
+            if len(set(consecutive_errors[: failing_error_repeat_passes()])) == 1:
+                return PhaseHealth(phase, "failing", consecutive_errors[0][:80])
 
         for row in run_history_rows[:3]:
             if not _row_is_measurable_throughput(row):
@@ -797,10 +829,21 @@ def _collection_allowed(pending: dict[str, int], automation: Any) -> bool:
         _collection_throttle_pending_total,
         collection_cycle_has_pending_work,
     )
+    from shared.pipeline_resource_policy import post_process_preferred
 
     q_len = len(getattr(automation, "_pending_collection_queue", []) or [])
     if not collection_cycle_has_pending_work(pending, pending_collection_queue_len=q_len):
         return False
+    # While preprocess is stable and structure backlog remains, defer opportunistic
+    # collection until the next scheduled cycle interval is due.
+    if post_process_preferred(pending):
+        sched = automation.schedules.get("collection_cycle") or {}
+        last = sched.get("last_run")
+        if last is not None:
+            interval = int(sched.get("interval") or 7200)
+            age = (datetime.now(timezone.utc) - last).total_seconds()
+            if age < interval:
+                return False
     downstream, _br = _collection_throttle_pending_total(pending)
     if downstream > COLLECTION_THROTTLE_PENDING_THRESHOLD:
         return False
@@ -881,13 +924,23 @@ def _pick_widow_oom_popos_overflow(
     return desired, branch
 
 
-def _catchup_order_policy(*, popos_ok: bool, mem_pressure: bool) -> str:
+def _catchup_order_policy(
+    *,
+    popos_ok: bool,
+    mem_pressure: bool,
+    pending: dict[str, int] | None = None,
+) -> str:
     """
     Single catchup host-balance policy (SSOT for phase ordering).
 
+    - widow_first: preprocess stable + structure backlog (post_process_preferred),
+      or PopOS unavailable / Widow under pressure → Widow-local structure before GPU.
     - popos_first: PopOS has headroom and Widow RAM is OK → GPU/PopOS phases before Widow DB/CPU.
-    - widow_first: PopOS unavailable or Widow under pressure → Widow-local work before GPU drains.
     """
+    from shared.pipeline_resource_policy import post_process_preferred
+
+    if pending is not None and post_process_preferred(pending):
+        return "widow_first"
     if popos_ok and not mem_pressure:
         return "popos_first"
     return "widow_first"
@@ -943,7 +996,9 @@ def _sort_post_phases_by_host(
     prio = {name: i for i, name in enumerate(_STRUCTURE_CATCHUP_PRIORITY)}
     popos_ok = popos_available_for_overflow(resources) if resources is not None else False
     mem_pressure = widow_memory_pressure(resources) if resources is not None else False
-    host_policy = _catchup_order_policy(popos_ok=popos_ok, mem_pressure=mem_pressure)
+    host_policy = _catchup_order_policy(
+        popos_ok=popos_ok, mem_pressure=mem_pressure, pending=pending
+    )
     # Lower rank = preferred for this host policy.
     def _host_lane_rank(phase: str) -> int:
         is_gpu = phase in popos
@@ -1137,7 +1192,55 @@ def pick_next_phases(
 ) -> tuple[list[str], str]:
     """
     Explicit decision tree — returns ordered phase names to enqueue and branch label.
+
+    When ``PIPELINE_FLAT_SCHEDULER`` is enabled (default), uses mode → priority →
+    admit_phase. Legacy catchup/maintenance/OOM tree remains for rollback.
     """
+    from shared.pipeline_admission import flat_scheduler_enabled, pick_next_phases_flat
+
+    if flat_scheduler_enabled():
+        mem_critical = widow_memory_critical(resources)
+        popos_ok = popos_available_for_overflow(resources)
+        wait_critical = mem_critical and not popos_ok
+        pressure = (
+            wait_critical
+            or widow_oom_popos_overflow_active(resources, automation)
+            or not _widow_resources_ok(resources, automation)
+        )
+        return pick_next_phases_flat(
+            pending,
+            resources,
+            phase_health,
+            automation,
+            stall_holds=stall_holds,
+            pressure=pressure and not wait_critical,
+            wait_resources_critical=wait_critical,
+            popos_gpu_phases=_popos_gpu_phases(),
+            catchup_phase_names=catchup_phases(),
+            widow_assembly_fallback=_widow_residual_assembly_fallback_allowed(
+                automation, pending, stall_holds=stall_holds
+            ),
+        )
+    return _pick_next_phases_legacy(
+        pending,
+        resources,
+        phase_health,
+        automation,
+        stall_holds=stall_holds,
+        catchup=catchup,
+    )
+
+
+def _pick_next_phases_legacy(
+    pending: dict[str, int],
+    resources: Any,
+    phase_health: dict[str, PhaseHealth],
+    automation: Any,
+    *,
+    stall_holds: dict[str, int],
+    catchup: bool,
+) -> tuple[list[str], str]:
+    """Legacy nested decision tree (rollback via PIPELINE_FLAT_SCHEDULER=false)."""
     mem_critical = widow_memory_critical(resources)
     oom_overflow = widow_oom_popos_overflow_active(resources, automation)
 
@@ -1271,7 +1374,9 @@ def pick_next_phases(
         }
     )
     popos_ok = popos_available_for_overflow(resources)
-    host_policy = _catchup_order_policy(popos_ok=popos_ok, mem_pressure=mem_pressure)
+    host_policy = _catchup_order_policy(
+        popos_ok=popos_ok, mem_pressure=mem_pressure, pending=pending
+    )
 
     phases, intake_first = _catchup_phases_by_backlog(
         pending,
@@ -1280,16 +1385,20 @@ def pick_next_phases(
         skip=skip,
         resources=resources,
     )
-    branch = (
-        "catchup_intake_first"
-        if intake_first
-        else f"catchup_post_{host_policy}"
-    )
+    from shared.pipeline_resource_policy import post_process_preferred
+
+    if intake_first:
+        branch = "catchup_intake_first"
+    elif post_process_preferred(pending):
+        branch = "post_process_preferred"
+    else:
+        branch = f"catchup_post_{host_policy}"
 
     for phase in phases:
         _add(phase)
 
     # Collection last among intake-capable work (throttle already blocks flood).
+    # post_process_preferred defers via _collection_allowed until schedule is due.
     if _collection_allowed(pending, automation) and not mem_pressure:
         _add("collection_cycle")
 
@@ -1427,6 +1536,18 @@ class PipelineController:
 
         self.phase_health = assess_all_phase_health(pending, self._pending_history)
         self._update_stall_holds()
+        try:
+            from services.phase_retry_silence_service import apply_auto_silence_from_health
+
+            newly = apply_auto_silence_from_health(self.phase_health)
+            if newly:
+                try:
+                    automation._apply_automation_disabled_schedules()
+                except Exception:
+                    pass
+                logger.info("PipelineController auto-silenced phases: %s", newly)
+        except Exception as silence_err:
+            logger.debug("auto-silence hook: %s", silence_err)
 
         desired, branch = pick_next_phases(
             pending,

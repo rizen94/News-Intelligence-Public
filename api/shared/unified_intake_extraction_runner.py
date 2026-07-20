@@ -9,36 +9,48 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from config.runtime import env_str
-from services.unified_intake_extraction_service import UnifiedIntakeExtractionService
-from shared.article_processing_gates import sql_ml_ready_and_content_bounds
-from shared.bulk_catchup_llm_routing import (
-    assign_extraction_lane,
-    create_lane_semaphores,
-    dual_lane_extraction_active,
-)
-from shared.domain_registry import pipeline_url_schema_pairs
-from shared.pipeline_article_selection import (
-    sql_order_coalesce_pub_created,
-    sql_order_unified_intake_value_priority,
-    unified_intake_row_value_sort_key,
-    unified_intake_value_priority_order_enabled,
-)
-from shared.pipeline_batch_drain import (
-    DrainStallTracker,
-    RunBudget,
-    phase_batch_limit,
-    phase_run_budget_seconds,
-)
-from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
-from shared.unified_intake_backlog import (
-    backfill_unified_pass_from_legacy_batch,
-    sql_actionable_unified_intake,
-    unified_intake_legacy_aware_backlog_enabled,
-)
-from shared.services.llm_service import pop_llm_execution_lane, push_llm_execution_lane
-from shared.monitor_pulse_debug import monitor_pulse_debug
 
 logger = logging.getLogger(__name__)
+
+try:
+    from services.unified_intake_extraction_service import UnifiedIntakeExtractionService
+except ImportError as _uie_imp_err:
+    UnifiedIntakeExtractionService = None  # type: ignore[misc, assignment]
+    logger.error(
+        "unified_intake_extraction_service import failed — drain disabled: %s",
+        _uie_imp_err,
+    )
+
+try:
+    from shared.article_processing_gates import sql_ml_ready_and_content_bounds
+    from shared.bulk_catchup_llm_routing import (
+        assign_extraction_lane,
+        create_lane_semaphores,
+        dual_lane_extraction_active,
+    )
+    from shared.domain_registry import pipeline_url_schema_pairs
+    from shared.pipeline_article_selection import (
+        sql_order_coalesce_pub_created,
+        sql_order_unified_intake_value_priority,
+        unified_intake_row_value_sort_key,
+        unified_intake_value_priority_order_enabled,
+    )
+    from shared.pipeline_batch_drain import (
+        DrainStallTracker,
+        RunBudget,
+        phase_batch_limit,
+        phase_run_budget_seconds,
+    )
+    from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
+    from shared.unified_intake_backlog import (
+        backfill_unified_pass_from_legacy_batch,
+        sql_actionable_unified_intake,
+        unified_intake_legacy_aware_backlog_enabled,
+    )
+    from shared.services.llm_service import pop_llm_execution_lane, push_llm_execution_lane
+except ImportError as _uie_deps_err:
+    logger.error("unified_intake_extraction_runner dependency import failed: %s", _uie_deps_err)
+    raise
 
 ArticleFailureHandler = Callable[[str, int, Exception], Awaitable[None]]
 
@@ -53,6 +65,9 @@ async def run_unified_intake_extraction_batch_drain(
     on_wave_complete: Callable[[int, dict[str, Any]], Awaitable[None]] | None = None,
     use_spine_work_queues: bool | None = None,
 ) -> dict[str, int]:
+    if UnifiedIntakeExtractionService is None:
+        logger.error("unified_intake_extraction drain skipped — service import unavailable")
+        return {"processed": 0, "errors": 1, "skipped": 1}
     per_domain = articles_per_domain
     if per_domain is None:
         per_domain = phase_batch_limit("unified_intake_extraction", 40)
@@ -66,17 +81,21 @@ async def run_unified_intake_extraction_batch_drain(
 
     llm_batch = batch_size
     if llm_batch is None:
-        try:
-            llm_batch = int(env_str("UNIFIED_INTAKE_EXTRACTION_BATCH_SIZE", "3"))
-        except ValueError:
-            llm_batch = 3
-    llm_batch = max(1, min(6, llm_batch))
+        from config.runtime import unified_intake_extraction_batch_size
+
+        llm_batch = unified_intake_extraction_batch_size()
+    llm_batch = max(1, min(8, int(llm_batch)))
 
     try:
-        parallel = int(env_str("UNIFIED_INTAKE_EXTRACTION_PARALLEL", "6"))
-    except ValueError:
-        parallel = 6
-    parallel = max(1, min(16, parallel))
+        from config.runtime import unified_intake_extraction_parallel
+
+        parallel = unified_intake_extraction_parallel()
+    except Exception:
+        try:
+            parallel = int(env_str("UNIFIED_INTAKE_EXTRACTION_PARALLEL", "8"))
+        except ValueError:
+            parallel = 8
+        parallel = max(1, min(16, parallel))
 
     gpu_sem, cpu_sem, single_sem, gpu_p, cpu_p, dual = create_lane_semaphores(parallel=parallel)
     dual = dual_lane_extraction_active()
@@ -247,7 +266,12 @@ async def run_unified_intake_extraction_batch_drain(
                         lambda: count_all_pending("unified_intake_extraction"),
                     )
                     if pending_q > 0:
-                        continue
+                        # Queue claim miss with SQL backlog — fall through to SQL selection
+                        # instead of spinning until budget expires.
+                        logger.info(
+                            "unified_intake: empty spine claim with pending=%s — SQL fallback",
+                            pending_q,
+                        )
             domain_articles = await loop.run_in_executor(
                 None,
                 lambda c=claimed_by_schema if use_queue_round else None: _fetch_domain_articles(c),
@@ -318,7 +342,6 @@ async def run_unified_intake_extraction_batch_drain(
                 )
 
                 token = push_llm_execution_lane(lane)
-                batch_t0 = time.monotonic()
                 try:
                     if lane_sem is not None:
                         async with lane_sem:
@@ -331,23 +354,11 @@ async def run_unified_intake_extraction_batch_drain(
                     return batch_slice, {}
                 finally:
                     pop_llm_execution_lane(token)
-                    monitor_pulse_debug(
-                        "unified_intake_extraction_runner.py:_process_batch",
-                        "batch wave slot finished",
-                        {
-                            "lane": lane,
-                            "articles": len(articles_for_batch),
-                            "seconds": round(time.monotonic() - batch_t0, 2),
-                        },
-                        hypothesis_id="concurrent_batches",
-                        run_id="post-fix",
-                    )
 
             for wave_start in range(0, len(batch_slices), parallel):
                 if budget.expired():
                     break
                 wave = batch_slices[wave_start : wave_start + parallel]
-                wave_t0 = time.monotonic()
                 wave_outcomes = await asyncio.gather(
                     *[
                         _process_batch(batch_slice, lane_idx + offset)
@@ -355,17 +366,6 @@ async def run_unified_intake_extraction_batch_drain(
                     ]
                 )
                 lane_idx += len(wave)
-                monitor_pulse_debug(
-                    "unified_intake_extraction_runner.py:wave",
-                    "batch wave complete",
-                    {
-                        "wave_batches": len(wave),
-                        "parallel": parallel,
-                        "seconds": round(time.monotonic() - wave_t0, 2),
-                    },
-                    hypothesis_id="concurrent_batches",
-                    run_id="post-fix",
-                )
 
                 for batch_slice, results in wave_outcomes:
                     schema_outcomes: dict[str, dict[int, bool]] = {}
@@ -415,13 +415,6 @@ async def run_unified_intake_extraction_batch_drain(
                         "backfill_count": backfill_count,
                     },
                 )
-            if round_ok > 0:
-                try:
-                    from services.backlog_metrics import invalidate_backlog_metrics_cache
-
-                    invalidate_backlog_metrics_cache()
-                except Exception:
-                    pass
             had_pending = bool(pending_rows)
             if stall.record_round(processed=round_ok, had_pending=had_pending):
                 break
@@ -438,11 +431,17 @@ async def run_unified_intake_extraction_batch_drain(
         )
         if processed_count > 0 or backfill_count > 0:
             try:
-                from services.backlog_metrics import invalidate_backlog_metrics_cache
+                from services.backlog_metrics import invalidate_backlog_metrics_cache_throttled
 
-                invalidate_backlog_metrics_cache()
+                # At most once per minute across productive drains (was every round).
+                invalidate_backlog_metrics_cache_throttled(min_interval_seconds=60.0)
             except Exception:
-                pass
+                try:
+                    from services.backlog_metrics import invalidate_backlog_metrics_cache
+
+                    invalidate_backlog_metrics_cache()
+                except Exception:
+                    pass
         return {
             "processed": processed_count + backfill_count,
             "articles_processed": processed_count + backfill_count,

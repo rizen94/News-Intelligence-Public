@@ -184,7 +184,7 @@ async def run_conductor_phase_with_history(
             phase_name,
             scheduler_path=scheduler_path,
             items_processed=0,
-            detail={"status": RunHistoryStatus.PHASE_STARTED},
+            detail={"status": "running"},
         )
 
     try:
@@ -201,6 +201,12 @@ async def run_conductor_phase_with_history(
             scheduler_path=scheduler_path,
             loops_processed=1,
             status=RunHistoryStatus.PHASE_FAILED,
+        )
+        record_conductor_phase_heartbeat(
+            phase_name,
+            scheduler_path=scheduler_path,
+            items_processed=0,
+            detail={"status": "failed"},
         )
         raise
 
@@ -219,6 +225,6 @@ async def run_conductor_phase_with_history(
         phase_name,
         scheduler_path=scheduler_path,
         items_processed=processed,
-        detail=result,
+        detail={**(result if isinstance(result, dict) else {}), "status": "complete"},
     )
     return result

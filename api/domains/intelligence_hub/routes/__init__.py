@@ -15,6 +15,8 @@ from .products import router as products_router
 from .quality import router as quality_router
 from .rag_queries import router as rag_router
 from .report import router as report_router
+from .desk_agent import router as desk_agent_router
+from .signals import router as signals_router
 
 router = APIRouter(tags=["Intelligence Hub"])
 router.include_router(hub_router)
@@ -31,5 +33,7 @@ router.include_router(products_router)
 router.include_router(report_router)
 router.include_router(enrichment_router)
 router.include_router(longitudinal_router)
+router.include_router(desk_agent_router)
+router.include_router(signals_router)
 
 __all__ = ["router"]

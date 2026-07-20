@@ -28,6 +28,7 @@ import {
 } from '@mui/material';
 import ArrowBack from '@mui/icons-material/ArrowBack';
 import Article from '@mui/icons-material/Article';
+import ReasoningPanel from '@/components/ReasoningPanel';
 import Refresh from '@mui/icons-material/Refresh';
 import Edit from '@mui/icons-material/Edit';
 import ReactMarkdown from 'react-markdown';
@@ -66,6 +67,174 @@ interface Chronicle {
   predictions?: unknown[] | null;
   momentum_score?: number | null;
   created_at?: string | null;
+}
+
+const CHRONICLE_STOPWORDS = new Set([
+  'about',
+  'after',
+  'against',
+  'amid',
+  'among',
+  'around',
+  'before',
+  'between',
+  'during',
+  'from',
+  'into',
+  'large',
+  'latest',
+  'major',
+  'model',
+  'models',
+  'news',
+  'other',
+  'over',
+  'research',
+  'says',
+  'than',
+  'that',
+  'their',
+  'there',
+  'these',
+  'this',
+  'through',
+  'under',
+  'update',
+  'updates',
+  'with',
+  'world',
+  'would',
+]);
+
+function significantEventTokens(eventName: string): string[] {
+  const raw = (eventName || '').split(/\W+/).filter(Boolean);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const w of raw) {
+    const low = w.toLowerCase();
+    if (low.length < 4 || CHRONICLE_STOPWORDS.has(low) || seen.has(low)) continue;
+    seen.add(low);
+    out.push(low);
+    if (out.length >= 6) break;
+  }
+  return out;
+}
+
+function significantEventPhrases(eventName: string): string[] {
+  const raw = (eventName || '').split(/\W+/).filter(w => w.length >= 4);
+  const phrases: string[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < raw.length - 1; i++) {
+    const a = raw[i].toLowerCase();
+    const b = raw[i + 1].toLowerCase();
+    if (CHRONICLE_STOPWORDS.has(a) && CHRONICLE_STOPWORDS.has(b)) continue;
+    const phrase = `${raw[i]} ${raw[i + 1]}`.toLowerCase();
+    if (seen.has(phrase)) continue;
+    seen.add(phrase);
+    phrases.push(phrase);
+    if (phrases.length >= 4) break;
+  }
+  return phrases;
+}
+
+/** Title-first relevance for Related contexts (mirrors API filter). */
+function developmentTitleMatchesEvent(
+  eventName: string,
+  title?: string | null
+): boolean {
+  const titleL = (title || '').toLowerCase().trim();
+  if (!titleL) return false;
+  const phrases = significantEventPhrases(eventName);
+  if (phrases.some(p => titleL.includes(p))) return true;
+  const tokenHit = (token: string) =>
+    new RegExp(`(?<![\\w-])${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`).test(
+      titleL
+    );
+  const tokens = significantEventTokens(eventName);
+  if (!tokens.length) {
+    const frag = (eventName || '').trim().toLowerCase().slice(0, 40);
+    return Boolean(frag) && titleL.includes(frag);
+  }
+  const hits = tokens.filter(t => tokenHit(t)).length;
+  const need = tokens.length >= 2 ? 2 : 1;
+  if (hits >= need) return true;
+  return tokens.some(t => t.length >= 8 && tokenHit(t));
+}
+
+/** One chronicle card per calendar day; keep newest id. */
+function dedupeChroniclesByDate(chronicles: Chronicle[]): Chronicle[] {
+  const byDay = new Map<string, Chronicle>();
+  for (const chr of chronicles) {
+    const day = (chr.update_date || chr.created_at || '').slice(0, 10) || `id-${chr.id}`;
+    const prev = byDay.get(day);
+    if (!prev || chr.id > prev.id) byDay.set(day, chr);
+  }
+  return Array.from(byDay.values()).sort((a, b) => {
+    const da = a.update_date || '';
+    const db = b.update_date || '';
+    if (da !== db) return db.localeCompare(da);
+    return b.id - a.id;
+  });
+}
+
+function filterChronicleDevelopments(
+  eventName: string,
+  developments: Development[] | null | undefined
+): Development[] {
+  const raw = developments ?? [];
+  const seen = new Set<string>();
+  const out: Development[] = [];
+  for (const d of raw) {
+    if (!developmentTitleMatchesEvent(eventName, d.title)) continue;
+    const key =
+      d.context_id != null
+        ? `c:${d.context_id}`
+        : d.storyline_id != null
+          ? `s:${d.domain_key || ''}:${d.storyline_id}`
+          : `t:${(d.title || '').slice(0, 80)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(d);
+  }
+  return out;
+}
+
+/**
+ * Drop empty day shells that only repeat the same summary with no on-topic contexts.
+ * Keeps every card that still has related contexts; otherwise one latest summary card.
+ */
+function prepareChroniclesForDisplay(
+  eventName: string,
+  chronicles: Chronicle[] | null | undefined
+): Array<Chronicle & { developments: Development[] }> {
+  const enriched = dedupeChroniclesByDate(chronicles ?? []).map(chr => ({
+    ...chr,
+    developments: filterChronicleDevelopments(eventName, chr.developments),
+  }));
+  const withDevs = enriched.filter(c => c.developments.length > 0);
+  if (withDevs.length > 0) {
+    return withDevs.map(c => ({
+      ...c,
+      momentum_score:
+        c.developments.length > 0
+          ? Math.min(1, c.developments.length * 0.1)
+          : null,
+    }));
+  }
+  const latest = enriched[0];
+  if (!latest) return [];
+  return [
+    {
+      ...latest,
+      momentum_score: null,
+      analysis: latest.analysis
+        ? {
+            ...latest.analysis,
+            // Do not surface polluted attachment lists in the empty state.
+          }
+        : latest.analysis,
+    },
+  ];
 }
 
 type EventWithChronicles = TrackedEvent & { chronicles?: Chronicle[] };
@@ -253,14 +422,21 @@ export default function EventDetailPage() {
 
   if (!domain) return null;
 
-  const formatDate = (d: string | null | undefined) =>
-    d
-      ? new Date(d).toLocaleDateString(undefined, {
-          month: 'short',
-          day: 'numeric',
-          year: 'numeric',
-        })
-      : null;
+  const formatDate = (d: string | null | undefined) => {
+    if (!d) return null;
+    // Date-only strings must use local calendar parts — `new Date('YYYY-MM-DD')`
+    // is UTC midnight and shifts back a day in US timezones.
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d);
+    const dt = m
+      ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+      : new Date(d);
+    if (Number.isNaN(dt.getTime())) return null;
+    return dt.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  };
 
   return (
     <Box>
@@ -520,6 +696,12 @@ export default function EventDetailPage() {
             </Card>
           )}
 
+          <Card variant='outlined'>
+            <CardContent>
+              <ReasoningPanel trackedEventId={Number(id)} />
+            </CardContent>
+          </Card>
+
           {linkedEvents.length > 0 && (
             <Card variant='outlined'>
               <CardHeader
@@ -555,15 +737,15 @@ export default function EventDetailPage() {
                 titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
               />
               <Divider />
-              {event.chronicles.map((chr, idx) => {
+              {prepareChroniclesForDisplay(
+                event.event_name || '',
+                event.chronicles
+              ).map((chr, idx) => {
                 const analysis = chr.analysis as {
                   summary?: string;
                   context_count?: number;
                 } | null;
-                const devs = (chr.developments ?? []) as {
-                  context_id?: number;
-                  type?: string;
-                }[];
+                const devs = chr.developments;
                 return (
                   <React.Fragment key={chr.id}>
                     {idx > 0 && <Divider />}
@@ -612,7 +794,7 @@ export default function EventDetailPage() {
                         </Box>
                       )}
 
-                      {devs.length > 0 && (
+                      {devs.length > 0 ? (
                         <Box>
                           <Typography
                             variant='caption'
@@ -622,9 +804,9 @@ export default function EventDetailPage() {
                             Related contexts ({devs.length})
                           </Typography>
                           <List dense disablePadding>
-                            {devs.map((d, idx) => {
+                            {devs.map((d, dIdx) => {
                               const devKey =
-                                d.context_id ?? d.storyline_id ?? `dev-${idx}`;
+                                d.context_id ?? d.storyline_id ?? `dev-${dIdx}`;
                               const label =
                                 d.title ||
                                 (d.context_id != null
@@ -657,6 +839,10 @@ export default function EventDetailPage() {
                             })}
                           </List>
                         </Box>
+                      ) : (
+                        <Typography variant='body2' color='text.secondary'>
+                          No on-topic related contexts for this update.
+                        </Typography>
                       )}
                     </CardContent>
                   </React.Fragment>

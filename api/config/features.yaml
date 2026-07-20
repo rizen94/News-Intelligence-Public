@@ -152,7 +152,7 @@ spine_conductor:
   modules: [api/services/spine_pipeline_conductor.py]
   flags:
     env: SPINE_PIPELINE_MODE
-  notes: Drain helpers retained; scheduling loop retired in favor of pipeline_controller
+  notes: Drain helpers only (_drain_enrichment, _drain_unified_intake, etc.); run_spine_conductor_cycle retired — pipeline_controller schedules spine phases
 
 assembly_conductor:
   lifecycle: incorporated
@@ -163,7 +163,7 @@ assembly_conductor:
   modules: [api/services/assembly_conductor_service.py]
   flags:
     env: ASSEMBLY_PIPELINE_MODE
-  notes: Drain helpers retained; scheduling loop retired in favor of pipeline_controller
+  notes: Drain helpers only; run_assembly_conductor_cycle retired — pipeline_controller schedules assembly phases
 
 pipeline_controller:
   lifecycle: incorporated
@@ -274,3 +274,148 @@ consolidation:
   lifecycle: incorporated
   enabled: true
   notes: Hourly consolidation rotation manifest
+
+storyline_membership_review:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  phase_name: storyline_membership_review
+  modules: [api/services/storyline_membership_review_service.py]
+  flags:
+    env: STORYLINE_MEMBERSHIP_REVIEW_ENABLED
+  notes: >
+    Auto-gated storyline decoupling — demote/unlink off-topic members and soft-deprioritize
+    weak graph/SEI/tracked_event links. Default off; dry-run default on.
+
+embedding_link_candidates:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  phase_name: embedding_link_candidates
+  modules: [api/services/embedding_link_candidate_service.py]
+  flags:
+    env: EMBEDDING_LINK_CANDIDATES_ENABLED
+  notes: Cosine-ranked graph_connection_proposals from embedding_chunks
+
+storyline_membership_llm:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  modules: [api/services/storyline_membership_llm_agent.py]
+  flags:
+    env: STORYLINE_MEMBERSHIP_LLM_ENABLED
+  notes: 8B confirm for pending membership_actions mid-band
+
+graph_link_drift_review:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  phase_name: graph_link_drift_review
+  modules: [api/services/graph_link_drift_service.py]
+  flags:
+    env: GRAPH_LINK_DRIFT_REVIEW_ENABLED
+  notes: Re-score stale active graph links; quarantine on drift
+
+# Fully retired briefing batch synthesizers (replaced by desk promote + RAG)
+editorial_document_generation:
+  lifecycle: archived
+  enabled: false
+  introduced_in: "8.0.0"
+  modules: [api/services/editorial_document_service.py]
+  notes: Fully retired 2026-07 — use content_refinement_queue / desk promote
+
+editorial_briefing_generation:
+  lifecycle: archived
+  enabled: false
+  introduced_in: "8.0.0"
+  modules: [api/services/editorial_document_service.py]
+  notes: Fully retired 2026-07 — use desk promote or narrative_stack API
+
+daily_briefing_synthesis:
+  lifecycle: archived
+  enabled: false
+  introduced_in: "8.0.0"
+  notes: Fully retired 2026-07 — Briefings page uses GET /api/{domain}/report
+
+digest_generation:
+  lifecycle: archived
+  enabled: false
+  introduced_in: "8.0.0"
+  notes: Fully retired 2026-07
+
+desk_agent_writeback:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  modules:
+    - api/services/desk_promotion_service.py
+    - api/domains/intelligence_hub/routes/desk_agent.py
+  flags:
+    env: DESK_AGENT_WRITEBACK_ENABLED
+  notes: >
+    OWUI editor promote path — PATCH storyline editorial / tracked_event narrative,
+    graph proposal accept/reject, POST /api/desk/promote_investigation. Default off.
+
+editorial_room_investigation_round:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  modules: [api/services/editorial_room_loop_service.py, api/services/vault_bridge_service.py]
+  flags:
+    env: EDITORIAL_ROOM_INVESTIGATION_ROUND_ENABLED
+  notes: >
+    Headless draft_investigation → 20_Investigations/. Editor lens tags only
+    (EDITORIAL_ROOM_EDITOR_LENS_ENABLED); never promotes long-form to Postgres.
+
+phase_auto_silence:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  incorporated_in: "10.1.0"
+  modules: [api/services/phase_retry_silence_service.py]
+  flags:
+    yaml: phase_retry_policy.enabled
+  notes: >
+    Config-driven task retry/backoff + auto-silence after failing/stalled streak.
+    Persist in public.phase_silence_state; Monitor heartbeat status=silenced.
+
+monitor_backlog_snapshot_history:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  incorporated_in: "10.1.0"
+  modules: [api/services/monitor_backlog_snapshot_service.py]
+  notes: Append-only history rows on each successful Monitor backlog refresh.
+
+causal_edges:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  incorporated_in: "10.1.0"
+  modules:
+    - api/services/causal_edges_service.py
+    - api/services/narrative_reasoning_service.py
+  notes: >
+    Typed evidence-graded causal edges (Postgres SSOT). Optional Neo4j projection
+    via NEO4J_URI. Narrative CoT scaffold cites edge ids.
+
+rolling_12m_arcs:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  incorporated_in: "10.1.0"
+  phase_name: rolling_arc_refresh
+  modules: [api/services/rolling_arc_service.py]
+  notes: Mid-horizon rolling arcs distinct from curated historical_arcs.yaml.
+
+trading_signals:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  incorporated_in: "10.1.0"
+  modules:
+    - api/services/trading_signals_service.py
+    - api/domains/intelligence_hub/routes/signals.py
+  notes: >
+    Event→ticker impact heuristics + GET /api/signals HITL review queue.
+    No auto-execution.

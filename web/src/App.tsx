@@ -61,6 +61,8 @@ const ArcCatalogPage = React.lazy(() => import('./pages/Arcs/ArcCatalogPage'));
 const ArcSpinePage = React.lazy(() => import('./pages/Arcs/ArcSpinePage'));
 const ArcHeatmapPage = React.lazy(() => import('./pages/Arcs/ArcHeatmapPage'));
 const ArcWeeklyBriefsPage = React.lazy(() => import('./pages/Arcs/ArcWeeklyBriefsPage'));
+const RollingArcsPage = React.lazy(() => import('./pages/Arcs/RollingArcsPage'));
+const SignalsReviewPage = React.lazy(() => import('./pages/Finance/SignalsReviewPage'));
 const InvestigationOpsPage = React.lazy(() => import('./pages/Operations/InvestigationOpsPage'));
 const MonitorPage = React.lazy(() => import('./pages/Monitor/MonitorPage'));
 const SqlExplorerPage = React.lazy(() => import('./pages/Monitor/SqlExplorerPage'));
@@ -76,6 +78,9 @@ const UsdPurchasingPowerTracker = React.lazy(
 const FinancialAnalysis = React.lazy(() => import('./pages/Finance/FinancialAnalysis'));
 const FinancialAnalysisResult = React.lazy(() => import('./pages/Finance/FinancialAnalysisResult'));
 const TaskTraceViewer = React.lazy(() => import('./pages/Finance/TaskTraceViewer'));
+const CongressTradingDashboard = React.lazy(
+  () => import('./pages/Politics/CongressTradingDashboard')
+);
 const Storylines = React.lazy(() => import('./pages/Storylines/Storylines'));
 const StorylineDetail = React.lazy(() => import('./pages/Storylines/StorylineDetail'));
 const StorylineDiscovery = React.lazy(() => import('./pages/Storylines/StorylineDiscovery'));
@@ -120,6 +125,12 @@ const theme = createTheme({
 function App() {
   const defaultDomainPath = `/${getDefaultDomainKey()}/dashboard`;
   useEffect(() => {
+    // Clear one-shot stale-chunk reload guard after a successful boot
+    try {
+      sessionStorage.removeItem('ni_spa_chunk_reload');
+    } catch {
+      /* ignore */
+    }
     errorHandler.initialize();
     loggingService.info('News Intelligence (Dashboard) initialized', {
       version: '9.0',
@@ -192,9 +203,11 @@ function App() {
                     element={<Navigate to='../briefings' replace />}
                   />
                   <Route path='arcs' element={<ArcCatalogPage />} />
+                  <Route path='arcs/rolling' element={<RollingArcsPage />} />
                   <Route path='arcs/reports' element={<ArcWeeklyBriefsPage />} />
                   <Route path='arcs/:arcId/spine' element={<ArcSpinePage />} />
                   <Route path='arcs/:arcId/heatmap' element={<ArcHeatmapPage />} />
+                  <Route path='signals/review' element={<SignalsReviewPage />} />
                   <Route
                     path='rss_feeds'
                     element={
@@ -360,6 +373,14 @@ function App() {
                     element={
                       <DemoRouteGuard>
                         <UsdPurchasingPowerTracker />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='congress-trading'
+                    element={
+                      <DemoRouteGuard>
+                        <CongressTradingDashboard />
                       </DemoRouteGuard>
                     }
                   />

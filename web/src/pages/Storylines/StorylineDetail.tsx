@@ -72,6 +72,7 @@ import ProvenancePanel, {
   storylineProvenanceRows,
 } from '../../components/ProvenancePanel/ProvenancePanel';
 import StorylineAuditCard from '../../components/StorylineAuditCard/StorylineAuditCard';
+import ReasoningPanel from '@/components/ReasoningPanel';
 import { Link as RouterLink } from 'react-router-dom';
 import { useDomainNavigation } from '../../hooks/useDomainNavigation';
 import { useDomainRoute } from '../../hooks/useDomainRoute';
@@ -935,6 +936,11 @@ const StorylineDetail = () => {
           on this deployment.
         </Alert>
       )}
+      <Card variant='outlined' sx={{ mb: 2 }}>
+        <CardContent>
+          <ReasoningPanel domain={effectiveDomain} storylineId={Number(id)} />
+        </CardContent>
+      </Card>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3, flexWrap: 'wrap' }}>
         <Button
           startIcon={<ArrowBackIcon />}

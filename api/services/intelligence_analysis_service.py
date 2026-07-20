@@ -1385,34 +1385,58 @@ List potential consequences (one per line):"""
                         )
 
                     edges: list[dict[str, Any]] = []
+                    typed_edge_map: dict[tuple[int, int], dict[str, Any]] = {}
+                    try:
+                        from services.causal_edges_service import list_causal_edges
+
+                        for te in list_causal_edges(
+                            cause_kind="tracked_event",
+                            min_confidence=0.0,
+                            limit=200,
+                        ):
+                            if te.get("effect_kind") != "tracked_event":
+                                continue
+                            key = (int(te["cause_id"]), int(te["effect_id"]))
+                            typed_edge_map[key] = te
+                    except Exception:
+                        typed_edge_map = {}
+
                     for i in range(len(nodes) - 1):
                         a = nodes[i]
                         b = nodes[i + 1]
                         overlap = set(a.get("participant_entity_profile_ids") or []) & set(
                             b.get("participant_entity_profile_ids") or []
                         )
+                        typed = typed_edge_map.get((a["event_id"], b["event_id"]))
                         reason_parts = []
+                        if typed:
+                            reason_parts.append(
+                                f"typed_edge_id={typed.get('id')} grade={typed.get('evidence_grade')}"
+                            )
                         if overlap:
                             reason_parts.append(f"shared_participants={len(overlap)}")
                         if set(a.get("domains") or []) != set(b.get("domains") or []):
                             reason_parts.append("cross_domain_transition")
-                        reason_parts.append("temporal_sequence")
+                        if not typed:
+                            reason_parts.append("temporal_sequence")
+                        conf = float(corr.get("correlation_strength") or 0.0)
+                        if typed:
+                            conf = max(conf, float(typed.get("confidence") or 0.0))
+                        elif overlap:
+                            conf = min(1.0, conf + 0.1)
                         edges.append(
                             {
                                 "from_event_id": a["event_id"],
                                 "to_event_id": b["event_id"],
-                                "confidence": round(
-                                    min(
-                                        1.0,
-                                        float(corr.get("correlation_strength") or 0.0)
-                                        + (0.1 if overlap else 0.0),
-                                    ),
-                                    3,
-                                ),
+                                "confidence": round(min(1.0, conf), 3),
                                 "reason": ", ".join(reason_parts),
+                                "typed_edge_id": typed.get("id") if typed else None,
+                                "evidence_grade": typed.get("evidence_grade") if typed else None,
                             }
                         )
 
+                    # Prefer chains that cite at least one typed edge
+                    has_typed = any(e.get("typed_edge_id") for e in edges)
                     chains.append(
                         {
                             "correlation_id": str(corr["correlation_id"]),
@@ -1423,8 +1447,17 @@ List potential consequences (one per line):"""
                             else None,
                             "nodes": nodes,
                             "edges": edges,
+                            "has_typed_causal_edges": has_typed,
                         }
                     )
+
+                chains.sort(
+                    key=lambda c: (
+                        1 if c.get("has_typed_causal_edges") else 0,
+                        float(c.get("strength") or 0),
+                    ),
+                    reverse=True,
+                )
 
                 return {
                     "days": days,

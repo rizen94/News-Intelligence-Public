@@ -140,6 +140,9 @@ _OLLAMA_AUTOMATION_PHASES_FULL = frozenset(
         "nightly_enrichment_context",
         "storyline_synthesis",
         "storyline_review_agent",
+        "storyline_membership_review",
+        "embedding_link_candidates",
+        "graph_link_drift_review",
         "daily_briefing_synthesis",
         "document_processing",
         "storyline_discovery",
@@ -303,6 +306,9 @@ DEFAULT_AUTOMATION_PER_PHASE_CONCURRENT_CAP_PHASES = frozenset(
         "narrative_thread_build",
         "storyline_automation",
         "storyline_review_agent",
+        "storyline_membership_review",
+        "embedding_link_candidates",
+        "graph_link_drift_review",
         "content_enrichment",
         "proactive_detection",
         "fact_verification",
@@ -448,6 +454,9 @@ _ANALYSIS_PIPELINE_STEPS_FULL: tuple[tuple[str, ...], ...] = (
     (
         "storyline_automation",
         "storyline_review_agent",
+        "storyline_membership_review",
+        "embedding_link_candidates",
+        "graph_link_drift_review",
         "event_deduplication",
         "mention_resolution",
         "content_refinement_queue",
@@ -527,6 +536,15 @@ class Task:
     metadata: dict[str, Any] = None
 
 
+def _phase_max_retries(phase_name: str) -> int:
+    try:
+        from services.phase_retry_silence_service import max_retries_for_phase
+
+        return max_retries_for_phase(phase_name)
+    except Exception:
+        return 3
+
+
 # Estimated duration in seconds per phase (single place to tune)
 PHASE_ESTIMATED_DURATION_SECONDS = {
     "rss_processing": 120,
@@ -550,6 +568,7 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "data_cleanup": 300,
     "health_check": 10,
     "rss_feed_health": 120,
+    "rolling_arc_refresh": 180,
     "pending_db_flush": 30,
     "context_sync": 60,  # ~5-10s per 100 contexts (production batch)
     "entity_profile_sync": 225,  # observed ~223s avg; was 120
@@ -571,6 +590,9 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "longitudinal_matview_refresh": 60,
     "storyline_automation": 180,
     "storyline_review_agent": 120,
+    "storyline_membership_review": 180,
+    "embedding_link_candidates": 120,
+    "graph_link_drift_review": 120,
     "storyline_enrichment": 600,  # full-history pass: ~10 min
     "story_enhancement": 300,
     "entity_enrichment": 180,
@@ -736,6 +758,15 @@ class AutomationManager:
                 "phase": 0,
                 "depends_on": ["collection_cycle"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["rss_feed_health"],
+            },
+            "rolling_arc_refresh": {
+                "interval": 86400,  # Phase B nightly rolling 12m arcs
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.LOW,
+                "phase": 0,
+                "depends_on": [],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["rolling_arc_refresh"],
             },
             # PHASE 1b: Context-centric sync (incremental: articles -> intelligence.contexts)
             "context_sync": {
@@ -977,6 +1008,28 @@ class AutomationManager:
                     "graph_connection_distillation"
                 ],
             },
+            "embedding_link_candidates": {
+                "interval": 1800,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.LOW,
+                "phase": 2,
+                "depends_on": ["graph_connection_distillation"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
+                    "embedding_link_candidates"
+                ],
+            },
+            "graph_link_drift_review": {
+                "interval": 3600,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.LOW,
+                "phase": 2,
+                "depends_on": ["graph_connection_distillation"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
+                    "graph_link_drift_review"
+                ],
+            },
             # PHASE 3: ML Processing (Runs frequently on processed articles)
             "ml_processing": {
                 "interval": 300,  # 5 minutes - run often, re-enqueue until empty
@@ -1125,6 +1178,17 @@ class AutomationManager:
                 "depends_on": ["storyline_automation"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["storyline_review_agent"],
             },
+            "storyline_membership_review": {
+                "interval": 900,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.LOW,
+                "phase": 7,
+                "depends_on": ["storyline_automation"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
+                    "storyline_membership_review"
+                ],
+            },
             # v8: Enrich existing storylines/dossiers with full-history search (past articles/contexts)
             "storyline_enrichment": {
                 "interval": 43200,  # 12 hours - full-history pass
@@ -1227,37 +1291,36 @@ class AutomationManager:
                 "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["cache_cleanup"],
             },
-            # PHASE 10.5: Editorial document generation — build/refine storyline editorial_document (see editorial_briefing_generation for events)
+            # FULLY RETIRED — desk promote + content_refinement_queue/RAG; never re-enable.
             "editorial_document_generation": {
-                "interval": 1800,  # 30 minutes
+                "interval": 1800,
                 "last_run": None,
-                "enabled": True,
+                "enabled": False,
                 "priority": TaskPriority.NORMAL,
                 "phase": 10,
-                "depends_on": ["storyline_processing"],
+                "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
                     "editorial_document_generation"
                 ],
             },
             "editorial_briefing_generation": {
-                "interval": 1800,  # 30 minutes
+                "interval": 1800,
                 "last_run": None,
-                "enabled": True,
+                "enabled": False,
                 "priority": TaskPriority.NORMAL,
                 "phase": 10,
-                "depends_on": ["event_tracking"],
+                "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
                     "editorial_briefing_generation"
                 ],
             },
-            # PHASE 11: Digest Generation (Every hour)
             "digest_generation": {
-                "interval": 3600,  # 1 hour
+                "interval": 3600,
                 "last_run": None,
-                "enabled": True,
+                "enabled": False,
                 "priority": TaskPriority.NORMAL,
                 "phase": 11,
-                "depends_on": ["editorial_document_generation"],
+                "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["digest_generation"],
             },
             # Auto storyline synthesis (Wikipedia-style articles)
@@ -1270,14 +1333,14 @@ class AutomationManager:
                 "depends_on": ["storyline_processing"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["storyline_synthesis"],
             },
-            # Auto daily briefing synthesis (breaking news)
+            # FULLY RETIRED — Briefings page reads storyline editorial_document / TE narratives
             "daily_briefing_synthesis": {
-                "interval": 14400,  # 4 hours
+                "interval": 14400,
                 "last_run": None,
-                "enabled": True,
+                "enabled": False,
                 "priority": TaskPriority.LOW,
                 "phase": 11,
-                "depends_on": ["storyline_synthesis"],
+                "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["daily_briefing_synthesis"],
             },
             # PHASE 12: Watchlist Alert Generation (v5.0)
@@ -1318,7 +1381,7 @@ class AutomationManager:
                 "enabled": True,
                 "priority": TaskPriority.LOW,
                 "phase": 11,
-                "depends_on": ["storyline_processing", "editorial_document_generation"],
+                "depends_on": ["storyline_processing"],
                 "estimated_duration": 120,
             },
             # MAINTENANCE: Data Cleanup (Daily)
@@ -1386,13 +1449,19 @@ class AutomationManager:
             pass
 
     def get_disabled_schedule_names(self) -> list[str]:
-        """Phases disabled via AUTOMATION_DISABLED_SCHEDULES and remote worker ownership."""
+        """Phases disabled via AUTOMATION_DISABLED_SCHEDULES, remote worker ownership, and auto-silence."""
         raw = env_str("AUTOMATION_DISABLED_SCHEDULES", "").strip()
         names = {x.strip() for x in raw.split(",") if x.strip()} if raw else set()
         try:
             from shared.remote_phase_worker import remote_owned_phases
 
             names |= set(remote_owned_phases())
+        except Exception:
+            pass
+        try:
+            from services.phase_retry_silence_service import list_auto_silenced_phases
+
+            names |= list_auto_silenced_phases()
         except Exception:
             pass
         return sorted(names)
@@ -1412,14 +1481,22 @@ class AutomationManager:
             remote_owned = set(remote_owned_phases())
         except Exception:
             pass
+        auto_silenced: set[str] = set()
+        try:
+            from services.phase_retry_silence_service import list_auto_silenced_phases
+
+            auto_silenced = list_auto_silenced_phases()
+        except Exception:
+            pass
         for name in disabled:
             if name in self.schedules:
                 self.schedules[name]["enabled"] = False
-                reason = (
-                    "REMOTE_PHASE_WORKER_OWNED_PHASES"
-                    if name in remote_owned
-                    else "AUTOMATION_DISABLED_SCHEDULES"
-                )
+                if name in remote_owned:
+                    reason = "REMOTE_PHASE_WORKER_OWNED_PHASES"
+                elif name in auto_silenced:
+                    reason = "PHASE_AUTO_SILENCE"
+                else:
+                    reason = "AUTOMATION_DISABLED_SCHEDULES"
                 logger.info("Automation schedule %s disabled (%s)", name, reason)
             else:
                 logger.warning("disabled schedule unknown phase %s", name)
@@ -1720,6 +1797,7 @@ class AutomationManager:
                     priority=TaskPriority.CRITICAL,
                     status=TaskStatus.PENDING,
                     created_at=datetime.now(timezone.utc),
+                    max_retries=_phase_max_retries(phase_name),
                     metadata={
                         "domain": domain,
                         "storyline_id": storyline_id,
@@ -1871,12 +1949,23 @@ class AutomationManager:
         if target <= 0:
             target = self.max_concurrent_tasks * prefetch_multiplier()
 
+        # Heal ghost scheduled-depth counters when the asyncio queue is empty.
+        # Superseded-task skips historically leaked depth and permanently blocked
+        # AUTOMATION_MAX_SCHEDULED_DEPTH_PER_PHASE enqueues (queue_actions=[]).
+        if self.task_queue.qsize() == 0:
+            for _ph, _depth in list(self._scheduled_queue_depth_by_phase.items()):
+                if int(_depth or 0) > 0:
+                    actions.append(f"heal_sched_depth:{_ph}:{int(_depth)}")
+                    self._scheduled_queue_depth_by_phase[_ph] = 0
+
         for phase in enqueue_order:
             if self._automation_queue_depth() >= target:
                 break
             if stall_holds.get(phase, 0) > 0:
+                actions.append(f"skip_stall:{phase}")
                 continue
             if self._should_skip_redundant_phase_request(phase):
+                actions.append(f"skip_redundant:{phase}")
                 continue
             from shared.bulk_catchup_pause import bulk_catchup_pause_defers_phase
 
@@ -1886,14 +1975,18 @@ class AutomationManager:
             inflight = self._phase_pipeline_inflight(phase)
             cap = self._per_phase_scheduler_concurrent_cap(phase)
             if cap > 0 and inflight >= cap:
+                actions.append(f"skip_cap:{phase}")
                 continue
             if host_lane_at_cap(self, phase, hosts=controller_hosts):
+                actions.append(f"skip_lane_cap:{phase}")
                 continue
             if AUTOMATION_MAX_SCHEDULED_DEPTH_PER_PHASE > 0:
                 queued = int(self._scheduled_queue_depth_by_phase.get(phase, 0) or 0)
                 if queued >= AUTOMATION_MAX_SCHEDULED_DEPTH_PER_PHASE:
+                    actions.append(f"skip_sched_depth:{phase}")
                     continue
             if phase not in self.schedules:
+                actions.append(f"skip_no_schedule:{phase}")
                 continue
             schedule = self.schedules[phase]
             task = Task(
@@ -1902,6 +1995,7 @@ class AutomationManager:
                 priority=schedule.get("priority", TaskPriority.NORMAL),
                 status=TaskStatus.PENDING,
                 created_at=datetime.now(timezone.utc),
+                max_retries=_phase_max_retries(phase),
                 metadata={
                     "scheduled": True,
                     "controller": True,
@@ -1914,6 +2008,8 @@ class AutomationManager:
             if await self._enqueue_scheduled_task(task):
                 actions.append(f"enqueue:{phase}")
                 phase_counts[phase] += 1
+            else:
+                actions.append(f"enqueue_false:{phase}")
 
         controller.queue_actions_last_replan = actions
 
@@ -2240,9 +2336,19 @@ class AutomationManager:
                             gen,
                             ctrl.plan_generation,
                         )
+                        # Depth was bumped at enqueue; skipping must release it or
+                        # reconcile permanently hits AUTOMATION_MAX_SCHEDULED_DEPTH.
                         if from_requested:
+                            self._requested_queue_depth_by_phase[task.name] = max(
+                                0,
+                                int(self._requested_queue_depth_by_phase[task.name]) - 1,
+                            )
                             self._requested_task_queue.task_done()
                         else:
+                            self._scheduled_queue_depth_by_phase[task.name] = max(
+                                0,
+                                int(self._scheduled_queue_depth_by_phase[task.name]) - 1,
+                            )
                             self.task_queue.task_done()
                         continue
                     if from_requested:
@@ -2694,6 +2800,10 @@ class AutomationManager:
                 await self._execute_entity_organizer(task)
             elif task.name == "graph_connection_distillation":
                 await self._execute_graph_connection_distillation(task)
+            elif task.name == "embedding_link_candidates":
+                await self._execute_embedding_link_candidates(task)
+            elif task.name == "graph_link_drift_review":
+                await self._execute_graph_link_drift_review(task)
             elif task.name == "digest_generation":
                 await self._execute_digest_generation(task)
             elif task.name == "data_cleanup":
@@ -2702,6 +2812,8 @@ class AutomationManager:
                 await self._execute_health_check(task)
             elif task.name == "rss_feed_health":
                 await self._execute_rss_feed_health(task)
+            elif task.name == "rolling_arc_refresh":
+                await self._execute_rolling_arc_refresh(task)
             elif task.name == "pending_db_flush":
                 await self._execute_pending_db_flush(task)
             elif task.name == "rag_enhancement":
@@ -2718,6 +2830,8 @@ class AutomationManager:
                 await self._execute_storyline_automation(task)
             elif task.name == "storyline_review_agent":
                 await self._execute_storyline_review_agent(task)
+            elif task.name == "storyline_membership_review":
+                await self._execute_storyline_membership_review(task)
             elif task.name == "storyline_enrichment":
                 await self._execute_storyline_enrichment(task)
             elif task.name == "entity_extraction":
@@ -2783,28 +2897,6 @@ class AutomationManager:
                     True,
                     None,
                 )
-                if task.name == "unified_intake_extraction":
-                    try:
-                        from shared.monitor_pulse_debug import monitor_pulse_debug
-
-                        meta = task.metadata or {}
-                        _dur = (
-                            (task.completed_at - task.started_at).total_seconds()
-                            if task.started_at and task.completed_at
-                            else None
-                        )
-                        monitor_pulse_debug(
-                            "automation_manager.py:task_complete",
-                            "automation_run_history_persisted",
-                            {
-                                "phase": task.name,
-                                "loops_processed": meta.get("loops_processed"),
-                                "processing_time_sec": _dur,
-                            },
-                            hypothesis_id="H1",
-                        )
-                    except Exception:
-                        pass
             # Record completion for last-60m run counts (used by monitoring timeline).
             if not (task.metadata or {}).get("skip_automation_run_history"):
                 try:
@@ -2881,10 +2973,25 @@ class AutomationManager:
 
             logger.error(f"Task {task.name} failed: {e}")
 
-            # Retry if under max retries
+            # Retry if under max retries (config-driven backoff per phase)
+            try:
+                from services.phase_retry_silence_service import (
+                    backoff_seconds_for_retry,
+                    max_retries_for_phase,
+                )
+
+                task.max_retries = max_retries_for_phase(task.name)
+            except Exception:
+                pass
             if task.retry_count < task.max_retries:
                 task.status = TaskStatus.RETRYING
-                await asyncio.sleep(min(60 * task.retry_count, 300))  # Exponential backoff
+                try:
+                    from services.phase_retry_silence_service import backoff_seconds_for_retry
+
+                    delay = backoff_seconds_for_retry(task.name, task.retry_count)
+                except Exception:
+                    delay = min(60 * max(1, task.retry_count), 300)
+                await asyncio.sleep(delay)
                 await self._enqueue_scheduled_task(
                     task,
                     bypass_nightly_cap=True,
@@ -3135,6 +3242,8 @@ class AutomationManager:
             return "Health check"
         if name == "rss_feed_health":
             return "RSS feed health review"
+        if name == "rolling_arc_refresh":
+            return "Rolling 12m arc refresh"
         if name == "nightly_enrichment_context":
             return "Nightly pipeline (enrichment → context sync → ~70B summaries)"
         if name == "cache_cleanup":
@@ -3417,9 +3526,11 @@ class AutomationManager:
         await dispatch_retired_automation_phase(self, "storyline_synthesis", task)
 
     async def _execute_daily_briefing_synthesis(self, task: Task):
-        from shared.retired_phase_dispatch import dispatch_retired_automation_phase
-
-        await dispatch_retired_automation_phase(self, "daily_briefing_synthesis", task)
+        """Fully retired — Briefings reads desk-promoted / RAG editorial fields."""
+        logger.info(
+            "daily_briefing_synthesis fully retired; use desk promote + content_refinement_queue"
+        )
+        return
 
     async def _execute_context_sync(self, task: Task):
         """Backfill: sync domain articles to intelligence.contexts (Phase 1.2 context-centric)."""
@@ -4082,6 +4193,7 @@ class AutomationManager:
             priority=sched.get("priority", TaskPriority.NORMAL),
             status=TaskStatus.PENDING,
             created_at=datetime.now(timezone.utc),
+            max_retries=_phase_max_retries(phase_name),
             metadata=nightly_meta,
         )
         await self._execute_task(task, "nightly_sequential_drain")
@@ -4576,14 +4688,18 @@ class AutomationManager:
                 logger.warning("Longitudinal matview non-concurrent refresh failed: %s", e2)
 
     async def _execute_editorial_document_generation(self, task: Task):
-        from shared.retired_phase_dispatch import dispatch_retired_automation_phase
-
-        await dispatch_retired_automation_phase(self, "editorial_document_generation", task)
+        """Fully retired — storyline editorial_document via RAG refinement or desk promote."""
+        logger.info(
+            "editorial_document_generation fully retired; use content_refinement_queue or desk promote"
+        )
+        return
 
     async def _execute_editorial_briefing_generation(self, task: Task):
-        from shared.retired_phase_dispatch import dispatch_retired_automation_phase
-
-        await dispatch_retired_automation_phase(self, "editorial_briefing_generation", task)
+        """Fully retired — tracked_event narratives via desk promote / narrative_stack API."""
+        logger.info(
+            "editorial_briefing_generation fully retired; use desk promote or narrative_stack"
+        )
+        return
 
     async def _execute_narrative_thread_build(self, task: Task):
         from shared.retired_phase_dispatch import dispatch_retired_automation_phase
@@ -4591,9 +4707,9 @@ class AutomationManager:
         await dispatch_retired_automation_phase(self, "narrative_thread_build", task)
 
     async def _execute_digest_generation(self, task: Task):
-        from shared.retired_phase_dispatch import dispatch_retired_automation_phase
-
-        await dispatch_retired_automation_phase(self, "digest_generation", task)
+        """Fully retired — no digest batch synthesizer."""
+        logger.info("digest_generation fully retired; Briefings uses /api/{domain}/report")
+        return
 
     async def _execute_data_cleanup(self, task: Task):
         """Execute data cleanup task — articles + intelligence layer."""
@@ -4657,6 +4773,14 @@ class AutomationManager:
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, run_feed_health_cycle)
         logger.info("rss_feed_health cycle: %s", result)
+
+    async def _execute_rolling_arc_refresh(self, task: Task):
+        """Phase B: refresh rolling 12-month arcs + latent co-arc proposals."""
+        from services.rolling_arc_service import refresh_default_rolling_arcs
+
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, refresh_default_rolling_arcs)
+        logger.info("rolling_arc_refresh: %s", result)
 
     async def _execute_health_check(self, task: Task):
         """Execute health check task (manual ``request_phase`` only; scheduled runs use ``_standalone_health_check_loop``)."""
@@ -5153,18 +5277,39 @@ class AutomationManager:
             except Exception:
                 pass
             for d in get_pipeline_active_domain_keys():
+                # Optional operator pause (empty default — not a permanent domain policy).
+                excluded_raw = env_str("STORYLINE_AUTOMATION_EXCLUDE_DOMAINS", "") or ""
+                excluded = {x.strip() for x in excluded_raw.split(",") if x.strip()}
+                if d in excluded:
+                    logger.info(
+                        "Storyline automation: skipping domain=%s (STORYLINE_AUTOMATION_EXCLUDE_DOMAINS)",
+                        d,
+                    )
+                    continue
                 domain_started = datetime.now(timezone.utc)
                 scanned = 0
                 matched = 0
+                skipped_freq = 0
+                skipped_backoff = 0
                 try:
                     svc = StorylineAutomationService(domain=d)
                     conn = await self._get_db_connection()
                     schema = resolve_domain_schema(d)
                     try:
                         with conn.cursor() as cur:
+                            # Due by frequency, and not inside zero-yield backoff window.
                             cur.execute(f"""
                                 SELECT id FROM {schema}.storylines
                                 WHERE automation_enabled = true
+                                  AND (
+                                    last_automation_run IS NULL
+                                    OR last_automation_run
+                                         <= NOW() - (COALESCE(automation_frequency_hours, 24) || ' hours')::interval
+                                  )
+                                  AND (
+                                    NULLIF(quality_metrics->>'zero_yield_until', '') IS NULL
+                                    OR (quality_metrics->>'zero_yield_until')::timestamptz <= NOW()
+                                  )
                                 ORDER BY last_automation_run ASC NULLS FIRST
                                 LIMIT %s
                             """, (batch_limit,))
@@ -5174,6 +5319,10 @@ class AutomationManager:
                     for row in storyline_rows:
                         scanned += 1
                         result = await svc.discover_articles_for_storyline(row[0], force_refresh=False)
+                        if result.get("skipped_frequency"):
+                            skipped_freq += 1
+                        if result.get("skipped_zero_yield_backoff"):
+                            skipped_backoff += 1
                         matched += len(result.get("articles") or [])
                     if scanned > 0:
                         await self._record_phase_batch_loop(
@@ -5183,6 +5332,8 @@ class AutomationManager:
                             articles_matched=matched,
                             round_processed=scanned,
                             domain=d,
+                            skipped_frequency=skipped_freq,
+                            skipped_zero_yield_backoff=skipped_backoff,
                         )
                         task.metadata["skip_automation_run_history"] = True
                 except Exception as e:
@@ -5195,20 +5346,220 @@ class AutomationManager:
             return
         from services.storyline_review_agent_service import run_storyline_review_agent_all_domains
 
+        batch_limit = 60
+        adaptive_meta: dict = {}
         try:
-            result = await run_storyline_review_agent_all_domains()
+            batch_limit = max(10, int(env_str("STORYLINE_REVIEW_BATCH_SIZE", "60") or "60"))
+        except ValueError:
+            batch_limit = 60
+        try:
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            batch_limit, adaptive_meta = resolve_adaptive_batch(
+                "storyline_review_agent", batch_limit
+            )
+            batch_limit = max(10, int(batch_limit))
+            if isinstance(task.metadata, dict):
+                task.metadata["adaptive_batch"] = batch_limit
+                if adaptive_meta:
+                    task.metadata["adaptive_batch_meta"] = adaptive_meta
+        except Exception:
+            adaptive_meta = {}
+
+        try:
+            result = await run_storyline_review_agent_all_domains(batch_limit=batch_limit)
             approved = int(result.get("approved", 0) or 0)
             rejected = int(result.get("rejected", 0) or 0)
-            if approved or rejected:
-                logger.info(
-                    "Storyline review agent: approved=%s rejected=%s llm_calls=%s skipped=%s",
-                    approved,
-                    rejected,
-                    result.get("llm_calls"),
-                    result.get("skipped"),
+            skipped = int(result.get("skipped", 0) or 0)
+            errors = int(result.get("errors", 0) or 0)
+            llm_calls = int(result.get("llm_calls", 0) or 0)
+            parse_exhausted = int(result.get("parse_exhausted", 0) or 0)
+            decided = approved + rejected
+            if isinstance(task.metadata, dict):
+                task.metadata["approved"] = approved
+                task.metadata["rejected"] = rejected
+                task.metadata["skipped"] = skipped
+                task.metadata["errors"] = errors
+                task.metadata["llm_calls"] = llm_calls
+                task.metadata["parse_exhausted"] = parse_exhausted
+                task.metadata["decided"] = decided
+                # Throughput for Monitor ETA = decisions only (skips do not drain).
+                task.metadata["items_processed"] = decided
+            yield_info: dict = {}
+            try:
+                from shared.adaptive_batch_policy import (
+                    apply_adaptive_batch_yield_gate,
+                    record_adaptive_batch_yield,
                 )
+
+                yield_info = record_adaptive_batch_yield(
+                    "storyline_review_agent",
+                    approved=approved,
+                    rejected=rejected,
+                    skipped=skipped,
+                    errors=errors,
+                    batch_limit=batch_limit,
+                )
+                if isinstance(task.metadata, dict):
+                    task.metadata["adaptive_batch_yield"] = yield_info
+                # Apply yield gate now (hold/decrease only — no headroom double-step).
+                post_batch, post_meta = apply_adaptive_batch_yield_gate(
+                    "storyline_review_agent"
+                )
+                if isinstance(task.metadata, dict):
+                    task.metadata["adaptive_batch_after"] = int(post_batch)
+                    task.metadata["adaptive_batch_meta_after"] = post_meta
+            except Exception:
+                pass
+            try:
+                await self._record_phase_batch_loop(
+                    task,
+                    loops_processed=1,
+                    items_processed=decided,
+                    approved=approved,
+                    rejected=rejected,
+                    skipped=skipped,
+                    parse_exhausted=parse_exhausted,
+                    llm_calls=llm_calls,
+                    round_processed=1 if decided > 0 else 0,
+                )
+                if isinstance(task.metadata, dict):
+                    task.metadata["skip_automation_run_history"] = True
+            except Exception:
+                pass
+            logger.info(
+                "Storyline review agent: approved=%s rejected=%s llm_calls=%s skipped=%s "
+                "parse_exhausted=%s errors=%s batch=%s decided=%s "
+                "adaptive_action=%s yield_gate=%s decision_rate=%s batch_after=%s",
+                approved,
+                rejected,
+                llm_calls,
+                skipped,
+                parse_exhausted,
+                errors,
+                batch_limit,
+                decided,
+                (adaptive_meta or {}).get("action"),
+                (
+                    (task.metadata or {}).get("adaptive_batch_meta_after") or {}
+                ).get("yield_gate")
+                or (adaptive_meta or {}).get("yield_gate"),
+                (yield_info or {}).get("decision_rate"),
+                (task.metadata or {}).get("adaptive_batch_after", batch_limit),
+            )
         except Exception as e:
             logger.warning("Storyline review agent failed: %s", e)
+
+    async def _execute_storyline_membership_review(self, task: Task):
+        """Decouple off-topic storyline members; soft-deprioritize weak connections."""
+        if env_str("STORYLINE_MEMBERSHIP_REVIEW_ENABLED", "false").lower() not in (
+            "1",
+            "true",
+            "yes",
+        ):
+            return
+        from services.storyline_membership_review_service import (
+            run_storyline_membership_review_all_domains,
+        )
+
+        limit = 8
+        try:
+            limit = max(1, int(env_str("STORYLINE_MEMBERSHIP_REVIEW_MAX_STORYLINES", "8") or "8"))
+        except ValueError:
+            limit = 8
+        dry_run = env_str("STORYLINE_MEMBERSHIP_REVIEW_DRY_RUN", "true").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        try:
+            result = run_storyline_membership_review_all_domains(
+                limit_per_domain=limit, dry_run=dry_run
+            )
+            totals = result.get("totals") or {}
+            if isinstance(task.metadata, dict):
+                task.metadata.update(
+                    {
+                        "dry_run": dry_run,
+                        "unlinked": int(totals.get("unlinked", 0) or 0),
+                        "demoted": int(totals.get("demoted", 0) or 0),
+                        "queued": int(totals.get("queued", 0) or 0),
+                        "graph_quarantined": int(totals.get("graph_quarantined", 0) or 0),
+                        "sei_demoted": int(totals.get("sei_demoted", 0) or 0),
+                        "tracked_events_unlinked": int(
+                            totals.get("tracked_events_unlinked", 0) or 0
+                        ),
+                        "items_processed": sum(int(totals.get(k, 0) or 0) for k in totals),
+                    }
+                )
+            logger.info(
+                "Storyline membership review: dry_run=%s totals=%s",
+                dry_run,
+                totals,
+            )
+            try:
+                from services.storyline_membership_llm_agent import run_membership_llm_midband
+
+                llm_stats = await run_membership_llm_midband(batch_limit=40, dry_run=dry_run)
+                if isinstance(task.metadata, dict):
+                    task.metadata["membership_llm"] = llm_stats
+                logger.info("Storyline membership LLM mid-band: %s", llm_stats)
+            except Exception as llm_e:
+                logger.debug("Storyline membership LLM: %s", llm_e)
+        except Exception as e:
+            logger.warning("Storyline membership review failed: %s", e)
+
+    async def _execute_embedding_link_candidates(self, task: Task):
+        if env_str("EMBEDDING_LINK_CANDIDATES_ENABLED", "false").lower() not in (
+            "1",
+            "true",
+            "yes",
+        ):
+            return
+        from services.embedding_link_candidate_service import (
+            run_embedding_link_candidates_all_domains,
+        )
+
+        limit = 12
+        try:
+            limit = max(1, int(env_str("EMBEDDING_LINK_MAX_STORYLINES", "12") or "12"))
+        except ValueError:
+            limit = 12
+        try:
+            result = run_embedding_link_candidates_all_domains(limit_per_domain=limit)
+            totals = result.get("totals") or {}
+            if isinstance(task.metadata, dict):
+                task.metadata.update(
+                    {
+                        "proposals": int(totals.get("proposals", 0) or 0),
+                        "merges_enqueued": int(totals.get("merges_enqueued", 0) or 0),
+                        "scanned": int(totals.get("scanned", 0) or 0),
+                        "items_processed": int(totals.get("proposals", 0) or 0),
+                    }
+                )
+            logger.info("Embedding link candidates: totals=%s", totals)
+        except Exception as e:
+            logger.warning("Embedding link candidates failed: %s", e)
+
+    async def _execute_graph_link_drift_review(self, task: Task):
+        if env_str("GRAPH_LINK_DRIFT_REVIEW_ENABLED", "false").lower() not in (
+            "1",
+            "true",
+            "yes",
+        ):
+            return
+        from services.graph_link_drift_service import rescore_active_graph_links
+
+        try:
+            stats = rescore_active_graph_links()
+            if isinstance(task.metadata, dict):
+                task.metadata.update(stats)
+                task.metadata["items_processed"] = int(stats.get("updated", 0) or 0) + int(
+                    stats.get("quarantined", 0) or 0
+                )
+            logger.info("Graph link drift review: %s", stats)
+        except Exception as e:
+            logger.warning("Graph link drift review failed: %s", e)
 
     async def _execute_storyline_enrichment(self, task: Task):
         from shared.retired_phase_dispatch import dispatch_retired_automation_phase

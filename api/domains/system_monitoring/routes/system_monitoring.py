@@ -230,6 +230,12 @@ async def health_check():
         cpu_percent = psutil.cpu_percent(interval=None)
         memory = psutil.virtual_memory()
         disk = psutil.disk_usage("/")
+        try:
+            from shared.process_memory import process_rss_mb
+
+            api_process_rss_mb = process_rss_mb()
+        except Exception:
+            api_process_rss_mb = None
 
         # GPU subprocess must not block the uvicorn event loop (nvidia-smi can take up to 5s).
         try:
@@ -321,6 +327,7 @@ async def health_check():
                 "cpu_percent": cpu_percent,
                 "memory_percent": memory.percent,
                 "disk_percent": disk.percent,
+                "process_rss_mb": api_process_rss_mb,
                 "gpu_vram_percent": gpu_vram_percent,
                 "gpu_utilization_percent": gpu_utilization_percent,
                 "gpu_temperature_c": gpu.get("gpu_temperature_c"),
@@ -648,10 +655,76 @@ def _merge_current_activities_with_run_counts(
                 row["running_instances"] = max(len(items), 1)
             else:
                 continue
+        row.setdefault("execution_host", "widow")
         merged.append(row)
 
     merged.sort(key=lambda x: x.get("started_at") or "", reverse=True)
     return merged
+
+
+def _merge_popos_into_current_activities(
+    current: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Union Widow feed rows with in-flight PopOS/Widow drains (heartbeat status=running)."""
+    try:
+        from services.pipeline_phase_heartbeat_service import (
+            popos_current_activities_from_heartbeats,
+            widow_current_activities_from_heartbeats,
+        )
+
+        popos_rows = popos_current_activities_from_heartbeats()
+        widow_hb_rows = widow_current_activities_from_heartbeats()
+    except Exception as e:
+        logger.debug("heartbeat current activities: %s", e)
+        popos_rows = []
+        widow_hb_rows = []
+
+    # Prefer heartbeat-backed running rows over stale AM ghosts when both exist.
+    if not widow_hb_rows and not popos_rows:
+        return current
+
+    by_phase: dict[str, dict[str, Any]] = {}
+    for row in current:
+        if not isinstance(row, dict):
+            continue
+        tn = row.get("task_name")
+        key = tn if isinstance(tn, str) and tn.strip() else str(row.get("id") or "")
+        if not key:
+            continue
+        by_phase[key] = dict(row)
+
+    for row in widow_hb_rows:
+        phase = str(row.get("task_name") or "")
+        if not phase or phase in MONITOR_EXCLUDED_AUTOMATION_PHASES:
+            continue
+        # Heartbeat running wins over ghost AM rows for Widow.
+        by_phase[phase] = dict(row)
+
+    for row in popos_rows:
+        phase = str(row.get("task_name") or "")
+        if not phase or phase in MONITOR_EXCLUDED_AUTOMATION_PHASES:
+            continue
+        existing = by_phase.get(phase)
+        if existing is None:
+            by_phase[phase] = dict(row)
+            continue
+        # Same phase on both hosts — show PopOS (remote-owned drains run there).
+        merged = dict(existing)
+        merged["execution_host"] = "popos"
+        merged["worker_id"] = row.get("worker_id")
+        merged["running_instances"] = max(
+            int(merged.get("running_instances") or 1),
+            int(row.get("running_instances") or 1),
+        )
+        if row.get("started_at"):
+            merged["started_at"] = row["started_at"]
+        if row.get("message"):
+            merged["message"] = row["message"]
+        by_phase[phase] = merged
+
+    out = list(by_phase.values())
+    out.sort(key=lambda x: x.get("started_at") or "", reverse=True)
+    return out
 
 
 def _activity_started_elapsed_seconds(started_at: Any) -> float | None:
@@ -957,9 +1030,17 @@ def _build_monitoring_overview_sync(request: Request) -> dict[str, Any]:
                 )
             except Exception as e:
                 logger.debug("Activity feed enrich: %s", e)
+            try:
+                merged = _merge_popos_into_current_activities(merged)
+            except Exception as e:
+                logger.debug("Activity feed popos merge: %s", e)
             activities = {**activities, "current": merged}
         else:
-            activities = {**activities, "current": []}
+            try:
+                popos_only = _merge_popos_into_current_activities([])
+            except Exception:
+                popos_only = []
+            activities = {**activities, "current": popos_only}
     except Exception as e:
         logger.debug("Activity feed: %s", e)
         syn = _synthesize_current_activities_from_automation(
@@ -975,6 +1056,10 @@ def _build_monitoring_overview_sync(request: Request) -> dict[str, Any]:
                 )
             except Exception:
                 pass
+        try:
+            syn = _merge_popos_into_current_activities(syn or [])
+        except Exception:
+            pass
         activities = {"current": syn, "recent": []}
 
     activities = _finalize_monitoring_activities_recent(activities)
@@ -1252,6 +1337,24 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
     """
     import asyncio
 
+    def _remote_worker_fields() -> dict[str, Any]:
+        try:
+            from shared.remote_phase_worker import remote_owned_phases
+
+            remote_owned = sorted(remote_owned_phases())
+        except Exception:
+            remote_owned = []
+        try:
+            from services.pipeline_phase_heartbeat_service import popos_worker_status_summary
+
+            popos_worker = popos_worker_status_summary()
+        except Exception:
+            popos_worker = {"alive": False, "phases": [], "cycle": None, "age_sec": None}
+        return {
+            "remote_owned_phases": remote_owned,
+            "popos_phase_worker": popos_worker,
+        }
+
     automation = getattr(request.app.state, "automation", None)
     thread_alive = _automation_thread_alive(request)
     if automation is None or not hasattr(automation, "get_status"):
@@ -1278,6 +1381,7 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
                 "message": "Automation manager not available"
                 if automation is None
                 else "Automation thread not running",
+                **_remote_worker_fields(),
             },
         }
     if not thread_alive:
@@ -1291,11 +1395,12 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
                 "automation_thread_alive": False,
                 "startup_ready": False,
                 "message": "Automation thread died",
+                **_remote_worker_fields(),
             },
         }
     try:
         status = await asyncio.wait_for(
-            asyncio.to_thread(automation.get_status),
+            asyncio.to_thread(lambda: automation.get_status(include_pending=False)),
             timeout=AUTOMATION_STATUS_TIMEOUT_SECONDS,
         )
         schedules = status.get("schedules") or {}
@@ -1427,6 +1532,18 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
             if hasattr(automation, "get_disabled_schedule_names")
             else []
         )
+        try:
+            from shared.remote_phase_worker import remote_owned_phases
+
+            remote_owned = sorted(remote_owned_phases())
+        except Exception:
+            remote_owned = []
+        try:
+            from services.pipeline_phase_heartbeat_service import popos_worker_status_summary
+
+            popos_worker = popos_worker_status_summary()
+        except Exception:
+            popos_worker = {"alive": False, "phases": [], "cycle": None}
         startup_ready = thread_alive and bool(status.get("is_running", False))
         return {
             "success": True,
@@ -1441,6 +1558,8 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
                 ),
                 "automation_thread_alive": thread_alive,
                 "disabled_schedules": disabled,
+                "remote_owned_phases": remote_owned,
+                "popos_phase_worker": popos_worker,
                 "pipeline_schedule": schedule_info,
                 "startup_ready": startup_ready,
                 "phases": phases,
@@ -1470,11 +1589,16 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
                 "active_workers": 0,
                 "phases": [],
                 "message": "Status temporarily unavailable (pipeline busy); refresh in a moment.",
+                **_remote_worker_fields(),
             },
         }
     except Exception as e:
         logger.warning("get_automation_status failed: %s", e)
-        return {"success": False, "data": {}, "error": str(e)[:200]}
+        return {
+            "success": False,
+            "data": {**_remote_worker_fields()},
+            "error": str(e)[:200],
+        }
 
 
 @router.get("/sources_collected")

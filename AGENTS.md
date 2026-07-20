@@ -27,6 +27,9 @@ Context for AI assistants. Use project terminology consistently.
 | Concept | Use This | Avoid |
 |---------|----------|-------|
 | Evolving news clusters | **storylines** | stories, threads |
+| Storyline deep-analysis status | **`ml_processing_status`** (`pending`/`completed`) | `processing_status` alone (create-flag; explorers often misread all-pending as stuck) |
+| Storyline entities (audit) | **`story_entity_index`**, **`article_entities`** | `key_entities` JSONB alone (discovery keywords) |
+| Storyline timeline SSOT | **`public.chronological_events`** | legacy per-domain `timeline_events` (off unless `LEGACY_TIMELINE_EVENTS_WRITES=1`) |
 | Per-domain silos | **domains** | sections, buckets |
 | Domain keys | **legal**, **medicine**, **artificial-intelligence**, **politics**, **finance** | Politics, FINANCE, science-tech (retired) |
 | Feed storage | **rss_feeds** | rssFeeds, RSS Feeds table |
@@ -76,6 +79,8 @@ Context for AI assistants. Use project terminology consistently.
 | Assembly phase order / retired phases | `api/shared/assembly_phase_order.py` |
 | Unified intake backlog (actionable vs legacy backfill) | `api/shared/unified_intake_backlog.py` |
 | Signal-first article lanes | `api/shared/article_signal_gate.py`, `docs/SIGNAL_FIRST_OPS.md` |
+| Intake catchup latency (≤6h SLA) | `api/shared/intake_catchup_latency.py`, `api/scripts/intake_catchup_latency.py` (`CATCHUP_SLA_HOURS`) |
+| Desk schedule (Widow vs PopOS GPU) | `api/services/pipeline_schedule_service.py` — heavy 01–06 / morning 06–10 / desk 10–01; desk defers GPU only |
 | RSS feed health / silencing | `api/services/rss_feed_health_service.py`, `api/scripts/rss_feed_yield_report.py` |
 | Batched event extraction (legacy rollback) | `api/_archived/intake/event_extraction_runner.py` via `LEGACY_INTAKE_EXTRACTION_ENABLED` |
 | Batched entity extraction (legacy rollback) | `api/_archived/intake/entity_extraction_runner.py` via `LEGACY_INTAKE_EXTRACTION_ENABLED` |
@@ -95,6 +100,10 @@ Context for AI assistants. Use project terminology consistently.
 | USD Purchasing Power Tracker | `api/services/usd_purchasing_power_tracker_service.py`, `api/services/scheduler_service.py` |
 | USD Purchasing Power Tracker Data | `data/tracker_data/USD_purchasing_power.json` |
 | USD Purchasing Power Tracker Documentation | `40_Reference/Trackers/USD_Purchasing_Power_Tracker.md` |
+| Phase retry / auto-silence | `api/services/phase_retry_silence_service.py`, `orchestrator_governance.yaml` → `phase_retry_policy` |
+| Typed causal edges + reasoning | `api/services/causal_edges_service.py`, `api/services/narrative_reasoning_service.py`, `GET /api/causal_edges`, `GET /api/reasoning/...` |
+| Rolling 12m arcs | `api/services/rolling_arc_service.py`, `rolling_arc_refresh` schedule, `GET /api/rolling_arcs` |
+| Trading signals (HITL) | `api/services/trading_signals_service.py`, `GET /api/signals`, `api/scripts/backtest_event_ticker_impacts.py` |
 
 ---
 

@@ -32,7 +32,16 @@ Single map of **where** the platform records “how well we are processing,” *
 
 **Queue depth vocabulary SSOT (2026-07):** `api/shared/pipeline_queue_vocabulary.py` and `api/shared/pipeline_queue_counts.py` define canonical terms (`queue_depth`, `scheduling_backlog`, `inventory_missing_pass`, `spine_queue_depth`, `in_memory_queue_depth`, `urgent_queue_depth`). Monitor run vocabulary remains in `api/shared/monitor_run_vocabulary.py` (`MONITOR_SCHEMA_VERSION` **1.1**). Dimension chip backlog delegates via `api/shared/monitor_dimension_metrics.py`. CI: `scripts/verify_pipeline_queue_alignment.py`.
 
-**`processing_progress` phase `queue_depth`:** Per-phase actionable depth from `pipeline_queue_counts.get_all_phase_queue_depths()` (cached via `backlog_metrics`, ~90s TTL). SQL aligns with each phase’s automation selection rules (e.g. `claim_extraction` uses `sql_claim_extraction_eligible` including gap-fill; `entity_profile_build` counts profiles with mentions, not raw context rows). Each row also exposes **`scheduling_backlog`** (`max(queue_depth − rows_per_run, 0)`). Legacy aliases: `pending_records`, `batches_to_drain` → `estimated_phase_runs`, `estimated_batch_per_run` → `rows_per_run`.
+**Phase E — heartbeat honesty & backlog snapshots (2026-07):** Conductor drains write `pipeline_phase_heartbeats.detail.status=running` at start and `complete`/`failed` at end (`conductor_run_history`). Monitor merges Widow + PopOS heartbeat `running` rows into Current activity (no stale “running” without a fresh heartbeat). Auto-silence persists in `public.phase_silence_state` via `phase_retry_silence_service` (config: `orchestrator_governance.yaml` → `phase_retry_policy`). Monitor backlog remains read-mostly from `automation_state.monitor_backlog_snapshot`; each refresh also appends `intelligence.monitor_backlog_snapshot_history` for p95/trend.
+
+**`processing_progress` phase `queue_depth`:** Per-phase actionable depth from `pipeline_queue_counts.get_all_phase_queue_depths()` (cached via `backlog_metrics`, ~90s TTL). SQL aligns with each phase’s automation / PopOS drain selection rules:
+
+- `claim_extraction` → `sql_claim_extraction_eligible` (gap-fill when fusion on)
+- `topic_clustering` → `TopicClusteringService.count_pending_articles` (same predicates as `select_pending_article_ids`; default **first-pass-only**, not retry inflation)
+- `storyline_assembly` → `count_assembly_actionable_pending` (unlinked only in domains that pass `domains_needing_assembly` threshold / `assembly_after_enrichment`)
+- `entity_profile_build` → profiles with mentions, not raw context rows
+
+Each row also exposes **`scheduling_backlog`** (`max(queue_depth − rows_per_run, 0)`). Legacy aliases: `pending_records`, `batches_to_drain` → `estimated_phase_runs`, `estimated_batch_per_run` → `rows_per_run`. Retry/first-pass breakdown for pass-marker phases remains on **`first_pass_depth` / `retry_depth`** (work-queue metrics), not inside `queue_depth`.
 
 **Rows/run (measured vs config):** Each `phase_dashboard` row exposes **`rows_per_run`** (ETA divisor), **`measured_rows_per_run_24h`** (24h AVG from `automation_run_history` batch rows with throughput), **`configured_rows_per_run`** (`BATCH_SIZE_PER_TASK` / env), **`rows_per_run_source`** (`measured_24h*` | `config_default` | `no_row_batch_model`), and **`rows_per_run_sample_count`**. SQL aggregation: `monitor_run_vocabulary.query_measured_rows_per_run_by_phase`. Phases without a row-batch model (`collection_cycle`, ops/health) set `rows_per_run_source=no_row_batch_model` and hide ETA runs.
 
@@ -46,7 +55,7 @@ Single map of **where** the platform records “how well we are processing,” *
 |----------|---------|
 | `GET /api/system_monitoring/monitoring/overview` | API/DB/webserver + in-memory activity feed. |
 | `GET /api/system_monitoring/automation/status` | Live queues: `queue_depths` (canonical), `scheduling_backlog`, `in_memory_queue_depth`; legacy `pending_counts`, `backlog_counts`, `combined_queue_depth`. |
-| `GET /api/system_monitoring/backlog_status` | ETAs, steady_state, nightly_catchup; dimension throughputs use `monitor_dimension_metrics` for backlog (cached ~15s). |
+| `GET /api/system_monitoring/backlog_status` | ETAs, steady_state, `intake_catchup_latency` (p50/p95 RSS→full-process hours vs `CATCHUP_SLA_HOURS` default 6), nightly_catchup; dimension throughputs use `monitor_dimension_metrics` for backlog (cached ~15s). |
 | `GET /api/system_monitoring/processing_progress` | **Processing pulse:** `phase_dashboard` rows: `queue_depth` (+ `pending_records` alias), `scheduling_backlog`, `estimated_phase_runs` (+ `batches_to_drain` alias), `first_pass_depth` / `retry_depth` aliases, `scheduling_status`, `queue_stale`. Snapshot accepts `queue_depths` / `scheduling_backlog` keys. Cached **~90s** per worker. |
 | `GET /api/system_monitoring/process_run_summary` | Phases run vs not in N hours, pipeline checkpoints, optional `activity.jsonl` tail. |
 | `GET /api/system_monitoring/pipeline_status` | Pipeline coordinator snapshot. |
@@ -128,6 +137,19 @@ When `UNIFIED_INTAKE_LEGACY_AWARE_BACKLOG=true` (default), unified pending is **
 | **`legacy_backfill_eligible`** | Same | Legacy outputs present; marker backfill only (no GPU) |
 | **`inventory_missing_pass`** / **`total_missing_unified_pass`** | Same | Raw inventory (missing unified pass marker) — **not** operator to-do |
 | **`spine_queue_depth`** | `pipeline_queue_counts.get_spine_queue_depth()` | Spine work-queue table rows (`unified_intake_queue`) — **operational only**; must not be used for ETA or bulk catch-up floor |
+
+### Intake → full-process catchup latency
+
+SSOT: `api/shared/intake_catchup_latency.py` (CLI: `api/scripts/intake_catchup_latency.py`). Exposed on **`backlog_status.intake_catchup_latency`** and monitor backlog snapshots (`automation_state` key `intake_catchup_latency_samples`).
+
+| Field | Meaning |
+|-------|---------|
+| **`p50_hours` / `p95_hours`** | Hours from `articles.created_at` to last of enrich terminal / UIE pass / context link / topic pass / storyline `added_at` for cohort articles that are **not** pending any of those stages |
+| **`max_inflight_age_hours`** | Oldest still-pending article age in the intake window (how far the current batch is behind) |
+| **`ok_under_sla`** | `p95_hours ≤ CATCHUP_SLA_HOURS` (default **6**) when `sample_n_completed ≥ CATCHUP_SLA_MIN_SAMPLES` |
+| **Spine `spine_p95_latency_hours`** | Separate UIE-only metric (~4h SLA) — do not confuse with full-process catchup |
+
+Assembly / entity_profile_build / dossier are **out of scope** for the 6h SLA.
 
 ### Queue depth vs spine queue vs inventory
 

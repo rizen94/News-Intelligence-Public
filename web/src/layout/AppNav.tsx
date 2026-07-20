@@ -37,6 +37,8 @@ import ScienceIcon from '@mui/icons-material/Science';
 import MemoryIcon from '@mui/icons-material/Memory';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
 import ExploreIcon from '@mui/icons-material/Explore';
+import HowToVoteIcon from '@mui/icons-material/HowToVote';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import { usePublicDemoMode } from '../contexts/PublicDemoContext';
 import { getDefaultDomainKey } from '../utils/domainHelper';
 
@@ -125,7 +127,10 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: 'arcs',
     label: 'Arcs',
-    items: [{ path: 'arcs', label: 'Arc catalog', icon: <TimelineIcon />, exact: true }],
+    items: [
+      { path: 'arcs', label: 'Arc catalog', icon: <TimelineIcon />, exact: true },
+      { path: 'arcs/rolling', label: 'Rolling 12m', icon: <TimelineIcon /> },
+    ],
   },
   {
     id: 'outputs',
@@ -139,6 +144,12 @@ const NAV_SECTIONS: NavSection[] = [
     id: 'finance',
     label: 'Finance',
     items: [
+      {
+        path: 'signals/review',
+        label: 'Trade signals',
+        icon: <ShowChartIcon />,
+        hrefDomain: 'finance',
+      },
       {
         path: 'analysis',
         label: 'Analysis',
@@ -172,6 +183,19 @@ const NAV_SECTIONS: NavSection[] = [
         label: 'Task trace',
         icon: <TimelineIcon />,
         domain: 'finance',
+        demoHidden: true,
+      },
+    ],
+  },
+  {
+    id: 'politics',
+    label: 'Politics',
+    items: [
+      {
+        path: 'congress-trading',
+        label: 'Congress Trading',
+        icon: <HowToVoteIcon />,
+        domain: 'politics',
         demoHidden: true,
       },
     ],
