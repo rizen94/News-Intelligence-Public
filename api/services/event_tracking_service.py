@@ -19,21 +19,24 @@ logger = logging.getLogger(__name__)
 
 EVENT_GROUPING_PROMPT = """You are a news intelligence analyst. Given these article headlines and summaries, identify the distinct real-world EVENTS they describe.
 
-An "event" is a specific, trackable happening — not a vague topic. Examples:
-- GOOD: "US-Israel military strikes on Iran (March 2026)"
-- GOOD: "California congressional redistricting and retirements"
-- BAD: "politics" (too vague)
-- BAD: "news" (not an event)
+An "event" is a specific, trackable happening with concrete actors and a clear recent development — not a vague topic, theme, or generic market narrative.
+
+Examples:
+- GOOD: "US-Israel military strikes on Iran (March 2026)" — named actors, concrete action, shared across articles
+- GOOD: "California congressional redistricting and retirements" — specific jurisdiction and action
+- BAD: "politics" / "news" / "markets" (too vague)
+- BAD: "Fed rate decision March 2026" or "US Treasury Rate Decision" when articles only mention rates in passing, are about unrelated topics, or do not report an actual decision/announcement in the batch
+- BAD: inventing scheduled future FOMC/Treasury decisions that are not evidenced in the article texts
 
 Group related articles by the event they cover. Each event needs:
-- event_name: Clear, specific name (max 200 chars)
+- event_name: Clear, specific name grounded in the articles (max 200 chars). Do not invent names.
 - event_type: One of: conflict, election, legislation, investigation, diplomatic, economic, disaster, protest, policy, appointment, market_shift, government_bond, regulatory, other
 - geographic_scope: Where it's happening (e.g. "Iran, Israel", "California, USA", "India", "US", "EU")
 - article_ids: List of article context IDs that belong to this event
-- summary: 1-2 sentence description of what's happening
+- summary: 1-2 sentence description of what's happening, citing shared facts
 
 Articles may belong to zero events (if unrelated noise) or exactly one event.
-Only create an event if at least 2 articles are about the same happening.
+Only create an event if at least {min_articles} articles in this batch clearly cover the SAME concrete happening (shared actors + shared action). Prefer returning an empty array over weak groupings.
 
 ARTICLES:
 {articles}
@@ -69,6 +72,184 @@ VALID_EVENT_TYPES = {
 }
 
 _MAX_KEY_PARTICIPANTS = 20
+
+# Common title/content words that must not drive chronicle attachment alone.
+_CHRONICLE_STOPWORDS = frozenset(
+    {
+        "about",
+        "after",
+        "against",
+        "amid",
+        "among",
+        "around",
+        "before",
+        "between",
+        "during",
+        "from",
+        "into",
+        "large",
+        "latest",
+        "major",
+        "model",
+        "models",
+        "news",
+        "other",
+        "over",
+        "research",
+        "says",
+        "than",
+        "that",
+        "their",
+        "there",
+        "these",
+        "this",
+        "through",
+        "under",
+        "update",
+        "updates",
+        "with",
+        "world",
+        "would",
+        # Generic event-type / org nouns — "Investigation" alone must not attach ICE/FCA stories
+        # to "SEC Investigation into NVIDIA".
+        "investigation",
+        "investigations",
+        "investigating",
+        "probe",
+        "probes",
+        "inquiry",
+        "inquiries",
+        "regulatory",
+        "regulation",
+        "corporation",
+        "company",
+        "companies",
+        "commission",
+        "authority",
+        "agency",
+        "department",
+        "government",
+        "official",
+        "officials",
+        "report",
+        "reports",
+        "action",
+        "actions",
+        "case",
+        "cases",
+        "lawsuit",
+        "hearing",
+        "statement",
+        "announcement",
+        "practical",
+        "experimental",
+        "details",
+        "continued",
+        "continues",
+        "ongoing",
+    }
+)
+
+
+def significant_event_tokens(event_name: str, *, max_tokens: int = 6) -> list[str]:
+    """Distinctive tokens from an event name for chronicle context matching."""
+    raw = [w for w in re.split(r"\W+", event_name or "") if w]
+    out: list[str] = []
+    seen: set[str] = set()
+    for w in raw:
+        low = w.lower()
+        if low in _CHRONICLE_STOPWORDS or low in seen:
+            continue
+        # Allow short ALL-CAPS tickers/agencies (SEC, FDA, ICE) — otherwise skip short words.
+        is_agency = w.isupper() and 2 <= len(w) <= 5 and w.isalpha()
+        if len(low) < 4 and not is_agency:
+            continue
+        seen.add(low)
+        out.append(w)
+        if len(out) >= max_tokens:
+            break
+    return out
+
+
+def significant_event_phrases(event_name: str, *, max_phrases: int = 4) -> list[str]:
+    """Adjacent contentful bigrams (e.g. 'NVIDIA Corporation' after filtering generics)."""
+    raw = [w for w in re.split(r"\W+", event_name or "") if w]
+    # Keep agency acronyms + len>=4 non-stopwords for phrase building.
+    keep: list[str] = []
+    for w in raw:
+        low = w.lower()
+        if low in _CHRONICLE_STOPWORDS:
+            continue
+        is_agency = w.isupper() and 2 <= len(w) <= 5 and w.isalpha()
+        if len(w) >= 4 or is_agency:
+            keep.append(w)
+    phrases: list[str] = []
+    seen: set[str] = set()
+    for i in range(len(keep) - 1):
+        phrase = f"{keep[i]} {keep[i + 1]}"
+        key = phrase.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        phrases.append(phrase)
+        if len(phrases) >= max_phrases:
+            break
+    return phrases
+
+
+def development_title_matches_event(event_name: str, title: str | None) -> bool:
+    """True when a development title is topically related to the tracked event name."""
+    title_l = (title or "").lower()
+    if not title_l.strip():
+        return False
+    phrases = significant_event_phrases(event_name)
+    if any(p.lower() in title_l for p in phrases):
+        return True
+
+    def _token_hit(token: str) -> bool:
+        # Avoid substring hits inside hyphenated compounds (e.g. "language" in "cross-language").
+        return (
+            re.search(rf"(?<![\w-]){re.escape(token)}(?![\w-])", title_l, flags=re.I)
+            is not None
+        )
+
+    tokens = [t.lower() for t in significant_event_tokens(event_name)]
+    if not tokens:
+        frag = re.sub(r"\s+", " ", (event_name or "").strip().lower())[:40]
+        return bool(frag) and frag in title_l
+    hits = sum(1 for t in tokens if _token_hit(t))
+    need = 2 if len(tokens) >= 2 else 1
+    if hits >= need:
+        return True
+    # One rare long *non-generic* token in the title is enough (e.g. "Breakthroughs", "NVIDIA").
+    # Never treat event-type nouns like "investigation" as sufficient alone.
+    return any(
+        len(t) >= 8 and t not in _CHRONICLE_STOPWORDS and _token_hit(t) for t in tokens
+    )
+
+
+def _event_tracking_min_articles() -> int:
+    try:
+        from config.settings import event_tracking_min_articles_per_event
+
+        return event_tracking_min_articles_per_event()
+    except Exception:
+        try:
+            return max(2, int(env_str("EVENT_TRACKING_MIN_ARTICLES_PER_EVENT", "4") or 4))
+        except ValueError:
+            return 4
+
+
+def _event_tracking_storyline_min_overlap() -> int:
+    try:
+        from config.settings import event_tracking_storyline_min_entity_overlap
+
+        return event_tracking_storyline_min_entity_overlap()
+    except Exception:
+        try:
+            return max(1, int(env_str("EVENT_TRACKING_STORYLINE_MIN_ENTITY_OVERLAP", "3") or 3))
+        except ValueError:
+            return 3
 
 
 def _domain_key_to_schema(domain_key: str) -> str:
@@ -196,9 +377,8 @@ async def discover_events_from_contexts(
                       AND c.created_at >= NOW() - (%s * INTERVAL '1 day')
                       AND LENGTH(COALESCE(c.content, '')) >= %s
                       AND NOT EXISTS (
-                          SELECT 1 FROM intelligence.event_chronicles ec,
-                          LATERAL jsonb_array_elements(ec.developments) AS dev
-                          WHERE (dev->>'context_id')::int = c.id
+                          SELECT 1 FROM intelligence.event_chronicle_contexts ecc
+                          WHERE ecc.context_id = c.id
                       )
                       {pass_sql}
                     ORDER BY c.created_at DESC
@@ -214,9 +394,8 @@ async def discover_events_from_contexts(
                     WHERE c.created_at >= NOW() - (%s * INTERVAL '1 day')
                       AND LENGTH(COALESCE(c.content, '')) >= %s
                       AND NOT EXISTS (
-                          SELECT 1 FROM intelligence.event_chronicles ec,
-                          LATERAL jsonb_array_elements(ec.developments) AS dev
-                          WHERE (dev->>'context_id')::int = c.id
+                          SELECT 1 FROM intelligence.event_chronicle_contexts ecc
+                          WHERE ecc.context_id = c.id
                     )
                       {pass_sql}
                     ORDER BY c.created_at DESC
@@ -252,9 +431,11 @@ async def discover_events_from_contexts(
     domain_hint = ""
     if domain_key == "finance":
         domain_hint = (
-            "\n\nThis batch is FINANCE content. Prefer event_type: market_shift (major indices, volatility, rate moves), "
-            "government_bond (treasury, sovereign debt, yield moves), regulatory (SEC, Fed, enforcement), or investigation "
-            "(corporate probes, fraud, DOJ). Name events specifically (e.g. 'Fed rate decision March 2026', 'SEC investigation into X')."
+            "\n\nThis batch is FINANCE content. Prefer event_type: market_shift (named index moves with a stated catalyst), "
+            "government_bond (specific treasury auction / yield move tied to a dated announcement), regulatory (named SEC/Fed "
+            "enforcement action), or investigation (named company/probe). Only name a rate decision if the articles report an "
+            "actual FOMC/Treasury announcement or immediate market reaction to one — never invent a future 'March 2026' decision "
+            "from generic rate chatter."
         )
     elif domain_key and domain_key != "finance":
         domain_hint = (
@@ -263,8 +444,13 @@ async def discover_events_from_contexts(
             "(e.g. oil/LNG, straits, OPEC, gold mining, tariffs) so cross-domain finance maps can surface it."
         )
 
+    min_articles = _event_tracking_min_articles()
     prompt = (
-        EVENT_GROUPING_PROMPT.format(articles=articles_text, domain_hint=domain_hint)
+        EVENT_GROUPING_PROMPT.format(
+            articles=articles_text,
+            domain_hint=domain_hint,
+            min_articles=min_articles,
+        )
         + existing_note
     )
 
@@ -307,7 +493,7 @@ async def discover_events_from_contexts(
         with conn.cursor() as cur:
             for ev in events:
                 valid_ids = [aid for aid in ev.get("article_ids", []) if aid in context_ids_set]
-                if len(valid_ids) < 2:
+                if len(valid_ids) < min_articles:
                     continue
 
                 event_name = ev.get("event_name", "Unnamed Event")[:300]
@@ -324,11 +510,12 @@ async def discover_events_from_contexts(
                 ]
                 start = min(dates).date() if dates else date.today()
 
+                # Dedup by name + date window only (ignore event_type) so
+                # "other" vs "economic" vs "market_shift" cannot spawn clones.
                 cur.execute(
                     """
-                    SELECT id FROM intelligence.tracked_events
-                    WHERE event_type = %s
-                      AND (
+                    SELECT id, event_type FROM intelligence.tracked_events
+                    WHERE (
                         lower(trim(event_name)) = lower(trim(%s))
                         OR (
                           length(trim(%s)) >= 8
@@ -340,12 +527,11 @@ async def discover_events_from_contexts(
                       )
                       AND (
                         start_date IS NULL
-                        OR start_date BETWEEN (%s::date - INTERVAL '7 days') AND (%s::date + INTERVAL '7 days')
+                        OR start_date BETWEEN (%s::date - INTERVAL '14 days') AND (%s::date + INTERVAL '14 days')
                       )
                     LIMIT 1
                 """,
                     (
-                        event_type,
                         event_name,
                         event_name,
                         f"%{event_name[:80].strip().lower()}%",
@@ -354,7 +540,8 @@ async def discover_events_from_contexts(
                         start,
                     ),
                 )
-                if cur.fetchone():
+                existing = cur.fetchone()
+                if existing:
                     continue
 
                 if domain_key:
@@ -431,6 +618,12 @@ async def discover_events_from_contexts(
                         min(1.0, len(valid_ids) * 0.15),
                     ),
                 )
+                try:
+                    from shared.event_chronicle_contexts import upsert_chronicle_context_links
+
+                    upsert_chronicle_context_links(cur, event_id, valid_ids)
+                except Exception:
+                    pass
 
                 # Auto-populate key_participant_entity_ids from contexts linked to this event
                 profile_ids = _resolve_context_ids_to_entity_profile_ids(conn, valid_ids)
@@ -619,6 +812,7 @@ def link_tracked_events_to_storylines(limit: int = 50) -> int:
                 best_schema = None
                 best_storyline_id = None
                 best_overlap = 0
+                min_overlap = _event_tracking_storyline_min_overlap()
                 for domain_key, canonical_ids in by_domain.items():
                     schema = _domain_key_to_schema(domain_key)
                     if schema not in _active_schema_set():
@@ -642,7 +836,11 @@ def link_tracked_events_to_storylines(limit: int = 50) -> int:
                         best_overlap = row[1]
                         best_schema = schema
                         best_storyline_id = row[0]
-                if best_schema and best_storyline_id is not None:
+                if (
+                    best_schema
+                    and best_storyline_id is not None
+                    and best_overlap >= min_overlap
+                ):
                     storyline_id_val = f"{best_schema}:{best_storyline_id}"
                     with conn.cursor() as cur:
                         cur.execute(
@@ -751,18 +949,40 @@ async def _update_existing_event_chronicles(limit: int = 20) -> int:
             participant_ids_json,
             last_update,
         ) in events:
-            # Build search terms: significant words (len >= 4) from event name, up to 3
-            words = [w for w in re.split(r"\W+", (event_name or "")) if len(w) >= 4][:3]
-            if not words:
-                words = [(event_name or "")[:50].strip() or " "]
-            # Match contexts that contain any of these terms in title or content, or that mention key participants
-            ilike_conditions = " OR ".join(
-                ["(c.title ILIKE %s OR c.content ILIKE %s)"] * len(words)
-            )
+            tokens = significant_event_tokens(event_name or "")
+            phrases = significant_event_phrases(event_name or "")
+            if not tokens and not phrases:
+                frag = (event_name or "").strip()[:50]
+                if frag:
+                    phrases = [frag]
+                else:
+                    continue
+
+            # Title-first relevance: phrase hit OR enough distinctive tokens in title.
+            # Avoid OR-matching common words against body text (that attached politics
+            # noise to "Large Language Models" via "%Large%").
+            match_parts: list[str] = []
             params: list = [last_update]
-            for w in words:
-                params.append(f"%{w}%")
-                params.append(f"%{w}%")
+            for phrase in phrases:
+                match_parts.append("c.title ILIKE %s")
+                params.append(f"%{phrase}%")
+            if tokens:
+                need = 2 if len(tokens) >= 2 else 1
+                score_bits = " + ".join(["(c.title ILIKE %s)::int"] * len(tokens))
+                match_parts.append(f"({score_bits}) >= %s")
+                for t in tokens:
+                    params.append(f"%{t}%")
+                params.append(need)
+                # Rare long token alone in title is enough.
+                long_tokens = [
+                    t
+                    for t in tokens
+                    if len(t) >= 8 and t.lower() not in _CHRONICLE_STOPWORDS
+                ]
+                for t in long_tokens:
+                    match_parts.append("c.title ILIKE %s")
+                    params.append(f"%{t}%")
+
             participant_ids: list = []
             if participant_ids_json and isinstance(participant_ids_json, list):
                 participant_ids = [
@@ -777,8 +997,14 @@ async def _update_existing_event_chronicles(limit: int = 20) -> int:
                 except Exception:
                     pass
             if participant_ids:
-                ilike_conditions += " OR c.id IN (SELECT context_id FROM intelligence.context_entity_mentions WHERE entity_profile_id = ANY(%s))"
+                # Candidates only — still require title relevance in Python below.
+                match_parts.append(
+                    "c.id IN (SELECT context_id FROM intelligence.context_entity_mentions "
+                    "WHERE entity_profile_id = ANY(%s))"
+                )
                 params.append(participant_ids)
+
+            ilike_conditions = " OR ".join(match_parts)
             params.append(event_id)
 
             with conn.cursor() as cur:
@@ -789,16 +1015,22 @@ async def _update_existing_event_chronicles(limit: int = 20) -> int:
                     WHERE c.created_at > COALESCE(%s, '2020-01-01'::date)
                       AND ({ilike_conditions})
                       AND NOT EXISTS (
-                          SELECT 1 FROM intelligence.event_chronicles ec,
-                          LATERAL jsonb_array_elements(ec.developments) AS dev
-                          WHERE ec.event_id = %s
-                            AND (dev->>'context_id')::int = c.id
+                          SELECT 1 FROM intelligence.event_chronicle_contexts ecc
+                          WHERE ecc.context_id = c.id
+                            AND ecc.event_id = %s
                       )
-                    LIMIT 10
+                    ORDER BY c.created_at DESC
+                    LIMIT 40
                     """,
                     tuple(params),
                 )
-                new_contexts = cur.fetchall()
+                raw_contexts = cur.fetchall()
+
+            new_contexts = [
+                c
+                for c in raw_contexts
+                if development_title_matches_event(event_name or "", c[1])
+            ][:10]
 
             if new_contexts:
                 developments = [
@@ -817,7 +1049,7 @@ async def _update_existing_event_chronicles(limit: int = 20) -> int:
                     cur.execute(
                         """
                         SELECT analysis FROM intelligence.event_chronicles
-                        WHERE event_id = %s ORDER BY update_date DESC LIMIT 1
+                        WHERE event_id = %s ORDER BY update_date DESC, id DESC LIMIT 1
                     """,
                         (event_id,),
                     )
@@ -832,28 +1064,89 @@ async def _update_existing_event_chronicles(limit: int = 20) -> int:
                     "latest_developments": "; ".join(new_titles[:5]),
                     "prior_analysis_carried_forward": True,
                 }
+                momentum = round(min(1.0, len(new_contexts) * 0.1), 2)
 
                 with conn.cursor() as cur:
+                    # One chronicle row per event per day — merge instead of duplicating dates.
                     cur.execute(
                         """
-                        INSERT INTO intelligence.event_chronicles
-                        (event_id, update_date, developments, analysis, predictions, momentum_score)
-                        VALUES (%s, CURRENT_DATE, %s, %s, '[]', %s)
-                    """,
-                        (
-                            event_id,
-                            json.dumps(developments),
-                            json.dumps(analysis),
-                            min(1.0, len(new_contexts) * 0.1),
-                        ),
+                        SELECT id, developments FROM intelligence.event_chronicles
+                        WHERE event_id = %s AND update_date = CURRENT_DATE
+                        ORDER BY id DESC
+                        LIMIT 1
+                        """,
+                        (event_id,),
                     )
+                    same_day = cur.fetchone()
+                    if same_day:
+                        existing_devs = same_day[1] if isinstance(same_day[1], list) else []
+                        if isinstance(same_day[1], str):
+                            try:
+                                existing_devs = json.loads(same_day[1])
+                            except Exception:
+                                existing_devs = []
+                        seen_ids = {
+                            d.get("context_id")
+                            for d in existing_devs
+                            if isinstance(d, dict) and d.get("context_id") is not None
+                        }
+                        merged = list(existing_devs) if isinstance(existing_devs, list) else []
+                        for d in developments:
+                            cid = d.get("context_id")
+                            if cid is not None and cid in seen_ids:
+                                continue
+                            if cid is not None:
+                                seen_ids.add(cid)
+                            merged.append(d)
+                        cur.execute(
+                            """
+                            UPDATE intelligence.event_chronicles
+                            SET developments = %s,
+                                analysis = %s,
+                                momentum_score = %s
+                            WHERE id = %s
+                            """,
+                            (
+                                json.dumps(merged),
+                                json.dumps(analysis),
+                                momentum,
+                                same_day[0],
+                            ),
+                        )
+                    else:
+                        cur.execute(
+                            """
+                            INSERT INTO intelligence.event_chronicles
+                            (event_id, update_date, developments, analysis, predictions, momentum_score)
+                            VALUES (%s, CURRENT_DATE, %s, %s, '[]', %s)
+                        """,
+                            (
+                                event_id,
+                                json.dumps(developments),
+                                json.dumps(analysis),
+                                momentum,
+                            ),
+                        )
+                    try:
+                        from shared.event_chronicle_contexts import upsert_chronicle_context_links
+
+                        upsert_chronicle_context_links(
+                            cur, event_id, [c[0] for c in new_contexts]
+                        )
+                    except Exception:
+                        pass
                 updates += 1
                 try:
                     from services.tracked_event_narrative_service import (
                         refresh_domain_keys_for_tracked_event,
                     )
 
-                    refresh_domain_keys_for_tracked_event(conn, event_id)
+                    refresh_domain_keys_for_tracked_event(
+                        conn,
+                        event_id,
+                        replace=True,
+                        event_name=event_name or "",
+                    )
                     with conn.cursor() as ucur:
                         ucur.execute(
                             """

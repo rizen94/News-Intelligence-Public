@@ -7,6 +7,7 @@ Flat /api/... routes. See docs/CONTEXT_CENTRIC_UPGRADE_PLAN.md.
 import asyncio
 import json
 import logging
+import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, List, Optional
@@ -603,71 +604,156 @@ def list_pattern_discoveries(
     domain_key: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    min_context_count: int | None = Query(
+        None,
+        ge=0,
+        le=100000,
+        description="Exclude patterns with data.context_count below this (when present)",
+    ),
+    briefing: bool = Query(
+        False,
+        description="Briefings Collisions lens: drop weak network co_mentions; rank by context_count",
+    ),
 ) -> dict:
     """List pattern discoveries (Phase 2.2). Optional pattern_type and domain_key filters."""
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
     try:
+        # Domain listing without an explicit type is the Briefings Collisions consumer —
+        # apply the high-signal lens so weak network co_mentions do not flood the feed.
+        if domain_key and not pattern_type:
+            briefing = True
+
+        where: list[str] = []
+        params: list[Any] = []
+        if pattern_type:
+            where.append("pattern_type = %s")
+            params.append(pattern_type)
+        if domain_key:
+            where.append("domain_key = %s")
+            params.append(domain_key)
+
+        # Briefing lens: hide single-article network co_mentions (dominate politics feed).
+        effective_min = min_context_count
+        if briefing and effective_min is None:
+            effective_min = 2
+        if briefing:
+            where.append(
+                """
+                NOT (
+                    pattern_type = 'network'
+                    AND COALESCE(data->>'relation', '') = 'co_mentioned'
+                    AND COALESCE((data->>'context_count')::int, 0) < 2
+                )
+                """
+            )
+        if effective_min is not None and effective_min > 0:
+            where.append(
+                """
+                (
+                    data->>'context_count' IS NULL
+                    OR COALESCE((data->>'context_count')::int, 0) >= %s
+                )
+                """
+            )
+            params.append(int(effective_min))
+
+        where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+        order_sql = (
+            """
+            ORDER BY COALESCE((data->>'context_count')::int, 0) DESC NULLS LAST,
+                     confidence DESC NULLS LAST,
+                     created_at DESC
+            """
+            if briefing
+            else "ORDER BY created_at DESC"
+        )
+        params.extend([limit, offset])
         with conn.cursor() as cur:
-            if pattern_type and domain_key:
-                cur.execute(
-                    """
-                    SELECT id, pattern_type, domain_key, context_ids, entity_profile_ids, confidence, data, created_at
-                    FROM intelligence.pattern_discoveries
-                    WHERE pattern_type = %s AND domain_key = %s
-                    ORDER BY created_at DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (pattern_type, domain_key, limit, offset),
-                )
-            elif pattern_type:
-                cur.execute(
-                    """
-                    SELECT id, pattern_type, domain_key, context_ids, entity_profile_ids, confidence, data, created_at
-                    FROM intelligence.pattern_discoveries
-                    WHERE pattern_type = %s
-                    ORDER BY created_at DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (pattern_type, limit, offset),
-                )
-            elif domain_key:
-                cur.execute(
-                    """
-                    SELECT id, pattern_type, domain_key, context_ids, entity_profile_ids, confidence, data, created_at
-                    FROM intelligence.pattern_discoveries
-                    WHERE domain_key = %s
-                    ORDER BY created_at DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (domain_key, limit, offset),
-                )
-            else:
-                cur.execute(
-                    """
-                    SELECT id, pattern_type, domain_key, context_ids, entity_profile_ids, confidence, data, created_at
-                    FROM intelligence.pattern_discoveries
-                    ORDER BY created_at DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (limit, offset),
-                )
+            cur.execute(
+                f"""
+                SELECT id, pattern_type, domain_key, context_ids, entity_profile_ids,
+                       confidence, data, created_at
+                FROM intelligence.pattern_discoveries
+                {where_sql}
+                {order_sql}
+                LIMIT %s OFFSET %s
+                """,
+                tuple(params),
+            )
             rows = cur.fetchall()
+
+            # Enrich entity display names for Collisions / Search snippets.
+            all_ep_ids: list[int] = []
+            for r in rows:
+                ids = list(r[4]) if r[4] else []
+                all_ep_ids.extend(int(x) for x in ids if x is not None)
+            name_by_id: dict[int, str] = {}
+            uniq = sorted(set(all_ep_ids))[:200]
+            if uniq:
+                cur.execute(
+                    """
+                    SELECT id,
+                           LEFT(
+                             COALESCE(
+                               NULLIF(metadata->>'canonical_name', ''),
+                               NULLIF(metadata->>'name', ''),
+                               NULLIF(metadata->>'display_name', ''),
+                               'entity ' || id::text
+                             ),
+                             80
+                           ) AS nm
+                    FROM intelligence.entity_profiles
+                    WHERE id = ANY(%s)
+                    """,
+                    (uniq,),
+                )
+                for eid, nm in cur.fetchall():
+                    name_by_id[int(eid)] = str(nm or f"entity {eid}")
+
         conn.close()
         items = []
         for r in rows:
-            items.append({
-                "id": r[0],
-                "pattern_type": r[1],
-                "domain_key": r[2],
-                "context_ids": list(r[3]) if r[3] else [],
-                "entity_profile_ids": list(r[4]) if r[4] else [],
-                "confidence": float(r[5]) if r[5] is not None else None,
-                "data": r[6],
-                "created_at": r[7].isoformat() if r[7] else None,
-            })
-        return {"items": items, "limit": limit, "offset": offset}
+            ep_ids = [int(x) for x in (list(r[4]) if r[4] else []) if x is not None]
+            entity_names = [name_by_id[i] for i in ep_ids if i in name_by_id][:6]
+            raw_data = r[6]
+            data_out: dict[str, Any] = dict(raw_data) if isinstance(raw_data, dict) else {}
+            # Put a human label first so older Briefings UI (first two data keys) is readable.
+            label_bits: list[str] = []
+            if entity_names:
+                label_bits.append(" · ".join(entity_names[:3]))
+            rel = data_out.get("relation")
+            if isinstance(rel, str) and rel.strip():
+                label_bits.append(rel.replace("_", " "))
+            date_v = data_out.get("date")
+            if isinstance(date_v, str) and date_v.strip():
+                label_bits.append(date_v)
+            ctx = data_out.get("context_count")
+            if ctx is not None and str(ctx).strip():
+                label_bits.append(f"{ctx} contexts")
+            if label_bits:
+                data_out = {"label": " · ".join(label_bits), **data_out}
+            items.append(
+                {
+                    "id": r[0],
+                    "pattern_type": r[1],
+                    "domain_key": r[2],
+                    "context_ids": list(r[3]) if r[3] else [],
+                    "entity_profile_ids": ep_ids,
+                    "entity_names": entity_names,
+                    "confidence": float(r[5]) if r[5] is not None else None,
+                    "data": data_out if data_out else raw_data,
+                    "created_at": r[7].isoformat() if r[7] else None,
+                }
+            )
+        return {
+            "items": items,
+            "limit": limit,
+            "offset": offset,
+            "briefing": briefing,
+            "min_context_count": effective_min,
+        }
     except Exception as e:
         logger.warning(f"list_pattern_discoveries: {e}")
         try:
@@ -1326,21 +1412,70 @@ def get_tracked_event(event_id: int) -> dict:
                 SELECT id, update_date, developments, analysis, predictions, momentum_score, created_at
                 FROM intelligence.event_chronicles
                 WHERE event_id = %s
-                ORDER BY update_date DESC
+                ORDER BY update_date DESC, id DESC
                 """,
                 (event_id,),
             )
             chronicles = []
+            seen_days: set[str] = set()
+            event_name = event.get("event_name") or ""
             for r in cur.fetchall():
+                day = str(r[1]) if r[1] else f"id-{r[0]}"
+                if day in seen_days:
+                    continue
+                seen_days.add(day)
+                raw_devs = r[2] if isinstance(r[2], list) else []
+                if isinstance(r[2], str):
+                    try:
+                        import json as _json
+                        raw_devs = _json.loads(r[2])
+                    except Exception:
+                        raw_devs = []
+                try:
+                    from services.event_tracking_service import development_title_matches_event
+                    filtered_devs = []
+                    seen_titles: set[str] = set()
+                    for d in raw_devs:
+                        if not isinstance(d, dict):
+                            continue
+                        title = d.get("title")
+                        if not development_title_matches_event(event_name, title):
+                            continue
+                        title_key = re.sub(r"\s+", " ", (title or "").strip().lower())[:120]
+                        if title_key and title_key in seen_titles:
+                            continue
+                        if title_key:
+                            seen_titles.add(title_key)
+                        filtered_devs.append(d)
+                except Exception:
+                    filtered_devs = raw_devs if isinstance(raw_devs, list) else []
+                analysis = r[3] if isinstance(r[3], dict) else r[3]
+                if filtered_devs:
+                    momentum = min(1.0, len(filtered_devs) * 0.1)
+                else:
+                    momentum = None
+                    # Drop polluted attachment blurbs when nothing on-topic remains.
+                    if isinstance(analysis, dict):
+                        analysis = {
+                            **analysis,
+                            "latest_developments": None,
+                            "context_count": len(filtered_devs),
+                        }
                 chronicles.append({
                     "id": r[0],
                     "update_date": str(r[1]) if r[1] else None,
-                    "developments": r[2],
-                    "analysis": r[3],
+                    "developments": filtered_devs,
+                    "analysis": analysis,
                     "predictions": r[4],
-                    "momentum_score": float(r[5]) if r[5] is not None else None,
+                    "momentum_score": momentum,
                     "created_at": r[6].isoformat() if r[6] else None,
                 })
+            # Collapse empty day shells that only repeat the same summary.
+            with_devs = [c for c in chronicles if c.get("developments")]
+            if with_devs:
+                chronicles = with_devs
+            elif chronicles:
+                chronicles = [chronicles[0]]
             event["chronicles"] = _enrich_chronicles_developments(cur, chronicles)
             try:
                 from services.quality_feedback_service import get_latest_event_validations
@@ -1384,7 +1519,13 @@ def get_tracked_event_linked_events(
     event_id: int,
     limit: int = Query(12, ge=1, le=30),
 ) -> dict:
-    """Other tracked_events that appear in cross_domain_correlations with this event."""
+    """
+    Other tracked_events meaningfully related to this one.
+
+    Prefer entity_overlap / thematic pairwise correlations. Mega temporal bags
+    (100 co-window events) are ignored — those produce junk like ICE stories
+    linked to an NVIDIA SEC probe.
+    """
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
@@ -1393,36 +1534,119 @@ def get_tracked_event_linked_events(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT correlation_type, correlation_strength, event_ids
+                SELECT event_name,
+                       COALESCE(key_participant_entity_ids, '[]'::jsonb)
+                FROM intelligence.tracked_events
+                WHERE id = %s
+                """,
+                (event_id,),
+            )
+            self_row = cur.fetchone()
+            if not self_row:
+                conn.close()
+                return {"items": [], "limit": limit}
+            self_name = self_row[0] or ""
+            self_ents_raw = self_row[1]
+            self_ents: set[int] = set()
+            if isinstance(self_ents_raw, list):
+                for x in self_ents_raw:
+                    if isinstance(x, int):
+                        self_ents.add(x)
+                    elif isinstance(x, dict) and "id" in x:
+                        try:
+                            self_ents.add(int(x["id"]))
+                        except (TypeError, ValueError):
+                            pass
+
+            # Pairwise-quality correlations only (skip giant temporal dumps).
+            cur.execute(
+                """
+                SELECT correlation_type, correlation_strength, event_ids,
+                       COALESCE(entity_profile_ids, '{}') AS entity_profile_ids,
+                       COALESCE(cardinality(event_ids), 0) AS n_events
                 FROM intelligence.cross_domain_correlations
                 WHERE %s = ANY(event_ids)
-                ORDER BY discovered_at DESC NULLS LAST
-                LIMIT 20
+                  AND (
+                    correlation_type IN ('entity_overlap', 'thematic')
+                    OR cardinality(event_ids) BETWEEN 2 AND 12
+                  )
+                ORDER BY correlation_strength DESC NULLS LAST, discovered_at DESC NULLS LAST
+                LIMIT 40
                 """,
                 (event_id,),
             )
             rows = cur.fetchall() or []
-        other: set[int] = set()
+
+        scored: dict[int, float] = {}
         for r in rows:
-            for eid in list(r[2]) if r[2] else []:
-                if isinstance(eid, int) and eid != event_id:
-                    other.add(eid)
-        if not other:
+            ctype = (r[0] or "") if len(r) > 0 else ""
+            strength = float(r[1] or 0)
+            eids = list(r[2]) if r[2] else []
+            n_events = int(r[4] or len(eids))
+            # Hard reject mega-bags even if mislabeled thematic.
+            if n_events > 12:
+                continue
+            for eid in eids:
+                if not isinstance(eid, int) or eid == event_id:
+                    continue
+                boost = strength
+                if ctype == "entity_overlap":
+                    boost += 0.25
+                scored[eid] = max(scored.get(eid, 0.0), boost)
+
+        if not scored:
             conn.close()
             return {"items": [], "limit": limit}
+
+        ranked_ids = sorted(scored.keys(), key=lambda i: scored[i], reverse=True)[
+            : limit * 3
+        ]
         with conn.cursor() as cur:
             cur.execute(
                 f"""
                 SELECT {_EVENT_COLS}
                 FROM intelligence.tracked_events
                 WHERE id = ANY(%s)
-                ORDER BY updated_at DESC NULLS LAST
-                LIMIT %s
                 """,
-                (list(other)[: limit * 2], limit),
+                (ranked_ids,),
             )
+            by_id = {}
             for row in cur.fetchall() or []:
-                items.append(_row_to_event(row))
+                ev = _row_to_event(row)
+                by_id[ev["id"]] = ev
+
+        from services.event_tracking_service import (
+            development_title_matches_event,
+            significant_event_tokens,
+        )
+
+        self_tokens = {t.lower() for t in significant_event_tokens(self_name)}
+        for eid in ranked_ids:
+            ev = by_id.get(eid)
+            if not ev:
+                continue
+            other_name = ev.get("event_name") or ""
+            # Require title relevance OR shared participants.
+            title_ok = development_title_matches_event(self_name, other_name) or (
+                bool(self_tokens)
+                and len(
+                    self_tokens
+                    & {t.lower() for t in significant_event_tokens(other_name)}
+                )
+                >= 1
+            )
+            other_ents: set[int] = set()
+            raw_ents = ev.get("key_participant_entity_ids") or []
+            if isinstance(raw_ents, list):
+                for x in raw_ents:
+                    if isinstance(x, int):
+                        other_ents.add(x)
+            entity_ok = bool(self_ents & other_ents)
+            if not title_ok and not entity_ok:
+                continue
+            items.append(ev)
+            if len(items) >= limit:
+                break
         conn.close()
     except Exception as e:
         logger.warning("get_tracked_event_linked_events: %s", e)
@@ -2024,6 +2248,36 @@ def list_claims(
         except Exception:
             pass
         raise HTTPException(status_code=500, detail="Failed to list claims")
+
+
+@router.get("/claims/similar_clusters", response_model=dict)
+def similar_claim_clusters(
+    since_days: int = Query(7, ge=1, le=365),
+    min_count: int = Query(3, ge=2, le=100, description="Min claims per subject cluster"),
+    min_contexts: int = Query(2, ge=1, le=50, description="Min distinct contexts"),
+    domain_key: str | None = Query(None),
+    q: str | None = Query(None, description="ILIKE filter on subject/predicate/object"),
+    mode: str = Query("both", description="subject | triple | both"),
+    limit: int = Query(40, ge=1, le=100),
+) -> dict:
+    """Cluster similar extracted_claims for agent / discovery review."""
+    if mode not in ("subject", "triple", "both"):
+        raise HTTPException(status_code=400, detail="mode must be subject, triple, or both")
+    try:
+        from services.claim_similarity_service import scan_similar_claim_clusters
+
+        return scan_similar_claim_clusters(
+            since_days=since_days,
+            min_claim_count=min_count,
+            min_context_count=min_contexts,
+            domain_key=domain_key,
+            query=q,
+            mode=mode,  # type: ignore[arg-type]
+            limit=limit,
+        )
+    except Exception as e:
+        logger.warning("similar_claim_clusters: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to scan similar claims")
 
 
 @router.get("/context_centric/search", response_model=dict)

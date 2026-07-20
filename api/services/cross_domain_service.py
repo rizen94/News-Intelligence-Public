@@ -148,42 +148,9 @@ def run_cross_domain_synthesis(
             pass
         return {"success": False, "error": str(e), "correlations": []}
 
-    # Build correlation rows: (domain_1, domain_2, event_ids, entity_ids, type, strength)
+    # Pairwise entity-overlap only. Mega temporal bags (every multi-domain event in
+    # the window) made linked_events attach ICE / lithium / Iran war to SEC probes.
     seen_pairs: dict[tuple, dict[str, Any]] = {}
-    for r in rows:
-        event_id, event_type, event_name, start_date, domain_keys, key_participant = r
-        event_domains = [
-            _norm_tracked_domain_key(x)
-            for x in (list(domain_keys) if isinstance(domain_keys, (list, tuple)) else [])
-        ]
-        entity_ids = []
-        if isinstance(key_participant, list):
-            for x in key_participant:
-                if isinstance(x, int):
-                    entity_ids.append(x)
-                elif isinstance(x, dict) and "id" in x:
-                    entity_ids.append(x["id"])
-        for i, d1 in enumerate(event_domains):
-            for d2 in event_domains[i + 1 :]:
-                if d1 not in target_domains or d2 not in target_domains:
-                    continue
-                pair = (min(d1, d2), max(d1, d2))
-                if pair not in seen_pairs:
-                    seen_pairs[pair] = {
-                        "domain_1": pair[0],
-                        "domain_2": pair[1],
-                        "event_ids": [],
-                        "entity_profile_ids": [],
-                        "correlation_type": "temporal",
-                        "correlation_strength": correlation_threshold,
-                    }
-                rec = seen_pairs[pair]
-                if event_id not in rec["event_ids"]:
-                    rec["event_ids"].append(event_id)
-                for eid in entity_ids:
-                    if eid not in rec["entity_profile_ids"]:
-                        rec["entity_profile_ids"].append(eid)
-
     pairwise_recs = _pairwise_entity_correlations(
         rows,
         target_domains,
@@ -191,29 +158,20 @@ def run_cross_domain_synthesis(
     )
     for rec in pairwise_recs:
         pair = tuple(sorted((rec["domain_1"], rec["domain_2"])))
-        if pair not in seen_pairs:
-            seen_pairs[pair] = {
-                "domain_1": pair[0],
-                "domain_2": pair[1],
-                "event_ids": list(rec.get("event_ids", [])),
-                "entity_profile_ids": list(rec.get("entity_profile_ids", [])),
-                "correlation_type": rec.get("correlation_type", "entity_overlap"),
-                "correlation_strength": rec.get("correlation_strength", correlation_threshold),
-            }
-        else:
-            existing = seen_pairs[pair]
-            for eid in rec.get("event_ids", []):
-                if eid not in existing["event_ids"]:
-                    existing["event_ids"].append(eid)
-            for eid in rec.get("entity_profile_ids", []):
-                if eid not in existing["entity_profile_ids"]:
-                    existing["entity_profile_ids"].append(eid)
-            if (
-                rec.get("correlation_type") == "entity_overlap"
-                and existing.get("correlation_type") == "temporal"
-            ):
-                # CHECK allows entity_overlap | temporal | thematic (not "mixed")
-                existing["correlation_type"] = "thematic"
+        eids = tuple(sorted(int(x) for x in (rec.get("event_ids") or []) if isinstance(x, int)))
+        if len(eids) < 2:
+            continue
+        key = (pair[0], pair[1], eids)
+        seen_pairs[key] = {
+            "domain_1": pair[0],
+            "domain_2": pair[1],
+            "event_ids": list(eids),
+            "entity_profile_ids": list(rec.get("entity_profile_ids", []))[:80],
+            "correlation_type": "entity_overlap",
+            "correlation_strength": float(
+                rec.get("correlation_strength") or correlation_threshold
+            ),
+        }
 
     if not seen_pairs:
         return {"success": True, "correlation_id": None, "correlations": [], "meta_storylines": []}
@@ -229,17 +187,55 @@ def run_cross_domain_synthesis(
     inserted = []
     try:
         with conn.cursor() as cur:
-            for pair, rec in seen_pairs.items():
-                event_ids = list(rec["event_ids"])[:100]
+            # Drop oversized bags first so linked_events stops serving junk immediately.
+            cur.execute(
+                """
+                DELETE FROM intelligence.cross_domain_correlations
+                WHERE cardinality(COALESCE(event_ids, '{}')) > 12
+                """
+            )
+            purged = cur.rowcount or 0
+            if purged:
+                logger.info("cross_domain_synthesis purged %s mega-correlation rows", purged)
+
+            # Aggregate pairwise hits per domain pair for today's upsert key.
+            by_domain_pair: dict[tuple[str, str], dict[str, Any]] = {}
+            for rec in seen_pairs.values():
+                dp = (rec["domain_1"], rec["domain_2"])
+                bucket = by_domain_pair.setdefault(
+                    dp,
+                    {
+                        "domain_1": dp[0],
+                        "domain_2": dp[1],
+                        "event_ids": [],
+                        "entity_profile_ids": [],
+                        "correlation_type": "entity_overlap",
+                        "correlation_strength": correlation_threshold,
+                    },
+                )
+                for eid in rec["event_ids"]:
+                    if eid not in bucket["event_ids"] and len(bucket["event_ids"]) < 12:
+                        bucket["event_ids"].append(eid)
+                for eid in rec["entity_profile_ids"]:
+                    if eid not in bucket["entity_profile_ids"]:
+                        bucket["entity_profile_ids"].append(eid)
+                bucket["correlation_strength"] = max(
+                    float(bucket["correlation_strength"]),
+                    float(rec["correlation_strength"]),
+                )
+
+            for _dp, rec in by_domain_pair.items():
+                event_ids = list(rec["event_ids"])[:12]
                 entity_ids = list(rec["entity_profile_ids"])[:100]
-                strength = min(1.0, 0.5 + 0.1 * (len(event_ids) + len(entity_ids)))
-                if strength < correlation_threshold:
+                strength = float(rec.get("correlation_strength") or correlation_threshold)
+                if strength < correlation_threshold or len(event_ids) < 2:
                     continue
                 cor_id = uuid.uuid4()
                 meta = {
                     "time_window_days": int(time_window_days),
                     "event_count": len(event_ids),
                     "entity_count": len(entity_ids),
+                    "mode": "pairwise_entity_overlap",
                 }
                 cur.execute(
                     """

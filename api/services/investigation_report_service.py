@@ -193,7 +193,7 @@ def _build_chronicle_block(chronicles: list[dict], contexts: dict[int, dict]) ->
 
 
 def _build_cross_domain_link_block(event_id: int) -> str:
-    """Summaries of other tracked_events that appear in cross_domain_correlations with this event."""
+    """Summaries of other tracked_events meaningfully related via correlations."""
     conn = get_db_connection()
     if not conn:
         return ""
@@ -205,6 +205,8 @@ def _build_cross_domain_link_block(event_id: int) -> str:
                 SELECT domain_1, domain_2, correlation_type, correlation_strength, event_ids
                 FROM intelligence.cross_domain_correlations
                 WHERE %s = ANY(event_ids)
+                  AND cardinality(COALESCE(event_ids, '{}')) BETWEEN 2 AND 12
+                  AND correlation_type IN ('entity_overlap', 'thematic')
                 ORDER BY discovered_at DESC NULLS LAST
                 LIMIT 12
                 """,
@@ -221,17 +223,29 @@ def _build_cross_domain_link_block(event_id: int) -> str:
             conn.close()
             return ""
         with conn.cursor() as cur:
+            from services.event_tracking_service import development_title_matches_event
+
+            cur.execute(
+                "SELECT event_name FROM intelligence.tracked_events WHERE id = %s",
+                (event_id,),
+            )
+            self_name_row = cur.fetchone()
+            self_name = (self_name_row[0] if self_name_row else "") or ""
             cur.execute(
                 """
                 SELECT id, event_name, event_type, COALESCE(domain_keys, '{}') AS domain_keys
                 FROM intelligence.tracked_events
                 WHERE id = ANY(%s)
                 """,
-                (list(other_ids)[:15],),
+                (list(other_ids)[:30],),
             )
             for r in cur.fetchall() or []:
+                if self_name and not development_title_matches_event(self_name, r[1]):
+                    continue
                 dks = ", ".join(list(r[3]) if r[3] else [])
                 lines.append(f"- Event #{r[0]} ({r[2]}): {r[1] or ''} [domains: {dks}]")
+                if len(lines) >= 8:
+                    break
         conn.close()
     except Exception as e:
         logger.debug("_build_cross_domain_link_block: %s", e)
