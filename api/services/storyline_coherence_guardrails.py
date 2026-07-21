@@ -127,6 +127,13 @@ _STORYLINE_GENERIC_TITLE_WORDS = frozenset(
         "trading",
         "wall",
         "street",
+        "keywords",
+        "entities",
+        "ongoing",
+        "preview",
+        "transcript",
+        "summary",
+        "filings",
     }
 )
 
@@ -244,10 +251,227 @@ def _title_content_words(title: str) -> list[str]:
     return [w.lower() for w in re.findall(r"[A-Za-z0-9]+", title or "") if len(w) >= 2]
 
 
+# 5W1H + editorial prompt keys that must never become mega titles / entities.
+_FIVE_W_PLACEHOLDER_TOKENS = frozenset(
+    {"what", "who", "when", "where", "why", "how", "lede", "headline", "summary"}
+)
+
+_PLACEHOLDER_MEGA_TITLE_RE = re.compile(
+    r"^Ongoing:\s*(WHAT|WHO|WHEN|WHERE|WHY|HOW|LEDE|HEADLINE|SUMMARY)\s*$",
+    re.IGNORECASE,
+)
+
+_LEAKED_TITLE_KEY_RE = re.compile(
+    r"^[\{\[]|"
+    r'["\']?(lede|headline|summary|title|who|what|when|where|why|how)["\']?\s*:',
+    re.IGNORECASE,
+)
+
+
+def is_placeholder_mega_title(title: str | None) -> bool:
+    """True for titles like 'Ongoing: WHAT' (leaked 5W1H keys)."""
+    t = _norm_title(title)
+    if not t:
+        return False
+    if _PLACEHOLDER_MEGA_TITLE_RE.match(t):
+        return True
+    lower = t.lower()
+    if lower.startswith("ongoing:"):
+        rest = lower[len("ongoing:") :].strip()
+        words = _title_content_words(rest)
+        if len(words) == 1 and words[0] in _FIVE_W_PLACEHOLDER_TOKENS:
+            return True
+    return False
+
+
+def is_leaked_storyline_title(title: str | None) -> bool:
+    """True when title looks like JSON / prompt-key leakage."""
+    t = _norm_title(title)
+    if not t:
+        return False
+    if t.startswith("{") or t.startswith("["):
+        return True
+    if '":' in t or "':" in t:
+        return True
+    if _LEAKED_TITLE_KEY_RE.search(t):
+        return True
+    return False
+
+
+_YEAR_ENTITY_TITLE_PREFIX_RE = re.compile(r"^Year_20\d{2}\s*:\s*", re.IGNORECASE)
+
+
+def sanitize_storyline_title_for_display(
+    title: str | None,
+    *,
+    fallback: str | None = None,
+) -> str:
+    """
+    Strip leaked JSON braces, prompt keys, and Year_20xx: prefixes for API/UI.
+
+    Does not invent a better headline — only removes known garbage prefixes.
+    """
+    raw = (title or "").strip()
+    if not raw:
+        return (fallback or "").strip() or "Untitled Storyline"
+
+    cleaned = _YEAR_ENTITY_TITLE_PREFIX_RE.sub("", raw).strip()
+    if cleaned.startswith("{") or cleaned.startswith("["):
+        cleaned = re.sub(r"^[\{\[\s\"']+", "", cleaned)
+        cleaned = re.sub(r"^:\s*", "", cleaned).strip()
+        cleaned = re.sub(
+            r"^(lede|headline|summary|title|who|what|when|where|why|how)\s*:\s*",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        ).strip()
+
+    if (
+        not cleaned
+        or is_placeholder_mega_title(cleaned)
+        or is_leaked_storyline_title(cleaned)
+        or cleaned in ("{", ":", "[", "]")
+    ):
+        return (fallback or "").strip() or "Untitled Storyline"
+    return _soft_ellipsize_mid_word_truncation(cleaned)
+
+
+def _soft_ellipsize_mid_word_truncation(title: str) -> str:
+    """If title ends mid-token (e.g. '… ove'), trim to last full word + ellipsis."""
+    t = (title or "").strip()
+    if len(t) < 24:
+        return t
+    if re.search(r"[.!?…)\"'\]]$", t):
+        return t
+    m = re.match(r"^(.*\s)([A-Za-z]{1,3})$", t)
+    if not m:
+        return t
+    head = m.group(1).rstrip()
+    if len(head) < 20:
+        return t
+    return f"{head}…"
+
+
+def is_mega_template_description(description: str | None) -> bool:
+    """True for retired boilerplate mega descriptions."""
+    d = (description or "").strip().lower()
+    return d.startswith("mega-storyline covering") or d.startswith(
+        "mega-storyline (initializing"
+    )
+
+
+def mega_quality_score_for_title(title: str | None, *, coherent: bool = True) -> float:
+    """Stamp quality_score on mega rows: low for placeholders/leaks."""
+    if is_placeholder_mega_title(title) or is_leaked_storyline_title(title):
+        return 0.15
+    if is_overly_generic_storyline_title(title):
+        return 0.25
+    if not coherent:
+        return 0.25
+    return 0.75
+
+
+def mega_min_shared_entities() -> int:
+    try:
+        return max(1, int(env_str("STORYLINE_MEGA_MIN_SHARED_ENTITIES", "1")))
+    except ValueError:
+        return 1
+
+
+def merge_min_shared_entities() -> int:
+    try:
+        return max(1, int(env_str("STORYLINE_MERGE_MIN_SHARED_ENTITIES", "1")))
+    except ValueError:
+        return 1
+
+
+def _clean_storyline_entity_set(raw: Any) -> set[str]:
+    out: set[str] = set()
+    for ent in raw or set():
+        key = (ent or "").strip().lower()
+        if (
+            not key
+            or len(key) < 3
+            or key in _FINANCE_ENTITY_STOPWORDS
+            or key in _FIVE_W_PLACEHOLDER_TOKENS
+        ):
+            continue
+        out.add(key)
+    return out
+
+
+def _entities_from_title(title: str | None) -> set[str]:
+    """Lightweight title entities for merge gating when StorylineInfo.entities is empty."""
+    text = title or ""
+    ents: set[str] = set()
+    for match in re.finditer(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b", text):
+        key = match.group(1).strip().lower()
+        if (
+            len(key) >= 3
+            and key not in _FINANCE_ENTITY_STOPWORDS
+            and key not in _FIVE_W_PLACEHOLDER_TOKENS
+        ):
+            ents.add(key)
+    for match in re.finditer(r"\b([A-Z]{2,})\b", text):
+        key = match.group(1).lower()
+        if (
+            len(key) >= 2
+            and key not in _FINANCE_ENTITY_STOPWORDS
+            and key not in _FIVE_W_PLACEHOLDER_TOKENS
+        ):
+            ents.add(key)
+    return ents
+
+
+def assess_storyline_pair_merge_coherence(
+    domain: str,
+    s1: Any,
+    s2: Any,
+) -> tuple[bool, str]:
+    """
+    Gate pairwise storyline merge. Requires shared non-stopword entities and
+    rejects leaked/placeholder titles.
+    """
+    if not guardrails_enabled():
+        return True, "disabled"
+
+    t1 = (getattr(s1, "title", None) or "").strip()
+    t2 = (getattr(s2, "title", None) or "").strip()
+    if is_leaked_storyline_title(t1) or is_leaked_storyline_title(t2):
+        return False, "leaked_title"
+    if is_placeholder_mega_title(t1) or is_placeholder_mega_title(t2):
+        return False, "placeholder_title"
+
+    e1 = _clean_storyline_entity_set(getattr(s1, "entities", None))
+    e2 = _clean_storyline_entity_set(getattr(s2, "entities", None))
+    if not e1:
+        e1 = _entities_from_title(t1)
+    if not e2:
+        e2 = _entities_from_title(t2)
+
+    shared = e1 & e2
+    min_shared = merge_min_shared_entities()
+    if len(shared) < min_shared:
+        return False, "insufficient_shared_entities"
+
+    # Finance: bare earnings pairs without shared actors already fail above;
+    # also block when both titles are generic filing vocabulary only.
+    dk = (domain or "").lower().replace("_", "-")
+    if dk.startswith("finance"):
+        if is_overly_generic_storyline_title(t1, domain) and is_overly_generic_storyline_title(
+            t2, domain
+        ):
+            return False, "generic_pair_titles"
+
+    return True, "ok"
+
+
 def is_overly_generic_storyline_title(title: str | None, domain: str = "") -> bool:
     """True when title is too vague to stand alone as a storyline label."""
     t = _norm_title(title)
     if not t:
+        return True
+    if is_placeholder_mega_title(t) or is_leaked_storyline_title(t):
         return True
     if _is_overly_generic_subject(t):
         return True
@@ -260,7 +484,12 @@ def is_overly_generic_storyline_title(title: str | None, domain: str = "") -> bo
     words = _title_content_words(lower)
     if not words:
         return True
+    if len(words) == 1 and words[0] in _FIVE_W_PLACEHOLDER_TOKENS:
+        return True
     if len(words) == 1 and words[0] in _STORYLINE_GENERIC_TITLE_WORDS:
+        return True
+    uniq = list(dict.fromkeys(words))
+    if uniq and all(w in _STORYLINE_GENERIC_TITLE_WORDS for w in uniq):
         return True
     if len(words) <= 3 and all(w in _STORYLINE_GENERIC_TITLE_WORDS for w in words):
         return True
@@ -384,6 +613,36 @@ def assess_cluster_coherence(
     return True, "ok"
 
 
+def assess_kitchen_sink_risk(
+    title: str | None,
+    articles: list[dict[str, Any]],
+) -> tuple[bool, str]:
+    """
+    Heuristic for bloated multi-topic storylines that still pass entity_diversity.
+    Returns (is_kitchen_sink, reason).
+    """
+    t = (title or "").strip()
+    lower = t.lower()
+    if " amid " in lower and (" and " in lower or "," in lower):
+        return True, "title_amid_join"
+    if not articles:
+        return False, "ok"
+    entity_counts = extract_cluster_specific_entities(articles)
+    n = len(articles)
+    if not entity_counts:
+        return False, "ok"
+    top_entity, top_n = entity_counts.most_common(1)[0]
+    # Many distinct actors, none dominant → kitchen sink
+    if len(entity_counts) >= 8 and top_n < max(2, int(n * 0.25)):
+        return True, f"diffuse_entities:{top_entity}"
+    # Two leading entities both weak relative to bag size
+    top2 = entity_counts.most_common(2)
+    if len(top2) == 2 and n >= 15:
+        if all(c < max(2, int(n * 0.2)) for _, c in top2) and len(entity_counts) >= 6:
+            return True, "no_dominant_theme"
+    return False, "ok"
+
+
 def assess_mega_group_coherence(domain: str, children: list[Any]) -> tuple[bool, str]:
     """
     Gate mega-storyline parent creation. ``children`` are StorylineInfo-like objects
@@ -395,19 +654,33 @@ def assess_mega_group_coherence(domain: str, children: list[Any]) -> tuple[bool,
         return False, "too_few_children"
 
     titles = [(getattr(c, "title", None) or "").strip() for c in children]
+    if any(is_leaked_storyline_title(t) for t in titles if t):
+        return False, "leaked_child_title"
     if all(is_overly_generic_storyline_title(t, domain) for t in titles if t):
         return False, "all_generic_child_titles"
+
+    # All domains: require at least one entity shared by ≥2 children.
+    all_entities: Counter[str] = Counter()
+    for child in children:
+        for ent in getattr(child, "entities", None) or set():
+            key = (ent or "").strip().lower()
+            if (
+                not key
+                or len(key) < 3
+                or key in _FINANCE_ENTITY_STOPWORDS
+                or key in _FIVE_W_PLACEHOLDER_TOKENS
+            ):
+                continue
+            all_entities[key] += 1
+    shared = sum(1 for _, n in all_entities.items() if n >= 2)
+    min_shared = mega_min_shared_entities()
+    if shared < min_shared:
+        return False, "insufficient_shared_entities"
 
     dk = (domain or "").lower().replace("_", "-")
     if dk.startswith("finance"):
         er_hits = sum(1 for t in titles if _EARNINGS_REPORT_CHILD_TITLE_RE.search(t))
         if er_hits >= max(2, (len(children) * 2 + 2) // 3):
-            all_entities: Counter[str] = Counter()
-            for child in children:
-                for ent in getattr(child, "entities", None) or set():
-                    key = (ent or "").strip().lower()
-                    if key and key not in _FINANCE_ENTITY_STOPWORDS:
-                        all_entities[key] += 1
             recurring = sum(1 for _, n in all_entities.items() if n >= 2)
             if recurring < 2:
                 return False, "finance_earnings_mega_insufficient_entities"
@@ -447,7 +720,11 @@ def post_process_storyline_description(description: str | None, domain: str) -> 
         " related articles",
         "similarity.",
         "emerging storyline detected from",
+        "mega-storyline covering",
+        "mega-storyline (initializing",
     )
-    if any(m in lower for m in boilerplate_markers) and len(d) < 120:
+    if any(m in lower for m in boilerplate_markers) and (
+        len(d) < 120 or lower.startswith("mega-storyline")
+    ):
         return ""
     return d

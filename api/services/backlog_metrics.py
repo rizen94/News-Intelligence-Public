@@ -4,9 +4,10 @@ Counts are defined to match each phase’s real eligibility (what automation wou
 not coarse table totals, so Monitor ``pending_records`` reflects actionable backlog.
 
 **topic_clustering (default):** ``pending`` = articles with no ``metadata.pipeline.topic_clustering.last_pass_at``
-that have sufficient body text — i.e. never completed a successful clustering pass (including
-``no_topics_extracted`` outcomes). Legacy “churn” counting (low average confidence after assignments)
-is available via ``TOPIC_CLUSTERING_BACKLOG_USE_PASS_MARKER=false``.
+that have sufficient body text **and** pass the same signal-first full-lane gate the worker uses
+(when ``ARTICLE_SIGNAL_ENABLED``). Light-lane / low-quality pass-null inventory is excluded so
+Monitor and residual scheduling do not thrash empty cycles. Legacy “churn” counting (low average
+confidence after assignments) is available via ``TOPIC_CLUSTERING_BACKLOG_USE_PASS_MARKER=false``.
 
 **Other phases:** ``PIPELINE_BACKLOG_USE_PASS_MARKERS`` (default true) and per-phase
 ``<PHASE>_BACKLOG_USE_PASS_MARKER`` gate the same ``metadata.pipeline.<phase>.last_pass_at`` pattern for
@@ -21,17 +22,22 @@ phases not listed still use interval-based scheduling. Adding more phases to
 _get_raw_pending_counts and BATCH_SIZE_PER_TASK makes more of the pipeline workload-driven.
 """
 
+import asyncio
 import logging
 import os
 import threading
 import time
-from typing import Dict, Optional
+from contextvars import ContextVar
+from typing import Any, Dict, Optional
 
 from shared.article_processing_gates import (
     sql_context_sync_article_ready,
     sql_ml_ready_and_content_bounds,
 )
-from shared.domain_registry import get_pipeline_schema_names_active, pipeline_url_schema_pairs
+from shared.domain_registry import (
+    get_pipeline_schema_names_active,
+    pipeline_url_schema_pairs,
+)
 from shared.pipeline_pass_marker import (
     phase_backlog_uses_pass_marker,
     sql_article_pass_null,
@@ -41,6 +47,28 @@ from shared.pipeline_article_selection import sql_order_created_at
 from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
+
+# One shared DB session for a full pending-count refresh (avoids N pool checkouts).
+_shared_backlog_conn: ContextVar[Any] = ContextVar("shared_backlog_conn", default=None)
+
+
+class _SharedBacklogConn:
+    """Proxy around a live connection whose ``close()`` is a no-op during batch refresh."""
+
+    __slots__ = ("_conn",)
+
+    def __init__(self, conn: Any) -> None:
+        self._conn = conn
+
+    def close(self) -> None:
+        return None
+
+    def cursor(self, *args: Any, **kwargs: Any):
+        return self._conn.cursor(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._conn, name)
+
 
 def _backlog_cache_ttl_seconds() -> int:
     """Cache TTL for pending/backlog counts; override via BACKLOG_CACHE_TTL_SECONDS."""
@@ -73,7 +101,7 @@ BATCH_SIZE_PER_TASK: Dict[str, int] = {
     "metadata_enrichment": 15,  # order-of-magnitude per domain batch
     "ml_processing": 150,  # 50 × 3 schemas
     "entity_extraction": 60,  # 20 × 3
-    "unified_intake_extraction": 90,
+    "unified_intake_extraction": 6,
     "sentiment_analysis": 300,  # 100 × 3
     "quality_scoring": 150,  # 50 × 3
     "storyline_processing": 24,  # ~8 storylines worth of summary work per full pass
@@ -83,7 +111,9 @@ BATCH_SIZE_PER_TASK: Dict[str, int] = {
     "storyline_assembly": 60,  # ~automation_batch_per_assembly (20) × active domains
     "proactive_detection": 1000,  # proactive candidate pool cap per domain
     "storyline_automation": 5,  # automation_manager LIMIT storylines per domain per tick
-    "rag_enhancement": 9,  # few storylines enhanced per tick per domain
+    "storyline_review_agent": 60,  # suggestions reviewed per domain batch (score + LLM mid-band)
+    "storyline_membership_review": 8,  # mega-threads reviewed per domain per tick
+    "rag_enhancement": 5,  # top-N hot per domain (see RAG_ENHANCEMENT_TOP_N_PER_DOMAIN)
     "event_extraction": 90,  # 30 × 3
     "claims_to_facts": 10_000,  # overridden by get_claims_to_facts_batch_limit() when available
     "legislative_references": 8,  # articles scanned per domain per run (Congress.gov rate limits)
@@ -92,7 +122,10 @@ BATCH_SIZE_PER_TASK: Dict[str, int] = {
     "entity_dossier_compile": 20,  # _run_scheduled_dossier_compiles max per run
     "story_enhancement": 50,  # fact_change_log + story_update_queue proxy per cycle
     "storyline_synthesis": 16,  # ~4 storylines × active domains per _execute_storyline_synthesis tick
-    "graph_connection_distillation": 12,  # GRAPH_CONNECTION_DISTILLATION_BATCH proposals per run
+    "graph_connection_distillation": 50,  # GRAPH_CONNECTION_DISTILLATION_BATCH proposals per run
+    "embedding_link_candidates": 12,
+    "graph_link_drift_review": 40,
+    "mention_resolution": 500,  # NRI_MENTION_RESOLVE_BATCH_LIMIT default
     "pending_db_flush": 200,  # rough lines replayed per successful flush (order-of-magnitude)
 }
 
@@ -166,6 +199,10 @@ RAW_PENDING_COUNT_KEYS = frozenset(
         "rag_enhancement",
         "event_extraction",
         "storyline_automation",
+        "storyline_review_agent",
+        "storyline_membership_review",
+        "embedding_link_candidates",
+        "graph_link_drift_review",
         "claims_to_facts",
         "legislative_references",
         "entity_profile_sync",
@@ -174,6 +211,7 @@ RAW_PENDING_COUNT_KEYS = frozenset(
         "story_enhancement",
         "storyline_synthesis",
         "graph_connection_distillation",
+        "mention_resolution",
         "nightly_enrichment_context",
     }
 )
@@ -183,17 +221,42 @@ def _get_raw_pending_counts() -> Dict[str, int]:
     """Query all raw pending-work counts (not cached — called by the cached wrapper)."""
     raw: Dict[str, int] = {}
 
-    def _set(phase: str, value: int) -> None:
-        raw[phase] = 0 if _should_skip_backlog_count(phase) else value
+    def _set(phase: str, value) -> None:
+        # Skip expensive COUNT SQL for retired/suppressed phases (evaluate callables lazily).
+        if _should_skip_backlog_count(phase):
+            raw[phase] = 0
+            return
+        raw[phase] = int(value() if callable(value) else (value or 0))
 
+    shared_conn = None
+    shared_token = None
     try:
-        _set("content_enrichment", _count_content_enrichment_backlog())
-        _set("context_sync", _count_context_sync_backlog())
+        shared_conn = _acquire_raw_backlog_conn()
+        if shared_conn is not None:
+            shared_token = _shared_backlog_conn.set(shared_conn)
+
+        hot: dict[str, int] = {}
+        if shared_conn is not None:
+            try:
+                hot = _hot_path_pending_counts(shared_conn)
+            except Exception as e:
+                logger.debug("backlog hot_path via shared conn: %s", e)
+        _set(
+            "content_enrichment",
+            hot.get("content_enrichment", 0) if hot else _count_content_enrichment_backlog(),
+        )
+        _set(
+            "context_sync",
+            hot.get("context_sync", 0) if hot else _count_context_sync_backlog(),
+        )
         _set("event_tracking", _count_event_tracking_backlog())
         _set("claim_extraction", _count_claim_extraction_backlog())
         _set("entity_profile_build", _count_entity_profile_build_backlog())
-        _set("investigation_report_refresh", _count_investigation_report_backlog())
-        _set("document_processing", _count_document_processing_backlog())
+        _set("investigation_report_refresh", _count_investigation_report_backlog)
+        _set(
+            "document_processing",
+            hot.get("document_processing", 0) if hot else _count_document_processing_backlog(),
+        )
         try:
             from shared.database.pending_db_writes import pending_line_count
 
@@ -207,23 +270,28 @@ def _get_raw_pending_counts() -> Dict[str, int]:
         _set("unified_intake_extraction", _count_unified_intake_extraction_pending())
         _set("sentiment_analysis", _count_sentiment_analysis_pending())
         _set("quality_scoring", _count_quality_scoring_pending())
-        _set("storyline_processing", _count_storyline_processing_pending())
+        _set("storyline_processing", _count_storyline_processing_pending)
         _set("topic_clustering", _count_topic_clustering_pending())
-        _set("timeline_generation", _count_timeline_generation_pending())
-        _set("storyline_discovery", _count_storyline_discovery_pending())
-        _set("rag_enhancement", _count_rag_enhancement_pending())
+        _set("timeline_generation", _count_timeline_generation_pending)
+        _set("storyline_discovery", _count_storyline_discovery_pending)
+        _set("rag_enhancement", _count_rag_enhancement_pending)
         _set("event_extraction", _count_event_extraction_pending())
-        _set("proactive_detection", _count_proactive_detection_pending())
+        _set("proactive_detection", _count_proactive_detection_pending)
         _set("storyline_assembly", _count_storyline_assembly_pending())
         _set("storyline_automation", _count_storyline_automation_pending())
+        _set("storyline_review_agent", get_storyline_review_queue_pending())
+        _set("storyline_membership_review", _count_storyline_membership_review_pending())
         _set("claims_to_facts", _count_claims_to_facts_pending())
         _set("legislative_references", _count_legislative_references_backlog())
         _set("entity_profile_sync", _count_entity_profile_sync_pending())
         _set("entity_enrichment", _count_entity_enrichment_pending())
         _set("entity_dossier_compile", _count_entity_dossier_compile_pending())
-        _set("story_enhancement", _count_story_enhancement_pending())
-        _set("storyline_synthesis", _count_storyline_synthesis_pending())
+        _set("story_enhancement", _count_story_enhancement_pending)
+        _set("storyline_synthesis", _count_storyline_synthesis_pending)
         _set("graph_connection_distillation", _count_graph_connection_distillation_pending())
+        _set("embedding_link_candidates", _count_embedding_link_candidates_pending())
+        _set("graph_link_drift_review", _count_graph_link_drift_pending())
+        _set("mention_resolution", _count_mention_resolution_pending())
         nightly_base = (
             int(raw.get("content_enrichment", 0) or 0)
             + int(raw.get("context_sync", 0) or 0)
@@ -242,6 +310,14 @@ def _get_raw_pending_counts() -> Dict[str, int]:
     except Exception as e:
         logger.warning("backlog_metrics _get_raw_pending_counts: %s", e)
         return raw
+    finally:
+        if shared_token is not None:
+            _shared_backlog_conn.reset(shared_token)
+        if shared_conn is not None:
+            try:
+                shared_conn.close()
+            except Exception:
+                pass
     built = frozenset(raw.keys())
     if built != RAW_PENDING_COUNT_KEYS:
         raise RuntimeError(
@@ -260,13 +336,27 @@ _pending_cache_time: float = 0
 _refresh_cache_lock = threading.Lock()
 
 
+def _called_from_asyncio_loop_thread() -> bool:
+    """True when invoked (possibly nested) on the thread running an asyncio event loop."""
+    try:
+        asyncio.get_running_loop()
+        return True
+    except RuntimeError:
+        return False
+
+
+_backlog_invalidate_last_mono: float = 0.0
+
+
 def invalidate_backlog_metrics_cache() -> None:
     """Force the next get_all_pending_counts / get_all_backlog_counts to re-query the DB."""
     global _backlog_cache_time, _pending_cache_time, _backlog_cache, _pending_cache
+    global _backlog_invalidate_last_mono
     _backlog_cache_time = 0.0
     _pending_cache_time = 0.0
     _backlog_cache.clear()
     _pending_cache.clear()
+    _backlog_invalidate_last_mono = time.monotonic()
     try:
         from shared.unified_intake_backlog import invalidate_unified_intake_backlog_stats_cache
 
@@ -275,20 +365,55 @@ def invalidate_backlog_metrics_cache() -> None:
         pass
 
 
+def invalidate_backlog_metrics_cache_throttled(*, min_interval_seconds: float = 60.0) -> bool:
+    """
+    Invalidate backlog caches at most once per ``min_interval_seconds``.
+
+    UIE/enrich drains used to call full invalidate every round (~100 COUNT scans).
+    Prefer this for high-frequency callers; use ``invalidate_backlog_metrics_cache`` for
+    operator/nightly forced refresh.
+    """
+    global _backlog_invalidate_last_mono
+    now = time.monotonic()
+    gap = max(0.0, float(min_interval_seconds))
+    if gap > 0 and (now - _backlog_invalidate_last_mono) < gap:
+        return False
+    invalidate_backlog_metrics_cache()
+    return True
+
 def _per_run_batch_size(task: str) -> int:
     """Align backlog subtraction with actual automation batch sizes (env-tunable for claim phases)."""
+    if task == "content_enrichment":
+        try:
+            from shared.adaptive_batch_policy import get_persisted_adaptive_batch
+
+            adaptive = get_persisted_adaptive_batch("content_enrichment")
+            if adaptive is not None:
+                return max(1, min(120, int(adaptive)))
+        except Exception:
+            pass
     if task in NO_BACKLOG_BATCH_SUBTRACT_PHASES:
         return 0
     if task == "entity_extraction":
         try:
+            from shared.adaptive_batch_policy import get_persisted_adaptive_batch
+
             n = int(env_str("ENTITY_EXTRACTION_ARTICLES_PER_DOMAIN", "40"))
             n = max(5, min(120, n))
+            adaptive = get_persisted_adaptive_batch("entity_extraction")
+            if adaptive is not None:
+                n = max(5, min(120, int(adaptive)))
             doms = len(get_pipeline_schema_names_active()) or 1
             return n * doms
         except Exception:
             pass
     if task == "claim_extraction":
         try:
+            from shared.adaptive_batch_policy import get_persisted_adaptive_batch
+
+            adaptive = get_persisted_adaptive_batch("claim_extraction")
+            if adaptive is not None:
+                return max(1, int(adaptive))
             from services.claim_extraction_service import get_claim_extraction_batch_limit
 
             return int(get_claim_extraction_batch_limit())
@@ -296,6 +421,11 @@ def _per_run_batch_size(task: str) -> int:
             pass
     if task == "claims_to_facts":
         try:
+            from shared.adaptive_batch_policy import get_persisted_adaptive_batch
+
+            adaptive = get_persisted_adaptive_batch("claims_to_facts")
+            if adaptive is not None:
+                return max(1, int(adaptive))
             from services.claim_extraction_service import get_claims_to_facts_batch_limit
 
             return int(get_claims_to_facts_batch_limit())
@@ -303,8 +433,26 @@ def _per_run_batch_size(task: str) -> int:
             pass
     if task == "topic_clustering":
         try:
+            from shared.adaptive_batch_policy import get_persisted_adaptive_batch
+
+            per = 20
+            adaptive = get_persisted_adaptive_batch("topic_clustering")
+            if adaptive is not None:
+                per = max(5, min(200, int(adaptive)))
+            else:
+                try:
+                    per = max(5, min(200, int(env_str("TOPIC_CLUSTERING_BATCH_SIZE", "20"))))
+                except (TypeError, ValueError):
+                    per = 20
             doms = len(get_pipeline_schema_names_active()) or 1
-            return 20 * doms
+            return per * doms
+        except Exception:
+            pass
+    if task == "mention_resolution":
+        try:
+            from config.runtime import mention_resolve_batch_limit
+
+            return int(mention_resolve_batch_limit())
         except Exception:
             pass
     if task == "storyline_automation":
@@ -317,12 +465,22 @@ def _per_run_batch_size(task: str) -> int:
             pass
     if task == "storyline_assembly":
         try:
-            from shared.domain_registry import get_pipeline_active_domain_keys
+            from services.storyline_assembly_service import storyline_assembly_rows_per_run
 
-            doms = len(get_pipeline_active_domain_keys()) or 1
-            return 20 * doms
+            return int(storyline_assembly_rows_per_run())
         except Exception:
             pass
+    if task == "storyline_review_agent":
+        # Per-domain adaptive limit (not × domains). Prefer persisted autotune size.
+        try:
+            from shared.adaptive_batch_policy import get_persisted_adaptive_batch
+
+            adaptive = get_persisted_adaptive_batch("storyline_review_agent")
+            if adaptive is not None:
+                return max(20, int(adaptive))
+            return max(20, int(BATCH_SIZE_PER_TASK.get("storyline_review_agent", 60)))
+        except Exception:
+            return int(BATCH_SIZE_PER_TASK.get("storyline_review_agent", 60))
     if task == "story_enhancement":
         try:
             import os
@@ -349,20 +507,68 @@ def _per_run_batch_size(task: str) -> int:
             pass
     if task == "entity_profile_build":
         try:
+            from shared.adaptive_batch_policy import get_persisted_adaptive_batch
+
+            adaptive = get_persisted_adaptive_batch("entity_profile_build")
+            if adaptive is not None:
+                return max(1, min(150, int(adaptive)))
             return max(1, min(150, int(env_str("ENTITY_PROFILE_BUILD_LIMIT", "25"))))
         except Exception:
             pass
     if task == "entity_dossier_compile":
         try:
+            from shared.adaptive_batch_policy import get_persisted_adaptive_batch
+
+            adaptive = get_persisted_adaptive_batch("entity_dossier_compile")
+            if adaptive is not None:
+                return max(1, min(100, int(adaptive)))
             return max(1, min(100, int(env_str("ENTITY_DOSSIER_COMPILE_MAX", "20"))))
         except Exception:
             pass
     if task == "event_tracking":
         try:
+            from shared.adaptive_batch_policy import get_persisted_adaptive_batch
+
+            adaptive = get_persisted_adaptive_batch("event_tracking")
             batch_max = max(25, min(300, int(env_str("EVENT_TRACKING_ASSEMBLY_BATCH_MAX", "300"))))
+            if adaptive is not None:
+                return max(1, min(batch_max, int(adaptive)))
             return max(1, min(batch_max, int(env_str("EVENT_TRACKING_ASSEMBLY_BATCH_LIMIT", "25"))))
         except Exception:
             pass
+    if task == "graph_connection_distillation":
+        try:
+            from shared.adaptive_batch_policy import get_persisted_adaptive_batch
+
+            adaptive = get_persisted_adaptive_batch("graph_connection_distillation")
+            default = max(1, min(200, int(env_str("GRAPH_CONNECTION_DISTILLATION_BATCH", "50"))))
+            if adaptive is not None:
+                return max(1, min(200, int(adaptive)))
+            return default
+        except Exception:
+            pass
+    # Generic: any phase with adaptive bounds + persisted batch
+    try:
+        from shared.adaptive_batch_policy import (
+            get_persisted_adaptive_batch,
+            is_adaptive_batch_phase,
+            is_per_domain_adaptive_batch,
+        )
+
+        if is_adaptive_batch_phase(task):
+            adaptive = get_persisted_adaptive_batch(task)
+            if adaptive is not None:
+                n = max(1, int(adaptive))
+                if is_per_domain_adaptive_batch(task):
+                    doms = len(get_pipeline_schema_names_active()) or 1
+                    if task == "storyline_automation":
+                        from shared.domain_registry import get_pipeline_active_domain_keys
+
+                        doms = len(get_pipeline_active_domain_keys()) or 1
+                    return n * doms
+                return n
+    except Exception:
+        pass
     if task in BATCH_SIZE_PER_TASK:
         return int(BATCH_SIZE_PER_TASK[task])
     return _default_batch_for_unknown_phase()
@@ -374,18 +580,47 @@ def get_per_run_batch_size_for_phase(phase_name: str) -> int:
 
 
 def _refresh_cache() -> None:
-    """Refresh both pending and backlog caches (single-flight under lock)."""
+    """Refresh both pending and backlog caches (single-flight under lock).
+
+    Goal: one DB session per refresh via shared contextvar in ``_get_raw_pending_counts``.
+
+    Never block the uvicorn event loop behind another refresh: serve stale caches when
+    available, and skip waiting on the asyncio thread when the cache is still empty
+    (callers that need fresh counts should use ``asyncio.to_thread``).
+    """
     global _backlog_cache, _backlog_cache_time, _pending_cache, _pending_cache_time
     now = time.monotonic()
     if now - _backlog_cache_time <= BACKLOG_CACHE_TTL and _backlog_cache and _pending_cache:
         return
 
-    with _refresh_cache_lock:
+    acquired = _refresh_cache_lock.acquire(blocking=False)
+    if not acquired:
+        # Stale caches are safe to serve without waiting.
+        if _pending_cache and _backlog_cache:
+            return
+        # No cache yet: wait for the in-flight refresh — but never on the asyncio
+        # loop thread (that freezes Monitor HTTP for the full SQL duration).
+        if _called_from_asyncio_loop_thread():
+            return
+        _refresh_cache_lock.acquire(blocking=True)
+        acquired = True
+
+    try:
         now = time.monotonic()
         if now - _backlog_cache_time <= BACKLOG_CACHE_TTL and _backlog_cache and _pending_cache:
             return
 
         raw = _get_raw_pending_counts()
+        # Never clobber a good cache with an empty refresh (pool/conn failure → Monitor zeros).
+        if not raw:
+            logger.warning(
+                "backlog_metrics refresh returned 0 phases — keeping prior cache "
+                "(pending=%d backlog=%d)",
+                len(_pending_cache),
+                len(_backlog_cache),
+            )
+            return
+
         _pending_cache = raw.copy()
         _pending_cache_time = now
 
@@ -395,7 +630,9 @@ def _refresh_cache() -> None:
             out[task] = max(pending - batch, 0)
         _backlog_cache = out
         _backlog_cache_time = now
-
+    finally:
+        if acquired:
+            _refresh_cache_lock.release()
 
 def get_all_backlog_counts() -> Dict[str, int]:
     """
@@ -432,7 +669,13 @@ def _get_conn():
     Prefer the **worker** pool (same as automation). When that pool is saturated or times out,
     fall back to the **UI** pool so ``processing_progress`` (which already uses the UI pool for
     its main query block) can still show ``pending_records`` instead of silent all-zeros.
+
+    During ``_get_raw_pending_counts`` a shared session is installed via contextvar so each
+    ``_count_*`` helper reuses one checkout instead of opening dozens of connections.
     """
+    shared = _shared_backlog_conn.get()
+    if shared is not None:
+        return _SharedBacklogConn(shared)
     try:
         from shared.database.connection import get_db_connection
 
@@ -446,6 +689,21 @@ def _get_conn():
                 "backlog_metrics: worker pool connection failed; using UI pool for pending counts"
             )
             return conn
+        except Exception:
+            return None
+
+
+def _acquire_raw_backlog_conn():
+    """Open a real connection for a full pending-count refresh (never the shared proxy)."""
+    try:
+        from shared.database.connection import get_db_connection
+
+        return get_db_connection()
+    except Exception:
+        try:
+            from shared.database.connection import get_ui_db_connection
+
+            return get_ui_db_connection()
         except Exception:
             return None
 
@@ -500,6 +758,52 @@ def _count_content_enrichment_backlog() -> int:
             pass
 
 
+def _hot_path_pending_counts(conn) -> dict[str, int]:
+    """Batch ingest hot-path COUNTs on one DB session (content_enrichment, context_sync, document_processing)."""
+    out = {"content_enrichment": 0, "context_sync": 0, "document_processing": 0}
+    try:
+        for schema in get_pipeline_schema_names_active():
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {schema}.articles
+                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
+                      AND COALESCE(enrichment_attempts, 0) < 3
+                      AND url IS NOT NULL AND url != ''
+                    """
+                )
+                out["content_enrichment"] += int(cur.fetchone()[0] or 0)
+        ready = sql_context_sync_article_ready("a")
+        for domain_key, schema in pipeline_url_schema_pairs():
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {schema}.articles a
+                    LEFT JOIN intelligence.article_to_context atc
+                      ON atc.domain_key = %s AND atc.article_id = a.id
+                    WHERE atc.context_id IS NULL
+                      AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
+                      AND ({ready})
+                    """,
+                    (domain_key,),
+                )
+                out["context_sync"] += int(cur.fetchone()[0] or 0)
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '3s'")
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM intelligence.processed_documents
+                WHERE source_url IS NOT NULL AND source_url != ''
+                  AND (extracted_sections IS NULL OR extracted_sections = '[]'::jsonb)
+                  AND (metadata IS NULL OR (metadata->'processing'->>'permanent_failure') IS DISTINCT FROM 'true')
+                """
+            )
+            out["document_processing"] = int(cur.fetchone()[0] or 0)
+    except Exception as e:
+        logger.debug("backlog hot_path counts: %s", e)
+    return out
+
+
 def _count_context_sync_backlog() -> int:
     """Articles not yet in article_to_context — matches ``sync_domain_articles_to_contexts`` (excludes removed)."""
     conn = _get_conn()
@@ -534,10 +838,15 @@ def _count_context_sync_backlog() -> int:
 
 
 def _count_event_tracking_backlog() -> int:
-    """Contexts the ``event_tracking`` phase can select: same window, min length, and
-    ``NOT EXISTS`` chronicle link predicate as ``discover_events_from_contexts`` (not
-    ``COUNT(contexts) - COUNT(event_chronicles)``, which is not meaningful work remaining)."""
+    """Contexts the ``event_tracking`` phase can select: same window, min length, pipeline
+    domains only (``run_event_tracking_batch`` / ``discover_events_from_contexts``), and
+    ``NOT EXISTS`` chronicle link predicate — not orphan rows like ``documents``."""
     max_age_days, min_len = _event_tracking_scan_window_params()
+    from shared.pipeline_domain_sql import pipeline_domain_any_sql
+
+    domain_sql, domain_keys = pipeline_domain_any_sql("c.domain_key")
+    if not domain_keys:
+        return 0
     conn = _get_conn()
     if not conn:
         return 0
@@ -552,14 +861,14 @@ def _count_event_tracking_backlog() -> int:
                 SELECT COUNT(*) FROM intelligence.contexts c
                 WHERE c.created_at >= NOW() - (%s * INTERVAL '1 day')
                   AND LENGTH(COALESCE(c.content, '')) >= %s
+                  AND {domain_sql}
                   AND NOT EXISTS (
-                      SELECT 1 FROM intelligence.event_chronicles ec,
-                      LATERAL jsonb_array_elements(ec.developments) AS dev
-                      WHERE (dev->>'context_id')::int = c.id
+                      SELECT 1 FROM intelligence.event_chronicle_contexts ecc
+                      WHERE ecc.context_id = c.id
                   )
                   {pass_sql}
                 """,
-                (max_age_days, min_len),
+                (max_age_days, min_len, domain_keys),
             )
             return int(cur.fetchone()[0] or 0)
     except Exception as e:
@@ -627,24 +936,26 @@ def _count_entity_profile_build_backlog() -> int:
     context mention (``build_profile_sections`` no-ops without mentions)."""
     from services.entity_profile_builder_service import (
         sql_entity_profile_upstream_cleared_exists,
-        _entity_profile_upstream_gate_enabled,
+        _entity_profile_upstream_gate_for_select,
+        _profile_build_db_timeout_ms,
     )
     from shared.entity_profile_eligibility import sql_entity_profile_needs_build
     from shared.pipeline_domain_sql import pipeline_domain_any_sql
 
     conn = _get_conn()
     if not conn:
-        return 0
+        raise RuntimeError("entity_profile_build backlog count: no DB connection")
     domain_sql, domain_keys = pipeline_domain_any_sql("ep.domain_key")
     if not domain_keys:
         return 0
     upstream_sql = ""
-    if _entity_profile_upstream_gate_enabled():
+    if _entity_profile_upstream_gate_for_select():
         upstream_sql = f" AND {sql_entity_profile_upstream_cleared_exists()} "
     needs_build = sql_entity_profile_needs_build("ep")
+    timeout_ms = _profile_build_db_timeout_ms()
     try:
         with conn.cursor() as cur:
-            cur.execute("SET LOCAL statement_timeout = '12s'")
+            cur.execute("SET LOCAL statement_timeout = %s", (str(timeout_ms),))
             cur.execute(
                 f"""
                 SELECT COUNT(*) FROM intelligence.entity_profiles ep
@@ -659,14 +970,20 @@ def _count_entity_profile_build_backlog() -> int:
                 (domain_keys,),
             )
             return int(cur.fetchone()[0] or 0)
-    except Exception as e:
-        logger.debug("backlog entity_profile_build count: %s", e)
-        return 0
     finally:
         try:
             conn.close()
         except Exception:
             pass
+
+
+def count_entity_profile_build_backlog_safe() -> int | None:
+    """Like _count_entity_profile_build_backlog but returns None when count fails."""
+    try:
+        return _count_entity_profile_build_backlog()
+    except Exception as e:
+        logger.warning("entity_profile_build backlog count failed: %s", e)
+        return None
 
 
 def _count_investigation_report_backlog() -> int:
@@ -1037,7 +1354,14 @@ def _count_storyline_processing_pending() -> int:
 
 
 def _count_topic_clustering_pending() -> int:
-    """Articles awaiting a first successful topic_clustering pass (or legacy graduation backlog)."""
+    """Articles awaiting topic_clustering that the worker would actually select.
+
+    Uses ``TopicClusteringService.count_pending_articles`` (same predicates as
+    ``select_pending_article_ids`` / PopOS idle gate). Default first-pass-only
+    mode does not inflate queue_depth with retry rows.
+    Per-schema timeouts keep a partial total instead of zeroing the whole phase.
+    Shared-connection failures roll back so later backlog counts are not poisoned.
+    """
     conn = _get_conn()
     if not conn:
         return 0
@@ -1046,54 +1370,64 @@ def _count_topic_clustering_pending() -> int:
         from config.settings import (
             topic_clustering_backlog_uses_pass_marker,
             topic_clustering_graduation_confidence,
+            topic_clustering_iterative_refinement_enabled,
+        )
+        from domains.content_analysis.services.topic_clustering_service import (
+            TopicClusteringService,
         )
 
         use_pass = topic_clustering_backlog_uses_pass_marker()
+        iterative = topic_clustering_iterative_refinement_enabled()
         conf = float(topic_clustering_graduation_confidence())
     except Exception:
         use_pass = True
+        iterative = False
         conf = 0.88
-    try:
-        for schema in get_pipeline_schema_names_active():
+        TopicClusteringService = None  # type: ignore[misc, assignment]
+
+    for schema in get_pipeline_schema_names_active():
+        try:
             with conn.cursor() as cur:
-                cur.execute("SET LOCAL statement_timeout = '3s'")
-                if use_pass:
+                cur.execute("SET LOCAL statement_timeout = '8s'")
+                if TopicClusteringService is not None:
+                    total += int(
+                        TopicClusteringService.count_pending_articles(
+                            cur,
+                            schema,
+                            use_pass_marker=use_pass,
+                            iterative=iterative,
+                            confidence_threshold=conf,
+                        )
+                        or 0
+                    )
+                else:
+                    # Fallback first-pass-only if import failed mid-path
                     cur.execute(
                         f"""
                         SELECT COUNT(*)
                         FROM {schema}.articles a
                         WHERE a.content IS NOT NULL
                           AND LENGTH(a.content) > 100
-                          AND (a.metadata->'pipeline'->'topic_clustering'->>'last_pass_at') IS NULL
+                          AND (
+                            a.metadata->'pipeline'->'topic_clustering'->>'last_pass_at' IS NULL
+                            OR TRIM(COALESCE(
+                                a.metadata->'pipeline'->'topic_clustering'->>'last_pass_at', ''
+                            )) = ''
+                          )
                         """
                     )
-                else:
-                    cur.execute(
-                        f"""
-                        SELECT COUNT(*) FROM (
-                            SELECT a.id
-                            FROM {schema}.articles a
-                            LEFT JOIN {schema}.article_topic_assignments ata
-                              ON a.id = ata.article_id
-                            WHERE a.content IS NOT NULL
-                              AND LENGTH(a.content) > 100
-                            GROUP BY a.id
-                            HAVING COUNT(ata.id) = 0
-                                OR COALESCE(AVG(ata.confidence_score), 0) < %s
-                        ) t
-                        """,
-                        (conf,),
-                    )
-                total += int(cur.fetchone()[0] or 0)
-        return total
-    except Exception as e:
-        logger.debug("backlog topic_clustering count: %s", e)
-        return 0
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+                    total += int(cur.fetchone()[0] or 0)
+        except Exception as e:
+            logger.debug("backlog topic_clustering count schema=%s: %s", schema, e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+    try:
+        conn.close()
+    except Exception:
+        pass
+    return total
 
 
 def _count_timeline_generation_pending() -> int:
@@ -1179,12 +1513,11 @@ def _count_storyline_discovery_pending() -> int:
 
 
 def _count_storyline_assembly_pending() -> int:
-    """Unlinked recent articles across pipeline domains — assembly ties detection + discovery + automation."""
+    """Domains above assembly threshold only — matches PopOS idle gate / drain."""
     try:
-        from services.storyline_assembly_service import count_unlinked_articles
-        from shared.domain_registry import get_pipeline_active_domain_keys
+        from services.storyline_assembly_service import count_assembly_actionable_pending
 
-        return sum(count_unlinked_articles(dk) for dk in get_pipeline_active_domain_keys())
+        return int(count_assembly_actionable_pending() or 0)
     except Exception as e:
         logger.debug("backlog storyline_assembly count: %s", e)
         return 0
@@ -1252,6 +1585,78 @@ def get_storyline_review_queue_pending() -> int:
     """Pending rows in public.storyline_article_suggestions (operator curation pressure)."""
     by_domain = get_storyline_review_queue_pending_by_domain()
     return sum(by_domain.values())
+
+
+def _count_storyline_membership_review_pending() -> int:
+    """
+    Actionable membership-review pressure (flag off → 0).
+
+    Prefer pending rows in ``intelligence.storyline_membership_actions``.
+    Otherwise count active mega-threads with no membership action in 7 days
+    (not a permanent census of all megas).
+    """
+    try:
+        from services.storyline_membership_review_service import membership_review_enabled
+
+        if not membership_review_enabled():
+            return 0
+    except Exception:
+        return 0
+    conn = _get_conn()
+    if not conn:
+        return 0
+    try:
+        from config.runtime import env_int
+        from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
+
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '3s'")
+            try:
+                cur.execute(
+                    """
+                    SELECT COUNT(*)::int
+                    FROM intelligence.storyline_membership_actions
+                    WHERE status = 'pending'
+                    """
+                )
+                pending_actions = int(cur.fetchone()[0] or 0)
+                if pending_actions > 0:
+                    return pending_actions
+            except Exception:
+                conn.rollback()
+                cur.execute("SET LOCAL statement_timeout = '3s'")
+
+            min_arts = max(5, env_int("STORYLINE_MEMBERSHIP_MIN_ARTICLE_COUNT", 50))
+            total = 0
+            for domain_key in get_pipeline_active_domain_keys():
+                schema = resolve_domain_schema(domain_key)
+                cur.execute("SET LOCAL statement_timeout = '3s'")
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {schema}.storylines s
+                    WHERE s.status = 'active'
+                      AND s.merged_into_id IS NULL
+                      AND COALESCE(s.article_count, 0) >= %s
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM intelligence.storyline_membership_actions a
+                        WHERE a.storyline_id = s.id
+                          AND a.domain_key = %s
+                          AND a.created_at > NOW() - INTERVAL '7 days'
+                      )
+                    """,
+                    (min_arts, domain_key),
+                )
+                total += int(cur.fetchone()[0] or 0)
+            return total
+    except Exception as e:
+        logger.debug("backlog storyline_membership_review count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def get_storyline_review_queue_pending_by_domain() -> Dict[str, int]:
@@ -1606,6 +2011,132 @@ def _count_graph_connection_distillation_pending() -> int:
         return 0
 
 
+def _count_embedding_link_candidates_pending() -> int:
+    """Active storylines eligible for embedding link scan when flag on."""
+    try:
+        from services.embedding_link_candidate_service import embedding_link_candidates_enabled
+
+        if not embedding_link_candidates_enabled():
+            return 0
+    except Exception:
+        return 0
+    conn = _get_conn()
+    if not conn:
+        return 0
+    total = 0
+    try:
+        for schema in get_pipeline_schema_names_active():
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '3s'")
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {schema}.storylines
+                    WHERE status = 'active' AND merged_into_id IS NULL
+                      AND COALESCE(article_count, 0) >= 3
+                    """
+                )
+                total += int(cur.fetchone()[0] or 0)
+        return total
+    except Exception as e:
+        logger.debug("backlog embedding_link_candidates count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_graph_link_drift_pending() -> int:
+    """Active links due for drift re-score when flag on."""
+    try:
+        from services.graph_link_drift_service import graph_link_drift_enabled
+
+        if not graph_link_drift_enabled():
+            return 0
+    except Exception:
+        return 0
+    conn = _get_conn()
+    if not conn:
+        return 0
+    try:
+        from config.runtime import env_int, env_str
+
+        conf_max = float(env_str("GRAPH_LINK_DRIFT_CONF_MAX", "0.70") or 0.70)
+        days = max(1, env_int("GRAPH_LINK_DRIFT_DAYS", 14))
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '3s'")
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM intelligence.graph_connection_links
+                WHERE status = 'active'
+                  AND (
+                    COALESCE(confidence, 0) < %s
+                    OR last_scored_at IS NULL
+                    OR last_scored_at < NOW() - (%s || ' days')::interval
+                  )
+                """,
+                (conf_max, days),
+            )
+            return int(cur.fetchone()[0] or 0)
+    except Exception as e:
+        logger.debug("backlog graph_link_drift count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_mention_resolution_pending() -> int:
+    """CEM rows still past the mention_resolver watermark (actionable automation drain).
+
+    Uses a dedicated connection so an aborted shared backlog transaction (earlier
+    phase COUNT timeouts) cannot zero this metric.
+    """
+    try:
+        from shared.database.connection import get_db_connection
+
+        conn = get_db_connection()
+    except Exception:
+        conn = None
+    if not conn:
+        return 0
+    try:
+        from config.investigation_tables import T_CONTEXT_ENTITY_MENTIONS, T_WATERMARKS
+
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '15s'")
+            cur.execute(
+                f"SELECT last_value FROM {T_WATERMARKS} WHERE name = %s",
+                ("mention_resolver",),
+            )
+            row = cur.fetchone()
+            watermark = int(row[0]) if row and row[0] is not None else 0
+            cur.execute(
+                f"""
+                SELECT COUNT(*)::bigint
+                FROM {T_CONTEXT_ENTITY_MENTIONS}
+                WHERE id > %s
+                """,
+                (watermark,),
+            )
+            return int(cur.fetchone()[0] or 0)
+    except Exception as e:
+        logger.debug("backlog mention_resolution count: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 # Phases that should be skipped when backlog is 0 (avoid empty cycles).
 # Every phase in RAW_PENDING_COUNT_KEYS belongs here so workload scheduling never ticks on interval at zero.
 SKIP_WHEN_EMPTY = frozenset({
@@ -1632,6 +2163,8 @@ SKIP_WHEN_EMPTY = frozenset({
     "proactive_detection",
     "storyline_assembly",
     "storyline_automation",
+    "storyline_review_agent",
+    "storyline_membership_review",
     "rag_enhancement",
     "event_extraction",
     "claims_to_facts",
@@ -1642,6 +2175,9 @@ SKIP_WHEN_EMPTY = frozenset({
     "story_enhancement",
     "storyline_synthesis",
     "graph_connection_distillation",
+    "embedding_link_candidates",
+    "graph_link_drift_review",
+    "mention_resolution",
 })
 
 _missing_skip_pending = SKIP_WHEN_EMPTY - RAW_PENDING_COUNT_KEYS
@@ -1669,7 +2205,11 @@ BACKLOG_ANY_INTERVAL = 30
 
 
 def get_data_quality_metrics() -> dict:
-    """Structural DB health signals for Monitor (entity graph size, claims/facts ratio, context orphans)."""
+    """Structural DB health signals for Monitor (entity graph size, claims/facts ratio, context orphans).
+
+    Also surfaces the connection quality-loop queues: pending proposals, contested facts,
+    and quarantined/refused patterns (count + oldest age in hours).
+    """
     from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 
     out: dict = {
@@ -1679,6 +2219,12 @@ def get_data_quality_metrics() -> dict:
         "claims_to_facts_ratio": 0.0,
         "claims_unpromoted": 0,
         "context_orphans": {},
+        "pending_graph_proposals": 0,
+        "pending_graph_proposals_oldest_hours": None,
+        "contested_facts": 0,
+        "contested_facts_oldest_hours": None,
+        "quarantined_patterns": 0,
+        "quarantined_patterns_oldest_hours": None,
     }
     conn = _get_conn()
     if not conn:
@@ -1704,6 +2250,63 @@ def get_data_quality_metrics() -> dict:
             out["versioned_facts_total"] = facts
             out["claims_to_facts_ratio"] = round(claims / facts, 2) if facts else float(claims)
             out["claims_unpromoted"] = _count_claims_to_facts_pending()
+
+            try:
+                cur.execute(
+                    """
+                    SELECT COUNT(*)::int,
+                           EXTRACT(EPOCH FROM (NOW() - MIN(created_at))) / 3600.0
+                    FROM intelligence.graph_connection_proposals
+                    WHERE status = 'pending'
+                    """
+                )
+                prow = cur.fetchone()
+                out["pending_graph_proposals"] = int((prow[0] if prow else 0) or 0)
+                if prow and prow[1] is not None and out["pending_graph_proposals"] > 0:
+                    out["pending_graph_proposals_oldest_hours"] = round(float(prow[1]), 2)
+            except Exception:
+                pass
+
+            try:
+                cur.execute(
+                    """
+                    SELECT COUNT(*)::int,
+                           EXTRACT(EPOCH FROM (NOW() - MIN(updated_at))) / 3600.0
+                    FROM intelligence.versioned_facts
+                    WHERE (metadata->>'verification_status') IN (
+                        'contested', 'unverified', 'partially_verified'
+                    )
+                      AND (metadata->>'superseded_by_fact_id') IS NULL
+                    """
+                )
+                crow = cur.fetchone()
+                out["contested_facts"] = int((crow[0] if crow else 0) or 0)
+                if crow and crow[1] is not None and out["contested_facts"] > 0:
+                    out["contested_facts_oldest_hours"] = round(float(crow[1]), 2)
+            except Exception:
+                pass
+
+            try:
+                cur.execute(
+                    """
+                    SELECT COUNT(*)::int,
+                           EXTRACT(EPOCH FROM (NOW() - MIN(updated_at))) / 3600.0
+                    FROM intelligence.graph_pattern_refusals
+                    WHERE status IN ('refuse', 'quarantine')
+                    """
+                )
+                qrow = cur.fetchone()
+                out["quarantined_patterns"] = int((qrow[0] if qrow else 0) or 0)
+                if qrow and qrow[1] is not None and out["quarantined_patterns"] > 0:
+                    out["quarantined_patterns_oldest_hours"] = round(float(qrow[1]), 2)
+            except Exception:
+                # Table may not exist until migration 263.
+                try:
+                    from services.graph_connection_queue_service import count_quarantined_patterns
+
+                    out["quarantined_patterns"] = int(count_quarantined_patterns())
+                except Exception:
+                    pass
 
             for domain_key in get_pipeline_active_domain_keys():
                 schema = resolve_domain_schema(domain_key)

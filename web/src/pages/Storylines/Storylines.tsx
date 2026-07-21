@@ -67,6 +67,7 @@ import {
 } from '@mui/material';
 
 import apiService from '../../services/apiService';
+import { displayStorylineTitle } from '../../utils/sanitizeDisplayText';
 import StorylineManagementDialog from '../../components/StorylineManagementDialog';
 import { useDomainNavigation } from '../../hooks/useDomainNavigation';
 import { useDomainRoute } from '../../hooks/useDomainRoute';
@@ -76,6 +77,7 @@ import { getUserFriendlyError } from '../../utils/errorHandler';
 import { formatDomainLabel } from '../../utils/domainHelper';
 import LoadingState from '../../components/shared/LoadingState';
 import EmptyState from '../../components/shared/EmptyState';
+import { PageShell } from '@/components/ui';
 
 interface Storyline {
   id: number;
@@ -597,7 +599,7 @@ const Storylines: React.FC = () => {
               overflow: 'hidden',
             }}
           >
-            {storyline.title || 'Untitled Storyline'}
+            {displayStorylineTitle(storyline, storyline.id)}
           </Typography>
           <IconButton
             size='small'
@@ -623,7 +625,9 @@ const Storylines: React.FC = () => {
             overflow: 'hidden',
           }}
         >
-          {truncateText(storyline.description || storyline.summary)}
+          {truncateText(
+            storyline.summary || storyline.description || 'No synopsis yet'
+          )}
         </Typography>
 
         <Box display='flex' flexWrap='wrap' gap={1} mb={2}>
@@ -707,10 +711,11 @@ const Storylines: React.FC = () => {
       <CardActions sx={{ p: 2, pt: 0 }}>
         <Button
           size='small'
+          variant='contained'
           startIcon={<Visibility />}
           onClick={() => navigateToDomain(`/storylines/${storyline.id}`)}
         >
-          View Details
+          Open story
         </Button>
         <Button
           size='small'
@@ -760,7 +765,7 @@ const Storylines: React.FC = () => {
           primary={
             <Box display='flex' alignItems='center' gap={1} mb={1}>
               <Typography variant='h6' sx={{ flexGrow: 1 }}>
-                {storyline.title || 'Untitled Storyline'}
+                {displayStorylineTitle(storyline, storyline.id)}
               </Typography>
               <Box display='flex' gap={1}>
                 {isRecentArticleSignal(storyline.last_article_added_at) && (
@@ -807,7 +812,10 @@ const Storylines: React.FC = () => {
           secondary={
             <Box>
               <Typography variant='body2' color='text.secondary' sx={{ mb: 1 }}>
-                {truncateText(storyline.description || storyline.summary, 200)}
+                {truncateText(
+                  storyline.summary || storyline.description || 'No synopsis yet',
+                  200
+                )}
               </Typography>
               <Box display='flex' alignItems='center' gap={2}>
                 <Box display='flex' alignItems='center' gap={0.5}>
@@ -846,10 +854,11 @@ const Storylines: React.FC = () => {
             </IconButton>
             <Button
               size='small'
+              variant='contained'
               startIcon={<Visibility />}
               onClick={() => navigateToDomain(`/storylines/${storyline.id}`)}
             >
-              Details
+              Open story
             </Button>
             <Button
               size='small'
@@ -865,30 +874,16 @@ const Storylines: React.FC = () => {
   );
 
   return (
-    <Box>
-      <Box
-        display='flex'
-        justifyContent='space-between'
-        alignItems='center'
-        mb={3}
-      >
-        <Box display='flex' alignItems='center' gap={2}>
-          <Box>
-            <Typography variant='h4' component='h1' sx={{ fontWeight: 'bold' }}>
-              Storylines
-            </Typography>
-            <Typography variant='body2' color='text.secondary'>
-              Domain story clusters — articles linked over time
-            </Typography>
-          </Box>
-          <Chip
-            label={formatDomainLabel(domain)}
-            size='small'
-            variant='outlined'
-            color='primary'
-          />
-        </Box>
-        <Box display='flex' gap={2} alignItems='center'>
+    <PageShell
+      title='Storylines'
+      subtitle='Domain story clusters — articles linked over time'
+      breadcrumbs={[
+        { label: 'Home', to: `/${domain}` },
+        { label: formatDomainLabel(domain) || domain, to: `/${domain}` },
+        { label: 'Storylines' },
+      ]}
+      actions={
+        <Box display='flex' gap={2} alignItems='center' flexWrap='wrap'>
           <Button
             variant='outlined'
             color={reviewQueueCount > 0 ? 'warning' : 'inherit'}
@@ -901,7 +896,6 @@ const Storylines: React.FC = () => {
             variant='contained'
             startIcon={<AddIcon />}
             onClick={handleCreateStoryline}
-            sx={{ mr: 2 }}
           >
             Create Storyline
           </Button>
@@ -929,8 +923,8 @@ const Storylines: React.FC = () => {
             List
           </Button>
         </Box>
-      </Box>
-
+      }
+    >
       {/* Statistics Overview */}
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid item xs={12} sm={6} md={2}>
@@ -1336,7 +1330,7 @@ const Storylines: React.FC = () => {
         domain={domain}
         onStorylineUpdated={handleStorylineUpdated}
       />
-    </Box>
+    </PageShell>
   );
 };
 

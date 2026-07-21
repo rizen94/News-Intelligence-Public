@@ -229,6 +229,15 @@ PHASE_POLICIES: dict[str, PhasePolicy] = {
     "storyline_review_agent": PhasePolicy(
         Host.POPOS_GPU, Tier.REFINEMENT, "gpu", "gpu_heavy", requires_llm=True
     ),
+    "storyline_membership_review": PhasePolicy(
+        Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy", default_batch=8
+    ),  # adaptive: 8–48 via adaptive_batch_policy (per-domain)
+    "embedding_link_candidates": PhasePolicy(
+        Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy", default_batch=12
+    ),
+    "graph_link_drift_review": PhasePolicy(
+        Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy", default_batch=40
+    ),
     "storyline_enrichment": PhasePolicy(
         Host.POPOS_HEAVY, Tier.REFINEMENT, "gpu", "gpu_heavy", requires_llm=True
     ),
@@ -441,12 +450,19 @@ _INTAKE_PREPROCESS_DEFER_EXEMPT: frozenset[str] = frozenset(
         "rss_feed_health",
         "mention_resolution",
         "entity_profile_build",
+        "storyline_membership_review",
     }
 )
 
 
 def intake_preprocess_clear_threshold() -> int:
     """Pending sum on core preprocess phases above this → intake-first hard gate."""
+    try:
+        from shared.pipeline_admission import mode_intake_clear
+
+        return mode_intake_clear()
+    except Exception:
+        pass
     try:
         from config.orchestrator_governance import get_orchestrator_governance_config
 
@@ -474,7 +490,59 @@ def intake_preprocess_hot(pending: dict[str, int] | None = None) -> bool:
     return intake_preprocess_pending(pending) > intake_preprocess_clear_threshold()
 
 
+# Near-zero preprocess band → flip scheduling to post-process (structure) preferred.
+# Includes claim_extraction + context_sync so "intake done" means ready for MR/EPB/GCD.
+_PREPROCESS_STABLE_PHASES: frozenset[str] = frozenset(
+    {
+        "content_enrichment",
+        "unified_intake_extraction",
+        "document_processing",
+        "claim_extraction",
+        "context_sync",
+    }
+)
+
+
+def preprocess_stable_threshold() -> int:
+    """Max sum on preprocess-stable phases before post-process preferred can engage."""
+    try:
+        from shared.pipeline_admission import mode_preprocess_stable
+
+        return mode_preprocess_stable()
+    except Exception:
+        pass
+    try:
+        return max(0, int(env_str("PREPROCESS_STABLE_THRESHOLD", "5")))
+    except ValueError:
+        return 5
+
+
+def preprocess_stable_pending(pending: dict[str, int] | None = None) -> int:
+    p = pending or {}
+    return sum(int(p.get(ph, 0) or 0) for ph in _PREPROCESS_STABLE_PHASES)
+
+
+def preprocess_stable(pending: dict[str, int] | None = None) -> bool:
+    return preprocess_stable_pending(pending) <= preprocess_stable_threshold()
+
+
+def post_process_preferred_enabled() -> bool:
+    """Env kill-switch; default on so clear preprocess flips to structure drains."""
+    return env_str("PIPELINE_POST_PROCESS_PREFERRED", "true").lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
 def intake_first_gpu_defer_threshold() -> int:
+    try:
+        from shared.pipeline_admission import mode_intake_clear
+
+        return mode_intake_clear()
+    except Exception:
+        pass
     try:
         return max(0, int(env_str("INTAKE_FIRST_GPU_DEFER_THRESHOLD", "50")))
     except ValueError:
@@ -488,6 +556,8 @@ def bulk_extract_compete_defer_phase(
     """
     True when ``phase_name`` should not be scheduled because unified/claim extract
     backlog is high and this phase competes for workers or PopOS GPU.
+
+    Spine-ordered path only (legacy extract>500 compete list removed).
     """
     p = pending or {}
     intake = int(p.get("unified_intake_extraction", 0) or 0)
@@ -496,45 +566,21 @@ def bulk_extract_compete_defer_phase(
     try:
         from shared.spine_phase_order import spine_pipeline_ordered_active
 
-        if spine_pipeline_ordered_active():
-            # Hard gate: while core preprocess backlog is hot, defer all post-band work.
-            if intake_preprocess_hot(p) and phase_name not in _INTAKE_PREPROCESS_DEFER_EXEMPT:
-                return True
-            # Prefer finishing unified intake before assembly/GPU peers burn PopOS slots.
-            if (
-                intake_thresh > 0
-                and intake >= intake_thresh
-                and phase_name in _INTAKE_FIRST_GPU_DEFER_PHASES
-            ):
-                return True
+        if not spine_pipeline_ordered_active():
             return False
     except Exception:
-        pass
-    if not intake_extraction_suppressed():
         return False
-    if phase_name in (
-        "unified_intake_extraction",
-        "claim_extraction",
-        "content_enrichment",
-        "event_tracking",
-        "mention_resolution",
-        "collection_cycle",
-        "document_processing",
-        "health_check",
-        "pending_db_flush",
-    ):
-        return False
-    extract_left = extract_bulk_pending_total(p)
-    try:
-        threshold = int(env_str("PIPELINE_BULK_EXTRACT_COMPETE_DEFER_THRESHOLD", "500"))
-    except ValueError:
-        threshold = 500
-    if extract_left <= threshold:
-        return False
-    if phase_name in _BULK_EXTRACT_COMPETE_DEFER_PHASES:
+
+    # Hard gate: while core preprocess backlog is hot, defer all post-band work.
+    if intake_preprocess_hot(p) and phase_name not in _INTAKE_PREPROCESS_DEFER_EXEMPT:
         return True
-    if is_refinement_phase(phase_name):
-        return not refinement_phase_allowed(phase_name, p)
+    # Prefer finishing unified intake before assembly/GPU peers burn PopOS slots.
+    if (
+        intake_thresh > 0
+        and intake >= intake_thresh
+        and phase_name in _INTAKE_FIRST_GPU_DEFER_PHASES
+    ):
+        return True
     return False
 
 
@@ -602,26 +648,51 @@ STRUCTURE_BAND_PHASES: frozenset[str] = frozenset(
         "entity_profile_build",
         "storyline_assembly",
         "storyline_automation",
+        "storyline_review_agent",
         "event_tracking",
         "graph_connection_distillation",
     }
 )
 
+
+def structure_band_pending(pending: dict[str, int] | None = None) -> int:
+    p = pending or {}
+    return sum(int(p.get(ph, 0) or 0) for ph in STRUCTURE_BAND_PHASES)
+
+
+def post_process_preferred(pending: dict[str, int] | None = None) -> bool:
+    """True when preprocess is stable and structure-band backlog still needs churn."""
+    if not post_process_preferred_enabled():
+        return False
+    return preprocess_stable(pending) and structure_band_pending(pending) > 0
+
+
 # Pending sum used to decide when structure catchup is "hot" (defers refinement).
 _STRUCTURE_CATCHUP_PENDING_PHASES: frozenset[str] = frozenset(
     {
+        "mention_resolution",
         "entity_profile_build",
         "storyline_assembly",
         "storyline_automation",
+        "storyline_review_agent",
+        "event_tracking",
+        "graph_connection_distillation",
     }
 )
 
 # Tier.REFINEMENT phases that still belong in the structure band (linking), not filler.
-_STRUCTURE_BAND_REFINEMENT_EXEMPT: frozenset[str] = frozenset({"storyline_automation"})
-
+_STRUCTURE_BAND_REFINEMENT_EXEMPT: frozenset[str] = frozenset(
+    {"storyline_automation", "storyline_review_agent"}
+)
 
 def structure_catchup_refinement_defer_threshold() -> int:
     """Defer Tier.REFINEMENT filler when structure pending sum is at/above this."""
+    try:
+        from shared.pipeline_admission import mode_structure_hot
+
+        return mode_structure_hot()
+    except Exception:
+        pass
     try:
         return max(1, int(env_str("STRUCTURE_CATCHUP_REFINEMENT_DEFER_THRESHOLD", "200")))
     except ValueError:
@@ -674,9 +745,9 @@ def entity_profile_build_allowed(pending: dict[str, int] | None = None) -> bool:
     if env_str("ENTITY_PROFILE_BUILD_ANYTIME", "").lower() in ("1", "true", "yes"):
         return True
     try:
-        from services.pipeline_schedule_service import in_nightly_heavy_window
+        from services.pipeline_schedule_service import popos_gpu_work_allowed
 
-        if in_nightly_heavy_window():
+        if popos_gpu_work_allowed():
             return True
     except Exception:
         pass
@@ -696,11 +767,20 @@ def refinement_phase_allowed(
     Refinement filler runs in nightly heavy window, when bulk intake is clear,
     and only when structure catchup is not hot (EPB / assembly / automation backlog).
     Override: PIPELINE_REFINEMENT_ANYTIME=true
+
+    Durable ``content_refinement_queue`` jobs (UI / CONTENT_REFINEMENT_AUTO_ENQUEUE)
+    are allowed whenever that queue has pending work — do not leave them blocked
+    behind structure-band catchup forever.
     """
     if not is_refinement_phase(phase_name):
         return True
     if env_str("PIPELINE_REFINEMENT_ANYTIME", "").lower() in ("1", "true", "yes"):
         return True
+    name = (phase_name or "").strip()
+    if name == "content_refinement_queue":
+        p = pending or {}
+        if int(p.get("content_refinement_queue", 0) or 0) > 0:
+            return True
     if phase_name == "entity_profile_build":
         try:
             from shared.spine_phase_order import spine_pipeline_ordered_active
@@ -710,9 +790,9 @@ def refinement_phase_allowed(
         except Exception:
             pass
     try:
-        from services.pipeline_schedule_service import in_nightly_heavy_window
+        from services.pipeline_schedule_service import popos_gpu_work_allowed
 
-        if in_nightly_heavy_window():
+        if popos_gpu_work_allowed():
             return True
     except Exception:
         pass
@@ -735,9 +815,9 @@ def story_enhancement_facts_only() -> bool:
     if env_str("STORY_ENHANCEMENT_FACTS_ONLY", "").lower() in ("1", "true", "yes"):
         return True
     try:
-        from services.pipeline_schedule_service import in_nightly_heavy_window
+        from services.pipeline_schedule_service import popos_gpu_work_allowed
 
-        return not in_nightly_heavy_window()
+        return not popos_gpu_work_allowed()
     except Exception:
         return True
 
@@ -836,6 +916,9 @@ def configure_pipeline_resources() -> None:
     env_setdefault("AUTO_ENQUEUE_COMPREHENSIVE_RAG", "0")
     env_setdefault("STORYLINE_AUTO_ENQUEUE_NARRATIVE_FINISHER", "0")
     env_setdefault("CONTENT_REFINEMENT_API_ENQUEUE_ONLY", "true")
+    # Prefer this flag to auto-enqueue comprehensive_rag (default off until ops validates).
+    env_setdefault("CONTENT_REFINEMENT_AUTO_ENQUEUE", "false")
+    env_setdefault("CONTENT_REFINEMENT_AUTO_ENQUEUE_MIN_ARTICLES", "3")
     env_setdefault("STORYLINE_ASSEMBLY_RUN_PROACTIVE", "false")
     env_setdefault("ASSEMBLY_PIPELINE_MODE", "ordered")
     env_setdefault("SPINE_PIPELINE_MODE", "ordered")

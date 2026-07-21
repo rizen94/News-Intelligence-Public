@@ -78,8 +78,22 @@ def _enqueue_topic_extraction(cur, schema_name: str, article_id: int) -> None:
         """,
         (article_id,),
     )
-# Burst (48h catch-up): 0.4s between fetches; revert to 0.6 after catch-up
+# Burst (48h catch-up): base pause between host slots; parallel workers share the budget.
 RATE_LIMIT_SLEEP = 0.4
+
+
+def _enrichment_fetch_parallel() -> int:
+    try:
+        return max(1, min(16, int(env_str("CONTENT_ENRICHMENT_FETCH_PARALLEL", "8"))))
+    except ValueError:
+        return 8
+
+
+def _enrichment_per_host_limit() -> int:
+    try:
+        return max(1, min(4, int(env_str("CONTENT_ENRICHMENT_PER_HOST_LIMIT", "2"))))
+    except ValueError:
+        return 2
 
 
 def _make_fast_config():
@@ -467,6 +481,7 @@ def enrich_articles_batch(
         with conn.cursor() as cur:
             cur.execute("SET statement_timeout = '300s'")
         enriched = 0
+        removed = 0
         remaining = batch_size
         pairs = list(pipeline_url_schema_pairs())
         if not pairs:
@@ -484,6 +499,25 @@ def enrich_articles_batch(
         _ca_ord = sql_order_created_at()
         batch_commit_every = 10
         pending_commits = 0
+
+        def _reopen_conn():
+            nonlocal conn
+            c = get_db_connection()
+            if c:
+                with c.cursor() as cur:
+                    cur.execute("SET statement_timeout = '300s'")
+            conn = c
+            return conn
+
+        def _release_conn_for_fetch():
+            nonlocal conn
+            _flush_commit(force=True)
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            conn = None
 
         def _flush_commit(force: bool = False) -> None:
             nonlocal pending_commits
@@ -531,6 +565,7 @@ def enrich_articles_batch(
                     )
                 rows = cur.fetchall()
 
+            to_fetch: list[tuple[int, str, str | None, str | None]] = []
             for article_id, url, existing_content, created_at, row_status in rows:
                 if remaining <= 0:
                     break
@@ -569,19 +604,68 @@ def enrich_articles_batch(
                                 article_id,
                                 ctx_e,
                             )
-                        time.sleep(RATE_LIMIT_SLEEP)
+                    time.sleep(RATE_LIMIT_SLEEP / max(1, _enrichment_fetch_parallel()))
                     continue
-                with conn.cursor() as cur:
-                    cur.execute(
-                        f"""UPDATE {schema_name}.articles SET enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1, updated_at = NOW() WHERE id = %s""",
-                        (article_id,),
-                    )
-                pending_commits += 1
-                _flush_commit()
+                to_fetch.append((int(article_id), str(url).strip(), existing_content, row_status))
+                if len(to_fetch) >= remaining:
+                    break
 
-                text = _fetch_full_text(url)
-                if text:
-                    text = text[:MAX_CONTENT_CHARS]
+            if not to_fetch:
+                continue
+
+            # Bump attempts for the whole fetch set, then release the DB connection.
+            fetch_ids = [aid for aid, *_ in to_fetch]
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    UPDATE {schema_name}.articles
+                    SET enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1,
+                        updated_at = NOW()
+                    WHERE id = ANY(%s)
+                    """,
+                    (fetch_ids,),
+                )
+            conn.commit()
+            _release_conn_for_fetch()
+
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            from collections import defaultdict
+            from threading import Semaphore
+            from urllib.parse import urlparse
+
+            host_limit = _enrichment_per_host_limit()
+            host_gates: dict[str, Semaphore] = defaultdict(lambda: Semaphore(host_limit))
+            workers = min(_enrichment_fetch_parallel(), max(1, len(to_fetch)))
+            pause = RATE_LIMIT_SLEEP / max(1, workers)
+
+            def _fetch_one(item: tuple[int, str, str | None, str | None]) -> tuple[int, str, str]:
+                article_id, url, _ec, _st = item
+                host = (urlparse(url).netloc or "").lower() or "_"
+                with host_gates[host]:
+                    text = _fetch_full_text(url) or ""
+                    if pause > 0:
+                        time.sleep(pause)
+                    return article_id, url, text[:MAX_CONTENT_CHARS] if text else ""
+
+            fetched: list[tuple[int, str, str]] = []
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [pool.submit(_fetch_one, item) for item in to_fetch]
+                for fut in as_completed(futures):
+                    try:
+                        fetched.append(fut.result())
+                    except Exception as e:
+                        logger.debug("enrichment parallel fetch failed: %s", e)
+
+            if not _reopen_conn():
+                logger.warning(
+                    "Content enrichment: no DB connection after parallel fetch (%s items)",
+                    len(to_fetch),
+                )
+                continue
+
+            for article_id, url, text in fetched:
+                if remaining <= 0:
+                    break
                 with conn.cursor() as cur:
                     if text:
                         wc = compute_word_count(text)
@@ -596,21 +680,25 @@ def enrich_articles_batch(
                         )
                         if _topic_extraction_queue_available(conn, schema_name):
                             _enqueue_topic_extraction(cur, schema_name, article_id)
+                        pending_commits += 1
+                        _flush_commit()
+                        enriched += 1
+                        remaining -= 1
+                        try:
+                            sync_context_from_article_after_content_change(domain_key, article_id)
+                        except Exception as ctx_e:
+                            logger.debug(
+                                "enrichment context %s/%s: %s",
+                                domain_key,
+                                article_id,
+                                ctx_e,
+                            )
                     else:
-                        # All paths (live, browser, wayback, archivetoday) failed: remove as bad datapoint
+                        # All paths failed: remove as bad datapoint (paywall/403/etc.)
                         _remove_article(conn, schema_name, article_id)
                         conn.commit()
-                        time.sleep(RATE_LIMIT_SLEEP)
-                        continue
-                pending_commits += 1
-                _flush_commit()
-
-                if text:
-                    enriched += 1
-                    remaining -= 1
-                    sync_context_from_article_after_content_change(domain_key, article_id)
-
-                time.sleep(RATE_LIMIT_SLEEP)
+                        removed += 1
+                        remaining -= 1
 
             _flush_commit(force=True)
 
@@ -622,9 +710,16 @@ def enrich_articles_batch(
             pending_commits += 1
         _flush_commit(force=True)
 
-        if enriched > 0:
-            logger.info("Content enrichment (v8): %s articles enriched", enriched)
-        return enriched
+        handled = enriched + removed
+        if enriched > 0 or removed > 0:
+            logger.info(
+                "Content enrichment (v8): %s enriched, %s removed/inaccessible (parallel=%s)",
+                enriched,
+                removed,
+                _enrichment_fetch_parallel(),
+            )
+        # Return handled count so stall detection sees paywall drain as progress
+        return handled
     except Exception as e:
         logger.warning("Content enrichment failed: %s", e)
         try:

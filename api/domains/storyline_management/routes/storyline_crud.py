@@ -27,6 +27,7 @@ from ..schemas.storyline_schemas import (
     StorylineUpdateRequest,
 )
 from ..services.storyline_service import StorylineService
+from services.storyline_coherence_guardrails import sanitize_storyline_title_for_display
 
 logger = logging.getLogger(__name__)
 
@@ -150,10 +151,14 @@ async def get_domain_storylines(
                     laa = row[8] if len(row) > 8 else None
                     last_refinement = row[9] if len(row) > 9 else None
                     last_automation_run = row[10] if len(row) > 10 else None
+                    raw_title = row[1]
+                    display_title = sanitize_storyline_title_for_display(
+                        raw_title, fallback=f"Storyline #{row[0]}"
+                    )
                     storylines.append(
                         StorylineListItem(
                             id=row[0],
-                            title=row[1],
+                            title=display_title,
                             description=row[2],
                             article_count=row[6] or 0,
                             quality_score=row[7],
@@ -445,9 +450,14 @@ async def get_domain_storyline(
                 laa_row = cur.fetchone()
                 last_article_added_at = laa_row[0] if laa_row and laa_row[0] else None
 
+                raw_title = storyline[1]
+                display_title = sanitize_storyline_title_for_display(
+                    raw_title, fallback=f"Storyline #{storyline[0]}"
+                )
+
                 return StorylineDetailResponse(
                     id=storyline[0],
-                    title=storyline[1],
+                    title=display_title,
                     description=storyline[2],
                     status=storyline[5],
                     article_count=len(articles),

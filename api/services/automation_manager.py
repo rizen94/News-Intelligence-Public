@@ -3060,6 +3060,7 @@ class AutomationManager:
             "content_enrichment",
             "document_processing",
             "spine_sql_tail",
+            "storyline_membership_review",
         }
     )
 
@@ -5467,6 +5468,20 @@ class AutomationManager:
             limit = max(1, int(env_str("STORYLINE_MEMBERSHIP_REVIEW_MAX_STORYLINES", "8") or "8"))
         except ValueError:
             limit = 8
+        adaptive_meta: dict = {}
+        try:
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            limit, adaptive_meta = resolve_adaptive_batch(
+                "storyline_membership_review", limit
+            )
+            limit = max(1, int(limit))
+            if isinstance(task.metadata, dict):
+                task.metadata["adaptive_batch"] = limit
+                if adaptive_meta:
+                    task.metadata["adaptive_batch_meta"] = adaptive_meta
+        except Exception:
+            adaptive_meta = {}
         dry_run = env_str("STORYLINE_MEMBERSHIP_REVIEW_DRY_RUN", "true").lower() in (
             "1",
             "true",
@@ -5477,6 +5492,13 @@ class AutomationManager:
                 limit_per_domain=limit, dry_run=dry_run
             )
             totals = result.get("totals") or {}
+            by_domain = result.get("by_domain") or {}
+            storylines_scanned = 0
+            if isinstance(by_domain, dict):
+                for domain_res in by_domain.values():
+                    if isinstance(domain_res, dict):
+                        storylines_scanned += len(domain_res.get("storylines") or [])
+            items = sum(int(totals.get(k, 0) or 0) for k in totals)
             if isinstance(task.metadata, dict):
                 task.metadata.update(
                     {
@@ -5489,14 +5511,28 @@ class AutomationManager:
                         "tracked_events_unlinked": int(
                             totals.get("tracked_events_unlinked", 0) or 0
                         ),
-                        "items_processed": sum(int(totals.get(k, 0) or 0) for k in totals),
+                        "storylines_scanned": storylines_scanned,
+                        "items_processed": max(items, storylines_scanned),
                     }
                 )
             logger.info(
-                "Storyline membership review: dry_run=%s totals=%s",
+                "Storyline membership review: dry_run=%s limit_per_domain=%s totals=%s scanned=%s",
                 dry_run,
+                limit,
                 totals,
+                storylines_scanned,
             )
+            try:
+                await self._record_phase_batch_loop(
+                    task,
+                    loops_processed=1,
+                    round_processed=storylines_scanned,
+                    processed=max(items, storylines_scanned),
+                    items_processed=max(items, storylines_scanned),
+                    storylines_scanned=storylines_scanned,
+                )
+            except Exception:
+                pass
             try:
                 from services.storyline_membership_llm_agent import run_membership_llm_midband
 

@@ -21,6 +21,7 @@ from ..services.quality_assessment_service import QualityAssessmentService
 from ..services.rag_analysis_service import RAGAnalysisService
 from ..services.storyline_service import StorylineService
 from services.article_content_enrichment_service import format_article_content_excerpt
+from services.storyline_coherence_guardrails import sanitize_storyline_title_for_display
 from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
@@ -147,10 +148,14 @@ async def get_domain_storylines(
                 storylines = []
                 for row in cur.fetchall():
                     laa = row[9] if len(row) > 9 else None
+                    raw_title = row[1]
+                    display_title = sanitize_storyline_title_for_display(
+                        raw_title, fallback=f"Storyline #{row[0]}"
+                    )
                     storylines.append(
                         {
                             "id": row[0],
-                            "title": row[1],
+                            "title": display_title,
                             "description": row[2],
                             "created_at": row[3].isoformat() if row[3] else None,
                             "updated_at": row[4].isoformat() if row[4] else None,
@@ -668,12 +673,17 @@ async def get_domain_storyline(
                 laa_r = cur.fetchone()
                 last_article_added_at = laa_r[0] if laa_r and laa_r[0] else None
 
+                raw_title = storyline[1]
+                display_title = sanitize_storyline_title_for_display(
+                    raw_title, fallback=f"Storyline #{storyline[0]}"
+                )
+
                 return {
                     "success": True,
                     "data": {
                         "storyline": {
                             "id": storyline[0],
-                            "title": storyline[1],
+                            "title": display_title,
                             "description": storyline[2],
                             "created_at": storyline[3].isoformat() if storyline[3] else None,
                             "updated_at": storyline[4].isoformat() if storyline[4] else None,
@@ -1442,6 +1452,21 @@ async def process_storyline_rag_analysis(
             else:
                 context_parts.append(f"  Content: {content[:500]}...")
 
+        # Pipeline-stored Wikipedia/GDELT (ensure+persist if missing; never via UI GET)
+        try:
+            from services.storyline_rag_context_service import (
+                ensure_storyline_rag_context,
+                render_rag_context_for_llm,
+            )
+
+            rag_data = await ensure_storyline_rag_context(domain, storyline_id)
+            external_block = render_rag_context_for_llm(rag_data, max_chars=4000)
+            if external_block:
+                context_parts.append("\n## External context (Wikipedia/GDELT)")
+                context_parts.append(external_block)
+        except Exception as rag_err:
+            logger.debug("process_storyline_rag_analysis external RAG skip: %s", rag_err)
+
         storyline_context = "\n".join(context_parts)
 
         # Generate comprehensive analysis using LLM
@@ -1472,12 +1497,15 @@ async def process_storyline_rag_analysis(
                             "based_on_articles": [a[0] for a in articles if a[0]],
                         }
 
+                        # Preserve non-null discovery quality; only fill default when missing.
+                        # Mirror processing_status so explorers don't treat create-flag as pipeline stuck.
                         cur.execute(
                             f"""
                             UPDATE {schema}.storylines
                             SET analysis_summary = %s,
-                                quality_score = %s,
+                                quality_score = COALESCE(quality_score, %s),
                                 ml_processing_status = 'completed',
+                                processing_status = 'completed',
                                 editorial_document = %s,
                                 document_version = COALESCE(document_version, 0) + 1,
                                 document_status = 'rag_analyzed',

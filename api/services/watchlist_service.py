@@ -91,15 +91,18 @@ class WatchlistService:
     def get_watchlist(self) -> list[dict[str, Any]]:
         cursor = self.conn.cursor()
         try:
+            # LEFT JOIN: public.storylines is a stub; domain silos hold real titles.
+            # Empty watchlist must still return [] without 500.
             cursor.execute("""
                 SELECT w.id, w.storyline_id, w.user_label, w.notes,
                        w.alert_on_reactivation, w.weekly_digest,
                        w.created_at, s.title, s.status, s.total_events,
                        s.last_event_at,
-                       (SELECT COUNT(*) FROM watchlist_alerts wa
-                        WHERE wa.watchlist_id = w.id AND wa.is_read = FALSE) AS unread
-                FROM watchlist w
-                JOIN storylines s ON s.id = w.storyline_id
+                       (SELECT COUNT(*) FROM public.watchlist_alerts wa
+                        WHERE wa.watchlist_id = w.id AND wa.is_read = FALSE) AS unread,
+                       w.domain_key
+                FROM public.watchlist w
+                LEFT JOIN public.storylines s ON s.id = w.storyline_id
                 ORDER BY w.created_at DESC
             """)
             items = []
@@ -118,6 +121,7 @@ class WatchlistService:
                         "total_events": r[9] or 0,
                         "last_event_at": r[10].isoformat() if r[10] else None,
                         "unread_alerts": r[11],
+                        "domain_key": r[12] if len(r) > 12 else None,
                     }
                 )
             return items
@@ -137,8 +141,8 @@ class WatchlistService:
                 SELECT wa.id, wa.storyline_id, wa.event_id, wa.alert_type,
                        wa.title, wa.body, wa.is_read, wa.created_at,
                        s.title AS storyline_title
-                FROM watchlist_alerts wa
-                JOIN storylines s ON s.id = wa.storyline_id
+                FROM public.watchlist_alerts wa
+                LEFT JOIN public.storylines s ON s.id = wa.storyline_id
                 {where}
                 ORDER BY wa.created_at DESC
                 LIMIT %s
