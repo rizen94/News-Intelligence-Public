@@ -1,8 +1,8 @@
 # Storyline canonical object model
 
-> **Mental model (one sentence):** Articles cluster into domain **storylines**; entities index those clusters; **tracked events** and **chronological events** attach back via entity overlap; **narrative threads** and synthesis describe what already exists — they do not decide what to track.
+> **Mental model (one sentence):** Articles and other atoms form **domain-kind proteins** (`story_kind`) via many loose **connection proposals**; stimuli (score, review, selective RAG) harden survivors into durable edges and storylines — not every domain is a political narrative cluster.
 
-This document is the authoritative reference for Phase 2 simplification (June 2026). See also [PIPELINE_AND_AUTOMATION.md](PIPELINE_AND_AUTOMATION.md) and [VAULT_AUTOMATION_LOOP.md](VAULT_AUTOMATION_LOOP.md).
+This document is the authoritative reference for Phase 2 simplification (June 2026) and the chemistry-style connection model (July 2026). See also [PIPELINE_AND_AUTOMATION.md](PIPELINE_AND_AUTOMATION.md), [GRAPH_EDGE_PROVENANCE.md](GRAPH_EDGE_PROVENANCE.md), and [VAULT_AUTOMATION_LOOP.md](VAULT_AUTOMATION_LOOP.md).
 
 ---
 
@@ -10,12 +10,35 @@ This document is the authoritative reference for Phase 2 simplification (June 20
 
 | Object | Canonical role | Scope | User-facing home |
 |--------|----------------|-------|------------------|
-| `{domain}.storylines` | **Domain narrative cluster** — evolving bundle of articles + synthesis | Per-domain silo | **Stories** shell |
+| `{domain}.storylines` | **Domain-kind protein** — shape set by `story_kind` (event narrative, research topic, docket, …) | Per-domain silo | **Stories** shell |
 | `intelligence.tracked_events` | **Investigative thread anchor** — multi-context real-world event | Cross-domain (`domain_keys[]`) | **Investigate** shell |
 | `{domain}.topic_clusters` | **Pipeline staging cluster** — pre-storyline grouping | Per-domain | **Topics** (Corpus/Signals) |
 | `public.chronological_events` | **Timeline atom** — per-article extracted event row | Global; domain via article | **Events** (subordinate to tracked_event) |
 | `intelligence.narrative_threads` | **Derived prose lens** — mirror/synthesis from storylines | Global | **Investigate → Narrative Threads** |
 | `public.emerging_storylines` | **Staging queue** for proactive promote | Global | Internal / Monitor only |
+| `intelligence.graph_connection_proposals` | **Loose bonds** — hypothesized/candidate collisions | Global | Monitor / Connections |
+| `intelligence.graph_connection_links` | **Solid edges** — established proteins | Global | Graph / Connections |
+| `intelligence.rag_evidence_pull_queue` | **RAG stimulus tickets** — pull fuller source when a bond needs evidence | Global | Monitor (`stimulus_rag`) |
+
+---
+
+## Story kinds (`story_kind`)
+
+Configured in `api/config/domain_synthesis_config.yaml` via `link_score_profile`:
+
+| Domain | `story_kind` | What “fits” means |
+|--------|--------------|-------------------|
+| politics | `event_narrative` | Same actors/issue/time → predictive event links |
+| finance | `market_regulatory_arc` | Instrument/issuer + catalyst |
+| legal | `matter_docket` | Case/bill/agency identity |
+| medicine | `evidence_thread` | Condition/intervention/finding lineage |
+| artificial-intelligence | `research_topic` | Problem + method family + claim/benchmark |
+
+Chemistry kinds (`research_topic`, `evidence_thread`, `matter_docket`) prefer **edge-first** behavior: softer membership, no aggressive storyline merge, optional event hard-bind.
+
+### Connection inference stages
+
+`hypothesized` → `candidate` → `established` | `quarantined` on proposals (and links when materialized). Phases: `collision_sampling`, `stimulus_rag`, `protein_harden`.
 
 ---
 
@@ -180,11 +203,48 @@ Core products unchanged: **storylines**, **tracked_events**, **entity dossiers**
 
 | Shell section | Owns (write) | Owns (read) | Does **not** own |
 |---------------|--------------|-------------|------------------|
-| **Stories** | `storylines`, suggestions, synthesis triggers | `storyline_articles`, editorial fields | `tracked_events`, `topic_clusters` as products |
+| **Stories** | `storylines`, suggestions, synthesis triggers, membership review actions | `storyline_articles`, editorial fields | `tracked_events`, `topic_clusters` as products |
 | **Investigate** | `tracked_events`, entity dossiers, hypotheses | `entity_profiles`, contexts | Creating storylines (link only) |
 | **Narrative Threads** | Build/synthesize thread prose | `narrative_threads` | Detection — never creates clusters |
 | **Topics** | Topic cluster CRUD | `article_topic_clusters` | Storylines except **Convert to storyline** |
 | **Events** | — | `chronological_events` | Top-level product — fold into Investigate after reconciliation |
+
+### Membership review vs suggestion review
+
+| Concern | Suggestion review (`storyline_review_agent`) | Membership review (`storyline_membership_review`) |
+|---------|-----------------------------------------------|---------------------------------------------------|
+| Queue table | `public.storyline_article_suggestions` | `intelligence.storyline_membership_actions` |
+| Question | Should this **new** article join? | Should this **existing** member stay / stay core? |
+| Hard remove | N/A (reject suggestion) | Unlink via `storyline_articles` DELETE |
+| Soft path | Reject / skip | Lower `relevance_score`; quarantine graph; demote SEI core; NULL weak tracked_event link |
+| Feature flag | `STORYLINE_REVIEW_AGENT_ENABLED` (default on) | `STORYLINE_MEMBERSHIP_REVIEW_ENABLED` (default **off**) |
+
+UI: Stories → Review Queue → **Suggestions** tab vs **Membership** tab.
+
+### Self-reviewing graph (Postgres)
+
+Link inference and drift review stay in Postgres (`graph_connection_proposals` / `_links`, `embedding_chunks`). See [GRAPH_EDGE_PROVENANCE.md](GRAPH_EDGE_PROVENANCE.md).
+
+| Capability | Phase / flag |
+|------------|--------------|
+| Embedding-ranked candidates | `embedding_link_candidates` / `EMBEDDING_LINK_CANDIDATES_ENABLED` |
+| Cross-domain associates | `link_indexer_cross_domain` + `associated_cross_domain` links |
+| Membership LLM mid-band | `STORYLINE_MEMBERSHIP_LLM_ENABLED` |
+| Drift re-score | `graph_link_drift_review` / `GRAPH_LINK_DRIFT_REVIEW_ENABLED` |
+
+### Continuous desk assembler (vault + OWUI)
+
+Long-form curated prose is **not** generated on demand by a batch synthesizer. Flow:
+
+1. **Headless detective** (`editorial_room_loop`) drafts `25_Connections/` and optionally `20_Investigations/` (`EDITORIAL_ROOM_INVESTIGATION_ROUND_ENABLED`).
+2. **Editor lens** tags notes (`needs_review` / `ready_to_promote`) — never writes Postgres long-form (`EDITORIAL_ROOM_EDITOR_LENS_ENABLED`).
+3. **OWUI `news-investigator`** deepens vault notes (MCP) and **promotes** via `DESK_AGENT_WRITEBACK_ENABLED` into existing products:
+   - `storylines.editorial_document` / `canonical_narrative`
+   - `tracked_events.global_narrative` / `editorial_briefing` / `narrative_lenses`
+   - graph proposal accept/reject
+4. Audit row: `intelligence.saved_intel_outputs` (`content_type=desk_promotion`).
+
+See [VAULT_AUTOMATION_LOOP.md](VAULT_AUTOMATION_LOOP.md).
 
 ---
 
@@ -211,4 +271,4 @@ Confirm this matches how you use the product:
 
 ---
 
-*Last updated: 2026-06-28 — Phase 2 implementation.*
+*Last updated: 2026-07-19 — membership review / decoupling documented.*

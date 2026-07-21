@@ -202,6 +202,9 @@ RAW_PENDING_COUNT_KEYS = frozenset(
         "storyline_review_agent",
         "storyline_membership_review",
         "embedding_link_candidates",
+        "collision_sampling",
+        "stimulus_rag",
+        "protein_harden",
         "graph_link_drift_review",
         "claims_to_facts",
         "legislative_references",
@@ -290,6 +293,9 @@ def _get_raw_pending_counts() -> Dict[str, int]:
         _set("storyline_synthesis", _count_storyline_synthesis_pending)
         _set("graph_connection_distillation", _count_graph_connection_distillation_pending())
         _set("embedding_link_candidates", _count_embedding_link_candidates_pending())
+        _set("collision_sampling", _count_collision_sampling_pending())
+        _set("stimulus_rag", _count_stimulus_rag_pending())
+        _set("protein_harden", _count_protein_harden_pending())
         _set("graph_link_drift_review", _count_graph_link_drift_pending())
         _set("mention_resolution", _count_mention_resolution_pending())
         nightly_base = (
@@ -1589,11 +1595,10 @@ def get_storyline_review_queue_pending() -> int:
 
 def _count_storyline_membership_review_pending() -> int:
     """
-    Actionable membership-review pressure (flag off → 0).
+    Actionable membership pressure (flag off → 0).
 
-    Prefer pending rows in ``intelligence.storyline_membership_actions``.
-    Otherwise count active mega-threads with no membership action in 7 days
-    (not a permanent census of all megas).
+    Prefer pending proposal rows. Otherwise count megas that still need a
+    review pass (no review_state, or membership fingerprint drifted).
     """
     try:
         from services.storyline_membership_review_service import membership_review_enabled
@@ -1631,22 +1636,47 @@ def _count_storyline_membership_review_pending() -> int:
             for domain_key in get_pipeline_active_domain_keys():
                 schema = resolve_domain_schema(domain_key)
                 cur.execute("SET LOCAL statement_timeout = '3s'")
-                cur.execute(
-                    f"""
-                    SELECT COUNT(*) FROM {schema}.storylines s
-                    WHERE s.status = 'active'
-                      AND s.merged_into_id IS NULL
-                      AND COALESCE(s.article_count, 0) >= %s
-                      AND NOT EXISTS (
-                        SELECT 1
-                        FROM intelligence.storyline_membership_actions a
-                        WHERE a.storyline_id = s.id
-                          AND a.domain_key = %s
-                          AND a.created_at > NOW() - INTERVAL '7 days'
-                      )
-                    """,
-                    (min_arts, domain_key),
-                )
+                try:
+                    from services.storyline_membership_review_service import (
+                        _membership_fingerprint_sql,
+                    )
+
+                    fp_sql = _membership_fingerprint_sql(schema, "s")
+                    cur.execute(
+                        f"""
+                        SELECT COUNT(*) FROM {schema}.storylines s
+                        LEFT JOIN intelligence.storyline_membership_review_state r
+                          ON r.domain_key = %s AND r.storyline_id = s.id
+                        WHERE s.status = 'active'
+                          AND s.merged_into_id IS NULL
+                          AND COALESCE(s.article_count, 0) >= %s
+                          AND (
+                            r.storyline_id IS NULL
+                            OR r.membership_fingerprint IS DISTINCT FROM {fp_sql}
+                          )
+                        """,
+                        (domain_key, min_arts),
+                    )
+                except Exception:
+                    conn.rollback()
+                    cur.execute("SET LOCAL statement_timeout = '3s'")
+                    # Fallback if review_state table missing pre-migration.
+                    cur.execute(
+                        f"""
+                        SELECT COUNT(*) FROM {schema}.storylines s
+                        WHERE s.status = 'active'
+                          AND s.merged_into_id IS NULL
+                          AND COALESCE(s.article_count, 0) >= %s
+                          AND NOT EXISTS (
+                            SELECT 1
+                            FROM intelligence.storyline_membership_actions a
+                            WHERE a.storyline_id = s.id
+                              AND a.domain_key = %s
+                              AND a.created_at > NOW() - INTERVAL '7 days'
+                          )
+                        """,
+                        (min_arts, domain_key),
+                    )
                 total += int(cur.fetchone()[0] or 0)
             return total
     except Exception as e:
@@ -2012,9 +2042,9 @@ def _count_graph_connection_distillation_pending() -> int:
 
 
 def _count_embedding_link_candidates_pending() -> int:
-    """Active storylines eligible for embedding link scan when flag on."""
+    """Active storylines eligible for embedding link scan when beaker/flag on."""
     try:
-        from services.embedding_link_candidate_service import embedding_link_candidates_enabled
+        from shared.chemistry_beaker import embedding_link_candidates_enabled
 
         if not embedding_link_candidates_enabled():
             return 0
@@ -2045,6 +2075,77 @@ def _count_embedding_link_candidates_pending() -> int:
             conn.close()
         except Exception:
             pass
+
+
+def _count_collision_sampling_pending() -> int:
+    """Hypothesized proposals, or opportunity storylines so first stir can schedule."""
+    try:
+        from shared.chemistry_beaker import collision_sampling_enabled
+
+        if not collision_sampling_enabled():
+            return 0
+    except Exception:
+        return 0
+    conn = _get_conn()
+    if not conn:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '3s'")
+            cur.execute(
+                """
+                SELECT COUNT(*)::int FROM intelligence.graph_connection_proposals
+                WHERE status = 'pending'
+                  AND COALESCE(inference_stage, 'candidate') = 'hypothesized'
+                """
+            )
+            hypothesized = int(cur.fetchone()[0] or 0)
+        if hypothesized > 0:
+            return hypothesized
+        # Opportunity: active storylines so SKIP_WHEN_EMPTY does not starve first collision run
+        total = 0
+        for schema in get_pipeline_schema_names_active():
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '3s'")
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*)::int FROM {schema}.storylines
+                    WHERE status = 'active' AND merged_into_id IS NULL
+                      AND COALESCE(article_count, 0) >= 2
+                    """
+                )
+                total += int(cur.fetchone()[0] or 0)
+        return total
+    except Exception as e:
+        logger.debug("backlog collision_sampling count: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_stimulus_rag_pending() -> int:
+    try:
+        from services.rag_evidence_pull_service import count_evidence_pull_pending
+
+        return int(count_evidence_pull_pending() or 0)
+    except Exception:
+        return 0
+
+
+def _count_protein_harden_pending() -> int:
+    try:
+        from services.protein_harden_service import count_protein_harden_pending
+
+        return int(count_protein_harden_pending() or 0)
+    except Exception:
+        return 0
 
 
 def _count_graph_link_drift_pending() -> int:
@@ -2176,6 +2277,9 @@ SKIP_WHEN_EMPTY = frozenset({
     "storyline_synthesis",
     "graph_connection_distillation",
     "embedding_link_candidates",
+    "collision_sampling",
+    "stimulus_rag",
+    "protein_harden",
     "graph_link_drift_review",
     "mention_resolution",
 })

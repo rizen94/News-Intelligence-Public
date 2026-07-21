@@ -13,10 +13,17 @@ from shared.database.connection import get_db_connection
 from shared.services.domain_aware_service import DomainAwareService
 from shared.storyline_article_counts import sync_counts_update_sql
 
-from services.domain_synthesis_config import get_domain_synthesis_config
+from services.domain_synthesis_config import (
+    combined_attach_score,
+    get_domain_synthesis_config,
+)
 from services.quality_monitoring_service import get_quality_monitoring_service
 
 logger = logging.getLogger(__name__)
+
+# Legacy automation_settings often pin min_quality_tier=2; corpus is ~all tier 3.
+# Stricter than 3 rejects every candidate → suggest_only stores nothing.
+_AUTOMATION_MIN_QUALITY_TIER_FLOOR = 3
 
 
 def _hours_since_db_timestamp(last_run: datetime) -> float:
@@ -30,6 +37,50 @@ def _hours_since_db_timestamp(last_run: datetime) -> float:
     else:
         lr = last_run.astimezone(timezone.utc)
     return (now - lr).total_seconds() / 3600.0
+
+
+def _parse_quality_metrics(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            return dict(parsed) if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _zero_yield_backoff_hours(streak: int) -> float:
+    """Exponential backoff for consecutive zero-yield discovery runs."""
+    from config.runtime import env_float
+
+    base = max(1.0, env_float("STORYLINE_AUTOMATION_ZERO_YIELD_BACKOFF_BASE_HOURS", 12.0))
+    cap = max(base, env_float("STORYLINE_AUTOMATION_ZERO_YIELD_BACKOFF_MAX_HOURS", 168.0))
+    n = max(1, int(streak))
+    return min(cap, base * (2 ** (n - 1)))
+
+
+def _zero_yield_until_active(metrics: dict[str, Any]) -> datetime | None:
+    """Return timezone-aware until-time if still in zero-yield backoff, else None."""
+    raw = metrics.get("zero_yield_until")
+    if not raw or not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        until = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    if until > now:
+        return until
+    return None
 
 
 class StorylineAutomationService(DomainAwareService):
@@ -122,10 +173,52 @@ class StorylineAutomationService(DomainAwareService):
         return filtered, stats
 
     def _final_score(self, article: dict[str, Any]) -> float:
-        """final_score = relevance*0.7 + quality*0.3"""
-        rel = article.get("relevance_score", 0.6)
-        qual = article.get("quality_score", 0.5)
-        return round(rel * 0.7 + qual * 0.3, 4)
+        """Domain-aware attach score from link_score_profile (chemistry model)."""
+        rel = float(article.get("relevance_score") or 0.0)
+        sem = float(article.get("semantic_score") or 0.0)
+        kw = float(article.get("keyword_score") or 0.0)
+        if kw <= 0 and rel > 0:
+            # Legacy rows often cloned relevance into keyword; prefer focus overlap when set.
+            kw = float(article.get("focus_keyword_score") or rel * 0.5)
+        qual = float(article.get("quality_score") or 0.5)
+        return combined_attach_score(
+            self.domain,
+            relevance=rel,
+            semantic=sem,
+            keyword=kw,
+            quality=qual,
+        )
+
+    def _auto_approve_threshold(self) -> float:
+        return float(self.domain_config.link_score_profile.auto_approve_combined)
+
+    def _keyword_score_for_article(
+        self, article: dict[str, Any], *, search_query: str = ""
+    ) -> float:
+        """Focus-area / query token overlap — not a clone of relevance."""
+        existing = article.get("keyword_score")
+        if existing is not None and float(existing) > 0 and article.get("focus_keyword_score"):
+            return float(existing)
+        text = " ".join(
+            str(x or "")
+            for x in (
+                article.get("title"),
+                article.get("summary"),
+                article.get("content"),
+            )
+        ).lower()
+        tokens: set[str] = set()
+        for area in self.domain_config.focus_areas[:12]:
+            for w in str(area).lower().replace(",", " ").split():
+                if len(w) >= 4:
+                    tokens.add(w)
+        for w in (search_query or "").lower().split():
+            if len(w) >= 4:
+                tokens.add(w)
+        if not tokens or not text:
+            return float(article.get("relevance_score") or 0.0) * 0.4
+        hits = sum(1 for t in tokens if t in text)
+        return round(min(1.0, hits / max(3, min(8, len(tokens)))), 4)
 
     async def discover_articles_for_storyline(
         self,
@@ -163,7 +256,8 @@ class StorylineAutomationService(DomainAwareService):
                         SELECT s.id, s.title, s.description, s.analysis_summary,
                                s.automation_enabled, s.automation_mode, s.automation_settings,
                                s.search_keywords, s.search_entities, s.search_exclude_keywords,
-                               s.article_count, s.last_automation_run, s.automation_frequency_hours
+                               s.article_count, s.last_automation_run, s.automation_frequency_hours,
+                               s.quality_metrics
                         FROM {self.schema}.storylines s
                         WHERE s.id = %s
                     """,
@@ -188,7 +282,9 @@ class StorylineAutomationService(DomainAwareService):
                         article_count,
                         last_automation_run,
                         automation_frequency_hours,
+                        quality_metrics_raw,
                     ) = storyline
+                    prior_quality_metrics = _parse_quality_metrics(quality_metrics_raw)
 
                     # Fetch key_entities and quality columns if they exist
                     key_entities = None
@@ -235,6 +331,16 @@ class StorylineAutomationService(DomainAwareService):
                     # Use storyline's min_quality_tier if not explicitly set in automation_settings
                     if "min_quality_tier" not in automation_settings:
                         settings["min_quality_tier"] = min_quality_tier
+                    # Never allow legacy settings (tier=2) to be stricter than the automation floor.
+                    try:
+                        configured_tier = int(
+                            settings.get("min_quality_tier", _AUTOMATION_MIN_QUALITY_TIER_FLOOR)
+                        )
+                    except (TypeError, ValueError):
+                        configured_tier = _AUTOMATION_MIN_QUALITY_TIER_FLOOR
+                    settings["min_quality_tier"] = max(
+                        _AUTOMATION_MIN_QUALITY_TIER_FLOOR, configured_tier
+                    )
                     if enrichment_mode:
                         settings["full_history"] = True
 
@@ -247,6 +353,20 @@ class StorylineAutomationService(DomainAwareService):
                                 "skipped_frequency": True,
                                 "message": "Recent discovery run exists, use force_refresh=true to run again",
                                 "last_run": last_automation_run.isoformat(),
+                                "articles": [],
+                                "articles_found": 0,
+                                "articles_added": 0,
+                            }
+
+                    # Zero-yield backoff: skip expensive rediscovery when recent runs stored/added nothing
+                    if not force_refresh and not enrichment_mode:
+                        until = _zero_yield_until_active(prior_quality_metrics)
+                        if until is not None:
+                            return {
+                                "success": True,
+                                "skipped_zero_yield_backoff": True,
+                                "message": "Zero-yield backoff active; use force_refresh=true to run again",
+                                "zero_yield_until": until.isoformat(),
                                 "articles": [],
                                 "articles_found": 0,
                                 "articles_added": 0,
@@ -372,6 +492,10 @@ class StorylineAutomationService(DomainAwareService):
                         discovered_articles, settings
                     )
                     for a in discovered_articles:
+                        a["keyword_score"] = self._keyword_score_for_article(
+                            a, search_query=title or ""
+                        )
+                        a["focus_keyword_score"] = a["keyword_score"]
                         a["combined_score"] = self._final_score(a)
 
                     import re
@@ -382,7 +506,8 @@ class StorylineAutomationService(DomainAwareService):
                         discovered_articles = [
                             a
                             for a in discovered_articles
-                            if float(a.get("combined_score") or 0) >= 0.75
+                            if float(a.get("combined_score") or 0)
+                            >= self._auto_approve_threshold()
                         ]
                         if before and not discovered_articles:
                             logger.info(
@@ -415,14 +540,38 @@ class StorylineAutomationService(DomainAwareService):
                         pass
 
                     # Update last automation run and quality_metrics (when column exists)
-                    now = datetime.now()
+                    now = datetime.now(timezone.utc)
+                    yield_count = int(suggestions_count or 0) + int(added_count or 0)
                     quality_metrics = {
                         "last_run": now.isoformat(),
                         "filter_stats": filter_stats,
                         "articles_passed": len(discovered_articles),
+                        "articles_suggested": suggestions_count,
+                        "articles_added": added_count,
+                        # Always replace so stale skip_reasons do not linger via jsonb ||
+                        "store_filter_stats": store_filter_stats or {},
                     }
-                    if store_filter_stats:
-                        quality_metrics["store_filter_stats"] = store_filter_stats
+                    if yield_count > 0:
+                        quality_metrics["zero_yield_streak"] = 0
+                        quality_metrics["zero_yield_until"] = None
+                    else:
+                        try:
+                            streak = int(prior_quality_metrics.get("zero_yield_streak") or 0) + 1
+                        except (TypeError, ValueError):
+                            streak = 1
+                        backoff_h = _zero_yield_backoff_hours(streak)
+                        until = now + timedelta(hours=backoff_h)
+                        quality_metrics["zero_yield_streak"] = streak
+                        quality_metrics["zero_yield_until"] = until.isoformat()
+                        quality_metrics["zero_yield_backoff_hours"] = backoff_h
+                        logger.info(
+                            "Storyline %s domain=%s zero-yield streak=%s backoff=%.1fh until=%s",
+                            storyline_id,
+                            self.domain,
+                            streak,
+                            backoff_h,
+                            until.isoformat(),
+                        )
                     if discovered_articles:
                         tiers = [
                             a.get("quality_tier")
@@ -1299,6 +1448,13 @@ class StorylineAutomationService(DomainAwareService):
                     relevance = float(article.get("relevance_score", 0.6) or 0.6)
                     quality = float(article.get("quality_score", 0.5) or 0.5)
                     semantic = float(article.get("semantic_score", relevance) or relevance)
+                    keyword = float(
+                        article.get("keyword_score")
+                        or self._keyword_score_for_article(
+                            article, search_query=search_query
+                        )
+                    )
+                    article["keyword_score"] = keyword
                     combined = float(article.get("combined_score") or self._final_score(article))
 
                     matched_raw = (
@@ -1344,7 +1500,7 @@ class StorylineAutomationService(DomainAwareService):
                                 article.get("id"),
                                 round(relevance, 2),
                                 round(semantic, 2),
-                                round(relevance, 2),
+                                round(keyword, 2),
                                 round(quality, 2),
                                 round(combined, 2),
                                 reasoning,

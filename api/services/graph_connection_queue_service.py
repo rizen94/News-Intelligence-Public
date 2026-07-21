@@ -25,6 +25,81 @@ DEFAULT_MIN_CONFIDENCE_FOR_AUTO = float(
 )
 
 
+def build_edge_evidence(
+    *,
+    phase: str,
+    method: str,
+    score_parts: dict[str, Any] | None = None,
+    anchors: dict[str, Any] | None = None,
+    refusal_key: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Canonical evidence JSON for proposals/links (see docs/GRAPH_EDGE_PROVENANCE.md)."""
+    out: dict[str, Any] = {
+        "phase": phase,
+        "method": method,
+        "score_parts": score_parts or {},
+        "anchors": anchors or {},
+        "refusal_key": refusal_key,
+    }
+    if extra:
+        for k, v in extra.items():
+            if k not in out:
+                out[k] = v
+    return out
+
+
+def merge_edge_evidence(
+    base: dict[str, Any] | None,
+    *,
+    phase: str | None = None,
+    method: str | None = None,
+    score_parts: dict[str, Any] | None = None,
+    anchors: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Merge proposal evidence into the link provenance contract."""
+    src = dict(base or {})
+    parts = dict(src.get("score_parts") or {})
+    if score_parts:
+        parts.update(score_parts)
+    anch = dict(src.get("anchors") or {})
+    if anchors:
+        for k, v in anchors.items():
+            if k in anch and isinstance(anch[k], list) and isinstance(v, list):
+                anch[k] = list(dict.fromkeys([*anch[k], *v]))
+            else:
+                anch[k] = v
+    # Lift common flat keys into score_parts / anchors when writers used legacy shape.
+    for k in ("semantic", "entity", "article", "title", "overall", "cosine"):
+        if k in src and k not in parts and isinstance(src[k], (int, float)):
+            parts[k] = float(src[k])
+    return build_edge_evidence(
+        phase=str(phase or src.get("phase") or "unknown"),
+        method=str(method or src.get("method") or "unknown"),
+        score_parts=parts,
+        anchors=anch,
+        refusal_key=src.get("refusal_key"),
+        extra={
+            k: v
+            for k, v in src.items()
+            if k
+            not in (
+                "phase",
+                "method",
+                "score_parts",
+                "anchors",
+                "refusal_key",
+                "semantic",
+                "entity",
+                "article",
+                "title",
+                "overall",
+                "cosine",
+            )
+        },
+    )
+
+
 def storyline_pair_dedupe_key(domain_key: str, id_a: int, id_b: int) -> str:
     lo, hi = (id_a, id_b) if id_a <= id_b else (id_b, id_a)
     return f"merge|storyline|{domain_key}|{lo}|{hi}"
@@ -56,6 +131,269 @@ def _normalize_endpoints(
     return ep
 
 
+def endpoint_key_from_endpoints(
+    domain_key: str | None,
+    endpoints: dict[str, Any] | None,
+) -> str | None:
+    """Source-agnostic key for refuse ledger (entity/storyline/topic pairs)."""
+    if not isinstance(endpoints, dict):
+        return None
+    dk = (domain_key or endpoints.get("domain_key") or "global").strip() or "global"
+    for kind, field in (
+        ("entity", "entity_ids"),
+        ("storyline", "storyline_ids"),
+        ("topic", "topic_ids"),
+    ):
+        ids = endpoints.get(field)
+        if isinstance(ids, list) and len(ids) >= 2:
+            lo, hi = sorted(int(x) for x in ids[:2])
+            return f"{kind}|{dk}|{lo}|{hi}"
+    return None
+
+
+def is_pattern_refused(endpoint_key: str) -> bool:
+    """True when refuse/quarantine/supersede is active for this endpoint pair."""
+    if not endpoint_key:
+        return False
+    from shared.database.connection import get_db_connection
+
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1 FROM intelligence.graph_pattern_refusals
+                WHERE endpoint_key = %s
+                  AND status IN ('refuse', 'quarantine', 'supersede')
+                LIMIT 1
+                """,
+                (endpoint_key,),
+            )
+            return cur.fetchone() is not None
+    except Exception as e:
+        # Table may not exist yet pre-migration — fail open for propose.
+        logger.debug("is_pattern_refused: %s", e)
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _reopen_refusal_unlocked(cur, endpoint_key: str, *, source: str = "reopen") -> None:
+    cur.execute(
+        """
+        UPDATE intelligence.graph_pattern_refusals
+        SET status = 'reopened', updated_at = NOW(), source = %s
+        WHERE endpoint_key = %s AND status IN ('refuse', 'quarantine', 'supersede')
+        """,
+        (source, endpoint_key),
+    )
+
+
+def record_pattern_refusal(
+    *,
+    endpoint_key: str,
+    status: str = "refuse",
+    reason: str | None = None,
+    domain_key: str | None = None,
+    endpoints: dict[str, Any] | None = None,
+    dedupe_key: str | None = None,
+    source: str = "operator",
+    proposal_id: int | None = None,
+    vault_path: str | None = None,
+) -> bool:
+    """Upsert refuse/quarantine/supersede for an endpoint pair."""
+    if status not in ("refuse", "quarantine", "supersede", "reopened"):
+        status = "refuse"
+    if not endpoint_key:
+        return False
+    from shared.database.connection import get_db_connection
+
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO intelligence.graph_pattern_refusals (
+                    endpoint_key, dedupe_key, status, reason, domain_key,
+                    endpoints, source, proposal_id, vault_path
+                ) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
+                ON CONFLICT (endpoint_key) DO UPDATE SET
+                    status = EXCLUDED.status,
+                    reason = COALESCE(EXCLUDED.reason, intelligence.graph_pattern_refusals.reason),
+                    dedupe_key = COALESCE(EXCLUDED.dedupe_key, intelligence.graph_pattern_refusals.dedupe_key),
+                    endpoints = COALESCE(EXCLUDED.endpoints, intelligence.graph_pattern_refusals.endpoints),
+                    source = EXCLUDED.source,
+                    proposal_id = COALESCE(EXCLUDED.proposal_id, intelligence.graph_pattern_refusals.proposal_id),
+                    vault_path = COALESCE(EXCLUDED.vault_path, intelligence.graph_pattern_refusals.vault_path),
+                    updated_at = NOW()
+                """,
+                (
+                    endpoint_key,
+                    dedupe_key,
+                    status,
+                    reason,
+                    domain_key,
+                    json.dumps(endpoints or {}),
+                    source,
+                    proposal_id,
+                    vault_path,
+                ),
+            )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning("record_pattern_refusal: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def reopen_pattern_refusal(endpoint_key: str, *, source: str = "operator_reopen") -> bool:
+    from shared.database.connection import get_db_connection
+
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            _reopen_refusal_unlocked(cur, endpoint_key, source=source)
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.debug("reopen_pattern_refusal: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def break_graph_connection_link(
+    *,
+    left_kind: str,
+    left_id: int,
+    right_kind: str,
+    right_id: int,
+    link_role: str = "associated",
+    reason: str | None = None,
+    quarantine: bool = False,
+    domain_key: str | None = None,
+    evidence_extra: dict[str, Any] | None = None,
+) -> bool:
+    """Mark a materialized link broken (or quarantined) and record refuse ledger."""
+    lk, li, rk, ri = _ordered_link_tuple(left_kind, left_id, right_kind, right_id)
+    new_status = "quarantined" if quarantine else "broken"
+    from shared.database.connection import get_db_connection
+
+    if lk == rk:
+        ek = f"{lk}|{domain_key or 'global'}|{min(li, ri)}|{max(li, ri)}"
+    else:
+        ek = f"{lk}:{li}|{rk}:{ri}|{link_role}"
+
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE intelligence.graph_connection_links
+                SET status = %s,
+                    evidence = COALESCE(evidence, '{}'::jsonb) || %s::jsonb,
+                    last_scored_at = NOW()
+                WHERE left_kind = %s AND left_id = %s
+                  AND right_kind = %s AND right_id = %s
+                  AND link_role = %s
+                  AND status = 'active'
+                """,
+                (
+                    new_status,
+                    json.dumps(
+                        {
+                            "refusal_key": ek,
+                            "break_reason": reason or f"link_{new_status}",
+                            **(evidence_extra or {}),
+                        }
+                    ),
+                    lk,
+                    li,
+                    rk,
+                    ri,
+                    link_role,
+                ),
+            )
+            updated = cur.rowcount > 0
+        conn.commit()
+    except Exception as e:
+        logger.warning("break_graph_connection_link: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    ep = {"domain_key": domain_key, f"{lk}_ids": [li, ri]} if lk == rk else {
+        "domain_key": domain_key,
+        "left": {"kind": lk, "id": li},
+        "right": {"kind": rk, "id": ri},
+    }
+    record_pattern_refusal(
+        endpoint_key=ek,
+        status="quarantine" if quarantine else "refuse",
+        reason=reason or f"link_{new_status}",
+        domain_key=domain_key,
+        endpoints=ep,
+        source="break_connection",
+    )
+    return updated
+
+
+def count_quarantined_patterns() -> int:
+    try:
+        from shared.database.connection import get_db_connection
+
+        conn = get_db_connection()
+        if not conn:
+            return 0
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COUNT(*) FROM intelligence.graph_pattern_refusals
+                    WHERE status IN ('refuse', 'quarantine')
+                    """
+                )
+                return int(cur.fetchone()[0] or 0)
+        finally:
+            conn.close()
+    except Exception:
+        return 0
+
+
 def upsert_graph_connection_proposal(
     *,
     dedupe_key: str,
@@ -67,76 +405,196 @@ def upsert_graph_connection_proposal(
     evidence: dict[str, Any] | None = None,
     subject_summary: str | None = None,
     min_confidence_for_auto: float | None = None,
+    reopen: bool = False,
+    inference_stage: str | None = None,
+    cur: Any | None = None,
 ) -> int | None:
     """
     Insert or update one proposal (confidence/evidence monotonic on conflict).
-    Returns proposal id, or None if DB unavailable.
+
+    Skips insert when the refuse ledger blocks the endpoint pair (unless reopen=True).
+    Never reopens rejected/auto_applied rows to pending unless reopen=True.
+    Returns proposal id, or None if DB unavailable / refused.
+
+    When ``cur`` is provided, uses the caller's transaction (no checkout/commit).
     """
     from shared.database.connection import get_db_connection
 
-    conn = get_db_connection()
-    if not conn:
+    endpoint_key = endpoint_key_from_endpoints(domain_key, endpoints)
+    if endpoint_key and is_pattern_refused(endpoint_key) and not reopen:
+        logger.debug("graph_connection upsert skipped (refused): %s", endpoint_key)
         return None
+
+    owns_conn = cur is None
+    conn = None
+    if owns_conn:
+        conn = get_db_connection()
+        if not conn:
+            return None
     mca = (
         float(min_confidence_for_auto)
         if min_confidence_for_auto is not None
         else DEFAULT_MIN_CONFIDENCE_FOR_AUTO
     )
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO intelligence.graph_connection_proposals (
-                    proposal_kind, domain_key, confidence, min_confidence_for_auto,
-                    source, subject_summary, endpoints, evidence, dedupe_key, status
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, 'pending'
+        if owns_conn:
+            with conn.cursor() as work_cur:
+                return _upsert_graph_connection_proposal_on_cur(
+                    work_cur,
+                    dedupe_key=dedupe_key,
+                    proposal_kind=proposal_kind,
+                    domain_key=domain_key,
+                    confidence=confidence,
+                    source=source,
+                    endpoints=endpoints,
+                    evidence=evidence,
+                    subject_summary=subject_summary,
+                    mca=mca,
+                    reopen=reopen,
+                    endpoint_key=endpoint_key,
+                    inference_stage=inference_stage,
+                    commit=True,
+                    conn=conn,
                 )
-                ON CONFLICT (dedupe_key) DO UPDATE SET
-                    confidence = GREATEST(
-                        intelligence.graph_connection_proposals.confidence,
-                        EXCLUDED.confidence
-                    ),
-                    evidence = CASE
-                        WHEN EXCLUDED.confidence
-                             >= intelligence.graph_connection_proposals.confidence
-                        THEN EXCLUDED.evidence
-                        ELSE intelligence.graph_connection_proposals.evidence
-                    END,
-                    subject_summary = COALESCE(EXCLUDED.subject_summary,
-                        intelligence.graph_connection_proposals.subject_summary),
-                    proposal_kind = EXCLUDED.proposal_kind,
-                    min_confidence_for_auto = EXCLUDED.min_confidence_for_auto,
-                    updated_at = NOW()
-                RETURNING id
-                """,
-                (
-                    proposal_kind,
-                    domain_key,
-                    float(confidence),
-                    mca,
-                    source,
-                    subject_summary,
-                    json.dumps(endpoints),
-                    json.dumps(evidence or {}),
-                    dedupe_key,
-                ),
-            )
-            row = cur.fetchone()
-            conn.commit()
-            return int(row[0]) if row else None
+        return _upsert_graph_connection_proposal_on_cur(
+            cur,
+            dedupe_key=dedupe_key,
+            proposal_kind=proposal_kind,
+            domain_key=domain_key,
+            confidence=confidence,
+            source=source,
+            endpoints=endpoints,
+            evidence=evidence,
+            subject_summary=subject_summary,
+            mca=mca,
+            reopen=reopen,
+            endpoint_key=endpoint_key,
+            inference_stage=inference_stage,
+            commit=False,
+            conn=None,
+        )
     except Exception as e:
         logger.debug("graph_connection upsert failed: %s", e)
-        try:
-            conn.rollback()
-        except Exception:
-            pass
+        if owns_conn and conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         return None
     finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+        if owns_conn and conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _upsert_graph_connection_proposal_on_cur(
+    work_cur: Any,
+    *,
+    dedupe_key: str,
+    proposal_kind: str,
+    domain_key: str | None,
+    confidence: float,
+    source: str,
+    endpoints: dict[str, Any],
+    evidence: dict[str, Any] | None,
+    subject_summary: str | None,
+    mca: float,
+    reopen: bool,
+    endpoint_key: str | None,
+    commit: bool,
+    conn: Any | None,
+    inference_stage: str | None = None,
+) -> int | None:
+    if reopen and endpoint_key:
+        _reopen_refusal_unlocked(work_cur, endpoint_key, source=source)
+    if not reopen:
+        work_cur.execute(
+            """
+            SELECT id, status FROM intelligence.graph_connection_proposals
+            WHERE dedupe_key = %s
+            """,
+            (dedupe_key,),
+        )
+        existing = work_cur.fetchone()
+        if existing and existing[1] in (
+            "rejected",
+            "auto_applied",
+            "applied_manual",
+            "superseded",
+        ):
+            if commit and conn is not None:
+                conn.commit()
+            return int(existing[0])
+
+    reopen_clause = (
+        ", resolved_at = NULL, resolution_note = NULL, status = 'pending'"
+        if reopen
+        else ""
+    )
+    from shared.connection_inference import (
+        INFERENCE_CANDIDATE,
+        normalize_inference_stage,
+    )
+
+    stage = normalize_inference_stage(inference_stage, default=INFERENCE_CANDIDATE)
+
+    work_cur.execute(
+        f"""
+        INSERT INTO intelligence.graph_connection_proposals (
+            proposal_kind, domain_key, confidence, min_confidence_for_auto,
+            source, subject_summary, endpoints, evidence, dedupe_key, status,
+            inference_stage
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, 'pending', %s
+        )
+        ON CONFLICT (dedupe_key) DO UPDATE SET
+            confidence = GREATEST(
+                intelligence.graph_connection_proposals.confidence,
+                EXCLUDED.confidence
+            ),
+            evidence = CASE
+                WHEN EXCLUDED.confidence
+                     >= intelligence.graph_connection_proposals.confidence
+                THEN EXCLUDED.evidence
+                ELSE intelligence.graph_connection_proposals.evidence
+            END,
+            subject_summary = COALESCE(EXCLUDED.subject_summary,
+                intelligence.graph_connection_proposals.subject_summary),
+            proposal_kind = EXCLUDED.proposal_kind,
+            min_confidence_for_auto = EXCLUDED.min_confidence_for_auto,
+            inference_stage = CASE
+                WHEN intelligence.graph_connection_proposals.inference_stage
+                     = 'established' THEN 'established'
+                WHEN EXCLUDED.inference_stage = 'established' THEN 'established'
+                WHEN intelligence.graph_connection_proposals.inference_stage
+                     = 'candidate'
+                     AND EXCLUDED.inference_stage = 'hypothesized'
+                THEN 'candidate'
+                ELSE EXCLUDED.inference_stage
+            END,
+            updated_at = NOW()
+            {reopen_clause}
+        RETURNING id
+        """,
+        (
+            proposal_kind,
+            domain_key,
+            float(confidence),
+            mca,
+            source,
+            subject_summary,
+            json.dumps(endpoints),
+            json.dumps(evidence or {}),
+            dedupe_key,
+            stage,
+        ),
+    )
+    row = work_cur.fetchone()
+    if commit and conn is not None:
+        conn.commit()
+    return int(row[0]) if row else None
 
 
 def mark_storyline_merge_applied(domain_key: str, primary_id: int, secondary_id: int) -> None:
@@ -336,6 +794,7 @@ def fetch_pending_proposals(
     limit: int = 50,
     min_confidence: float = 0.0,
     proposal_kind: str | None = None,
+    proposal_ids: list[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Return pending proposals for workers / review APIs."""
     from shared.database.connection import get_db_connection
@@ -348,7 +807,8 @@ def fetch_pending_proposals(
         with conn.cursor() as cur:
             q = """
                 SELECT id, created_at, proposal_kind, domain_key, confidence,
-                       min_confidence_for_auto, source, subject_summary, endpoints, evidence, dedupe_key
+                       min_confidence_for_auto, source, subject_summary, endpoints, evidence, dedupe_key,
+                       status
                 FROM intelligence.graph_connection_proposals
                 WHERE status = 'pending' AND confidence >= %s
             """
@@ -356,6 +816,9 @@ def fetch_pending_proposals(
             if proposal_kind:
                 q += " AND proposal_kind = %s"
                 args.append(proposal_kind)
+            if proposal_ids:
+                q += " AND id = ANY(%s)"
+                args.append(list(proposal_ids))
             q += " ORDER BY confidence DESC, created_at ASC LIMIT %s"
             args.append(limit)
             cur.execute(q, tuple(args))
@@ -378,32 +841,107 @@ def fetch_pending_proposals(
             pass
 
 
+def get_proposal_by_id(proposal_id: int) -> dict[str, Any] | None:
+    """Fetch one graph connection proposal by id (any status)."""
+    from shared.database.connection import get_db_connection
+
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, created_at, proposal_kind, domain_key, confidence,
+                       min_confidence_for_auto, source, subject_summary, endpoints, evidence,
+                       dedupe_key, status, resolution_note, resolved_at
+                FROM intelligence.graph_connection_proposals
+                WHERE id = %s
+                """,
+                (int(proposal_id),),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            cols = [d[0] for d in cur.description]
+            rec = dict(zip(cols, row))
+            if isinstance(rec.get("endpoints"), str):
+                rec["endpoints"] = json.loads(rec["endpoints"])
+            if isinstance(rec.get("evidence"), str):
+                rec["evidence"] = json.loads(rec["evidence"])
+            return rec
+    except Exception as e:
+        logger.debug("get_proposal_by_id: %s", e)
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def mark_proposal_resolved(
     proposal_id: int,
     status: str,
     resolution_note: str | None = None,
+    *,
+    inference_stage: str | None = None,
 ) -> bool:
-    """Set proposal status (auto_applied, applied_manual, rejected, superseded)."""
+    """Set proposal status (auto_applied, applied_manual, rejected, superseded).
+
+    Chemistry model: successful apply → established; reject → quarantined
+    (unless inference_stage is passed explicitly).
+    """
     if status not in ("auto_applied", "applied_manual", "rejected", "superseded", "pending"):
         status = "applied_manual"
+    from shared.connection_inference import (
+        INFERENCE_ESTABLISHED,
+        INFERENCE_QUARANTINED,
+        normalize_inference_stage,
+    )
     from shared.database.connection import get_db_connection
+
+    if inference_stage is None:
+        if status in ("auto_applied", "applied_manual"):
+            inference_stage = INFERENCE_ESTABLISHED
+        elif status == "rejected":
+            inference_stage = INFERENCE_QUARANTINED
+    stage = (
+        normalize_inference_stage(inference_stage)
+        if inference_stage is not None
+        else None
+    )
 
     conn = get_db_connection()
     if not conn:
         return False
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE intelligence.graph_connection_proposals
-                SET status = %s,
-                    resolved_at = CASE WHEN %s = 'pending' THEN resolved_at ELSE NOW() END,
-                    resolution_note = COALESCE(%s, resolution_note),
-                    updated_at = NOW()
-                WHERE id = %s
-                """,
-                (status, status, resolution_note, proposal_id),
-            )
+            if stage is not None:
+                cur.execute(
+                    """
+                    UPDATE intelligence.graph_connection_proposals
+                    SET status = %s,
+                        inference_stage = %s,
+                        resolved_at = CASE WHEN %s = 'pending' THEN resolved_at ELSE NOW() END,
+                        resolution_note = COALESCE(%s, resolution_note),
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (status, stage, status, resolution_note, proposal_id),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE intelligence.graph_connection_proposals
+                    SET status = %s,
+                        resolved_at = CASE WHEN %s = 'pending' THEN resolved_at ELSE NOW() END,
+                        resolution_note = COALESCE(%s, resolution_note),
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (status, status, resolution_note, proposal_id),
+                )
             conn.commit()
             return cur.rowcount > 0
     except Exception as e:
@@ -438,38 +976,91 @@ def insert_graph_connection_link_pair(
     right_id: int,
     link_role: str,
     confidence: float | None,
+    evidence: dict[str, Any] | None = None,
+    source: str | None = None,
+    inference_stage: str | None = None,
+    cur: Any | None = None,
 ) -> bool:
     """Insert one undirected link (canonical endpoint order). Returns True if attempted OK."""
+    from shared.connection_inference import INFERENCE_ESTABLISHED, normalize_inference_stage
+
     lk, li, rk, ri = _ordered_link_tuple(left_kind, left_id, right_kind, right_id)
+    ev = merge_edge_evidence(
+        evidence,
+        phase=(evidence or {}).get("phase") if isinstance(evidence, dict) else None,
+        method=(evidence or {}).get("method") if isinstance(evidence, dict) else None,
+    )
+    src = source or (ev.get("phase") if isinstance(ev.get("phase"), str) else None) or "unknown"
+    stage = normalize_inference_stage(
+        inference_stage, default=INFERENCE_ESTABLISHED
+    )
+
+    def _do(cur_inner) -> bool:
+        cur_inner.execute(
+            """
+            INSERT INTO intelligence.graph_connection_links (
+                domain_key, source_proposal_id,
+                left_kind, left_id, right_kind, right_id,
+                link_role, confidence, status, evidence, source,
+                inference_stage, last_scored_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'active', %s::jsonb, %s, %s, NOW())
+            ON CONFLICT (left_kind, left_id, right_kind, right_id, link_role)
+            DO UPDATE SET
+                confidence = GREATEST(
+                    COALESCE(intelligence.graph_connection_links.confidence, 0),
+                    COALESCE(EXCLUDED.confidence, 0)
+                ),
+                evidence = EXCLUDED.evidence,
+                source = COALESCE(EXCLUDED.source, intelligence.graph_connection_links.source),
+                inference_stage = CASE
+                    WHEN EXCLUDED.inference_stage = 'established' THEN 'established'
+                    ELSE COALESCE(
+                        intelligence.graph_connection_links.inference_stage,
+                        EXCLUDED.inference_stage
+                    )
+                END,
+                last_scored_at = NOW(),
+                status = CASE
+                    WHEN intelligence.graph_connection_links.status = 'active'
+                    THEN 'active'
+                    ELSE intelligence.graph_connection_links.status
+                END
+            WHERE intelligence.graph_connection_links.status = 'active'
+               OR intelligence.graph_connection_links.status IS NULL
+            """,
+            (
+                domain_key,
+                source_proposal_id,
+                lk,
+                li,
+                rk,
+                ri,
+                link_role,
+                confidence,
+                json.dumps(ev),
+                src,
+                stage,
+            ),
+        )
+        return True
+
+    if cur is not None:
+        try:
+            return _do(cur)
+        except Exception as e:
+            logger.debug("insert_graph_connection_link_pair (cur): %s", e)
+            return False
+
     from shared.database.connection import get_db_connection
 
     conn = get_db_connection()
     if not conn:
         return False
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO intelligence.graph_connection_links (
-                    domain_key, source_proposal_id,
-                    left_kind, left_id, right_kind, right_id,
-                    link_role, confidence
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (left_kind, left_id, right_kind, right_id, link_role) DO NOTHING
-                """,
-                (
-                    domain_key,
-                    source_proposal_id,
-                    lk,
-                    li,
-                    rk,
-                    ri,
-                    link_role,
-                    confidence,
-                ),
-            )
-            conn.commit()
-            return True
+        with conn.cursor() as c:
+            ok = _do(c)
+        conn.commit()
+        return ok
     except Exception as e:
         logger.debug("insert_graph_connection_link_pair: %s", e)
         try:
@@ -626,8 +1217,9 @@ def bfs_graph_neighbors(
                     SELECT id, left_kind, left_id, right_kind, right_id,
                            link_role, confidence, domain_key, source_proposal_id
                     FROM intelligence.graph_connection_links
-                    WHERE (left_kind = %s AND left_id = %s)
-                       OR (right_kind = %s AND right_id = %s)
+                    WHERE ((left_kind = %s AND left_id = %s)
+                       OR (right_kind = %s AND right_id = %s))
+                      AND COALESCE(status, 'active') = 'active'
                     LIMIT 80
                     """,
                     (kind, obj_id, kind, obj_id),

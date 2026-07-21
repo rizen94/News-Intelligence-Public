@@ -9,6 +9,16 @@ defaults:
   min_article_confidence: 0.3
   clustering_similarity_threshold: 0.70
   storyline_min_cluster_size: 3
+  # Chemistry model: domain protein shape + attach-score blend (see DomainSynthesisConfig).
+  story_kind: event_narrative
+  link_score_profile:
+    relevance_weight: 0.55
+    semantic_weight: 0.15
+    keyword_weight: 0.10
+    quality_weight: 0.20
+    auto_approve_combined: 0.75
+    aggressive_membership: true
+    allow_storyline_merge: true
   storyline_development:
     discovery:
       clustering_similarity_threshold: 0.70
@@ -74,6 +84,15 @@ defaults:
 
 domains:
   politics: &politics_v1
+    story_kind: event_narrative
+    link_score_profile:
+      relevance_weight: 0.55
+      semantic_weight: 0.15
+      keyword_weight: 0.10
+      quality_weight: 0.20
+      auto_approve_combined: 0.75
+      aggressive_membership: true
+      allow_storyline_merge: true
     focus_areas:
       - campaigns and elections
       - regimes and leadership changes
@@ -168,6 +187,15 @@ domains:
         min_articles_for_mega: 12
 
   finance: &finance_v1
+    story_kind: market_regulatory_arc
+    link_score_profile:
+      relevance_weight: 0.50
+      semantic_weight: 0.15
+      keyword_weight: 0.10
+      quality_weight: 0.25
+      auto_approve_combined: 0.75
+      aggressive_membership: true
+      allow_storyline_merge: true
     focus_areas:
       - commodities and price movements driven by events
       - supply chains and disruptions
@@ -254,6 +282,15 @@ domains:
         min_articles_for_mega: 12
 
   legal:
+    story_kind: matter_docket
+    link_score_profile:
+      relevance_weight: 0.40
+      semantic_weight: 0.20
+      keyword_weight: 0.15
+      quality_weight: 0.25
+      auto_approve_combined: 0.78
+      aggressive_membership: false
+      allow_storyline_merge: false
     focus_areas:
       - Newton and Greater Boston local ordinances, municipal law, and city/county proceedings
       - Massachusetts state legislation, regulations, and appellate decisions when reported in news
@@ -291,13 +328,13 @@ domains:
       - local ordinance cycles (hearing, vote, implementation)
       - federal–state interaction (preemption, funding, enforcement shifts)
 
-    clustering_similarity_threshold: 0.58
-    storyline_min_cluster_size: 2
+    clustering_similarity_threshold: 0.68
+    storyline_min_cluster_size: 3
 
     storyline_development:
       discovery:
-        clustering_similarity_threshold: 0.58
-        min_cluster_size: 2
+        clustering_similarity_threshold: 0.68
+        min_cluster_size: 3
         semantic_weight: 0.75
         entity_weight: 0.18
       proactive:
@@ -306,9 +343,9 @@ domains:
         promote_min_articles: 3
         promote_min_confidence: 0.50
       consolidation:
-        merge_similarity_threshold: 0.62
-        parent_similarity_threshold: 0.48
-        min_articles_for_mega: 8
+        merge_similarity_threshold: 0.68
+        parent_similarity_threshold: 0.55
+        min_articles_for_mega: 12
 
     editorial_sections:
       - What Changed
@@ -355,6 +392,15 @@ domains:
       Prefer neutral, factual reporting; flag uncertainty when sources conflict.
 
   medicine:
+    story_kind: evidence_thread
+    link_score_profile:
+      relevance_weight: 0.35
+      semantic_weight: 0.30
+      keyword_weight: 0.15
+      quality_weight: 0.20
+      auto_approve_combined: 0.80
+      aggressive_membership: false
+      allow_storyline_merge: false
     focus_areas:
       - randomized trials, effect sizes, and pre-specified endpoints
       - regulatory decisions (FDA, EMA) and label changes grounded in evidence
@@ -462,6 +508,15 @@ domains:
       medical advice.
 
   artificial-intelligence:
+    story_kind: research_topic
+    link_score_profile:
+      relevance_weight: 0.30
+      semantic_weight: 0.35
+      keyword_weight: 0.20
+      quality_weight: 0.15
+      auto_approve_combined: 0.82
+      aggressive_membership: false
+      allow_storyline_merge: false
     focus_areas:
       - reproducible benchmarks, evaluations, and failure modes
       - Research publications and verifiable deployments (what was demonstrated)

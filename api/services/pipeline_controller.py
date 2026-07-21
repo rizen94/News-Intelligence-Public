@@ -138,6 +138,34 @@ def get_post_collection_kickoff_phases() -> list[str]:
     return phases
 
 
+def post_intake_beaker_enabled() -> bool:
+    raw = _controller_config().get("post_intake_beaker_enabled")
+    if raw is not None:
+        return bool(raw)
+    try:
+        from shared.chemistry_beaker import chemistry_beaker_enabled
+
+        return chemistry_beaker_enabled()
+    except Exception:
+        return True
+
+
+def get_post_intake_beaker_phases() -> list[str]:
+    """Chemistry beaker phases after RSS intake preprocess clears."""
+    try:
+        from shared.chemistry_beaker import get_post_intake_beaker_phases as _phases
+
+        return _phases()
+    except Exception:
+        return [
+            "graph_connection_distillation",
+            "embedding_link_candidates",
+            "collision_sampling",
+            "stimulus_rag",
+            "protein_harden",
+        ]
+
+
 def popos_overflow_util_max_pct() -> float:
     return float(_cfg_int("popos_overflow_util_max_pct", 85))
 
@@ -187,6 +215,10 @@ _CATCHUP_DRIVER_PHASES: frozenset[str] = frozenset(
         "storyline_automation",
         "event_tracking",
         "graph_connection_distillation",
+        "embedding_link_candidates",
+        "collision_sampling",
+        "stimulus_rag",
+        "protein_harden",
         "ml_processing",
         "sentiment_analysis",
         "quality_scoring",

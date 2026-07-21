@@ -8,9 +8,10 @@ Job types:
   - timeline_narrative_chronological | timeline_narrative_briefing: 8B narrative from timeline, stored on storylines
 
 Processed by automation task `content_refinement_queue` (see automation_manager).
-Before each drain batch, automation calls `auto_enqueue_comprehensive_rag_for_automation()` so
-deep analysis (`comprehensive_rag`) is queued without using the UI (disable via
-`AUTO_ENQUEUE_COMPREHENSIVE_RAG=0`).
+Before each drain batch, automation calls `auto_enqueue_comprehensive_rag_for_automation()` when
+`CONTENT_REFINEMENT_AUTO_ENQUEUE=true` (default off). Legacy path:
+`CONTENT_REFINEMENT_API_ENQUEUE_ONLY=false` and `AUTO_ENQUEUE_COMPREHENSIVE_RAG=1`.
+Minimum linked articles: `CONTENT_REFINEMENT_AUTO_ENQUEUE_MIN_ARTICLES` (default 3).
 
 Nightly pipeline (America/New_York by default): automation phase `nightly_enrichment_context` runs
 02:00–07:00 (`NIGHTLY_PIPELINE_*`): kickoff RSS once per local day, drain enrichment and context_sync,
@@ -248,6 +249,95 @@ def enqueue_initial_narrative_finisher(
     )
 
 
+def content_refinement_auto_enqueue_enabled() -> bool:
+    """
+    True when automation may enqueue comprehensive_rag without a UI click.
+
+    Prefer CONTENT_REFINEMENT_AUTO_ENQUEUE=true (plan SSOT; default off).
+    Legacy: CONTENT_REFINEMENT_API_ENQUEUE_ONLY=false and AUTO_ENQUEUE_COMPREHENSIVE_RAG=1.
+    """
+    if env_str("CONTENT_REFINEMENT_AUTO_ENQUEUE", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return True
+    if env_str("CONTENT_REFINEMENT_API_ENQUEUE_ONLY", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return False
+    return env_str("AUTO_ENQUEUE_COMPREHENSIVE_RAG", "1").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def enqueue_refinement_for_stimulus(
+    *,
+    domain_key: str,
+    article_id: int | None = None,
+    storyline_id: int | None = None,
+    reason: str = "stimulus",
+) -> dict[str, Any]:
+    """Enqueue comprehensive_rag from a chemistry stimulus (evidence pull / harden), not heat census."""
+    from shared.domain_registry import resolve_domain_schema
+
+    schema = resolve_domain_schema(domain_key)
+    sid = storyline_id
+    conn = get_db_connection()
+    if not conn:
+        return {"enqueued": 0, "error": "no_db"}
+    try:
+        with conn.cursor() as cur:
+            if sid is None and article_id is not None:
+                cur.execute(
+                    f"""
+                    SELECT storyline_id FROM {schema}.storyline_articles
+                    WHERE article_id = %s
+                    ORDER BY COALESCE(relevance_score, 0) DESC
+                    LIMIT 1
+                    """,
+                    (article_id,),
+                )
+                row = cur.fetchone()
+                if row:
+                    sid = int(row[0])
+        if sid is None:
+            return {"enqueued": 0, "reason": "no_storyline"}
+        result = enqueue_content_refinement(
+            domain_key=domain_key,
+            storyline_id=int(sid),
+            job_type=JOB_COMPREHENSIVE_RAG,
+            priority="high",
+            metadata={"source": reason, "stimulus": True, "article_id": article_id},
+        )
+        ok = bool(result.get("success"))
+        return {
+            "enqueued": 1 if ok and not result.get("already_queued") else 0,
+            "storyline_id": sid,
+            "result": result,
+        }
+    except Exception as e:
+        logger.debug("enqueue_refinement_for_stimulus: %s", e)
+        return {"enqueued": 0, "error": str(e)[:200]}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def auto_enqueue_comprehensive_rag_min_articles() -> int:
+    """Minimum linked articles before auto-enqueue comprehensive_rag."""
+    try:
+        return max(1, int(env_str("CONTENT_REFINEMENT_AUTO_ENQUEUE_MIN_ARTICLES", "3")))
+    except ValueError:
+        return 3
+
+
 def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
     """
     Enqueue comprehensive_rag (deep storyline analysis) for storylines that should not depend
@@ -257,25 +347,22 @@ def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
     Candidates:
       - ml_processing_status in (pending, processing) — e.g. topic→storyline promotion
       - Else if document_status is present: never rag_analyzed (NULL or other values)
+      - At least CONTENT_REFINEMENT_AUTO_ENQUEUE_MIN_ARTICLES linked articles (default 3)
 
-    Disabled with AUTO_ENQUEUE_COMPREHENSIVE_RAG=0. Per-domain scan cap:
-    AUTO_ENQUEUE_COMPREHENSIVE_RAG_PER_DOMAIN (default 8).
-    When CONTENT_REFINEMENT_API_ENQUEUE_ONLY=true (default), scheduler never auto-enqueues.
+    Enable with CONTENT_REFINEMENT_AUTO_ENQUEUE=true (default off).
+    Legacy disable: CONTENT_REFINEMENT_API_ENQUEUE_ONLY=true (default) without AUTO_ENQUEUE flag.
+    Per-domain scan cap: AUTO_ENQUEUE_COMPREHENSIVE_RAG_PER_DOMAIN (default 8).
     """
-    if env_str("CONTENT_REFINEMENT_API_ENQUEUE_ONLY", "true").lower() in (
-        "1",
-        "true",
-        "yes",
-    ):
-        return {"skipped": True, "reason": "api_enqueue_only", "enqueued": 0, "already_queued": 0}
-    if env_str("AUTO_ENQUEUE_COMPREHENSIVE_RAG", "1").lower() not in (
-        "1",
-        "true",
-        "yes",
-    ):
-        return {"skipped": True, "reason": "disabled_by_env", "enqueued": 0, "already_queued": 0}
+    if not content_refinement_auto_enqueue_enabled():
+        return {
+            "skipped": True,
+            "reason": "auto_enqueue_disabled",
+            "enqueued": 0,
+            "already_queued": 0,
+        }
 
     limit = max(1, int(env_str("AUTO_ENQUEUE_COMPREHENSIVE_RAG_PER_DOMAIN", "8")))
+    min_articles = auto_enqueue_comprehensive_rag_min_articles()
     stats: dict[str, Any] = {"enqueued": 0, "already_queued": 0, "errors": 0, "by_domain": {}}
 
     for domain_key in sorted(get_active_domain_keys()):
@@ -298,10 +385,10 @@ def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
                           END AS prio
                         FROM {schema}.storylines s
                         WHERE s.status = 'active'
-                          AND EXISTS (
-                              SELECT 1 FROM {schema}.storyline_articles sa
+                          AND (
+                              SELECT COUNT(*) FROM {schema}.storyline_articles sa
                               WHERE sa.storyline_id = s.id
-                          )
+                          ) >= %s
                           AND NOT EXISTS (
                               SELECT 1 FROM intelligence.content_refinement_queue q
                               WHERE q.domain_key = %s
@@ -324,7 +411,7 @@ def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
                           s.updated_at DESC NULLS LAST
                         LIMIT %s
                         """,
-                        (domain_key, JOB_COMPREHENSIVE_RAG, limit),
+                        (min_articles, domain_key, JOB_COMPREHENSIVE_RAG, limit),
                     )
                     rows = [(int(r[0]), str(r[1])) for r in cur.fetchall()]
                 except Exception as e:
@@ -336,10 +423,10 @@ def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
                         SELECT s.id, 'high'::text AS prio
                         FROM {schema}.storylines s
                         WHERE s.status = 'active'
-                          AND EXISTS (
-                              SELECT 1 FROM {schema}.storyline_articles sa
+                          AND (
+                              SELECT COUNT(*) FROM {schema}.storyline_articles sa
                               WHERE sa.storyline_id = s.id
-                          )
+                          ) >= %s
                           AND NOT EXISTS (
                               SELECT 1 FROM intelligence.content_refinement_queue q
                               WHERE q.domain_key = %s
@@ -351,7 +438,7 @@ def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
                         ORDER BY s.updated_at DESC NULLS LAST
                         LIMIT %s
                         """,
-                        (domain_key, JOB_COMPREHENSIVE_RAG, limit),
+                        (min_articles, domain_key, JOB_COMPREHENSIVE_RAG, limit),
                     )
                     rows = [(int(r[0]), str(r[1])) for r in cur.fetchall()]
         except Exception as e:

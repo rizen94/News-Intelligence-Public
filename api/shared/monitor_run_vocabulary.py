@@ -54,6 +54,15 @@ ITERATION_THROUGHPUT_KEYS: tuple[str, ...] = (
     "items_processed",
 )
 
+# Chemistry-style connection phases (Monitor / operator chrome)
+CHEMISTRY_PHASE_DISPLAY_LABELS: dict[str, str] = {
+    "collision_sampling": "Collision sampling (loose bonds)",
+    "stimulus_rag": "Stimulus RAG (evidence pull)",
+    "protein_harden": "Protein harden (establish edges)",
+    "embedding_link_candidates": "Embedding link candidates",
+    "graph_connection_distillation": "Graph connection distillation",
+}
+
 
 class RunHistoryStatus(StrEnum):
     BATCH_ROUND = "batch_round"
@@ -116,12 +125,14 @@ class PhaseRunEvent:
             "scheduler_path": self.scheduler_path,
             "loops_processed": self.iteration_index,
             "iteration_index": self.iteration_index,
-            "round_processed": self.rows_processed,
-            "rows_processed": self.rows_processed,
         }
         if self.rows_cumulative is not None:
             meta["total_processed"] = self.rows_cumulative
+        # Extra first, then pin iteration throughput so inflated action totals
+        # in kwargs cannot overwrite rows_processed / round_processed.
         meta.update(self.extra_metadata)
+        meta["round_processed"] = self.rows_processed
+        meta["rows_processed"] = self.rows_processed
         return meta
 
     def activity_payload(self, *, message: str | None = None) -> dict[str, Any]:
@@ -207,11 +218,21 @@ def run_history_measurable_sql(*, min_dur_param: str = "%(min_dur)s") -> str:
 
 
 def metadata_batch_throughput_sql(*, metadata_expr: str = "metadata") -> str:
-    """SQL expression: max iteration throughput from a metadata jsonb column."""
-    keys_sql = ", ".join(
-        f"COALESCE(({metadata_expr}->>'{k}')::bigint, 0)" for k in ITERATION_THROUGHPUT_KEYS
+    """SQL expression: first positive iteration throughput key.
+
+    Must match ``throughput_from_payload(..., prefer_iteration=True)``. Using
+    ``GREATEST`` inflated Monitor rows/run when metadata also carried action
+    totals (e.g. membership dry-run demotions) under ``processed`` /
+    ``items_processed`` while ``round_processed`` held the real batch size.
+    """
+    nullifs = [
+        f"NULLIF(COALESCE(({metadata_expr}->>'{k}')::bigint, 0), 0)"
+        for k in ITERATION_THROUGHPUT_KEYS
+    ]
+    nullifs.append(
+        f"NULLIF(COALESCE(({metadata_expr}->>'total_processed')::bigint, 0), 0)"
     )
-    return f"GREATEST({keys_sql})"
+    return f"COALESCE({', '.join(nullifs)}, 0)"
 
 
 def query_measured_rows_per_run_by_phase(cur, *, window_hours: int = 24) -> dict[str, tuple[int, str, int]]:

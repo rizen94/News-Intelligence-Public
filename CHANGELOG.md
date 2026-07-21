@@ -6,6 +6,7 @@ All notable changes to News Intelligence are documented here.
 
 ### Added
 
+- **Chemistry beaker (connection lifecycle)** — domain `story_kind` + `link_score_profile`; inference stages (`hypothesized` → `candidate` → `established`/`quarantined`); phases `collision_sampling`, `stimulus_rag`, `protein_harden`; selective RAG evidence pull queue (migration 275); master gate `CHEMISTRY_BEAKER_ENABLED` (default on) with post-RSS / post-UIE kickoff (`api/shared/chemistry_beaker.py`)
 - **Feature registry** (`api/config/features.yaml`) — lifecycle tags (`under_developed`, `staged`, `incorporated`, `deprecated`, `archived`), programmatic search CLI/API, rollover protocol
 - **Signal-first admission control** — enabled by default; adaptive quality threshold governor
 - **RSS feed silencing** — enabled with dry-run default; warn-then-auto-silence
@@ -18,7 +19,8 @@ All notable changes to News Intelligence are documented here.
 
 ### Changed
 
-- **Scheduling** — four loops: ingest maintenance, spine conductor (ordered), assembly conductor (ordered), nightly window
+- **Stories / Monitor** — kind-aware labels (e.g. Research thread); Monitor phase labels for beaker stages; attach scoring and membership/merge gated by `story_kind`
+- **Scheduling** — beaker phases in flat postprocess priority + structure band; kickoff after `collection_cycle` RSS and unified intake when preprocess clear
 - **Intake fusion exclusive** — legacy per-article extract phases archived; unified intake sole LLM path
 - **Steady-state model** — `qwen2.5:14b-instruct` for unified intake when quality gate passes
 - **Monitor** — measures `profiles_updated`, `compiled`, `chronicle_entries` in batch throughput
@@ -34,3 +36,4 @@ All notable changes to News Intelligence are documented here.
 ### Migration
 
 - 249–260: feature overrides, admission config, pipeline_status, spine queue tables (see `docs/UPGRADE_10.1.md`)
+- **275:** `inference_stage` on graph connection proposals/links + `intelligence.rag_evidence_pull_queue`

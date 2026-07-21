@@ -142,6 +142,9 @@ _OLLAMA_AUTOMATION_PHASES_FULL = frozenset(
         "storyline_review_agent",
         "storyline_membership_review",
         "embedding_link_candidates",
+        "collision_sampling",
+        "stimulus_rag",
+        "protein_harden",
         "graph_link_drift_review",
         "daily_briefing_synthesis",
         "document_processing",
@@ -308,6 +311,9 @@ DEFAULT_AUTOMATION_PER_PHASE_CONCURRENT_CAP_PHASES = frozenset(
         "storyline_review_agent",
         "storyline_membership_review",
         "embedding_link_candidates",
+        "collision_sampling",
+        "stimulus_rag",
+        "protein_harden",
         "graph_link_drift_review",
         "content_enrichment",
         "proactive_detection",
@@ -439,10 +445,14 @@ _ANALYSIS_PIPELINE_STEPS_FULL: tuple[tuple[str, ...], ...] = (
         "sentiment_analysis",
         "fact_verification",  # Moved from Step 2 — verify before synthesis
     ),
-    # Step 2: Structure (post-spine assembly — see assembly_conductor when ordered)
+    # Step 2: Structure + chemistry beaker (loose bonds → stimuli → harden)
     (
         "entity_organizer",
         "graph_connection_distillation",
+        "embedding_link_candidates",
+        "collision_sampling",
+        "stimulus_rag",
+        "protein_harden",
         "cross_domain_synthesis",
         "storyline_assembly",
         "event_tracking",
@@ -455,7 +465,6 @@ _ANALYSIS_PIPELINE_STEPS_FULL: tuple[tuple[str, ...], ...] = (
         "storyline_automation",
         "storyline_review_agent",
         "storyline_membership_review",
-        "embedding_link_candidates",
         "graph_link_drift_review",
         "event_deduplication",
         "mention_resolution",
@@ -592,6 +601,10 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "storyline_review_agent": 120,
     "storyline_membership_review": 180,
     "embedding_link_candidates": 120,
+    "collision_sampling": 60,
+    "stimulus_rag": 180,
+    "protein_harden": 120,
+    "graph_link_drift_review": 90,
     "graph_link_drift_review": 120,
     "storyline_enrichment": 600,  # full-history pass: ~10 min
     "story_enhancement": 300,
@@ -1012,12 +1025,40 @@ class AutomationManager:
                 "interval": 1800,
                 "last_run": None,
                 "enabled": True,
-                "priority": TaskPriority.LOW,
+                "priority": TaskPriority.NORMAL,
                 "phase": 2,
-                "depends_on": ["graph_connection_distillation"],
+                # After RSS intake chain (collection → enrich/UIE) — beaker stir
+                "depends_on": ["collection_cycle", "unified_intake_extraction"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
                     "embedding_link_candidates"
                 ],
+            },
+            "collision_sampling": {
+                "interval": 1800,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 2,
+                "depends_on": ["collection_cycle", "unified_intake_extraction"],
+                "estimated_duration": 60,
+            },
+            "stimulus_rag": {
+                "interval": 900,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 2,
+                "depends_on": ["collision_sampling", "embedding_link_candidates"],
+                "estimated_duration": 180,
+            },
+            "protein_harden": {
+                "interval": 1200,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 2,
+                "depends_on": ["stimulus_rag", "graph_connection_distillation"],
+                "estimated_duration": 120,
             },
             "graph_link_drift_review": {
                 "interval": 3600,
@@ -2802,6 +2843,12 @@ class AutomationManager:
                 await self._execute_graph_connection_distillation(task)
             elif task.name == "embedding_link_candidates":
                 await self._execute_embedding_link_candidates(task)
+            elif task.name == "collision_sampling":
+                await self._execute_collision_sampling(task)
+            elif task.name == "stimulus_rag":
+                await self._execute_stimulus_rag(task)
+            elif task.name == "protein_harden":
+                await self._execute_protein_harden(task)
             elif task.name == "graph_link_drift_review":
                 await self._execute_graph_link_drift_review(task)
             elif task.name == "digest_generation":
@@ -3461,6 +3508,13 @@ class AutomationManager:
                     ctrl.request_replan()
             except Exception as e:
                 logger.debug("collection_cycle post-RSS replan: %s", e)
+        # Stir the beaker when intake preprocess is already clear (RSS done, backlog low).
+        try:
+            from shared.chemistry_beaker import kickoff_beaker_phases
+
+            kickoff_beaker_phases(self, reason="collection_cycle_post_rss")
+        except Exception as e:
+            logger.debug("collection_cycle beaker kickoff: %s", e)
         # 3. Document collection (skip during backfill pause — avoid adding new external documents)
         if not backfill_pause:
             try:
@@ -5482,7 +5536,7 @@ class AutomationManager:
                     task.metadata["adaptive_batch_meta"] = adaptive_meta
         except Exception:
             adaptive_meta = {}
-        dry_run = env_str("STORYLINE_MEMBERSHIP_REVIEW_DRY_RUN", "true").lower() in (
+        dry_run = env_str("STORYLINE_MEMBERSHIP_REVIEW_DRY_RUN", "false").lower() in (
             "1",
             "true",
             "yes",
@@ -5498,7 +5552,9 @@ class AutomationManager:
                 for domain_res in by_domain.values():
                     if isinstance(domain_res, dict):
                         storylines_scanned += len(domain_res.get("storylines") or [])
-            items = sum(int(totals.get(k, 0) or 0) for k in totals)
+            # Action totals (esp. dry-run demote/unlink candidates) are not batch
+            # throughput — Monitor rows/run must track storylines scanned only.
+            action_total = sum(int(totals.get(k, 0) or 0) for k in totals)
             if isinstance(task.metadata, dict):
                 task.metadata.update(
                     {
@@ -5511,8 +5567,9 @@ class AutomationManager:
                         "tracked_events_unlinked": int(
                             totals.get("tracked_events_unlinked", 0) or 0
                         ),
+                        "action_totals_sum": action_total,
                         "storylines_scanned": storylines_scanned,
-                        "items_processed": max(items, storylines_scanned),
+                        "items_processed": storylines_scanned,
                     }
                 )
             logger.info(
@@ -5527,8 +5584,7 @@ class AutomationManager:
                     task,
                     loops_processed=1,
                     round_processed=storylines_scanned,
-                    processed=max(items, storylines_scanned),
-                    items_processed=max(items, storylines_scanned),
+                    items_processed=storylines_scanned,
                     storylines_scanned=storylines_scanned,
                 )
             except Exception:
@@ -5546,11 +5602,9 @@ class AutomationManager:
             logger.warning("Storyline membership review failed: %s", e)
 
     async def _execute_embedding_link_candidates(self, task: Task):
-        if env_str("EMBEDDING_LINK_CANDIDATES_ENABLED", "false").lower() not in (
-            "1",
-            "true",
-            "yes",
-        ):
+        from shared.chemistry_beaker import embedding_link_candidates_enabled
+
+        if not embedding_link_candidates_enabled():
             return
         from services.embedding_link_candidate_service import (
             run_embedding_link_candidates_all_domains,
@@ -5576,6 +5630,73 @@ class AutomationManager:
             logger.info("Embedding link candidates: totals=%s", totals)
         except Exception as e:
             logger.warning("Embedding link candidates failed: %s", e)
+
+    async def _execute_collision_sampling(self, task: Task):
+        from shared.chemistry_beaker import collision_sampling_enabled
+
+        if not collision_sampling_enabled():
+            return
+        from services.embedding_link_candidate_service import run_random_collision_sample
+
+        try:
+            result = run_random_collision_sample()
+            if isinstance(task.metadata, dict):
+                task.metadata["items_processed"] = int(result.get("proposals") or 0)
+                task.metadata.update({k: result.get(k) for k in ("proposals", "errors")})
+            logger.info("Collision sampling: %s", result)
+        except Exception as e:
+            logger.warning("Collision sampling failed: %s", e)
+
+    async def _execute_stimulus_rag(self, task: Task):
+        from shared.chemistry_beaker import stimulus_rag_enabled
+
+        if not stimulus_rag_enabled():
+            return
+        from services.rag_evidence_pull_service import (
+            drain_queued_evidence_pulls,
+            screen_ai_arxiv_for_evidence_pull,
+            screen_hypothesized_bonds_for_evidence_pull,
+        )
+
+        try:
+            screened = screen_ai_arxiv_for_evidence_pull(limit=20)
+            bond_screened = screen_hypothesized_bonds_for_evidence_pull(limit=25)
+            drained = drain_queued_evidence_pulls(limit=3)
+            if isinstance(task.metadata, dict):
+                task.metadata["screened"] = screened
+                task.metadata["bond_screened"] = bond_screened
+                task.metadata["drained"] = drained
+                task.metadata["items_processed"] = (
+                    int(drained.get("processed") or 0)
+                    + int(screened.get("enqueued") or 0)
+                    + int(bond_screened.get("enqueued") or 0)
+                )
+            logger.info(
+                "Stimulus RAG: screen=%s bonds=%s drain=%s",
+                screened,
+                bond_screened,
+                drained,
+            )
+        except Exception as e:
+            logger.warning("Stimulus RAG failed: %s", e)
+
+    async def _execute_protein_harden(self, task: Task):
+        from shared.chemistry_beaker import protein_harden_enabled
+
+        if not protein_harden_enabled():
+            return
+        from services.protein_harden_service import run_protein_harden
+
+        try:
+            result = run_protein_harden()
+            if isinstance(task.metadata, dict):
+                task.metadata.update(result)
+                task.metadata["items_processed"] = int(result.get("promoted") or 0) + int(
+                    result.get("refined") or 0
+                )
+            logger.info("Protein harden: %s", result)
+        except Exception as e:
+            logger.warning("Protein harden failed: %s", e)
 
     async def _execute_graph_link_drift_review(self, task: Task):
         if env_str("GRAPH_LINK_DRIFT_REVIEW_ENABLED", "false").lower() not in (
@@ -5779,6 +5900,13 @@ class AutomationManager:
             processed,
             result.get("batch_rounds", 0),
         )
+        # Intake batch done — stir beaker when enrichment+UIE queues are clear enough.
+        try:
+            from shared.chemistry_beaker import kickoff_beaker_phases
+
+            kickoff_beaker_phases(self, reason="unified_intake_batch_complete")
+        except Exception as e:
+            logger.debug("unified_intake beaker kickoff: %s", e)
 
     async def _execute_entity_extraction(self, task: Task):
         """Batched entity extraction on PopOS GPU (with Widow CPU overflow when dual-lane)."""

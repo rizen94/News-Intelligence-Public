@@ -97,7 +97,7 @@ This section states **what "good" means per layer**, **what we deliberately igno
 | **Pipeline domain scope** | Per-domain automation loops use **`get_pipeline_active_domain_keys()`** / **`pipeline_url_schema_pairs()`** so paused legacy silos are not enriched, synced, or story-processed. |
 | **`BATCH_SIZE_PER_TASK`** | Defines "normal" batch per run; pending **above** this is treated as backlog (shorter effective interval in backlog mode). |
 | **`BATCH_PHASES_CONTINUOUS`** + `MAX_REQUEUE_PER_WINDOW` | After `collection_cycle`, some phases may re-enqueue in the same analysis window up to a cap so one pass does not starve others. |
-| **Nightly unified window** | When `in_nightly_pipeline_window_est()` is true, `content_enrichment` / `context_sync` standalone tasks defer to **`nightly_enrichment_context`** (single orchestrated drain). When `NIGHTLY_UNIFIED_PIPELINE_ENABLED=false`, the normal `collection_cycle` + interval phases own enrichment again. |
+| **Nightly unified / heavy band** | When `in_nightly_pipeline_window_est()` is true (default **01:00–06:00** local heavy band), standalone `content_enrichment` / `context_sync` defer to **`nightly_enrichment_context`**. Outside heavy, morning (06:00–10:00) runs full GPU drains; desk_light (10:00–01:00) keeps Widow busy but defers PopOS GPU phases. When `NIGHTLY_UNIFIED_PIPELINE_ENABLED=false`, interval automation owns enrichment again. |
 
 ### Tier A — Ingestion (Reject Early)
 
@@ -154,7 +154,7 @@ When enabled, **`unified_intake_extraction`** replaces scheduled **`entity_extra
 | `UNIFIED_INTAKE_EXTRACTION_ENABLED` | `true` | Opt-out: set `false` or `LEGACY_INTAKE_EXTRACTION_ENABLED=true` for per-phase intake |
 | `FAST_NER_ENABLED` | `true` | spaCy + GLiNER pre-pass before LLM entity fan-out |
 | `FAST_NER_BACKEND` | `spacy` | `spacy`, `gliner`, `both`, or `auto` |
-| `CONTEXT_CHUNKING_ENABLED` | `true` | Semantic multi-chunk contexts for long articles |
+| `CONTEXT_CHUNKING_ENABLED` | `false` | When true, split long articles into `article` + `article_chunk` contexts. Default off — one full-body context per article (`text` columns already unbounded). |
 | `UNIFIED_INTAKE_EXTRACTION_BATCH_SIZE` | `6` | Articles per LLM call (`scripts/run_baseline_catchup.sh` mirrors this default) |
 | `UNIFIED_INTAKE_EXTRACTION_PARALLEL` | `6` | Concurrent batch lanes |
 | `UNIFIED_INTAKE_EXTRACTION_RUN_BUDGET_SECONDS` | `0` | **0 = unlimited** drain until idle or stall; positive = circuit breaker only |
@@ -196,7 +196,9 @@ Drains use **stall detection** (`PIPELINE_DRAIN_STALL_ROUNDS`) instead of wall-c
 
 `SPINE_PIPELINE_MODE=ordered` runs enrich → fuse → sql tail via spine **drain helpers** (`spine_pipeline_conductor._drain_*`); **PipelineController** schedules phases — not the retired `run_spine_conductor_cycle` loop. Rollback: `INTAKE_FUSION_ENABLED=false`, `SPINE_PIPELINE_MODE=legacy`.
 
-**Intake-first catchup (phase priority vs FIFO articles):** Article batches stay **FIFO** (`PIPELINE_ARTICLE_SELECTION_ORDER=fifo`) so old rows inside a phase are not starved. Separately, catchup **desired** phases prioritize the spine preprocess band (`content_enrichment` → `unified_intake_extraction` → `spine_sql_tail` → `document_processing` → `context_sync`, then `collection_cycle`) while the sum of core preprocess pending (enrichment + UIE + documents) exceeds `intake_preprocess_clear_threshold` (default 50, same as `catchup_clear_threshold`). Branch label `catchup_intake_first`. When that band is quiet, branch is `catchup_post_{popos_first|widow_first}` and post phases (profiles, mention resolution, assembly, etc.) resume by host-lane + backlog depth. See `INTAKE_PREPROCESS_*` in `api/shared/pipeline_resource_policy.py` and `_catchup_phases_by_backlog` in `api/services/pipeline_controller.py`.
+**Flat scheduler (default):** ``PIPELINE_FLAT_SCHEDULER=true`` selects mode → priority → ``admit_phase`` (`api/shared/pipeline_admission.py`). Modes: ``mode_pressure`` (light Widow only), ``mode_preprocess`` (intake band + MR/EPB co-schedule), ``mode_postprocess`` (structure-first when preprocess stable), ``mode_maintenance`` (collection/residual). Rollback: ``PIPELINE_FLAT_SCHEDULER=false`` restores the legacy catchup/OOM/residual tree. Thresholds live under ``pipeline_controller.modes`` in `orchestrator_governance.yaml`.
+
+**Intake-first catchup (legacy / still used inside flat preprocess):** Article batches stay **FIFO** (`PIPELINE_ARTICLE_SELECTION_ORDER=fifo`) so old rows inside a phase are not starved. Separately, catchup **desired** phases prioritize the spine preprocess band while the sum of core preprocess pending exceeds `modes.intake_clear` / `intake_preprocess_clear_threshold` (default 50). When preprocess-stable phases sum ≤ `modes.preprocess_stable` (default 5) while structure-band backlog remains, flat branch is `mode_postprocess` (Widow-local structure before PopOS peers; collection deferred mid-interval). Kill-switch: `PIPELINE_POST_PROCESS_PREFERRED=false`. See `post_process_preferred` / `admit_phase` in `api/shared/pipeline_resource_policy.py` and `api/shared/pipeline_admission.py`.
 
 #### Post-spine assembly (link graph + editorial room, June 2026)
 
@@ -208,7 +210,51 @@ After spine completes, three passes replace ~25 competing automation phases:
 | 1 | `assembly_conductor_service` drain helpers (`ASSEMBLY_PIPELINE_MODE=ordered`) | Rare — distillation, event tail, continuation, assembly, automation, ambiguous entity resolve; **scheduling via PipelineController** |
 | 2 | `editorial_room_loop_service` | Yes — iterative Ollama + vault `25_Connections/` |
 
-Env defaults (Widow rollout): `ASSEMBLY_PIPELINE_MODE=shadow` → `ordered`, `EDITORIAL_ROOM_LOOP_ENABLED=true`, `CONTENT_REFINEMENT_API_ENQUEUE_ONLY=true`, `AUTO_ENQUEUE_COMPREHENSIVE_RAG=0`.
+Env defaults (Widow rollout): `ASSEMBLY_PIPELINE_MODE=shadow` → `ordered`, `EDITORIAL_ROOM_LOOP_ENABLED=true`.
+Storyline deep analysis: set `CONTENT_REFINEMENT_AUTO_ENQUEUE=true` to let automation enqueue `comprehensive_rag` for active storylines with ≥ `CONTENT_REFINEMENT_AUTO_ENQUEUE_MIN_ARTICLES` (default 3) linked articles and `ml_processing_status` pending. Default remains off (`CONTENT_REFINEMENT_API_ENQUEUE_ONLY=true` blocks legacy auto-enqueue unless the new flag is set). Drain via `content_refinement_queue` phase / nightly GPU window.
+
+When the refinement queue has pending durable jobs, admission allows `content_refinement_queue` even if structure catchup is hot, and the phase is in both `mode_postprocess` and `mode_maintenance` priority lists. Quiet/desk windows admit it when pending ≥ `CONTENT_REFINEMENT_QUIET_MIN_PENDING` (default 5).
+
+#### Storyline membership review (decoupling)
+
+Phase `storyline_membership_review` audits **existing** mega-thread membership (not suggestion intake). It scores linked articles against storyline core (title/narrative + SEI entities), then:
+
+- high offtopic → hard unlink (existing `storyline_articles` DELETE + count sync)
+- demote band → lower `relevance_score`
+- mid-band / dry-run → queue `intelligence.storyline_membership_actions` for human approve/reject
+- same pass soft-deprioritizes weak graph links (quarantine), SEI `is_core_entity=false`, and weak `tracked_events.storyline_id`
+
+**Not the same as** `storyline_review_agent` / suggestion review queue. Enable with `STORYLINE_MEMBERSHIP_REVIEW_ENABLED=true` (default **false**). Live mode keeps `STORYLINE_MEMBERSHIP_REVIEW_DRY_RUN=false` and queues proposals as `pending` unless `STORYLINE_MEMBERSHIP_AUTO_APPLY=true`. Each mega is marked in `intelligence.storyline_membership_review_state` with a membership fingerprint so unchanged storylines are not re-scanned; member add/remove re-queues. Optional LLM mid-band: `STORYLINE_MEMBERSHIP_LLM_ENABLED`. Operator UI: Stories → Review Queue → **Membership** tab.
+
+#### Postgres self-reviewing graph (embedding + drift)
+
+No Neo4j — link candidates and drift review run on Postgres:
+
+| Phase | Flag (default) | Role |
+|-------|----------------|------|
+| `embedding_link_candidates` | `EMBEDDING_LINK_CANDIDATES_ENABLED=false` | Cosine over `embedding_chunks` → `graph_connection_proposals` (`candidate`) |
+| `collision_sampling` | `COLLISION_SAMPLING_ENABLED=false` | Random out-of-prior pairs → `hypothesized` proposals |
+| `stimulus_rag` | `RAG_EVIDENCE_PULL_ENABLED=false` | Selective RAG / arXiv PDF pull when bonds need evidence |
+| `protein_harden` | `PROTEIN_HARDEN_ENABLED=false` | Promote hypothesized→candidate; enqueue refinement from established links |
+| `graph_connection_distillation` | on | Materialize proposals → `graph_connection_links` (`established`); merge gated by `story_kind` |
+| `graph_link_drift_review` | `GRAPH_LINK_DRIFT_REVIEW_ENABLED=false` | Re-score stale/weak active links; quarantine below floor |
+
+Domain protein shapes (`story_kind` + `link_score_profile`) live in `api/config/domain_synthesis_config.yaml`. See [STORYLINE_CANONICAL_MODEL.md](STORYLINE_CANONICAL_MODEL.md).
+
+Cross-domain associates use `endpoints.left` / `endpoints.right` and materialize as `associated_cross_domain` with domain-qualified endpoint kinds. Link provenance: migration 270 + [GRAPH_EDGE_PROVENANCE.md](GRAPH_EDGE_PROVENANCE.md).
+
+**Post-RSS beaker kickoff:** After `collection_cycle` RSS (and after each `unified_intake_extraction` batch), when enrichment+UIE pending ≤ `catchup_clear_threshold`, AutomationManager requests `post_intake_beaker_phases` (`CHEMISTRY_BEAKER_ENABLED`, default on). See `api/shared/chemistry_beaker.py`, `api/config/schedulers.yaml` → `chemistry_beaker`, and `orchestrator_governance.yaml` → `pipeline_controller.post_intake_beaker_phases`.
+
+#### Storyline status and entity columns (explorer guidance)
+
+| Column / table | Meaning |
+|----------------|---------|
+| `ml_processing_status` | **SSOT for deep analysis.** UI uses this (`COALESCE` NULL → completed). Set to `completed` by successful `comprehensive_rag`. |
+| `processing_status` | Set to `pending` on discovery/proactive create; mirrored to `completed` when RAG finishes. **Do not treat all-pending as a broken pipeline** without checking `ml_processing_status`. |
+| `key_entities` | Discovery keyword seed — often generic. |
+| `{schema}.story_entity_index` + `article_entities` | Proper NER / entity audit path. |
+| `public.chronological_events` | Timeline SSOT (legacy `timeline_events` writes off by default). |
+| `quality_score` | Discovery may set importance; RAG uses `COALESCE(quality_score, 0.90)` so non-null discovery scores are preserved. |
 
 Retired schedulers: `POST_SPINE_RETIRED_PHASES` in `api/shared/assembly_phase_order.py` + `AUTOMATION_DISABLED_SCHEDULES`. Monitor zeros retired phase pending via `apply_intake_mode_pending_mask()`.
 
@@ -337,12 +383,12 @@ Below: **Task** = scheduler key in `schedules`. **Backlog key** = name in `pipel
 
 | Task | Default interval | depends_on | Primary implementation | Inputs / selection | Outputs |
 |------|------------------|------------|------------------------|--------------------|---------|
-| `editorial_document_generation` | 1800s | `storyline_processing` | `_execute_editorial_document_generation` | Storylines missing editorial doc | `editorial_document` JSONB |
-| `editorial_briefing_generation` | 1800s | `event_tracking` | `_execute_editorial_briefing_generation` | Tracked events | `editorial_briefing` on events |
-| `storyline_synthesis` | 3600s | `storyline_processing` | `_execute_storyline_synthesis` | Storylines for long-form synthesis | Synthesis artifacts |
-| `digest_generation` | 3600s | `editorial_document_generation` | `_execute_digest_generation` | Digest inputs | Digest records |
-| `daily_briefing_synthesis` | 14400s | `storyline_synthesis` | `_execute_daily_briefing_synthesis` | Breaking / domain briefings | Briefing content |
-| `narrative_thread_build` | 7200s | `storyline_processing`, `editorial_document_generation` | `_execute_narrative_thread_build` | Cross-storyline arcs | Narrative threads |
+| `editorial_document_generation` | — | — | **FULLY RETIRED** | — | Use `content_refinement_queue` / desk promote |
+| `editorial_briefing_generation` | — | — | **FULLY RETIRED** | — | Use desk promote / `narrative_stack` |
+| `digest_generation` | — | — | **FULLY RETIRED** | — | Briefings = `GET /api/{domain}/report` |
+| `daily_briefing_synthesis` | — | — | **FULLY RETIRED** | — | Briefings = report API + storyline editorial |
+| `storyline_synthesis` | 3600s | `storyline_processing` | `_execute_storyline_synthesis` | Storylines for long-form synthesis | Synthesis artifacts (scheduling suppressed under ordered) |
+| `narrative_thread_build` | 7200s | `storyline_processing` | `_execute_narrative_thread_build` | Cross-storyline arcs | Narrative threads (on-demand preferred) |
 | `watchlist_alerts` | 1200s | `story_continuation` | `_execute_watchlist_alerts_v5` | Pattern / watch rules | Alerts |
 | `pattern_matching` | 1800s | — | `_execute_pattern_matching` | Watch patterns vs new content | `pattern_matches` |
 

@@ -108,7 +108,7 @@ class OrchestratorCoordinator:
         logger.info("OrchestratorCoordinator loop stopped")
 
     async def _kickoff_post_collection_processing(self, current_cycle: int) -> None:
-        """After RSS ingest, trigger PipelineController replan (backlog-driven enqueue)."""
+        """After RSS ingest, trigger PipelineController replan + chemistry beaker when intake clear."""
         if not self._get_automation:
             return
         try:
@@ -129,6 +129,12 @@ class OrchestratorCoordinator:
                 current_cycle,
             )
             try:
+                from shared.chemistry_beaker import kickoff_beaker_phases
+
+                kickoff_beaker_phases(automation, reason=f"orchestrator_post_collection_{current_cycle}")
+            except Exception as e:
+                logger.debug("Orchestrator beaker kickoff: %s", e)
+            try:
                 from . import orchestrator_state
 
                 orchestrator_state.append_decision_log(
@@ -139,17 +145,10 @@ class OrchestratorCoordinator:
             except Exception as e:
                 logger.debug("Orchestrator kickoff decision_log failed: %s", e)
             return
-        if not hasattr(automation, "request_phase"):
-            return
-        try:
-            from services.pipeline_conductor_service import get_post_collection_kickoff_phases
-        except Exception:
-            return
-        for phase in get_post_collection_kickoff_phases():
-            try:
-                automation.request_phase(phase)
-            except Exception as e:
-                logger.debug("Post-collection request_phase %s failed: %s", phase, e)
+        logger.debug(
+            "Orchestrator post-collection: pipeline_controller unavailable (cycle=%s)",
+            current_cycle,
+        )
 
     async def _wait_for_automation(self, timeout_seconds: float = 120.0) -> None:
         """Defer processing until AutomationManager is running (avoids dropped requests on boot)."""

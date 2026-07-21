@@ -55,6 +55,18 @@ Synthesis of S1–S6 segment audits. Use as rename impact map and overlap refere
 | `in_memory_queue_depth` | AutomationManager task queues | `automation_manager._automation_queue_depth()` |
 | Dimension chip `backlog` | Maps to phase `queue_depth` | `monitor_dimension_metrics.get_dimension_backlog()` |
 
+## Chemistry connection phases (2026-07)
+
+| Phase | Operator label | Backlog meaning |
+|-------|----------------|-----------------|
+| `collision_sampling` | Collision sampling (loose bonds) | Pending `hypothesized` proposals |
+| `stimulus_rag` | Stimulus RAG (evidence pull) | `rag_evidence_pull_queue` pending/queued |
+| `protein_harden` | Protein harden (establish edges) | High-conf hypothesized awaiting promote |
+| `embedding_link_candidates` | Embedding link candidates | Prior-driven neighbor proposals |
+| `graph_connection_distillation` | Graph connection distillation | Pending proposals to materialize |
+
+Display labels: `CHEMISTRY_PHASE_DISPLAY_LABELS` in `api/shared/monitor_run_vocabulary.py`.
+
 Run-history vocabulary remains in `api/shared/monitor_run_vocabulary.py` (`MONITOR_SCHEMA_VERSION` **1.1** adds queue aliases).
 
 ## SSOT module

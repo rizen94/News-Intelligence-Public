@@ -257,6 +257,8 @@ const Storylines: React.FC = () => {
     new Set()
   );
   const [reviewQueueCount, setReviewQueueCount] = useState(0);
+  const [storyKindLabel, setStoryKindLabel] = useState<string | null>(null);
+  const [storyKindKey, setStoryKindKey] = useState<string | null>(null);
   const [stats, setStats] = useState<Stats>({
     total: 0,
     active: 0,
@@ -394,6 +396,28 @@ const Storylines: React.FC = () => {
       const res = await apiService.getReviewQueueCount(domain);
       if (!cancelled && res?.success) {
         setReviewQueueCount(res.data?.count ?? 0);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [domain]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { storylinesApi } = await import('../../services/api/storylines');
+        const res = await storylinesApi.getDomainStoryKind(domain);
+        if (!cancelled && res.success && res.data) {
+          setStoryKindLabel(res.data.display_label || null);
+          setStoryKindKey(res.data.story_kind || null);
+        }
+      } catch {
+        if (!cancelled) {
+          setStoryKindLabel(null);
+          setStoryKindKey(null);
+        }
       }
     })();
     return () => {
@@ -875,15 +899,26 @@ const Storylines: React.FC = () => {
 
   return (
     <PageShell
-      title='Storylines'
-      subtitle='Domain story clusters — articles linked over time'
+      title={storyKindLabel === 'Research thread' ? 'Research threads' : 'Storylines'}
+      subtitle={
+        storyKindKey === 'research_topic'
+          ? 'Problem / method / claim clusters — loose connections harden via evidence'
+          : storyKindKey === 'evidence_thread'
+            ? 'Condition / intervention / finding lineages'
+            : storyKindKey === 'matter_docket'
+              ? 'Case / bill / agency matters'
+              : 'Domain story clusters — articles linked over time'
+      }
       breadcrumbs={[
         { label: 'Home', to: `/${domain}` },
         { label: formatDomainLabel(domain) || domain, to: `/${domain}` },
-        { label: 'Storylines' },
+        { label: storyKindLabel || 'Storylines' },
       ]}
       actions={
         <Box display='flex' gap={2} alignItems='center' flexWrap='wrap'>
+          {storyKindLabel ? (
+            <Chip size='small' label={storyKindLabel} variant='outlined' color='primary' />
+          ) : null}
           <Button
             variant='outlined'
             color={reviewQueueCount > 0 ? 'warning' : 'inherit'}

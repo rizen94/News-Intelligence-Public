@@ -288,14 +288,51 @@ storyline_membership_review:
     weak graph/SEI/tracked_event links. Default off; dry-run default on.
 
 embedding_link_candidates:
-  lifecycle: staged
-  enabled: false
+  lifecycle: incorporated
+  enabled: true
   introduced_in: "10.1.0"
   phase_name: embedding_link_candidates
   modules: [api/services/embedding_link_candidate_service.py]
   flags:
     env: EMBEDDING_LINK_CANDIDATES_ENABLED
-  notes: Cosine-ranked graph_connection_proposals from embedding_chunks
+  notes: Cosine-ranked graph_connection_proposals from embedding_chunks (beaker loose-bond factory)
+
+collision_sampling:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  phase_name: collision_sampling
+  modules: [api/services/embedding_link_candidate_service.py]
+  flags:
+    env: COLLISION_SAMPLING_ENABLED
+  notes: >
+    Chemistry beaker — random storyline pair collisions as hypothesized proposals
+    (epsilon exploration outside prior-driven embedding links). Gated by CHEMISTRY_BEAKER_ENABLED.
+
+stimulus_rag:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  phase_name: stimulus_rag
+  modules: [api/services/rag_evidence_pull_service.py]
+  flags:
+    env: RAG_EVIDENCE_PULL_ENABLED
+  notes: >
+    Selective RAG evidence pull (arXiv PDF etc.) when loose connections need more source text.
+    Gated by CHEMISTRY_BEAKER_ENABLED.
+
+protein_harden:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  phase_name: protein_harden
+  modules: [api/services/protein_harden_service.py]
+  flags:
+    env: PROTEIN_HARDEN_ENABLED
+  notes: >
+    Chemistry beaker — promote hypothesized→candidate and enqueue refinement from
+    established links (stimulus/harden), not storyline heat census.
+    Gated by CHEMISTRY_BEAKER_ENABLED.
 
 storyline_membership_llm:
   lifecycle: staged

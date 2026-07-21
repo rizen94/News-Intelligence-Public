@@ -88,6 +88,14 @@ _DEFAULT_CONDUCTOR: dict[str, Any] = {
     "orchestrator_post_collection_kickoff_enabled": True,
     "orchestrator_collection_enabled": True,
     "post_collection_phases": ["content_enrichment", "context_sync"],
+    "post_intake_beaker_enabled": True,
+    "post_intake_beaker_phases": [
+        "graph_connection_distillation",
+        "embedding_link_candidates",
+        "collision_sampling",
+        "stimulus_rag",
+        "protein_harden",
+    ],
     "external_schedulers": [
         {
             "name": "nri_mention_resolve",
@@ -176,26 +184,12 @@ def phase_conductor_scheduling_suppressed(phase_name: str) -> bool:
     """
     True when PipelineController must not enqueue this phase from the orchestrator path.
 
-    Spine and assembly conductors own their phase lists when mode=ordered; post-spine
-    retired phases are suppressed when assembly is not legacy.
+    Post-spine retired phases are suppressed when assembly is not legacy.
+    Scheduling loops in spine/assembly conductors were retired in v10.1 — PipelineController only.
     """
     p = (phase_name or "").strip().lower().replace("-", "_")
     if not p:
         return False
-    try:
-        from services.spine_pipeline_conductor import spine_phase_should_suppress_scheduler
-
-        if spine_phase_should_suppress_scheduler(p):
-            return True
-    except Exception:
-        pass
-    try:
-        from services.assembly_conductor_service import assembly_phase_should_suppress_scheduler
-
-        if assembly_phase_should_suppress_scheduler(p):
-            return True
-    except Exception:
-        pass
     try:
         from shared.assembly_phase_order import post_spine_scheduling_suppressed
 

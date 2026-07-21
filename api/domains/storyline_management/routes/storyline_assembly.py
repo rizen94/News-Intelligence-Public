@@ -60,12 +60,14 @@ def storyline_assembly_status(
     if not is_valid_domain_key(domain):
         return {"success": False, "message": f"Unknown or inactive domain: {domain}"}
     unlinked = count_unlinked_articles(domain)
+    story_kind = None
     try:
         from services.domain_synthesis_config import get_domain_synthesis_config
 
         cfg = get_domain_synthesis_config(domain)
         threshold = cfg.storyline_development.automation.unlinked_article_threshold
         mode = cfg.storyline_development.automation.default_mode
+        story_kind = cfg.story_kind
     except Exception:
         threshold = 25
         mode = "auto_approve"
@@ -77,6 +79,44 @@ def storyline_assembly_status(
             "assembly_recommended": unlinked >= threshold,
             "threshold": threshold,
             "automation_mode": mode,
+            "story_kind": story_kind,
         },
         "message": None,
+    }
+
+
+@router.get("/{domain}/storylines/story_kind")
+async def get_domain_story_kind_info(
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+):
+    """Chemistry model: protein shape + link score profile for this domain."""
+    if not is_valid_domain_key(domain):
+        return {"success": False, "message": f"Unknown or inactive domain: {domain}"}
+    from services.domain_synthesis_config import get_domain_synthesis_config
+
+    cfg = get_domain_synthesis_config(domain)
+    p = cfg.link_score_profile
+    return {
+        "success": True,
+        "data": {
+            "domain": domain,
+            "story_kind": cfg.story_kind,
+            "is_chemistry_kind": cfg.is_chemistry_kind(),
+            "display_label": {
+                "event_narrative": "Story",
+                "market_regulatory_arc": "Market arc",
+                "matter_docket": "Matter / docket",
+                "evidence_thread": "Evidence thread",
+                "research_topic": "Research thread",
+            }.get(cfg.story_kind, "Storyline"),
+            "link_score_profile": {
+                "relevance_weight": p.relevance_weight,
+                "semantic_weight": p.semantic_weight,
+                "keyword_weight": p.keyword_weight,
+                "quality_weight": p.quality_weight,
+                "auto_approve_combined": p.auto_approve_combined,
+                "aggressive_membership": p.aggressive_membership,
+                "allow_storyline_merge": p.allow_storyline_merge,
+            },
+        },
     }

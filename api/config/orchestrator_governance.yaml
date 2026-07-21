@@ -261,6 +261,13 @@ pipeline_conductor:
   post_collection_phases:
     - content_enrichment
     - context_sync
+  post_intake_beaker_enabled: true
+  post_intake_beaker_phases:
+    - graph_connection_distillation
+    - embedding_link_candidates
+    - collision_sampling
+    - stimulus_rag
+    - protein_harden
   orchestrator_collection_enabled: true
   external_schedulers:
     - name: nri_mention_resolve
@@ -343,6 +350,14 @@ pipeline_controller:
   post_collection_phases:
     - content_enrichment
     - context_sync
+  # Chemistry beaker — after RSS intake preprocess clears (enrichment + UIE low)
+  post_intake_beaker_enabled: true
+  post_intake_beaker_phases:
+    - graph_connection_distillation
+    - embedding_link_candidates
+    - collision_sampling
+    - stimulus_rag
+    - protein_harden
   entity_extraction_run_budget_seconds: 900
   ml_processing_run_budget_seconds: 900
   sentiment_analysis_run_budget_seconds: 900

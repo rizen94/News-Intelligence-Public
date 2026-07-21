@@ -113,8 +113,35 @@ class StorylineDevelopmentConfig:
 
 
 @dataclass
+class LinkScoreProfile:
+    """Per-domain attach-score blend (chemistry model). Weights should sum ~1.0."""
+
+    relevance_weight: float = 0.55
+    semantic_weight: float = 0.15
+    keyword_weight: float = 0.10
+    quality_weight: float = 0.20
+    auto_approve_combined: float = 0.75
+    aggressive_membership: bool = True
+    allow_storyline_merge: bool = True
+
+
+# Domain protein shapes — keep storylines table; behavior differs by kind.
+STORY_KINDS = frozenset(
+    {
+        "event_narrative",
+        "market_regulatory_arc",
+        "matter_docket",
+        "evidence_thread",
+        "research_topic",
+    }
+)
+
+
+@dataclass
 class DomainSynthesisConfig:
     domain_key: str
+    story_kind: str = "event_narrative"
+    link_score_profile: LinkScoreProfile = field(default_factory=LinkScoreProfile)
     focus_areas: list[str] = field(default_factory=list)
     macro_subject_axes: list[str] = field(default_factory=list)
     event_type_priorities: list[str] = field(default_factory=list)
@@ -149,17 +176,31 @@ class DomainSynthesisConfig:
     def prioritised_event_types(self) -> list[str]:
         return list(self.event_type_priorities)
 
+    def is_chemistry_kind(self) -> bool:
+        """Research/evidence/docket kinds prefer loose bonds over hard membership."""
+        return self.story_kind in (
+            "research_topic",
+            "evidence_thread",
+            "matter_docket",
+        )
+
     def narrative_prompt_context(self) -> str:
         """Bundle domain LLM context with storyline patterns for title/summary generation."""
         parts: list[str] = []
         if self.llm_context:
             parts.append(self.llm_context.strip())
+        parts.append(f"Story kind: {self.story_kind}")
         focus = _coerce_str_list(self.focus_areas)
         if focus:
             parts.append("Focus areas: " + "; ".join(focus[:8]))
         patterns = _coerce_str_list(self.storyline_patterns)
         if patterns:
-            parts.append("Preferred storyline arcs: " + "; ".join(patterns[:6]))
+            label = (
+                "Preferred research threads"
+                if self.story_kind == "research_topic"
+                else "Preferred storyline arcs"
+            )
+            parts.append(f"{label}: " + "; ".join(patterns[:6]))
         return "\n".join(parts)
 
 
@@ -326,6 +367,44 @@ def _merge_storyline_development(
     )
 
 
+def _merge_link_score_profile(
+    defaults: dict[str, Any],
+    domain_raw: dict[str, Any],
+) -> LinkScoreProfile:
+    def_p = defaults.get("link_score_profile") or {}
+    dom_p = domain_raw.get("link_score_profile") or {}
+    return LinkScoreProfile(
+        relevance_weight=_float(
+            dom_p.get("relevance_weight"), _float(def_p.get("relevance_weight"), 0.55)
+        ),
+        semantic_weight=_float(
+            dom_p.get("semantic_weight"), _float(def_p.get("semantic_weight"), 0.15)
+        ),
+        keyword_weight=_float(
+            dom_p.get("keyword_weight"), _float(def_p.get("keyword_weight"), 0.10)
+        ),
+        quality_weight=_float(
+            dom_p.get("quality_weight"), _float(def_p.get("quality_weight"), 0.20)
+        ),
+        auto_approve_combined=_float(
+            dom_p.get("auto_approve_combined"),
+            _float(def_p.get("auto_approve_combined"), 0.75),
+        ),
+        aggressive_membership=bool(
+            dom_p.get(
+                "aggressive_membership",
+                def_p.get("aggressive_membership", True),
+            )
+        ),
+        allow_storyline_merge=bool(
+            dom_p.get(
+                "allow_storyline_merge",
+                def_p.get("allow_storyline_merge", True),
+            )
+        ),
+    )
+
+
 def get_domain_synthesis_config(domain_key: str) -> DomainSynthesisConfig:
     raw = _load_raw()
     defaults = raw.get("defaults", {}) or {}
@@ -347,9 +426,16 @@ def get_domain_synthesis_config(domain_key: str) -> DomainSynthesisConfig:
     )
 
     storyline_development = _merge_storyline_development(defaults, domain_raw)
+    kind_raw = str(
+        domain_raw.get("story_kind") or defaults.get("story_kind") or "event_narrative"
+    ).strip()
+    story_kind = kind_raw if kind_raw in STORY_KINDS else "event_narrative"
+    link_score_profile = _merge_link_score_profile(defaults, domain_raw)
 
     return DomainSynthesisConfig(
         domain_key=norm_key,
+        story_kind=story_kind,
+        link_score_profile=link_score_profile,
         focus_areas=_coerce_str_list(domain_raw.get("focus_areas", [])),
         macro_subject_axes=list(domain_raw.get("macro_subject_axes") or []),
         event_type_priorities=domain_raw.get("event_type_priorities", []),
@@ -376,3 +462,26 @@ def get_domain_synthesis_config(domain_key: str) -> DomainSynthesisConfig:
 
 def get_storyline_development_config(domain_key: str) -> StorylineDevelopmentConfig:
     return get_domain_synthesis_config(domain_key).storyline_development
+
+
+def get_domain_story_kind(domain_key: str) -> str:
+    return get_domain_synthesis_config(domain_key).story_kind
+
+
+def combined_attach_score(
+    domain_key: str,
+    *,
+    relevance: float = 0.0,
+    semantic: float = 0.0,
+    keyword: float = 0.0,
+    quality: float = 0.5,
+) -> float:
+    """Domain-aware combined score for article↔storyline attach."""
+    profile = get_domain_synthesis_config(domain_key).link_score_profile
+    score = (
+        float(relevance or 0) * profile.relevance_weight
+        + float(semantic or 0) * profile.semantic_weight
+        + float(keyword or 0) * profile.keyword_weight
+        + float(quality or 0) * profile.quality_weight
+    )
+    return round(max(0.0, min(1.0, score)), 4)

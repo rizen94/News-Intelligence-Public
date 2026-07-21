@@ -85,6 +85,23 @@ schedulers:
     domains: ["politics", "finance"]
     condition: "QUIVER_COLLECTOR_ENABLED and QUIVER_API_KEY"
 
+  chemistry_beaker:
+    owner: automation_manager
+    enabled: true
+    note: >
+      Post-RSS intake connection lifecycle (CHEMISTRY_BEAKER_ENABLED).
+      Phases: graph_connection_distillation → embedding_link_candidates →
+      collision_sampling → stimulus_rag → protein_harden.
+      Kickoff after collection_cycle RSS and after unified_intake batches when
+      enrichment+UIE pending ≤ catchup_clear_threshold.
+    phases:
+      - graph_connection_distillation
+      - embedding_link_candidates
+      - collision_sampling
+      - stimulus_rag
+      - protein_harden
+    condition: "CHEMISTRY_BEAKER_ENABLED"
+
 # context_sync split-brain resolution: cron owns sync on Widow prod (see widow-db_adjacent)
 
 consolidation:

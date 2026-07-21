@@ -95,6 +95,36 @@ def get_ingest_exclude_keywords(domain_key: str | None = None) -> list[str]:
     return out
 
 
+# Chemistry model: narrative campaign briefings vs research-thread digests
+_NARRATIVE_BRIEFING_KINDS = frozenset({"event_narrative", "market_regulatory_arc"})
+_DIGEST_BRIEFING_KINDS = frozenset(
+    {"research_topic", "evidence_thread", "matter_docket"}
+)
+
+
+def briefing_product_for_domain(domain_key: str) -> str:
+    """
+    Return 'narrative_briefing' for politics/finance-style kinds, else
+    'connection_digest' for chemistry research/evidence/docket domains.
+    """
+    try:
+        from services.domain_synthesis_config import get_domain_synthesis_config
+
+        kind = get_domain_synthesis_config(domain_key).story_kind
+    except Exception:
+        kind = "event_narrative"
+    if kind in _DIGEST_BRIEFING_KINDS:
+        return "connection_digest"
+    if kind in _NARRATIVE_BRIEFING_KINDS:
+        return "narrative_briefing"
+    return "narrative_briefing"
+
+
+def include_hard_event_storyline_bind_in_briefing(domain_key: str) -> bool:
+    """Event↔storyline hard bind is for narrative kinds only."""
+    return briefing_product_for_domain(domain_key) == "narrative_briefing"
+
+
 def sort_briefing_items_by_priority(
     items: list[dict],
     title_key: str = "title",

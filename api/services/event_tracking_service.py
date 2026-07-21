@@ -758,6 +758,9 @@ def link_tracked_events_to_storylines(limit: int = 50) -> int:
     Set tracked_events.storyline_id by entity overlap: for each event with
     key_participant_entity_ids but no storyline_id, find a storyline in the same
     domain whose articles mention the same entities; set storyline_id = 'schema:id'.
+
+    Chemistry kinds (research_topic, evidence_thread, matter_docket): skip hard bind —
+    prefer loose event–story collisions that harden later.
     Returns number of events linked.
     """
     from shared.database.connection import get_db_connection
@@ -784,6 +787,8 @@ def link_tracked_events_to_storylines(limit: int = 50) -> int:
         if not rows:
             conn.close()
             return 0
+
+        from services.domain_synthesis_config import get_domain_synthesis_config
 
         for event_id, profile_ids_json in rows:
             try:
@@ -814,6 +819,13 @@ def link_tracked_events_to_storylines(limit: int = 50) -> int:
                 best_overlap = 0
                 min_overlap = _event_tracking_storyline_min_overlap()
                 for domain_key, canonical_ids in by_domain.items():
+                    try:
+                        cfg = get_domain_synthesis_config(domain_key)
+                        if cfg.is_chemistry_kind():
+                            # Soft chemistry domains: do not hard-bind events to one storyline
+                            continue
+                    except Exception:
+                        pass
                     schema = _domain_key_to_schema(domain_key)
                     if schema not in _active_schema_set():
                         continue

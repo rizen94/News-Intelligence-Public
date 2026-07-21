@@ -235,6 +235,15 @@ PHASE_POLICIES: dict[str, PhasePolicy] = {
     "embedding_link_candidates": PhasePolicy(
         Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy", default_batch=12
     ),
+    "collision_sampling": PhasePolicy(
+        Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy", default_batch=8
+    ),
+    "stimulus_rag": PhasePolicy(
+        Host.WIDOW_FETCH, Tier.BULK, "cpu", "cpu_light", default_batch=3
+    ),
+    "protein_harden": PhasePolicy(
+        Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy", default_batch=40
+    ),
     "graph_link_drift_review": PhasePolicy(
         Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy", default_batch=40
     ),
@@ -651,6 +660,10 @@ STRUCTURE_BAND_PHASES: frozenset[str] = frozenset(
         "storyline_review_agent",
         "event_tracking",
         "graph_connection_distillation",
+        "embedding_link_candidates",
+        "collision_sampling",
+        "stimulus_rag",
+        "protein_harden",
     }
 )
 
@@ -677,6 +690,10 @@ _STRUCTURE_CATCHUP_PENDING_PHASES: frozenset[str] = frozenset(
         "storyline_review_agent",
         "event_tracking",
         "graph_connection_distillation",
+        "embedding_link_candidates",
+        "collision_sampling",
+        "stimulus_rag",
+        "protein_harden",
     }
 )
 

@@ -102,6 +102,7 @@ const StorylineDetail = () => {
   const { domain } = useDomainRoute();
   const { readonly: demoReadonly } = usePublicDemoMode();
   const effectiveDomain = domain || getDefaultDomainKey();
+  const [storyKindLabel, setStoryKindLabel] = useState<string | null>(null);
   const [storyline, setStoryline] = useState(null);
   const [articles, setArticles] = useState([]);
   const [timelineData, setTimelineData] = useState(null); // { events, gaps, milestones, time_span, event_count, source_count }
@@ -261,6 +262,24 @@ const StorylineDetail = () => {
 
   // Track when processing starts so we can show elapsed time
   const prevProcessingRef = useRef(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { storylinesApi } = await import('../../services/api/storylines');
+        const res = await storylinesApi.getDomainStoryKind(effectiveDomain);
+        if (!cancelled && res.success && res.data) {
+          setStoryKindLabel(res.data.display_label || null);
+        }
+      } catch {
+        if (!cancelled) setStoryKindLabel(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveDomain]);
+
   useEffect(() => {
     if (isProcessing && !prevProcessingRef.current) {
       setProcessingStartTime(Date.now());
@@ -965,7 +984,7 @@ const StorylineDetail = () => {
     <>
     <PageShell
       title={heroTitle}
-      subtitle={`${storyline?.article_count ?? articles?.length ?? 0} articles · story cluster`}
+      subtitle={`${storyline?.article_count ?? articles?.length ?? 0} articles · ${storyKindLabel || 'story cluster'}`}
       breadcrumbs={[
         { label: 'Home', to: `/${effectiveDomain}` },
         { label: effectiveDomain, to: `/${effectiveDomain}` },

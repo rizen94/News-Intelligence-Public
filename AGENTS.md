@@ -26,7 +26,13 @@ Context for AI assistants. Use project terminology consistently.
 
 | Concept | Use This | Avoid |
 |---------|----------|-------|
-| Evolving news clusters | **storylines** | stories, threads |
+| Evolving news clusters | **storylines** (domain-kind **proteins**; see `story_kind`) | stories, threads (unless UI label for research kinds) |
+| Domain protein shape | **`story_kind`** (`event_narrative`, `research_topic`, …) | universal “narrative cluster” |
+| Attach / membership scoring profile | **`link_score_profile`** | politics-only weights |
+| Loose → solid connection band | **`inference_stage`** (`hypothesized`/`candidate`/`established`/`quarantined`) | binary linked/unlinked only |
+| Exploratory embedding pairs | **`collision_sampling`** | merge-only embedding links |
+| Selective PDF/chunk pull | **`stimulus_rag`** / `rag_evidence_pull_queue` | bulk deep-research of all papers |
+| Harden + stimulus refinement | **`protein_harden`** | heat-only RAG census |
 | Storyline deep-analysis status | **`ml_processing_status`** (`pending`/`completed`) | `processing_status` alone (create-flag; explorers often misread all-pending as stuck) |
 | Storyline entities (audit) | **`story_entity_index`**, **`article_entities`** | `key_entities` JSONB alone (discovery keywords) |
 | Storyline timeline SSOT | **`public.chronological_events`** | legacy per-domain `timeline_events` (off unless `LEGACY_TIMELINE_EVENTS_WRITES=1`) |
@@ -134,7 +140,7 @@ Context for AI assistants. Use project terminology consistently.
 ## Key Flows
 
 1. **Article:** RSS → enrichment → storyline linking → intake extraction (unified or legacy per-phase).
-2. **Unified intake (`UNIFIED_INTAKE_EXTRACTION_ENABLED=true`, default):** one batched PopOS LLM pass fans out to entities, events, claims, sentiment/quality; inline context on enrich via `sync_context_from_article_after_content_change`. **Fast NER pre-pass** (`FAST_NER_ENABLED`, spaCy + optional GLiNER) seeds entities before LLM. **Context chunking** (`CONTEXT_CHUNKING_ENABLED`) splits long articles into `article` + `article_chunk` contexts. Legacy per-phase intake runs only when `LEGACY_INTAKE_EXTRACTION_ENABLED=true`. **Legacy-aware backlog** (`UNIFIED_INTAKE_LEGACY_AWARE_BACKLOG=true`, default): Monitor/automation count only articles still needing unified LLM; legacy-complete rows get pass-marker backfill without re-extraction (`api/shared/unified_intake_backlog.py`, `api/scripts/backfill_unified_intake_pass_from_legacy.py`). See [docs/PIPELINE_AND_AUTOMATION.md](docs/PIPELINE_AND_AUTOMATION.md).
+2. **Unified intake (`UNIFIED_INTAKE_EXTRACTION_ENABLED=true`, default):** one batched PopOS LLM pass fans out to entities, events, claims, sentiment/quality; inline context on enrich via `sync_context_from_article_after_content_change`. **Fast NER pre-pass** (`FAST_NER_ENABLED`, spaCy + optional GLiNER) seeds entities before LLM. **Context chunking** (`CONTEXT_CHUNKING_ENABLED`, default **off**): when enabled, splits long articles into `article` + `article_chunk` contexts; otherwise one full-body context per article. Legacy per-phase intake runs only when `LEGACY_INTAKE_EXTRACTION_ENABLED=true`. **Legacy-aware backlog** (`UNIFIED_INTAKE_LEGACY_AWARE_BACKLOG=true`, default): Monitor/automation count only articles still needing unified LLM; legacy-complete rows get pass-marker backfill without re-extraction (`api/shared/unified_intake_backlog.py`, `api/scripts/backfill_unified_intake_pass_from_legacy.py`). See [docs/PIPELINE_AND_AUTOMATION.md](docs/PIPELINE_AND_AUTOMATION.md).
 3. **Storyline:** create → add articles → queued refinement (`intelligence.content_refinement_queue`).
 4. **Events (v5):** extract → deduplicate → story continuation → alerts.
 5. **Ollama:** Model routing via `api/shared/services/ollama_model_caller.py`. **Widow does not run Ollama** — all LLM HTTP from the Widow API targets **PopOS** (`OLLAMA_HOST` / `OLLAMA_POP_OS_HOST` → `http://192.168.93.99:11434`, RTX 5090). Dual-host CPU/GPU split is off on Widow (`OLLAMA_DUAL_HOST_ROUTING_ENABLED=false`). PopOS phase workers still use local `127.0.0.1:11434` on that host.
