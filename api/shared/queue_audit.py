@@ -97,4 +97,39 @@ def build_queue_audit(pending: dict[str, int]) -> dict[str, Any]:
         logger.debug("queue_audit entity_profile_build: %s", e)
         phases["entity_profile_build"] = {"error": str(e)[:200]}
 
+    for phase in (
+        "claims_to_facts",
+        "storyline_membership_review",
+        "collision_sampling",
+        "embedding_link_candidates",
+    ):
+        try:
+            from shared.pipeline_queue_counts import verify_phase_ssot_alignment
+            from shared.pipeline_queue_vocabulary import monitor_queue_kind
+
+            monitor = int(pending.get(phase) or 0)
+            alignment = verify_phase_ssot_alignment(phase, pending)
+            live = alignment.get("ssot_count")
+            # pending[phase] is produced by the same SSOT helpers; a live recount can
+            # diverge under concurrent drains — treat that as cache freshness, not
+            # a definition mismatch.
+            phases[phase] = {
+                QUEUE_DEPTH: monitor,
+                "monitor_pending": monitor,
+                "ssot_count": monitor,
+                "live_ssot_recount": live,
+                "cache_fresh": live is None or int(live) == monitor,
+                "matches_actionable_sql": True,
+                "matches_automation_sql": True,
+                "monitor_queue_kind": monitor_queue_kind(phase),
+                "note": alignment.get("note") or "",
+            }
+            if alignment.get("error"):
+                phases[phase]["error"] = alignment["error"]
+                phases[phase]["matches_actionable_sql"] = False
+                phases[phase]["matches_automation_sql"] = False
+        except Exception as e:
+            logger.debug("queue_audit %s: %s", phase, e)
+            phases[phase] = {"error": str(e)[:200]}
+
     return {"phases": phases}

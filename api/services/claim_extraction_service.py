@@ -133,12 +133,44 @@ def _claim_extraction_strict_seeded_domain_keys() -> frozenset[str]:
     return frozenset()
 
 
-def _subject_matches_seeded_pool(cur, domain_key: str, subject_text: str) -> bool:
-    """Fast exact normalized match against entity_profiles canonical_name or domain entity_canonical."""
+def _subject_matches_seeded_pool(
+    cur,
+    domain_key: str,
+    subject_text: str,
+    *,
+    context_id: int | None = None,
+) -> bool:
+    """Match claim subject against seeded entities (global + context-scoped)."""
     norm = _subject_norm(subject_text)
     if not norm:
         return False
     schema = _claim_domain_key_to_schema(domain_key)
+
+    # Context-linked profiles first (resolvability for the article being processed).
+    if context_id is not None:
+        try:
+            cur.execute(
+                """
+                SELECT 1
+                FROM intelligence.context_entity_mentions cem
+                JOIN intelligence.entity_profiles ep ON ep.id = cem.entity_profile_id
+                WHERE cem.context_id = %s
+                  AND (
+                    lower(trim(COALESCE(ep.metadata->>'canonical_name', ''))) = %s
+                    OR (
+                      length(trim(COALESCE(ep.metadata->>'canonical_name', ''))) >= 5
+                      AND strpos(%s, lower(trim(COALESCE(ep.metadata->>'canonical_name', '')))) > 0
+                    )
+                  )
+                LIMIT 1
+                """,
+                (context_id, norm, norm),
+            )
+            if cur.fetchone():
+                return True
+        except Exception:
+            pass
+
     cur.execute(
         """
         SELECT 1
@@ -167,14 +199,34 @@ def _subject_matches_seeded_pool(cur, domain_key: str, subject_text: str) -> boo
             return True
     except Exception:
         pass
+    # Containment: "psilocybin therapy" ↔ known entity "psilocybin"
+    try:
+        cur.execute(
+            """
+            SELECT 1
+            FROM intelligence.entity_profiles ep
+            WHERE length(trim(COALESCE(ep.metadata->>'canonical_name', ''))) >= 5
+              AND strpos(%s, lower(trim(COALESCE(ep.metadata->>'canonical_name', '')))) > 0
+            LIMIT 1
+            """,
+            (norm,),
+        )
+        if cur.fetchone():
+            return True
+    except Exception:
+        pass
     cur.execute(
         f"""
         SELECT 1
         FROM {schema}.entity_canonical ec
         WHERE lower(trim(ec.canonical_name)) = %s
+           OR (
+             length(trim(ec.canonical_name)) >= 5
+             AND strpos(%s, lower(trim(ec.canonical_name))) > 0
+           )
         LIMIT 1
         """,
-        (norm,),
+        (norm, norm),
     )
     return bool(cur.fetchone())
 
@@ -293,12 +345,19 @@ def get_claim_extraction_parallel() -> int:
 def get_claims_to_facts_batch_limit() -> int:
     """Max extracted_claims rows attempted per promote_claims_to_versioned_facts call. <=0 → claim_pipeline_max_fetch()."""
     try:
-        n = int(env_str("CLAIMS_TO_FACTS_BATCH_LIMIT", "10000"))
+        n = int(env_str("CLAIMS_TO_FACTS_BATCH_LIMIT", "200"))
     except ValueError:
-        n = 10_000
+        n = 200
     if n <= 0:
         return claim_pipeline_max_fetch()
-    return n
+    default = n
+    try:
+        from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+        tuned, _meta = resolve_adaptive_batch("claims_to_facts", default)
+        return max(1, int(tuned))
+    except Exception:
+        return default
 
 
 def get_claims_to_facts_min_confidence() -> float:
@@ -387,6 +446,10 @@ def _persist_claims_to_facts_batch_run(
 async def drain_claims_to_facts_for_automation_task(
     *,
     per_batch_limit: int | None = None,
+    max_batches: int | None = None,
+    max_seconds: float | None = None,
+    max_zero_promote_batches: int | None = None,
+    enforce_nightly_window: bool = False,
 ) -> tuple[int, int]:
     """
     Run claim promotion in a loop until no candidates remain or a guard trips.
@@ -395,11 +458,34 @@ async def drain_claims_to_facts_for_automation_task(
     without waiting for the next scheduler tick. Nightly unified drain keeps one promote per
     ``run_nightly_sequential_phase`` call; outer ``NIGHTLY_SEQUENTIAL_PHASE_LOOP_CAPS`` repeats that.
 
+    ``max_batches`` / ``max_seconds`` / ``max_zero_promote_batches`` override env defaults when set
+    (catch-up / spine callers). ``enforce_nightly_window`` is accepted for call-site compatibility and
+    currently has no effect (daytime drain is always allowed when this function is invoked).
+
     Returns (total_promoted, batch_count).
     """
-    max_batches = _claims_to_facts_drain_max_batches()
-    max_sec = _claims_to_facts_drain_max_seconds()
-    max_zero = _claims_to_facts_drain_max_zero_promote_batches()
+    _ = enforce_nightly_window
+    if max_batches is None:
+        max_batches = _claims_to_facts_drain_max_batches()
+    else:
+        try:
+            max_batches = int(max_batches)
+        except (TypeError, ValueError):
+            max_batches = _claims_to_facts_drain_max_batches()
+    if max_seconds is None:
+        max_sec = _claims_to_facts_drain_max_seconds()
+    else:
+        try:
+            max_sec = max(0.0, float(max_seconds))
+        except (TypeError, ValueError):
+            max_sec = _claims_to_facts_drain_max_seconds()
+    if max_zero_promote_batches is None:
+        max_zero = _claims_to_facts_drain_max_zero_promote_batches()
+    else:
+        try:
+            max_zero = max(1, int(max_zero_promote_batches))
+        except (TypeError, ValueError):
+            max_zero = _claims_to_facts_drain_max_zero_promote_batches()
     t0 = time.monotonic()
     total_promoted = 0
     batches = 0
@@ -484,6 +570,36 @@ CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL = """
   )"""
 
 
+def claim_promotion_deferred_exclude_sql() -> str:
+    """
+    Skip claims with ``metadata.promotion_skip`` set so promotion can advance past a stuck head.
+
+    - ``unresolved_subject``: retry after ``CLAIMS_TO_FACTS_UNRESOLVED_RETRY_HOURS`` (0 = never).
+    - other skips (e.g. ``gap_ignored``): permanent until metadata cleared.
+    """
+    try:
+        hours = float(env_str("CLAIMS_TO_FACTS_UNRESOLVED_RETRY_HOURS", "168") or "168")
+    except (TypeError, ValueError):
+        hours = 168.0
+    if hours <= 0:
+        return """
+  AND COALESCE(ec.metadata->>'promotion_skip', '') = ''
+""".rstrip()
+    # Safe numeric interval — hours is float-validated above
+    return f"""
+  AND (
+    COALESCE(ec.metadata->>'promotion_skip', '') = ''
+    OR (
+      COALESCE(ec.metadata->>'promotion_skip', '') = 'unresolved_subject'
+      AND COALESCE(
+           (ec.metadata->>'promotion_skip_at')::timestamptz,
+           '-infinity'::timestamptz
+         ) < (NOW() - make_interval(secs => {int(hours * 3600)}))
+    )
+  )
+""".rstrip()
+
+
 def claim_promotion_generic_subject_exclude_sql() -> str:
     """SQL AND-clauses for subjects ``promote_claims_to_versioned_facts`` skips via ``_is_overly_generic_subject`` (exact-set + length)."""
     parts = sorted(_GENERIC_SUBJECTS)
@@ -566,26 +682,31 @@ def claims_to_facts_resolvable_hint_predicate_sql() -> str:
 
 def get_claims_to_facts_backlog_count_mode() -> str:
     """
-    ``promotable_hint`` (default): backlog count uses generic-subject exclusion + resolvable-hint predicate.
-    ``batch_candidate``: count all SQL batch candidates (confidence + not in versioned_facts + gap ignore + generic),
-    matching promote's row set before per-row resolution (can be very large).
+    ``batch_candidate`` (default): backlog COUNT uses the same WHERE as
+    ``promote_claims_to_versioned_facts`` (confidence + not-in-facts + gap ignore +
+    deferred skip + generic subject). This is the queue_depth SSOT.
+
+    ``promotable_hint``: also requires an exact-resolution signal (Monitor can opt in
+    via ``CLAIMS_TO_FACTS_BACKLOG_COUNT_MODE=promotable_hint`` when exploring
+    fuzzy/trgm-free subsets — not the automation drain set).
     """
-    raw = env_str("CLAIMS_TO_FACTS_BACKLOG_COUNT_MODE", "promotable_hint").strip().lower()
-    if raw in ("batch_candidate", "candidate", "candidates", "all", "all_candidates"):
-        return "batch_candidate"
-    return "promotable_hint"
+    raw = env_str("CLAIMS_TO_FACTS_BACKLOG_COUNT_MODE", "batch_candidate").strip().lower()
+    if raw in ("promotable_hint", "hint", "resolvable_hint"):
+        return "promotable_hint"
+    return "batch_candidate"
 
 
 def build_claims_to_facts_backlog_where_suffix() -> str:
-    """Fragment appended after ``WHERE ec.confidence >= %s`` for ``_count_claims_to_facts_pending``."""
+    """Fragment appended after ``WHERE ec.confidence >= %s`` — must match promote SELECT."""
     base = (
         claims_to_facts_versioned_fact_absent_sql()
         + CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL
+        + claim_promotion_deferred_exclude_sql()
         + claim_promotion_generic_subject_exclude_sql()
     )
-    if get_claims_to_facts_backlog_count_mode() == "batch_candidate":
-        return base
-    return base + " AND " + claims_to_facts_resolvable_hint_predicate_sql()
+    if get_claims_to_facts_backlog_count_mode() == "promotable_hint":
+        return base + " AND " + claims_to_facts_resolvable_hint_predicate_sql()
+    return base
 
 
 def _claim_domain_key_to_schema(dk: str) -> str:
@@ -604,15 +725,24 @@ def _parse_claims_response(raw: str) -> list[tuple[str, str, str, float]]:
         start = raw.find("[")
         if start < 0:
             start = raw.find("{")
-            if start >= 0 and '"claims"' in raw:
-                end = raw.rfind("}") + 1
-                data = json.loads(raw[start:end])
-                arr = data.get("claims", [])
+            if start < 0:
+                return out
+            end = raw.rfind("}") + 1
+            data = json.loads(raw[start:end])
+            if isinstance(data, dict) and isinstance(data.get("claims"), list):
+                arr = data.get("claims") or []
+            elif isinstance(data, dict) and (
+                data.get("subject") or data.get("subject_text")
+            ):
+                # Models often return one claim object instead of a JSON array.
+                arr = [data]
             else:
                 return out
         else:
             end = raw.rfind("]") + 1
             arr = json.loads(raw[start:end])
+        if isinstance(arr, dict):
+            arr = [arr]
         for item in arr:
             if isinstance(item, dict):
                 s = (item.get("subject") or item.get("subject_text") or "").strip()
@@ -683,31 +813,24 @@ def insert_parsed_claims_for_context(
                     skipped_generic += 1
                     continue
                 if strict_seeded and not _subject_matches_seeded_pool(
-                    cur, str(context_domain_key), subject_text
+                    cur,
+                    str(context_domain_key),
+                    subject_text,
+                    context_id=context_id,
                 ):
                     skipped_unseeded += 1
                     continue
                 adj_conf = max(0.0, min(1.0, float(confidence) * cred_mult))
-                # Compute claim fingerprint
-                claim_fingerprint = substring(
-                    sha256(
-                        (str(context_id) || '::' ||
-                        lower(regexp_replace(subject_text, '\s+', ' ', 'g')) || '::' ||
-                        lower(regexp_replace(predicate_text, '\s+', ' ', 'g')) || '::' ||
-                        lower(regexp_replace(object_text, '\s+', ' ', 'g')))
-                    ) from 1 for 64
-                )
                 if execute_with_savepoint(
                     cur,
                     conn,
                     f"claim_ins_{context_id}_{idx}",
                     """
                         INSERT INTO intelligence.extracted_claims
-                        (context_id, subject_text, predicate_text, object_text, confidence, claim_fingerprint)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (claim_fingerprint) DO NOTHING
+                        (context_id, subject_text, predicate_text, object_text, confidence)
+                        VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (context_id, subject_text, predicate_text, object_text, adj_conf, claim_fingerprint),
+                    (context_id, subject_text, predicate_text, object_text, adj_conf),
                 ):
                     inserted += 1
                 else:
@@ -830,6 +953,7 @@ Keep each subject under ~80 characters when possible."""
             prompt,
             kind=InvocationKind.STRUCTURED_EXTRACTION,
             approx_prompt_chars=len(prompt),
+            batch_size=1,
         )
         raw = gen.text
     except Exception as e:
@@ -878,31 +1002,24 @@ Keep each subject under ~80 characters when possible."""
                     skipped_generic += 1
                     continue
                 if strict_seeded and not _subject_matches_seeded_pool(
-                    cur, str(context_domain_key), subject_text
+                    cur,
+                    str(context_domain_key),
+                    subject_text,
+                    context_id=context_id,
                 ):
                     skipped_unseeded += 1
                     continue
                 adj_conf = max(0.0, min(1.0, float(confidence) * cred_mult))
-                # Compute claim fingerprint
-                claim_fingerprint = substring(
-                    sha256(
-                        (str(context_id) || '::' ||
-                        lower(regexp_replace(subject_text, '\s+', ' ', 'g')) || '::' ||
-                        lower(regexp_replace(predicate_text, '\s+', ' ', 'g')) || '::' ||
-                        lower(regexp_replace(object_text, '\s+', ' ', 'g')))
-                    ) from 1 for 64
-                )
                 if execute_with_savepoint(
                     cur,
                     conn,
                     f"claim_llm_{context_id}_{idx}",
                     """
                         INSERT INTO intelligence.extracted_claims
-                        (context_id, subject_text, predicate_text, object_text, confidence, claim_fingerprint)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (claim_fingerprint) DO NOTHING
+                        (context_id, subject_text, predicate_text, object_text, confidence)
+                        VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (context_id, subject_text, predicate_text, object_text, adj_conf, claim_fingerprint),
+                    (context_id, subject_text, predicate_text, object_text, adj_conf),
                 ):
                     inserted += 1
                 else:
@@ -1160,6 +1277,9 @@ def _persist_claim_extraction_batch_run(
 ) -> None:
     """One automation_run_history row per completed batch (when no automation on_batch callback)."""
     try:
+        # Do not spam Monitor with idle drain ticks (contexts_processed=0).
+        if int(contexts_processed or 0) <= 0 and int(claims_inserted or 0) <= 0:
+            return
         from shared.services.phase_batch_run_history import record_phase_batch_completion
 
         rows = int(claims_inserted or contexts_processed or 0)
@@ -1188,7 +1308,16 @@ def _automation_claim_batch_limit() -> int | None:
         n = int(env_str("AUTOMATION_CLAIM_EXTRACTION_BATCH_LIMIT", "64"))
     except ValueError:
         n = 64
-    return max(1, n) if n > 0 else None
+    if n <= 0:
+        return None
+    default = max(1, n)
+    try:
+        from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+        tuned, _meta = resolve_adaptive_batch("claim_extraction", default)
+        return max(1, int(tuned))
+    except Exception:
+        return default
 
 
 async def drain_claim_extraction_for_automation_task(
@@ -1216,6 +1345,13 @@ async def drain_claim_extraction_for_automation_task(
     total_claims = 0
     batches = 0
     zero_streak = 0
+
+    # Cheap idle gate: PopOS claim_topic cycles this phase every ~20s even when
+    # fusion gap-fill backlog is empty — skip before recording empty batch history.
+    probe_ids = await asyncio.to_thread(get_context_ids_without_claims, 1)
+    if not probe_ids:
+        logger.debug("claim_extraction drain idle: no eligible contexts")
+        return 0, 0
 
     while True:
         if max_batches > 0 and batches >= max_batches:
@@ -1326,7 +1462,7 @@ def _map_predicate_to_fact_type(predicate: str) -> str:
 
 def _claims_to_facts_chunk_size() -> int:
     try:
-        return max(10, min(500, int(env_str("CLAIMS_TO_FACTS_CHUNK_SIZE", "50"))))
+        return max(10, min(1000, int(env_str("CLAIMS_TO_FACTS_CHUNK_SIZE", "50"))))
     except (TypeError, ValueError):
         return 50
 
@@ -1340,6 +1476,7 @@ def _promote_claims_to_versioned_facts_one_tx(
         "promoted": 0,
         "candidates": 0,
         "unresolved_subject": 0,
+        "deferred_unresolved": 0,
         "insert_failed": 0,
         "generic_subject_skipped": 0,
         "merged_groups": 0,
@@ -1352,20 +1489,30 @@ def _promote_claims_to_versioned_facts_one_tx(
         try:
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '120s'")
+                # Claim via CTE so LIMIT + SKIP LOCKED cooperate: lock rows while
+                # filling the batch instead of materializing a locked head then
+                # returning empty to sibling workers.
                 cur.execute(
                     """
-                    SELECT ec.id, ec.context_id, ec.subject_text, ec.predicate_text, ec.object_text,
-                           ec.confidence, ec.valid_from, ec.valid_to
+                    WITH claim AS (
+                    SELECT ec.id
                     FROM intelligence.extracted_claims ec
                     WHERE ec.confidence >= %s
                     """
                     + claims_to_facts_versioned_fact_absent_sql()
                     + CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL
+                    + claim_promotion_deferred_exclude_sql()
                     + claim_promotion_generic_subject_exclude_sql()
                     + """
-                    ORDER BY ec.confidence DESC
+                    ORDER BY ec.confidence DESC, ec.id ASC
                     LIMIT %s
                     FOR UPDATE OF ec SKIP LOCKED
+                    )
+                    SELECT ec.id, ec.context_id, ec.subject_text, ec.predicate_text, ec.object_text,
+                           ec.confidence, ec.valid_from, ec.valid_to
+                    FROM intelligence.extracted_claims ec
+                    INNER JOIN claim ON claim.id = ec.id
+                    ORDER BY ec.confidence DESC, ec.id ASC
                     """,
                     (min_confidence, limit),
                 )
@@ -1377,6 +1524,8 @@ def _promote_claims_to_versioned_facts_one_tx(
 
                 active_schemas = frozenset(get_pipeline_schema_names_active())
                 grouped: dict[tuple, dict[str, object]] = {}
+                subject_resolve_memo: dict[tuple[int | None, str], Any] = {}
+                deferred_ids: list[int] = []
                 for (
                     claim_id,
                     context_id,
@@ -1390,14 +1539,23 @@ def _promote_claims_to_versioned_facts_one_tx(
                     if _is_overly_generic_subject(subject):
                         stats["generic_subject_skipped"] += 1
                         continue
-                    entity_profile_id = _resolve_claim_to_entity_profile(
-                        cur,
-                        subject,
-                        context_id,
-                        active_schema_set=active_schemas,
+                    memo_key = (
+                        int(context_id) if context_id is not None else None,
+                        _claim_text_norm(subject),
                     )
+                    if memo_key in subject_resolve_memo:
+                        entity_profile_id = subject_resolve_memo[memo_key]
+                    else:
+                        entity_profile_id = _resolve_claim_to_entity_profile(
+                            cur,
+                            subject,
+                            context_id,
+                            active_schema_set=active_schemas,
+                        )
+                        subject_resolve_memo[memo_key] = entity_profile_id
                     if not entity_profile_id:
                         stats["unresolved_subject"] += 1
+                        deferred_ids.append(int(claim_id))
                         continue
 
                     fact_type = _map_predicate_to_fact_type(predicate or "")
@@ -1478,16 +1636,34 @@ def _promote_claims_to_versioned_facts_one_tx(
                             e,
                         )
 
+                if deferred_ids:
+                    skip_payload = json.dumps(
+                        {
+                            "promotion_skip": "unresolved_subject",
+                            "promotion_skip_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
+                    cur.execute(
+                        """
+                        UPDATE intelligence.extracted_claims
+                        SET metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb
+                        WHERE id = ANY(%s)
+                        """,
+                        (skip_payload, deferred_ids),
+                    )
+                    stats["deferred_unresolved"] = len(deferred_ids)
+
                 conn.commit()
         except Exception as e:
             logger.warning("promote_claims_to_versioned_facts failed: %s", e)
             conn.rollback()
     if stats["candidates"] > 0:
         logger.info(
-            "claims_to_facts batch: promoted=%s candidates=%s unresolved_subject=%s insert_failed=%s merged_groups=%s collapsed=%s merged_id_check=%s",
+            "claims_to_facts batch: promoted=%s candidates=%s unresolved_subject=%s deferred=%s insert_failed=%s merged_groups=%s collapsed=%s merged_id_check=%s",
             stats["promoted"],
             stats["candidates"],
             stats["unresolved_subject"],
+            stats.get("deferred_unresolved", 0),
             stats["insert_failed"],
             stats["merged_groups"],
             stats["merged_claims_collapsed"],
@@ -1531,6 +1707,7 @@ def promote_claims_to_versioned_facts(
         "promoted": 0,
         "candidates": 0,
         "unresolved_subject": 0,
+        "deferred_unresolved": 0,
         "insert_failed": 0,
         "generic_subject_skipped": 0,
         "merged_groups": 0,
@@ -1592,6 +1769,7 @@ def sample_unpromoted_claim_resolution_stats(
                 """
                 + claims_to_facts_versioned_fact_absent_sql()
                 + CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL
+                + claim_promotion_deferred_exclude_sql()
                 + claim_promotion_generic_subject_exclude_sql()
                 + """
                 ORDER BY ec.confidence DESC

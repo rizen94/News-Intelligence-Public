@@ -27,7 +27,8 @@ _TOKEN_RE = re.compile(r"[a-z0-9]{3,}")
 
 
 def membership_review_enabled() -> bool:
-    return env_str("STORYLINE_MEMBERSHIP_REVIEW_ENABLED", "false").lower() in (
+    """Default ON so mega review automation runs; set false to disable."""
+    return env_str("STORYLINE_MEMBERSHIP_REVIEW_ENABLED", "true").lower() in (
         "1",
         "true",
         "yes",
@@ -46,6 +47,20 @@ def membership_review_dry_run() -> bool:
 def membership_auto_apply() -> bool:
     """When true (and not dry_run), apply clear unlink/demote immediately. Default: queue proposals."""
     return env_str("STORYLINE_MEMBERSHIP_AUTO_APPLY", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def membership_mega_auto_apply() -> bool:
+    """
+    Auto-apply clear unlink/demote on large storylines (megas).
+
+    Default ON so kitchen-sink megas can shed dissimilar members without waiting
+    for a global STORYLINE_MEMBERSHIP_AUTO_APPLY flip.
+    """
+    return env_str("STORYLINE_MEMBERSHIP_MEGA_AUTO_APPLY", "true").lower() in (
         "1",
         "true",
         "yes",
@@ -93,7 +108,7 @@ def _min_article_count_for_review() -> int:
 
 
 def _max_storylines() -> int:
-    return max(1, env_int("STORYLINE_MEMBERSHIP_REVIEW_MAX_STORYLINES", 8))
+    return max(1, env_int("STORYLINE_MEMBERSHIP_REVIEW_MAX_STORYLINES", 100))
 
 
 def _graph_quarantine_confidence() -> float:
@@ -208,6 +223,137 @@ def decide_membership_article_action(
     )
 
 
+def _norm_claim_part(s: str) -> str:
+    return " ".join((s or "").strip().lower().split())
+
+
+def objects_incompatible(a: str, b: str) -> bool:
+    """Heuristic: distinct objects with low token overlap, number mismatch, or negation."""
+    na, nb = _norm_claim_part(a), _norm_claim_part(b)
+    if not na or not nb or na == nb:
+        return False
+    neg_a = na.startswith("not ") or " no " in f" {na} " or na.startswith("never ")
+    neg_b = nb.startswith("not ") or " no " in f" {nb} " or nb.startswith("never ")
+    if neg_a != neg_b and (
+        na.replace("not ", "").strip() == nb.replace("not ", "").strip()
+        or na in nb
+        or nb in na
+    ):
+        return True
+    nums_a = re.findall(r"\d+(?:\.\d+)?", na)
+    nums_b = re.findall(r"\d+(?:\.\d+)?", nb)
+    if nums_a and nums_b and nums_a != nums_b:
+        return True
+    ta, tb = set(_TOKEN_RE.findall(na)), set(_TOKEN_RE.findall(nb))
+    if not ta or not tb:
+        return na != nb
+    inter = len(ta & tb)
+    union = len(ta | tb)
+    j = float(inter) / float(union) if union else 0.0
+    return j < 0.25
+
+
+def detect_claim_contradictions(
+    claims: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Same subject+predicate with incompatible objects → contradiction groups.
+
+    Each claim dict: subject/predicate/object (or *_text), optional article_id, id.
+    """
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for c in claims or []:
+        subj = _norm_claim_part(str(c.get("subject") or c.get("subject_text") or ""))
+        pred = _norm_claim_part(str(c.get("predicate") or c.get("predicate_text") or ""))
+        obj = str(c.get("object") or c.get("object_text") or "").strip()
+        if not subj or not pred or not obj:
+            continue
+        groups.setdefault((subj, pred), []).append(c)
+
+    out: list[dict[str, Any]] = []
+    for (subj, pred), rows in groups.items():
+        if len(rows) < 2:
+            continue
+        objs = [
+            str(r.get("object") or r.get("object_text") or "").strip() for r in rows
+        ]
+        conflict = False
+        for i in range(len(objs)):
+            for j in range(i + 1, len(objs)):
+                if objects_incompatible(objs[i], objs[j]):
+                    conflict = True
+                    break
+            if conflict:
+                break
+        if conflict:
+            article_ids = sorted(
+                {
+                    int(r["article_id"])
+                    for r in rows
+                    if r.get("article_id") is not None
+                }
+            )
+            out.append(
+                {
+                    "subject": subj,
+                    "predicate": pred,
+                    "objects": objs,
+                    "claim_ids": [r.get("id") for r in rows if r.get("id") is not None],
+                    "article_ids": article_ids,
+                    "reason_code": "claim_contradiction",
+                }
+            )
+    return out
+
+
+def _load_storyline_member_claims(
+    cur,
+    *,
+    domain_key: str,
+    article_ids: list[int],
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    if not article_ids:
+        return []
+    cur.execute(
+        """
+        SELECT ec.id, ec.subject_text, ec.predicate_text, ec.object_text,
+               atc.article_id
+        FROM intelligence.extracted_claims ec
+        JOIN intelligence.article_to_context atc ON atc.context_id = ec.context_id
+        WHERE atc.article_id = ANY(%s)
+          AND (atc.domain_key = %s OR atc.domain_key IS NULL)
+        ORDER BY ec.confidence DESC NULLS LAST, ec.id DESC
+        LIMIT %s
+        """,
+        (list(article_ids), domain_key, max(1, min(int(limit), 500))),
+    )
+    out: list[dict[str, Any]] = []
+    for r in cur.fetchall() or []:
+        out.append(
+            {
+                "id": r[0],
+                "subject_text": r[1] or "",
+                "predicate_text": r[2] or "",
+                "object_text": r[3] or "",
+                "article_id": int(r[4]) if r[4] is not None else None,
+            }
+        )
+    return out
+
+
+# Must match intelligence.storyline_membership_actions_action_check (migration 269).
+MEMBERSHIP_ACTIONS_ALLOWED = frozenset(
+    {
+        "unlink",
+        "demote_relevance",
+        "quarantine_graph",
+        "demote_entity",
+        "unlink_tracked_event",
+    }
+)
+
+
 def _enqueue_action(
     cur,
     *,
@@ -226,27 +372,73 @@ def _enqueue_action(
     status: str = "pending",
     metadata: dict[str, Any] | None = None,
 ) -> int | None:
-    if status == "pending":
+    """
+    Insert a membership action row. Unsupported actions are skipped (never inserted)
+    so CHECK violations cannot abort the caller's transaction.
+
+    Uses a SAVEPOINT so any remaining DB error rolls back only this insert.
+    """
+    if action not in MEMBERSHIP_ACTIONS_ALLOWED:
+        meta = dict(metadata or {})
+        meta["skipped_action"] = action
+        logger.warning(
+            "skip unsupported membership action=%s domain=%s storyline=%s meta=%s",
+            action,
+            domain_key,
+            storyline_id,
+            {k: meta.get(k) for k in ("source", "chunk_excerpt", "reason_code") if k in meta},
+        )
+        return None
+
+    # SAVEPOINT: CheckViolation / unique race must not abort outer prune/finisher txn.
+    cur.execute("SAVEPOINT membership_enqueue")
+    try:
+        if status == "pending":
+            cur.execute(
+                """
+                SELECT id FROM intelligence.storyline_membership_actions
+                WHERE status IN ('pending', 'dry_run')
+                  AND domain_key = %s
+                  AND storyline_id = %s
+                  AND action = %s
+                  AND article_id IS NOT DISTINCT FROM %s
+                  AND entity_name IS NOT DISTINCT FROM %s
+                  AND tracked_event_id IS NOT DISTINCT FROM %s
+                  AND graph_left_kind IS NOT DISTINCT FROM %s
+                  AND graph_left_id IS NOT DISTINCT FROM %s
+                  AND graph_right_kind IS NOT DISTINCT FROM %s
+                  AND graph_right_id IS NOT DISTINCT FROM %s
+                LIMIT 1
+                """,
+                (
+                    domain_key,
+                    storyline_id,
+                    action,
+                    article_id,
+                    entity_name,
+                    tracked_event_id,
+                    graph_left_kind,
+                    graph_left_id,
+                    graph_right_kind,
+                    graph_right_id,
+                ),
+            )
+            existing = cur.fetchone()
+            if existing:
+                cur.execute("RELEASE SAVEPOINT membership_enqueue")
+                return int(existing[0])
         cur.execute(
             """
-            SELECT id FROM intelligence.storyline_membership_actions
-            WHERE status IN ('pending', 'dry_run')
-              AND domain_key = %s
-              AND storyline_id = %s
-              AND action = %s
-              AND article_id IS NOT DISTINCT FROM %s
-              AND entity_name IS NOT DISTINCT FROM %s
-              AND tracked_event_id IS NOT DISTINCT FROM %s
-              AND graph_left_kind IS NOT DISTINCT FROM %s
-              AND graph_left_id IS NOT DISTINCT FROM %s
-              AND graph_right_kind IS NOT DISTINCT FROM %s
-              AND graph_right_id IS NOT DISTINCT FROM %s
-            LIMIT 1
+            INSERT INTO intelligence.storyline_membership_actions
+            (domain_key, storyline_id, article_id, entity_name, tracked_event_id,
+             graph_left_kind, graph_left_id, graph_right_kind, graph_right_id,
+             action, fit_score, status, rationale, metadata)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+            RETURNING id
             """,
             (
                 domain_key,
                 storyline_id,
-                action,
                 article_id,
                 entity_name,
                 tracked_event_id,
@@ -254,39 +446,28 @@ def _enqueue_action(
                 graph_left_id,
                 graph_right_kind,
                 graph_right_id,
+                action,
+                fit_score,
+                status,
+                (rationale or "")[:2000],
+                json.dumps(metadata or {}),
             ),
         )
-        existing = cur.fetchone()
-        if existing:
-            return int(existing[0])
-    cur.execute(
-        """
-        INSERT INTO intelligence.storyline_membership_actions
-        (domain_key, storyline_id, article_id, entity_name, tracked_event_id,
-         graph_left_kind, graph_left_id, graph_right_kind, graph_right_id,
-         action, fit_score, status, rationale, metadata)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
-        RETURNING id
-        """,
-        (
-            domain_key,
-            storyline_id,
-            article_id,
-            entity_name,
-            tracked_event_id,
-            graph_left_kind,
-            graph_left_id,
-            graph_right_kind,
-            graph_right_id,
+        row = cur.fetchone()
+        cur.execute("RELEASE SAVEPOINT membership_enqueue")
+        return int(row[0]) if row else None
+    except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT membership_enqueue")
+        except Exception:
+            pass
+        logger.warning(
+            "membership enqueue failed action=%s storyline=%s: %s",
             action,
-            fit_score,
-            status,
-            (rationale or "")[:2000],
-            json.dumps(metadata or {}),
-        ),
-    )
-    row = cur.fetchone()
-    return int(row[0]) if row else None
+            storyline_id,
+            e,
+        )
+        return None
 
 
 def _membership_fingerprint_sql(schema: str, storyline_alias: str = "s") -> str:
@@ -298,6 +479,71 @@ def _membership_fingerprint_sql(schema: str, storyline_alias: str = "s") -> str:
         FROM {schema}.storyline_articles sa
         WHERE sa.storyline_id = {storyline_alias}.id
     )"""
+
+
+def membership_needs_review_where_sql(schema: str, storyline_alias: str = "s") -> str:
+    """
+    SSOT WHERE fragment for megas the membership drain will pick.
+
+    Bind ``min_article_count`` once for the ``article_count >= %s`` placeholder.
+    Caller must ``LEFT JOIN intelligence.storyline_membership_review_state r``
+    on ``r.domain_key`` / ``r.storyline_id``.
+    """
+    fp_sql = _membership_fingerprint_sql(schema, storyline_alias)
+    a = storyline_alias
+    return f"""
+                {a}.status = 'active'
+                  AND {a}.merged_into_id IS NULL
+                  AND COALESCE({a}.article_count, 0) >= %s
+                  AND (
+                    r.storyline_id IS NULL
+                    OR r.membership_fingerprint IS DISTINCT FROM {fp_sql}
+                  )
+""".rstrip()
+
+
+def count_storylines_needing_membership_review(
+    *,
+    domain_key: str | None = None,
+) -> int:
+    """Count megas matching ``_pick_storylines`` eligibility (automation drain SSOT)."""
+    if not membership_review_enabled():
+        return 0
+    from shared.domain_registry import get_pipeline_active_domain_keys
+
+    domains = [domain_key] if domain_key else list(get_pipeline_active_domain_keys())
+    min_arts = _min_article_count_for_review()
+    total = 0
+    conn = get_db_connection()
+    if not conn:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            for dk in domains:
+                if not dk:
+                    continue
+                schema = resolve_domain_schema(dk)
+                where = membership_needs_review_where_sql(schema, "s")
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*)::int
+                    FROM {schema}.storylines s
+                    LEFT JOIN intelligence.storyline_membership_review_state r
+                      ON r.domain_key = %s AND r.storyline_id = s.id
+                    WHERE {where}
+                    """,
+                    (dk, min_arts),
+                )
+                total += int(cur.fetchone()[0] or 0)
+        return total
+    except Exception as e:
+        logger.debug("count_storylines_needing_membership_review: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def _read_membership_fingerprint(
@@ -405,8 +651,7 @@ def review_storyline_membership(
     """
     if dry_run is None:
         dry_run = membership_review_dry_run()
-    # Propose by default: queue pending. Auto-apply only when explicitly enabled.
-    auto_apply = (not dry_run) and membership_auto_apply()
+    # Propose by default: queue pending. Auto-apply when explicitly enabled, or for megas.
     schema = resolve_domain_schema(domain_key)
     keep = _keep_score()
     demote_floor = _demote_score()
@@ -414,12 +659,13 @@ def review_storyline_membership(
     demote_cap = _demote_cap()
     min_remain = _min_remaining()
     max_unlinks = _max_unlinks_per_storyline()
+    mega_floor = _min_article_count_for_review()
 
     stats: dict[str, Any] = {
         "domain_key": domain_key,
         "storyline_id": storyline_id,
         "dry_run": dry_run,
-        "auto_apply": auto_apply,
+        "auto_apply": False,
         "scored": 0,
         "kept": 0,
         "demoted": 0,
@@ -429,6 +675,7 @@ def review_storyline_membership(
         "sei_demoted": 0,
         "tracked_events_unlinked": 0,
         "skipped_min_remaining": 0,
+        "claim_contradictions": 0,
         "errors": 0,
     }
 
@@ -452,6 +699,15 @@ def review_storyline_membership(
             if not row:
                 return {**stats, "error": "storyline_not_found"}
             title, summary, article_count = row[1], row[2] or "", int(row[3] or 0)
+            auto_apply = (not dry_run) and (
+                membership_auto_apply()
+                or (
+                    article_count >= mega_floor
+                    and membership_mega_auto_apply()
+                )
+            )
+            stats["auto_apply"] = auto_apply
+            stats["article_count"] = article_count
             core_tokens = _tokenize(f"{title} {summary}")
 
             cur.execute(
@@ -492,10 +748,59 @@ def review_storyline_membership(
             )
             members = cur.fetchall()
 
+            # Claim contradictions among member articles → demote/split trigger.
+            try:
+                art_ids = [int(m[0]) for m in members if m and m[0] is not None]
+                claim_rows = _load_storyline_member_claims(
+                    cur,
+                    domain_key=domain_key,
+                    article_ids=art_ids,
+                )
+                contradictions = detect_claim_contradictions(claim_rows)
+                stats["claim_contradictions"] = len(contradictions)
+                contradicted_articles: set[int] = set()
+                for group in contradictions:
+                    for aid in group.get("article_ids") or []:
+                        contradicted_articles.add(int(aid))
+                    # Queue demote for each article in the contradiction group.
+                    for aid in group.get("article_ids") or []:
+                        _enqueue_action(
+                            cur,
+                            domain_key=domain_key,
+                            storyline_id=storyline_id,
+                            article_id=int(aid),
+                            action="demote_relevance",
+                            fit_score=None,
+                            rationale=(
+                                f"claim_contradiction subject={group.get('subject')!r} "
+                                f"predicate={group.get('predicate')!r}"
+                            ),
+                            status="dry_run" if dry_run else "pending",
+                            metadata={
+                                "reason_code": "claim_contradiction",
+                                "objects": group.get("objects"),
+                                "claim_ids": group.get("claim_ids"),
+                            },
+                        )
+                        stats["queued"] += 1
+                        if auto_apply and not dry_run:
+                            if _demote_relevance(
+                                cur, schema, storyline_id, int(aid), demote_cap
+                            ):
+                                stats["demoted"] += 1
+            except Exception as cex:
+                logger.debug(
+                    "claim contradiction scan storyline=%s: %s", storyline_id, cex
+                )
+                contradicted_articles = set()
+
             remaining = article_count
             unlinks_done = 0
             for article_id, rel, art_title, pub_at, ent_arr in members:
                 stats["scored"] += 1
+                # Already queued/demoted for claim contradiction — skip fit path.
+                if int(article_id) in contradicted_articles:
+                    continue
                 ents = {e for e in (ent_arr or []) if e}
                 fit = compute_article_fit_score(
                     core_tokens=core_tokens,
@@ -533,6 +838,9 @@ def review_storyline_membership(
                         rationale=rationale
                         + (" [dry_run]" if dry_run else ""),
                         status="dry_run" if dry_run else "pending",
+                        metadata={"reason_code": "dissimilar_to_core"}
+                        if fit < demote_floor
+                        else None,
                     )
                     stats["queued"] += 1
                     continue
@@ -551,6 +859,7 @@ def review_storyline_membership(
                             fit_score=fit,
                             rationale=rationale,
                             status="applied",
+                            metadata={"reason_code": "dissimilar_to_core"},
                         )
                     else:
                         stats["errors"] += 1
@@ -566,6 +875,9 @@ def review_storyline_membership(
                         fit_score=fit,
                         rationale=rationale,
                         status="applied",
+                        metadata={"reason_code": "dissimilar_to_core"}
+                        if fit < keep
+                        else None,
                     )
 
             # --- Connection deprioritize ---
@@ -766,15 +1078,18 @@ def review_storyline_membership(
                         status="applied",
                     )
 
+        # Mark outside the main `with conn.cursor()` block — that cursor is closed.
+        # Open a fresh cursor so review_state persists (otherwise megas re-queue forever).
         try:
-            stats["membership_fingerprint"] = _mark_storyline_reviewed(
-                cur,
-                domain_key=domain_key,
-                storyline_id=storyline_id,
-                schema=schema,
-            )
+            with conn.cursor() as mark_cur:
+                stats["membership_fingerprint"] = _mark_storyline_reviewed(
+                    mark_cur,
+                    domain_key=domain_key,
+                    storyline_id=storyline_id,
+                    schema=schema,
+                )
         except Exception as mark_e:
-            logger.debug("membership review_state mark: %s", mark_e)
+            logger.warning("membership review_state mark: %s", mark_e)
 
         conn.commit()
     except Exception as e:
@@ -797,7 +1112,7 @@ def _pick_storylines(domain_key: str, limit: int) -> list[int]:
     """Pick megas never reviewed, or whose membership fingerprint drifted since last pass."""
     schema = resolve_domain_schema(domain_key)
     min_arts = _min_article_count_for_review()
-    fp_sql = _membership_fingerprint_sql(schema, "s")
+    where = membership_needs_review_where_sql(schema, "s")
     conn = get_db_connection()
     if not conn:
         return []
@@ -809,13 +1124,7 @@ def _pick_storylines(domain_key: str, limit: int) -> list[int]:
                 FROM {schema}.storylines s
                 LEFT JOIN intelligence.storyline_membership_review_state r
                   ON r.domain_key = %s AND r.storyline_id = s.id
-                WHERE s.status = 'active'
-                  AND s.merged_into_id IS NULL
-                  AND COALESCE(s.article_count, 0) >= %s
-                  AND (
-                    r.storyline_id IS NULL
-                    OR r.membership_fingerprint IS DISTINCT FROM {fp_sql}
-                  )
+                WHERE {where}
                 ORDER BY s.article_count DESC NULLS LAST, s.updated_at DESC NULLS LAST
                 LIMIT %s
                 """,
@@ -922,14 +1231,55 @@ def run_storyline_membership_review_all_domains(
 
     for dk in get_pipeline_active_domain_keys():
         cfg = get_domain_synthesis_config(dk)
-        # Chemistry kinds: soft proposal path — skip aggressive unlink/demote sweeps
-        if cfg.is_chemistry_kind() and not cfg.link_score_profile.aggressive_membership:
-            by_domain[dk] = {
-                "skipped": True,
-                "reason": f"story_kind={cfg.story_kind}_soft_membership",
-            }
-            totals["skipped_chemistry_kind"] += 1
-            continue
+        # Chemistry kinds normally use soft membership — but oversize evidence
+        # threads (kitchen-sink megas) must still be pruned.
+        skip_chemistry = (
+            cfg.is_chemistry_kind() and not cfg.link_score_profile.aggressive_membership
+        )
+        if skip_chemistry:
+            try:
+                from shared.domain_registry import resolve_domain_schema
+                from shared.database.connection import get_db_connection
+
+                schema = resolve_domain_schema(dk)
+                conn = get_db_connection()
+                oversize = False
+                if conn and schema:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            f"""
+                            SELECT 1 FROM {schema}.storylines
+                            WHERE merged_into_id IS NULL
+                              AND COALESCE(article_count, 0) > %s
+                            LIMIT 1
+                            """,
+                            (
+                                int(
+                                    cfg.link_score_profile.max_member_articles
+                                    or 48
+                                ),
+                            ),
+                        )
+                        oversize = cur.fetchone() is not None
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                if not oversize:
+                    by_domain[dk] = {
+                        "skipped": True,
+                        "reason": f"story_kind={cfg.story_kind}_soft_membership",
+                    }
+                    totals["skipped_chemistry_kind"] += 1
+                    continue
+                # Fall through: prune oversize chemistry proteins
+            except Exception:
+                by_domain[dk] = {
+                    "skipped": True,
+                    "reason": f"story_kind={cfg.story_kind}_soft_membership",
+                }
+                totals["skipped_chemistry_kind"] += 1
+                continue
         res = run_storyline_membership_review_for_domain(
             dk, limit=limit_per_domain, dry_run=dry_run
         )
@@ -1118,6 +1468,21 @@ def apply_membership_action(action_id: int, *, approve: bool) -> dict[str, Any]:
                 """,
                 ("applied" if applied else "skipped", action_id),
             )
+            # Keep review fingerprint aligned with post-apply membership (same SSOT as drain).
+            if applied:
+                try:
+                    _mark_storyline_reviewed(
+                        cur,
+                        domain_key=str(domain_key),
+                        storyline_id=int(storyline_id),
+                        schema=schema,
+                    )
+                except Exception as mark_e:
+                    logger.warning(
+                        "apply_membership_action review_state mark id=%s: %s",
+                        action_id,
+                        mark_e,
+                    )
             conn.commit()
             return {"success": True, "status": "applied" if applied else "skipped"}
     except Exception as e:

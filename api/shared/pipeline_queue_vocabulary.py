@@ -18,6 +18,41 @@ FIRST_PASS_DEPTH = "first_pass_depth"
 RETRY_DEPTH = "retry_depth"
 SPINE_QUEUE_DEPTH = "spine_queue_depth"
 IN_MEMORY_QUEUE_DEPTH = "in_memory_queue_depth"
+MONITOR_QUEUE_KIND = "monitor_queue_kind"
+
+# Monitor primary-table classification (non-drainable pools stay off the main phase table).
+MONITOR_KIND_DRAINABLE = "drainable"
+MONITOR_KIND_ROTATING_POOL = "rotating_pool"
+MONITOR_KIND_GATED = "gated"
+
+# Phases whose queue_depth is a recurring eligibility pool, not one-shot catch-up work.
+ROTATING_POOL_PHASES: frozenset[str] = frozenset(
+    {
+        "storyline_automation",
+        # Generative samplers — queue_depth is eligibility presence, not catch-up inventory.
+        "collision_sampling",
+    }
+)
+
+
+def monitor_queue_kind(phase_name: str) -> str:
+    """Classify phase backlog for Monitor primary-table filtering."""
+    name = (phase_name or "").strip()
+    if name in ROTATING_POOL_PHASES:
+        return MONITOR_KIND_ROTATING_POOL
+    return MONITOR_KIND_DRAINABLE
+
+
+def apply_monitor_queue_kind(row: dict[str, Any], phase_name: str) -> dict[str, Any]:
+    """Attach monitor_queue_kind; clear ETA for non-drainable pools."""
+    out = dict(row)
+    kind = monitor_queue_kind(phase_name)
+    out[MONITOR_QUEUE_KIND] = kind
+    if kind == MONITOR_KIND_ROTATING_POOL:
+        out["batches_to_drain"] = None
+        out["estimated_phase_runs"] = None
+        out["queue_stale"] = False
+    return out
 
 # Legacy aliases (keep during migration)
 PENDING_RECORDS = "pending_records"
@@ -59,6 +94,10 @@ REPORTING_DEFINITIONS: dict[str, str] = {
         "Per-phase actionable work remaining: rows matching the same eligibility SQL "
         "automation uses for that phase (not raw table sizes or spine queue table depth)."
     ),
+    "monitor_queue_kind": (
+        "Monitor display class: drainable (primary table), rotating_pool (hidden from primary; "
+        "recurring eligibility pool), or gated (deferred until policy allows)."
+    ),
     "scheduling_backlog": (
         "Excess queue depth beyond one automation tick: max(queue_depth − estimated_batch_per_run, 0). "
         "Used for scheduler priority and interval shortening."
@@ -97,16 +136,20 @@ REPORTING_DEFINITIONS: dict[str, str] = {
     ),
     "rows_per_run": (
         "Rows consumed per phase run for ETA: measured_rows_per_run_24h when history samples exist, "
-        "else configured_rows_per_run from backlog_metrics batch heuristics."
+        "else configured_rows_per_run from backlog_metrics batch heuristics. "
+        "For storyline_review_agent, rows = approve+reject decisions only (skips excluded); "
+        "ETA is null (awaiting_decision_yield) until a measured decision sample exists."
     ),
     "measured_rows_per_run_24h": (
         "Average iteration throughput from automation_run_history batch rows in the last 24 hours."
     ),
     "configured_rows_per_run": (
-        "Modeled rows per run from BATCH_SIZE_PER_TASK / env overrides when no measured samples."
+        "Modeled rows per run from persisted adaptive batch (when tuned) or "
+        "BATCH_SIZE_PER_TASK / env defaults when no measured samples."
     ),
     "rows_per_run_source": (
-        "measured_24h* | config_default | no_row_batch_model — how rows_per_run was chosen."
+        "measured_24h* | adaptive_persisted | config_default | no_row_batch_model | "
+        "awaiting_decision_yield — how rows_per_run was chosen."
     ),
     "estimated_batch_per_run": "Alias for rows_per_run (legacy Monitor field name).",
 }
@@ -170,12 +213,28 @@ _NO_ROW_BATCH_MODEL_PHASES = frozenset(
 )
 
 
+def _configured_rows_per_run_source(phase_name: str) -> str:
+    """``adaptive_persisted`` when Monitor batch comes from adaptive_batch state."""
+    try:
+        from shared.adaptive_batch_policy import (
+            adaptive_batch_enabled,
+            get_persisted_adaptive_batch,
+        )
+
+        if adaptive_batch_enabled() and get_persisted_adaptive_batch(phase_name) is not None:
+            return "adaptive_persisted"
+    except Exception:
+        pass
+    return "config_default"
+
+
 def apply_rows_per_run_fields(
     row: dict[str, Any],
     phase_name: str,
     *,
     configured: int,
     measured: tuple[int, str, int] | None,
+    configured_source: str | None = None,
 ) -> dict[str, Any]:
     """Set canonical rows/run fields on a phase_dashboard row (mutates copy)."""
     out = dict(row)
@@ -191,6 +250,18 @@ def apply_rows_per_run_fields(
         out[ESTIMATED_BATCH_PER_RUN_SOURCE] = "no_row_batch_model"
         return out
 
+    # Review agent: ETA must use decided throughput (approve+reject). Skips do not
+    # drain the queue — never invent an ETA from configured batch size alone.
+    if phase_name == "storyline_review_agent" and not measured:
+        out[MEASURED_ROWS_PER_RUN_24H] = None
+        out[ROWS_PER_RUN] = None
+        out[ROWS_PER_RUN_SOURCE] = "awaiting_decision_yield"
+        out[ROWS_PER_RUN_SAMPLE_COUNT] = 0
+        out[ESTIMATED_BATCH_PER_RUN] = None
+        out[ESTIMATED_BATCH_PER_RUN_SOURCE] = "awaiting_decision_yield"
+        out[CONFIGURED_ROWS_PER_RUN] = cfg if cfg > 0 else None
+        return out
+
     if measured:
         avg, source, sample_count = measured
         out[MEASURED_ROWS_PER_RUN_24H] = avg
@@ -200,10 +271,13 @@ def apply_rows_per_run_fields(
         out[ESTIMATED_BATCH_PER_RUN] = avg
         out[ESTIMATED_BATCH_PER_RUN_SOURCE] = source
     else:
+        src = (configured_source or "").strip() or _configured_rows_per_run_source(phase_name)
+        if src not in ("adaptive_persisted", "config_default"):
+            src = "config_default"
         out[MEASURED_ROWS_PER_RUN_24H] = None
         out[ROWS_PER_RUN] = cfg
-        out[ROWS_PER_RUN_SOURCE] = "config_default"
+        out[ROWS_PER_RUN_SOURCE] = src
         out[ROWS_PER_RUN_SAMPLE_COUNT] = 0
         out[ESTIMATED_BATCH_PER_RUN] = cfg
-        out[ESTIMATED_BATCH_PER_RUN_SOURCE] = "config_default"
+        out[ESTIMATED_BATCH_PER_RUN_SOURCE] = src
     return out

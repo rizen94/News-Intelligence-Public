@@ -59,6 +59,101 @@ def _static_regressions() -> list[str]:
                 "(not persist_automation_run_history with empty metadata)"
             )
 
+    # storyline_assembly queue_depth must use threshold-gated domains (drain/idle SSOT)
+    sa_start = text.find("def _count_storyline_assembly_pending")
+    if sa_start == -1:
+        errors.append("missing _count_storyline_assembly_pending in backlog_metrics.py")
+    else:
+        sa_end = text.find("\ndef ", sa_start + 1)
+        sa_body = text[sa_start:sa_end if sa_end != -1 else None]
+        if "count_assembly_actionable_pending" not in sa_body:
+            errors.append(
+                "_count_storyline_assembly_pending must use count_assembly_actionable_pending "
+                "(domains_needing_assembly semantics)"
+            )
+        if "get_pipeline_active_domain_keys" in sa_body and "count_assembly_actionable_pending" not in sa_body:
+            errors.append(
+                "_count_storyline_assembly_pending must not sum all-domain unlinked without threshold"
+            )
+
+    # topic_clustering queue_depth must match select_pending_article_ids / count_pending_articles
+    tc_start = text.find("def _count_topic_clustering_pending")
+    if tc_start == -1:
+        errors.append("missing _count_topic_clustering_pending in backlog_metrics.py")
+    else:
+        tc_end = text.find("\ndef ", tc_start + 1)
+        tc_body = text[tc_start:tc_end if tc_end != -1 else None]
+        if "count_pending_articles" not in tc_body:
+            errors.append(
+                "_count_topic_clustering_pending must use TopicClusteringService.count_pending_articles"
+            )
+        if "sql_article_pass_null" in tc_body:
+            errors.append(
+                "_count_topic_clustering_pending must not use sql_article_pass_null "
+                "(that includes retries; drain is first-pass-only by default)"
+            )
+
+    # Membership / collision / embedding / CTF must delegate to drain SSOT helpers
+    memb = text.find("def _count_storyline_membership_review_pending")
+    if memb == -1:
+        errors.append("missing _count_storyline_membership_review_pending")
+    else:
+        memb_end = text.find("\ndef ", memb + 1)
+        memb_body = text[memb:memb_end if memb_end != -1 else None]
+        if "count_storylines_needing_membership_review" not in memb_body:
+            errors.append(
+                "_count_storyline_membership_review_pending must use "
+                "count_storylines_needing_membership_review"
+            )
+        if "storyline_membership_actions" in memb_body:
+            errors.append(
+                "_count_storyline_membership_review_pending must not count pending actions "
+                "(automation drains megas via _pick_storylines)"
+            )
+
+    coll = text.find("def _count_collision_sampling_pending")
+    if coll == -1:
+        errors.append("missing _count_collision_sampling_pending")
+    else:
+        coll_end = text.find("\ndef ", coll + 1)
+        coll_body = text[coll:coll_end if coll_end != -1 else None]
+        if "count_collision_sampling_actionable" not in coll_body:
+            errors.append(
+                "_count_collision_sampling_pending must use count_collision_sampling_actionable"
+            )
+        if "graph_connection_proposals" in coll_body:
+            errors.append(
+                "_count_collision_sampling_pending must not count hypothesized proposals "
+                "(those belong to graph_connection_distillation)"
+            )
+
+    emb = text.find("def _count_embedding_link_candidates_pending")
+    if emb == -1:
+        errors.append("missing _count_embedding_link_candidates_pending")
+    else:
+        emb_end = text.find("\ndef ", emb + 1)
+        emb_body = text[emb:emb_end if emb_end != -1 else None]
+        if "count_embedding_link_candidates_due" not in emb_body:
+            errors.append(
+                "_count_embedding_link_candidates_pending must use "
+                "count_embedding_link_candidates_due"
+            )
+
+    ctf = API / "services" / "claim_extraction_service.py"
+    if ctf.is_file():
+        ctf_text = ctf.read_text(encoding="utf-8")
+        mode_fn = ctf_text.find("def get_claims_to_facts_backlog_count_mode")
+        if mode_fn == -1:
+            errors.append("missing get_claims_to_facts_backlog_count_mode")
+        else:
+            mode_end = ctf_text.find("\ndef ", mode_fn + 1)
+            mode_body = ctf_text[mode_fn:mode_end if mode_end != -1 else None]
+            if 'env_str("CLAIMS_TO_FACTS_BACKLOG_COUNT_MODE", "batch_candidate")' not in mode_body:
+                errors.append(
+                    "CLAIMS_TO_FACTS_BACKLOG_COUNT_MODE default must be batch_candidate "
+                    "(queue_depth == promote SELECT)"
+                )
+
     return errors
 
 
@@ -100,6 +195,73 @@ def _runtime_alignment() -> list[str]:
         if claim and not claim.get("error"):
             if not claim.get("matches_actionable_sql"):
                 errors.append("queue_audit claim_extraction matches_actionable_sql is false")
+
+        for phase in (
+            "claims_to_facts",
+            "storyline_membership_review",
+            "collision_sampling",
+            "embedding_link_candidates",
+        ):
+            row = (audit.get("phases") or {}).get(phase) or {}
+            if row.get("error"):
+                errors.append(f"queue_audit {phase} error: {row.get('error')}")
+            elif row and not row.get("matches_actionable_sql"):
+                errors.append(
+                    f"queue_audit {phase} matches_actionable_sql is false: "
+                    f"queue_depth={row.get('queue_depth')} ssot={row.get('ssot_count')}"
+                )
+
+        # Live SSOT recount must equal the counters that feed queue_depth (no cache).
+        from shared.pipeline_queue_counts import verify_claims_to_facts_alignment
+        from services.backlog_metrics import (
+            _count_claims_to_facts_pending,
+            _count_collision_sampling_pending,
+            _count_embedding_link_candidates_pending,
+            _count_storyline_membership_review_pending,
+        )
+        from services.storyline_membership_review_service import (
+            count_storylines_needing_membership_review,
+        )
+        from services.embedding_link_candidate_service import (
+            count_collision_sampling_actionable,
+            count_embedding_link_candidates_due,
+        )
+
+        pairs = [
+            ("claims_to_facts", _count_claims_to_facts_pending, _count_claims_to_facts_pending),
+            (
+                "storyline_membership_review",
+                _count_storyline_membership_review_pending,
+                count_storylines_needing_membership_review,
+            ),
+            (
+                "collision_sampling",
+                _count_collision_sampling_pending,
+                count_collision_sampling_actionable,
+            ),
+            (
+                "embedding_link_candidates",
+                _count_embedding_link_candidates_pending,
+                count_embedding_link_candidates_due,
+            ),
+        ]
+        for phase, backlog_fn, drain_fn in pairs:
+            b = int(backlog_fn() or 0)
+            d = int(drain_fn() or 0)
+            if b != d:
+                errors.append(
+                    f"{phase} backlog counter != drain SSOT: backlog={b} drain_ssot={d}"
+                )
+
+        ctf_align = verify_claims_to_facts_alignment(
+            {"claims_to_facts": int(_count_claims_to_facts_pending() or 0)}
+        )
+        if not ctf_align.get("matches_actionable_sql"):
+            errors.append(
+                "claims_to_facts queue_depth != promote-eligible count: "
+                f"queue_depth={ctf_align.get('queue_depth')} "
+                f"promote_eligible={ctf_align.get('promote_eligible_count')}"
+            )
 
         work_queues = get_all_phase_work_queues(pending)
         for phase in ("unified_intake_extraction", "claim_extraction", "entity_profile_build"):

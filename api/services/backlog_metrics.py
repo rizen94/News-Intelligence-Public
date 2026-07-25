@@ -44,6 +44,7 @@ from shared.pipeline_pass_marker import (
     sql_context_pass_null,
 )
 from shared.pipeline_article_selection import sql_order_created_at
+from shared.phase_spec import overlay_batch_size_per_task, overlay_skip_when_empty
 from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,61 @@ class _SharedBacklogConn:
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._conn, name)
+
+
+def _ensure_shared_backlog_conn_healthy() -> None:
+    """
+    Rollback an aborted shared backlog transaction so later phase COUNTs are not
+    false-zeroed (e.g. claims_to_facts timeout poisoning collision/embedding).
+    """
+    shared = _shared_backlog_conn.get()
+    if shared is None:
+        return
+    try:
+        with shared.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
+    except Exception:
+        try:
+            shared.rollback()
+        except Exception:
+            pass
+
+
+def _capped_count_probe(
+    cur,
+    sql: str,
+    params: tuple | list | None = None,
+    *,
+    cap: int = 10_001,
+    cache_key: str | None = None,
+) -> int:
+    """
+    COUNT(*) over a ``LIMIT cap`` subquery so heavy scans cannot run unbounded.
+
+    When the probe hits ``cap``, return max(cached, cap) so Monitor still shows
+    non-zero backlog instead of a false zero or a multi-minute COUNT.
+    """
+    cap = max(1, int(cap))
+    wrapped = f"SELECT COUNT(*)::bigint FROM ({sql.rstrip().rstrip(';')} LIMIT %s) AS _probe"
+    args: list[Any] = list(params or [])
+    args.append(cap)
+    cur.execute(wrapped, tuple(args))
+    n = int(cur.fetchone()[0] or 0)
+    if n >= cap and cache_key:
+        try:
+            prev = int(_backlog_cache.get(cache_key, 0) or 0)
+        except Exception:
+            prev = 0
+        return max(prev, cap)
+    return n
+
+
+def _rollback_quiet(conn) -> None:
+    try:
+        conn.rollback()
+    except Exception:
+        pass
 
 
 def _backlog_cache_ttl_seconds() -> int:
@@ -112,10 +168,11 @@ BATCH_SIZE_PER_TASK: Dict[str, int] = {
     "proactive_detection": 1000,  # proactive candidate pool cap per domain
     "storyline_automation": 5,  # automation_manager LIMIT storylines per domain per tick
     "storyline_review_agent": 60,  # suggestions reviewed per domain batch (score + LLM mid-band)
-    "storyline_membership_review": 8,  # mega-threads reviewed per domain per tick
+    "storyline_membership_review": 100,  # adaptive floor; catch-up may raise further
+    "storyline_hygiene": 25,  # storylines pruned per domain per tick
     "rag_enhancement": 5,  # top-N hot per domain (see RAG_ENHANCEMENT_TOP_N_PER_DOMAIN)
     "event_extraction": 90,  # 30 × 3
-    "claims_to_facts": 10_000,  # overridden by get_claims_to_facts_batch_limit() when available
+    "claims_to_facts": 200,  # adaptive 50–500; chunked by CLAIMS_TO_FACTS_CHUNK_SIZE (default 50)
     "legislative_references": 8,  # articles scanned per domain per run (Congress.gov rate limits)
     "entity_profile_sync": 40,  # canonical rows mapped per domain batch (approx)
     "entity_enrichment": 20,  # run_enrichment_batch limit
@@ -124,10 +181,19 @@ BATCH_SIZE_PER_TASK: Dict[str, int] = {
     "storyline_synthesis": 16,  # ~4 storylines × active domains per _execute_storyline_synthesis tick
     "graph_connection_distillation": 50,  # GRAPH_CONNECTION_DISTILLATION_BATCH proposals per run
     "embedding_link_candidates": 12,
+    "collision_sampling": 8,
+    "stimulus_rag": 20,
+    "protein_harden": 40,
     "graph_link_drift_review": 40,
     "mention_resolution": 500,  # NRI_MENTION_RESOLVE_BATCH_LIMIT default
+    "entity_organizer": 100,
+    "event_deduplication": 100,
+    "story_continuation": 30,
     "pending_db_flush": 200,  # rough lines replayed per successful flush (order-of-magnitude)
 }
+
+# High-churn phases: PhaseSpec overlays batch defaults (spec wins).
+BATCH_SIZE_PER_TASK = overlay_batch_size_per_task(BATCH_SIZE_PER_TASK)
 
 # Phases where backlog = pending (orchestrator / not row-batched in this model).
 NO_BACKLOG_BATCH_SUBTRACT_PHASES = frozenset({"nightly_enrichment_context"})
@@ -201,6 +267,7 @@ RAW_PENDING_COUNT_KEYS = frozenset(
         "storyline_automation",
         "storyline_review_agent",
         "storyline_membership_review",
+        "storyline_hygiene",
         "embedding_link_candidates",
         "collision_sampling",
         "stimulus_rag",
@@ -216,6 +283,9 @@ RAW_PENDING_COUNT_KEYS = frozenset(
         "graph_connection_distillation",
         "mention_resolution",
         "nightly_enrichment_context",
+        "entity_organizer",
+        "event_deduplication",
+        "story_continuation",
     }
 )
 
@@ -229,7 +299,14 @@ def _get_raw_pending_counts() -> Dict[str, int]:
         if _should_skip_backlog_count(phase):
             raw[phase] = 0
             return
-        raw[phase] = int(value() if callable(value) else (value or 0))
+        _ensure_shared_backlog_conn_healthy()
+        try:
+            raw[phase] = int(value() if callable(value) else (value or 0))
+        except Exception as e:
+            logger.debug("backlog_metrics _set %s: %s", phase, e)
+            raw[phase] = 0
+        finally:
+            _ensure_shared_backlog_conn_healthy()
 
     shared_conn = None
     shared_token = None
@@ -244,6 +321,10 @@ def _get_raw_pending_counts() -> Dict[str, int]:
                 hot = _hot_path_pending_counts(shared_conn)
             except Exception as e:
                 logger.debug("backlog hot_path via shared conn: %s", e)
+                try:
+                    shared_conn.rollback()
+                except Exception:
+                    pass
         _set(
             "content_enrichment",
             hot.get("content_enrichment", 0) if hot else _count_content_enrichment_backlog(),
@@ -284,20 +365,25 @@ def _get_raw_pending_counts() -> Dict[str, int]:
         _set("storyline_automation", _count_storyline_automation_pending())
         _set("storyline_review_agent", get_storyline_review_queue_pending())
         _set("storyline_membership_review", _count_storyline_membership_review_pending())
-        _set("claims_to_facts", _count_claims_to_facts_pending())
-        _set("legislative_references", _count_legislative_references_backlog())
-        _set("entity_profile_sync", _count_entity_profile_sync_pending())
-        _set("entity_enrichment", _count_entity_enrichment_pending())
-        _set("entity_dossier_compile", _count_entity_dossier_compile_pending())
+        _set("storyline_hygiene", _count_storyline_hygiene_pending)
+        # Prefer callables so _set can recover a poisoned shared txn before each COUNT.
+        _set("claims_to_facts", _count_claims_to_facts_pending)
+        _set("legislative_references", _count_legislative_references_backlog)
+        _set("entity_profile_sync", _count_entity_profile_sync_pending)
+        _set("entity_enrichment", _count_entity_enrichment_pending)
+        _set("entity_dossier_compile", _count_entity_dossier_compile_pending)
         _set("story_enhancement", _count_story_enhancement_pending)
         _set("storyline_synthesis", _count_storyline_synthesis_pending)
-        _set("graph_connection_distillation", _count_graph_connection_distillation_pending())
-        _set("embedding_link_candidates", _count_embedding_link_candidates_pending())
-        _set("collision_sampling", _count_collision_sampling_pending())
-        _set("stimulus_rag", _count_stimulus_rag_pending())
-        _set("protein_harden", _count_protein_harden_pending())
-        _set("graph_link_drift_review", _count_graph_link_drift_pending())
-        _set("mention_resolution", _count_mention_resolution_pending())
+        _set("graph_connection_distillation", _count_graph_connection_distillation_pending)
+        _set("embedding_link_candidates", _count_embedding_link_candidates_pending)
+        _set("collision_sampling", _count_collision_sampling_pending)
+        _set("stimulus_rag", _count_stimulus_rag_pending)
+        _set("protein_harden", _count_protein_harden_pending)
+        _set("graph_link_drift_review", _count_graph_link_drift_pending)
+        _set("mention_resolution", _count_mention_resolution_pending)
+        _set("entity_organizer", _count_entity_organizer_pending)
+        _set("event_deduplication", _count_event_deduplication_pending)
+        _set("story_continuation", _count_story_continuation_pending)
         nightly_base = (
             int(raw.get("content_enrichment", 0) or 0)
             + int(raw.get("context_sync", 0) or 0)
@@ -431,7 +517,8 @@ def _per_run_batch_size(task: str) -> int:
 
             adaptive = get_persisted_adaptive_batch("claims_to_facts")
             if adaptive is not None:
-                return max(1, int(adaptive))
+                # Keep Monitor ETA aligned with adaptive max (50–500).
+                return max(1, min(500, int(adaptive)))
             from services.claim_extraction_service import get_claims_to_facts_batch_limit
 
             return int(get_claims_to_facts_batch_limit())
@@ -444,10 +531,10 @@ def _per_run_batch_size(task: str) -> int:
             per = 20
             adaptive = get_persisted_adaptive_batch("topic_clustering")
             if adaptive is not None:
-                per = max(5, min(200, int(adaptive)))
+                per = max(5, int(adaptive))
             else:
                 try:
-                    per = max(5, min(200, int(env_str("TOPIC_CLUSTERING_BATCH_SIZE", "20"))))
+                    per = max(5, int(env_str("TOPIC_CLUSTERING_BATCH_SIZE", "20")))
                 except (TypeError, ValueError):
                     per = 20
             doms = len(get_pipeline_schema_names_active()) or 1
@@ -547,9 +634,9 @@ def _per_run_batch_size(task: str) -> int:
             from shared.adaptive_batch_policy import get_persisted_adaptive_batch
 
             adaptive = get_persisted_adaptive_batch("graph_connection_distillation")
-            default = max(1, min(200, int(env_str("GRAPH_CONNECTION_DISTILLATION_BATCH", "50"))))
+            default = max(1, int(env_str("GRAPH_CONNECTION_DISTILLATION_BATCH", "50")))
             if adaptive is not None:
-                return max(1, min(200, int(adaptive)))
+                return max(1, int(adaptive))
             return default
         except Exception:
             pass
@@ -767,46 +854,65 @@ def _count_content_enrichment_backlog() -> int:
 def _hot_path_pending_counts(conn) -> dict[str, int]:
     """Batch ingest hot-path COUNTs on one DB session (content_enrichment, context_sync, document_processing)."""
     out = {"content_enrichment": 0, "context_sync": 0, "document_processing": 0}
+    probe_cap = env_int("BACKLOG_HOT_PATH_PROBE_CAP", 5001)
     try:
         for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    SELECT COUNT(*) FROM {schema}.articles
-                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
-                      AND COALESCE(enrichment_attempts, 0) < 3
-                      AND url IS NOT NULL AND url != ''
-                    """
-                )
-                out["content_enrichment"] += int(cur.fetchone()[0] or 0)
+                cur.execute("SET LOCAL statement_timeout = '3s'")
+                try:
+                    out["content_enrichment"] += _capped_count_probe(
+                        cur,
+                        f"""
+                        SELECT 1 FROM {schema}.articles
+                        WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
+                          AND COALESCE(enrichment_attempts, 0) < 3
+                          AND url IS NOT NULL AND url != ''
+                        """,
+                        cap=probe_cap,
+                        cache_key="content_enrichment",
+                    )
+                except Exception:
+                    _rollback_quiet(conn)
         ready = sql_context_sync_article_ready("a")
         for domain_key, schema in pipeline_url_schema_pairs():
             with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    SELECT COUNT(*) FROM {schema}.articles a
-                    LEFT JOIN intelligence.article_to_context atc
-                      ON atc.domain_key = %s AND atc.article_id = a.id
-                    WHERE atc.context_id IS NULL
-                      AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
-                      AND ({ready})
-                    """,
-                    (domain_key,),
-                )
-                out["context_sync"] += int(cur.fetchone()[0] or 0)
+                cur.execute("SET LOCAL statement_timeout = '3s'")
+                try:
+                    out["context_sync"] += _capped_count_probe(
+                        cur,
+                        f"""
+                        SELECT 1 FROM {schema}.articles a
+                        LEFT JOIN intelligence.article_to_context atc
+                          ON atc.domain_key = %s AND atc.article_id = a.id
+                        WHERE atc.context_id IS NULL
+                          AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
+                          AND ({ready})
+                        """,
+                        (domain_key,),
+                        cap=probe_cap,
+                        cache_key="context_sync",
+                    )
+                except Exception:
+                    _rollback_quiet(conn)
         with conn.cursor() as cur:
             cur.execute("SET LOCAL statement_timeout = '3s'")
-            cur.execute(
-                """
-                SELECT COUNT(*) FROM intelligence.processed_documents
-                WHERE source_url IS NOT NULL AND source_url != ''
-                  AND (extracted_sections IS NULL OR extracted_sections = '[]'::jsonb)
-                  AND (metadata IS NULL OR (metadata->'processing'->>'permanent_failure') IS DISTINCT FROM 'true')
-                """
-            )
-            out["document_processing"] = int(cur.fetchone()[0] or 0)
+            try:
+                out["document_processing"] = _capped_count_probe(
+                    cur,
+                    """
+                    SELECT 1 FROM intelligence.processed_documents
+                    WHERE source_url IS NOT NULL AND source_url != ''
+                      AND (extracted_sections IS NULL OR extracted_sections = '[]'::jsonb)
+                      AND (metadata IS NULL OR (metadata->'processing'->>'permanent_failure') IS DISTINCT FROM 'true')
+                    """,
+                    cap=probe_cap,
+                    cache_key="document_processing",
+                )
+            except Exception:
+                _rollback_quiet(conn)
     except Exception as e:
         logger.debug("backlog hot_path counts: %s", e)
+        _rollback_quiet(conn)
     return out
 
 
@@ -892,6 +998,7 @@ def _count_claim_extraction_backlog() -> int:
     conn = _get_conn()
     if not conn:
         return 0
+    min_text = _claim_extraction_min_text_length()
     try:
         from services.claim_extraction_service import sql_claim_extraction_eligible
 
@@ -906,29 +1013,31 @@ def _count_claim_extraction_backlog() -> int:
             )
             return int(cur.fetchone()[0] or 0)
     except Exception as e:
-        logger.warning("backlog claim_extraction count failed (using pending probe): %s", e)
+        logger.warning("backlog claim_extraction count failed (using eligible capped probe): %s", e)
+        _rollback_quiet(conn)
+        # Prefer the same eligibility SQL as the worker; never fall back to a looser
+        # "no claims + min text" probe (phantom backlog / CTF-class mismatch).
         try:
+            from services.claim_extraction_service import sql_claim_extraction_eligible
+
+            eligible = sql_claim_extraction_eligible("c")
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '15s'")
-                cur.execute(
+                n = _capped_count_probe(
+                    cur,
                     f"""
                     SELECT 1 FROM intelligence.contexts c
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM intelligence.extracted_claims ec
-                        WHERE ec.context_id = c.id
-                    )
-                      AND (
-                          LENGTH(COALESCE(c.content, '')) + LENGTH(COALESCE(c.title, ''))
-                      ) >= %s
-                      {pass_sql}
-                    LIMIT 1
+                    WHERE {eligible}
                     """,
-                    (min_text,),
+                    (),
+                    cap=env_int("BACKLOG_CLAIM_EXTRACTION_PROBE_CAP", 5001),
+                    cache_key="claim_extraction",
                 )
-                if cur.fetchone():
-                    return max(_backlog_cache.get("claim_extraction", 1), 1)
-        except Exception:
-            pass
+                if n > 0:
+                    return n
+        except Exception as e2:
+            logger.debug("backlog claim_extraction capped probe: %s", e2)
+            _rollback_quiet(conn)
         return int(_backlog_cache.get("claim_extraction", 0) or 0)
     finally:
         try:
@@ -1593,100 +1702,35 @@ def get_storyline_review_queue_pending() -> int:
     return sum(by_domain.values())
 
 
+def _count_storyline_hygiene_pending() -> int:
+    """Active oversized storylines eligible for hygiene prune/merge."""
+    try:
+        from services.storyline_hygiene_service import count_storyline_hygiene_pending
+
+        return int(count_storyline_hygiene_pending() or 0)
+    except Exception:
+        return 0
+
+
 def _count_storyline_membership_review_pending() -> int:
     """
-    Actionable membership pressure (flag off → 0).
+    Megas the membership drain will actually pick (fingerprint / never-reviewed SSOT).
 
-    Prefer pending proposal rows. Otherwise count megas that still need a
-    review pass (no review_state, or membership fingerprint drifted).
+    Pending operator actions are *not* this phase's queue_depth — automation runs
+    ``_pick_storylines`` / review, not ``apply_membership_action``.
     """
     try:
-        from services.storyline_membership_review_service import membership_review_enabled
+        from services.storyline_membership_review_service import (
+            count_storylines_needing_membership_review,
+            membership_review_enabled,
+        )
 
         if not membership_review_enabled():
             return 0
-    except Exception:
-        return 0
-    conn = _get_conn()
-    if not conn:
-        return 0
-    try:
-        from config.runtime import env_int
-        from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
-
-        with conn.cursor() as cur:
-            cur.execute("SET LOCAL statement_timeout = '3s'")
-            try:
-                cur.execute(
-                    """
-                    SELECT COUNT(*)::int
-                    FROM intelligence.storyline_membership_actions
-                    WHERE status = 'pending'
-                    """
-                )
-                pending_actions = int(cur.fetchone()[0] or 0)
-                if pending_actions > 0:
-                    return pending_actions
-            except Exception:
-                conn.rollback()
-                cur.execute("SET LOCAL statement_timeout = '3s'")
-
-            min_arts = max(5, env_int("STORYLINE_MEMBERSHIP_MIN_ARTICLE_COUNT", 50))
-            total = 0
-            for domain_key in get_pipeline_active_domain_keys():
-                schema = resolve_domain_schema(domain_key)
-                cur.execute("SET LOCAL statement_timeout = '3s'")
-                try:
-                    from services.storyline_membership_review_service import (
-                        _membership_fingerprint_sql,
-                    )
-
-                    fp_sql = _membership_fingerprint_sql(schema, "s")
-                    cur.execute(
-                        f"""
-                        SELECT COUNT(*) FROM {schema}.storylines s
-                        LEFT JOIN intelligence.storyline_membership_review_state r
-                          ON r.domain_key = %s AND r.storyline_id = s.id
-                        WHERE s.status = 'active'
-                          AND s.merged_into_id IS NULL
-                          AND COALESCE(s.article_count, 0) >= %s
-                          AND (
-                            r.storyline_id IS NULL
-                            OR r.membership_fingerprint IS DISTINCT FROM {fp_sql}
-                          )
-                        """,
-                        (domain_key, min_arts),
-                    )
-                except Exception:
-                    conn.rollback()
-                    cur.execute("SET LOCAL statement_timeout = '3s'")
-                    # Fallback if review_state table missing pre-migration.
-                    cur.execute(
-                        f"""
-                        SELECT COUNT(*) FROM {schema}.storylines s
-                        WHERE s.status = 'active'
-                          AND s.merged_into_id IS NULL
-                          AND COALESCE(s.article_count, 0) >= %s
-                          AND NOT EXISTS (
-                            SELECT 1
-                            FROM intelligence.storyline_membership_actions a
-                            WHERE a.storyline_id = s.id
-                              AND a.domain_key = %s
-                              AND a.created_at > NOW() - INTERVAL '7 days'
-                          )
-                        """,
-                        (min_arts, domain_key),
-                    )
-                total += int(cur.fetchone()[0] or 0)
-            return total
+        return int(count_storylines_needing_membership_review() or 0)
     except Exception as e:
         logger.debug("backlog storyline_membership_review count: %s", e)
         return 0
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
 
 
 def get_storyline_review_queue_pending_by_domain() -> Dict[str, int]:
@@ -1729,11 +1773,9 @@ def _count_rag_enhancement_pending() -> int:
 def _count_claims_to_facts_pending() -> int:
     """Unpromoted high-confidence claims for Monitor (see ``build_claims_to_facts_backlog_where_suffix``).
 
-    Default ``CLAIMS_TO_FACTS_BACKLOG_COUNT_MODE=promotable_hint``: excludes generic subjects and requires
-    an exact-resolution signal (context mention, profile canonical/display, or article_entities name),
-    so the number tracks work closer to what can promote without fuzzy/trgm. Use ``batch_candidate``
-    for the larger SQL-candidate pool (pre-resolution, still excludes generic subjects and uses merged-id
-    guard when ``CLAIMS_TO_FACTS_CHECK_MERGED_SOURCE_IDS`` is on).
+    Default ``CLAIMS_TO_FACTS_BACKLOG_COUNT_MODE=batch_candidate``: same WHERE as
+    ``promote_claims_to_versioned_facts`` (queue_depth SSOT). Opt into
+    ``promotable_hint`` only for exploratory Monitor views.
     """
     try:
         from services.claim_extraction_service import (
@@ -1768,7 +1810,60 @@ def _count_claims_to_facts_pending() -> int:
             return int(cur.fetchone()[0] or 0)
     except Exception as e:
         logger.debug("backlog claims_to_facts count: %s", e)
-        return 0
+        # Timeout/error aborts the txn — must rollback or shared-batch COUNTs false-zero.
+        _rollback_quiet(conn)
+        # Cheaper fallback: unpromoted high-confidence claims (no resolvable-hint joins).
+        # Still exclude promotion_skip / deferred so Monitor does not show ~deferred+gap as actionable.
+        try:
+            from services.claim_extraction_service import claim_promotion_deferred_exclude_sql
+
+            defer_sql = claim_promotion_deferred_exclude_sql()
+        except Exception:
+            defer_sql = """
+                      AND COALESCE(ec.metadata->>'promotion_skip', '') = ''
+"""
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '10s'")
+                cur.execute(
+                    """
+                    SELECT COUNT(*) FROM intelligence.extracted_claims ec
+                    WHERE ec.confidence >= %s
+                      AND NOT EXISTS (
+                        SELECT 1 FROM intelligence.versioned_facts vf
+                        WHERE vf.metadata->>'source_claim_id' = ec.id::text
+                      )
+                    """
+                    + defer_sql,
+                    (min_conf,),
+                )
+                return int(cur.fetchone()[0] or 0)
+        except Exception as e2:
+            logger.debug("backlog claims_to_facts fallback count: %s", e2)
+            _rollback_quiet(conn)
+            # Last resort: capped probe — never leave Monitor at false zero if work exists.
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SET LOCAL statement_timeout = '5s'")
+                    return _capped_count_probe(
+                        cur,
+                        """
+                        SELECT 1 FROM intelligence.extracted_claims ec
+                        WHERE ec.confidence >= %s
+                          AND NOT EXISTS (
+                            SELECT 1 FROM intelligence.versioned_facts vf
+                            WHERE vf.metadata->>'source_claim_id' = ec.id::text
+                          )
+                        """
+                        + defer_sql,
+                        (min_conf,),
+                        cap=env_int("BACKLOG_CLAIMS_TO_FACTS_PROBE_CAP", 10001),
+                        cache_key="claims_to_facts",
+                    )
+            except Exception as e3:
+                logger.debug("backlog claims_to_facts capped probe: %s", e3)
+                _rollback_quiet(conn)
+                return int(_backlog_cache.get("claims_to_facts", 0) or 0)
     finally:
         try:
             conn.close()
@@ -2031,44 +2126,74 @@ def _count_legislative_references_backlog() -> int:
 
 
 def _count_graph_connection_distillation_pending() -> int:
-    """Pending rows in intelligence.graph_connection_proposals (merge / associate / hyperedge)."""
+    """Actionable pending rows in intelligence.graph_connection_proposals.
+
+    Excludes entity-merge rows the drain deliberately holds for editorial
+    review (below GRAPH_CONNECTION_ENTITY_MERGE_MIN); counting those made the
+    backlog look flat once drainable rows cleared, falsely stalling the phase
+    into auto-silence.
+    """
     try:
         from services.graph_connection_queue_service import count_pending_graph_connection_proposals
 
-        return int(count_pending_graph_connection_proposals())
+        return int(count_pending_graph_connection_proposals(actionable_only=True))
     except Exception as e:
         logger.debug("backlog graph_connection_distillation count: %s", e)
         return 0
 
 
 def _count_embedding_link_candidates_pending() -> int:
-    """Active storylines eligible for embedding link scan when beaker/flag on."""
+    """Storylines due for embedding-link scan (same due SQL as the drain)."""
     try:
-        from shared.chemistry_beaker import embedding_link_candidates_enabled
+        from services.embedding_link_candidate_service import (
+            count_embedding_link_candidates_due,
+        )
 
-        if not embedding_link_candidates_enabled():
-            return 0
-    except Exception:
+        return int(count_embedding_link_candidates_due() or 0)
+    except Exception as e:
+        logger.debug("backlog embedding_link_candidates count: %s", e)
         return 0
+
+
+def _count_collision_sampling_pending() -> int:
+    """Domains with a samplable collision pool (≥2 storylines) — not proposal inventory."""
+    try:
+        from services.embedding_link_candidate_service import (
+            count_collision_sampling_actionable,
+        )
+
+        return int(count_collision_sampling_actionable() or 0)
+    except Exception as e:
+        logger.debug("backlog collision_sampling count: %s", e)
+        return 0
+
+
+def _count_event_deduplication_pending() -> int:
+    """Unmerged chronological_events still eligible for coreference (capped probe)."""
     conn = _get_conn()
     if not conn:
         return 0
-    total = 0
+    cap = max(100, env_int("EVENT_DEDUP_PENDING_PROBE_CAP", 5000))
     try:
-        for schema in get_pipeline_schema_names_active():
-            with conn.cursor() as cur:
-                cur.execute("SET LOCAL statement_timeout = '3s'")
-                cur.execute(
-                    f"""
-                    SELECT COUNT(*) FROM {schema}.storylines
-                    WHERE status = 'active' AND merged_into_id IS NULL
-                      AND COALESCE(article_count, 0) >= 3
-                    """
-                )
-                total += int(cur.fetchone()[0] or 0)
-        return total
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '5s'")
+            cur.execute(
+                """
+                SELECT COUNT(*)::int FROM (
+                    SELECT 1 FROM public.chronological_events
+                    WHERE canonical_event_id IS NULL
+                    LIMIT %s
+                ) t
+                """,
+                (cap,),
+            )
+            return int(cur.fetchone()[0] or 0)
     except Exception as e:
-        logger.debug("backlog embedding_link_candidates count: %s", e)
+        logger.debug("backlog event_deduplication count: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return 0
     finally:
         try:
@@ -2077,47 +2202,72 @@ def _count_embedding_link_candidates_pending() -> int:
             pass
 
 
-def _count_collision_sampling_pending() -> int:
-    """Hypothesized proposals, or opportunity storylines so first stir can schedule."""
-    try:
-        from shared.chemistry_beaker import collision_sampling_enabled
-
-        if not collision_sampling_enabled():
-            return 0
-    except Exception:
-        return 0
+def _count_story_continuation_pending() -> int:
+    """Events not yet linked to a storyline (capped probe)."""
     conn = _get_conn()
     if not conn:
         return 0
+    cap = max(100, env_int("STORY_CONTINUATION_PENDING_PROBE_CAP", 5000))
     try:
         with conn.cursor() as cur:
-            cur.execute("SET LOCAL statement_timeout = '3s'")
+            cur.execute("SET LOCAL statement_timeout = '5s'")
             cur.execute(
                 """
-                SELECT COUNT(*)::int FROM intelligence.graph_connection_proposals
-                WHERE status = 'pending'
-                  AND COALESCE(inference_stage, 'candidate') = 'hypothesized'
-                """
+                SELECT COUNT(*)::int FROM (
+                    SELECT 1 FROM public.chronological_events
+                    WHERE storyline_id IS NULL OR storyline_id = ''
+                    LIMIT %s
+                ) t
+                """,
+                (cap,),
             )
-            hypothesized = int(cur.fetchone()[0] or 0)
-        if hypothesized > 0:
-            return hypothesized
-        # Opportunity: active storylines so SKIP_WHEN_EMPTY does not starve first collision run
-        total = 0
+            return int(cur.fetchone()[0] or 0)
+    except Exception as e:
+        logger.debug("backlog story_continuation count: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_entity_organizer_pending() -> int:
+    """Articles past unified intake with no link_indexer pass (organizer relationship work)."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    total = 0
+    cap_per = max(50, env_int("ENTITY_ORGANIZER_PENDING_PROBE_CAP", 2000))
+    try:
+        from shared.pipeline_pass_marker import sql_article_pass_cleared
+
         for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
-                cur.execute("SET LOCAL statement_timeout = '3s'")
+                cur.execute("SET LOCAL statement_timeout = '5s'")
                 cur.execute(
                     f"""
-                    SELECT COUNT(*)::int FROM {schema}.storylines
-                    WHERE status = 'active' AND merged_into_id IS NULL
-                      AND COALESCE(article_count, 0) >= 2
-                    """
+                    SELECT COUNT(*)::int FROM (
+                        SELECT 1
+                        FROM {schema}.articles a
+                        WHERE ({sql_article_pass_cleared("unified_intake_extraction", "a")})
+                          AND COALESCE(
+                              (a.metadata #>> '{{pipeline,link_indexer,last_pass_at}}')::text,
+                              ''
+                          ) = ''
+                        LIMIT %s
+                    ) t
+                    """,
+                    (cap_per,),
                 )
                 total += int(cur.fetchone()[0] or 0)
         return total
     except Exception as e:
-        logger.debug("backlog collision_sampling count: %s", e)
+        logger.debug("backlog entity_organizer count: %s", e)
         try:
             conn.rollback()
         except Exception:
@@ -2215,15 +2365,30 @@ def _count_mention_resolution_pending() -> int:
             )
             row = cur.fetchone()
             watermark = int(row[0]) if row and row[0] is not None else 0
-            cur.execute(
-                f"""
-                SELECT COUNT(*)::bigint
-                FROM {T_CONTEXT_ENTITY_MENTIONS}
-                WHERE id > %s
-                """,
-                (watermark,),
-            )
-            return int(cur.fetchone()[0] or 0)
+            try:
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*)::bigint
+                    FROM {T_CONTEXT_ENTITY_MENTIONS}
+                    WHERE id > %s
+                    """,
+                    (watermark,),
+                )
+                return int(cur.fetchone()[0] or 0)
+            except Exception:
+                _rollback_quiet(conn)
+                cur.execute("SET LOCAL statement_timeout = '5s'")
+                return _capped_count_probe(
+                    cur,
+                    f"""
+                    SELECT 1
+                    FROM {T_CONTEXT_ENTITY_MENTIONS}
+                    WHERE id > %s
+                    """,
+                    (watermark,),
+                    cap=env_int("BACKLOG_MENTION_RESOLUTION_PROBE_CAP", 50001),
+                    cache_key="mention_resolution",
+                )
     except Exception as e:
         logger.debug("backlog mention_resolution count: %s", e)
         try:
@@ -2266,6 +2431,7 @@ SKIP_WHEN_EMPTY = frozenset({
     "storyline_automation",
     "storyline_review_agent",
     "storyline_membership_review",
+    "storyline_hygiene",
     "rag_enhancement",
     "event_extraction",
     "claims_to_facts",
@@ -2282,7 +2448,13 @@ SKIP_WHEN_EMPTY = frozenset({
     "protein_harden",
     "graph_link_drift_review",
     "mention_resolution",
+    "entity_organizer",
+    "event_deduplication",
+    "story_continuation",
 })
+
+# PhaseSpec high-churn phases union into skip set (keeps specs from drifting off SKIP_WHEN_EMPTY).
+SKIP_WHEN_EMPTY = overlay_skip_when_empty(SKIP_WHEN_EMPTY)
 
 _missing_skip_pending = SKIP_WHEN_EMPTY - RAW_PENDING_COUNT_KEYS
 if _missing_skip_pending:
