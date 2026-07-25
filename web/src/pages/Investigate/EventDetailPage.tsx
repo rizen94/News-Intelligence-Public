@@ -36,6 +36,8 @@ import remarkGfm from 'remark-gfm';
 import {
   contextCentricApi,
   type TrackedEvent,
+  type EventArticleMembership,
+  type TrackedEventFacet,
 } from '@/services/api/contextCentric';
 import { useDomain } from '@/contexts/DomainContext';
 
@@ -283,6 +285,8 @@ export default function EventDetailPage() {
     confidence?: string;
   } | null>(null);
   const [linkedEvents, setLinkedEvents] = useState<TrackedEvent[]>([]);
+  const [membership, setMembership] = useState<EventArticleMembership[]>([]);
+  const [facets, setFacets] = useState<TrackedEventFacet[]>([]);
 
   const numId = id ? parseInt(id, 10) : NaN;
 
@@ -344,12 +348,22 @@ export default function EventDetailPage() {
   useEffect(() => {
     if (Number.isNaN(numId)) {
       setLinkedEvents([]);
+      setMembership([]);
+      setFacets([]);
       return;
     }
     contextCentricApi
       .getTrackedEventLinkedEvents(numId, 12)
       .then(r => setLinkedEvents(r.items ?? []))
       .catch(() => setLinkedEvents([]));
+    contextCentricApi
+      .getTrackedEventMembership(numId, 80)
+      .then(r => setMembership(r.items ?? []))
+      .catch(() => setMembership([]));
+    contextCentricApi
+      .getTrackedEventFacets(numId)
+      .then(r => setFacets(r.items ?? []))
+      .catch(() => setFacets([]));
   }, [numId]);
 
   const handleEditOpen = useCallback(() => {
@@ -621,6 +635,13 @@ export default function EventDetailPage() {
                     color='primary'
                     variant='outlined'
                   />
+                  {event.arc_state && (
+                    <Chip
+                      label={`arc: ${event.arc_state}`}
+                      size='small'
+                      variant='outlined'
+                    />
+                  )}
                   {event.geographic_scope && (
                     <Chip
                       label={event.geographic_scope}
@@ -628,6 +649,15 @@ export default function EventDetailPage() {
                       variant='outlined'
                     />
                   )}
+                  {(event.anchors || []).slice(0, 6).map((a, i) => (
+                    <Chip
+                      key={`${a.value || i}-${a.kind || 'a'}`}
+                      label={`${a.kind || 'anchor'}: ${a.value || '—'}`}
+                      size='small'
+                      color='secondary'
+                      variant='outlined'
+                    />
+                  ))}
                 </Box>
               }
             />
@@ -644,6 +674,74 @@ export default function EventDetailPage() {
               </Box>
             </CardContent>
           </Card>
+
+          {(facets.length > 0 || membership.length > 0) && (
+            <Card variant='outlined'>
+              <CardHeader
+                title='Event-core evidence'
+                subheader='Typed membership + domain facet storylines (quality-type megathread)'
+                titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
+              />
+              <CardContent sx={{ pt: 0 }}>
+                {facets.length > 0 && (
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant='body2' fontWeight={600} sx={{ mb: 0.75 }}>
+                      Facets ({facets.length})
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
+                      {facets.map(f => (
+                        <Chip
+                          key={`${f.domain_key}-${f.storyline_id}`}
+                          label={`${f.domain_key} · ${f.facet || 'facet'} #${f.storyline_id}`}
+                          size='small'
+                          onClick={() =>
+                            navigate(
+                              `/${f.domain_key}/storylines/${f.storyline_id}`,
+                            )
+                          }
+                        />
+                      ))}
+                    </Box>
+                  </Box>
+                )}
+                {membership.length > 0 ? (
+                  <>
+                    <Typography variant='body2' fontWeight={600} sx={{ mb: 0.75 }}>
+                      Typed members ({membership.length})
+                    </Typography>
+                    <List dense disablePadding>
+                      {membership.slice(0, 40).map(m => (
+                        <ListItemButton
+                          key={`${m.domain_key}-${m.article_id}-${m.membership_type}`}
+                          onClick={() =>
+                            navigate(
+                              `/${m.domain_key}/articles/${m.article_id}`,
+                            )
+                          }
+                        >
+                          <ListItemText
+                            primary={`${m.domain_key} article #${m.article_id}`}
+                            secondary={`${m.membership_type}${
+                              m.anchor_ref ? ` · ${m.anchor_ref}` : ''
+                            }${m.facet ? ` · ${m.facet}` : ''}`}
+                          />
+                        </ListItemButton>
+                      ))}
+                    </List>
+                    {membership.length > 40 && (
+                      <Typography variant='caption' color='text.secondary'>
+                        Showing 40 of {membership.length}
+                      </Typography>
+                    )}
+                  </>
+                ) : (
+                  <Typography variant='body2' color='text.secondary'>
+                    No typed membership rows yet for this event.
+                  </Typography>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {reconciliation && (
             <Card variant='outlined'>

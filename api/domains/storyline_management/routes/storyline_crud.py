@@ -6,6 +6,7 @@ Core create, read, update, delete operations for storylines
 
 import logging
 import math
+import re
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
@@ -352,10 +353,35 @@ async def get_domain_storyline(
                     for r in cur.fetchall()
                 ]
 
-                # Entities: article_entities + entity_canonical for this storyline's articles
+                # Entities: article_entities + entity_canonical for this storyline's articles.
+                # Rank by mention_count with a title-relevance boost so peripheral color
+                # (e.g. "Starbucks" in a quarantine vignette) and bad alias merges do not
+                # dominate Key Actors.
                 entity_list = []
                 if article_ids:
                     domain_key = domain  # URL domain key for this storyline
+                    story_title = (storyline[1] or "").lower()
+                    title_tokens = {
+                        t
+                        for t in re.findall(r"[a-z0-9]{4,}", story_title)
+                        if t
+                        not in {
+                            "with",
+                            "from",
+                            "that",
+                            "this",
+                            "have",
+                            "been",
+                            "were",
+                            "their",
+                            "about",
+                            "after",
+                            "over",
+                            "into",
+                            "story",
+                            "news",
+                        }
+                    }
                     cur.execute(
                         f"""
                         SELECT ec.id, ec.canonical_name, ec.entity_type, ec.description,
@@ -369,6 +395,33 @@ async def get_domain_storyline(
                         (article_ids,),
                     )
                     entity_rows = cur.fetchall()
+
+                    def _title_overlap(name: str) -> int:
+                        ntoks = set(re.findall(r"[a-z0-9]{4,}", (name or "").lower()))
+                        return len(ntoks & title_tokens)
+
+                    scored: list[tuple[int, tuple]] = []
+                    n_arts = max(1, len(article_ids))
+                    for r in entity_rows:
+                        name = r[1] or ""
+                        mentions = int(r[4] or 0)
+                        overlap = _title_overlap(name)
+                        etype = (r[2] or "").lower()
+                        # Drop single-article peripheral orgs/subjects with no title overlap
+                        if (
+                            overlap == 0
+                            and mentions <= 1
+                            and n_arts >= 3
+                            and etype in {"organization", "subject"}
+                        ):
+                            continue
+                        score = mentions * 10 + overlap * 50
+                        if overlap:
+                            score += 25
+                        scored.append((score, r))
+                    scored.sort(key=lambda x: (-x[0], -int(x[1][4] or 0)))
+                    entity_rows = [r for _, r in scored[:20]]
+
                     canonical_ids = [r[0] for r in entity_rows]
                     profile_map = {}
                     dossier_set = set()

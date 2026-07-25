@@ -260,9 +260,12 @@ function formatRowsPerRunCell(p: ProcessingPulsePhase): {
     };
   }
   const cfg = p.configured_rows_per_run ?? p.estimated_batch_per_run ?? p.rows_per_run;
+  // config_default = static BATCH_SIZE/env; adaptive_persisted = last auto-tuned batch
+  const subtitle =
+    source === 'adaptive_persisted' ? '(adaptive)' : '(config)';
   return {
     main: formatPulseCount(cfg),
-    subtitle: '(config)',
+    subtitle,
     muted: true,
   };
 }
@@ -284,16 +287,31 @@ type QueueAuditPhase = {
   total_no_claims_inventory?: number;
 };
 
-const QUEUE_AUDIT_PHASE_LABELS: Record<string, string> = {
-  unified_intake_extraction: 'unified_intake_extraction',
-  claim_extraction: 'claim_extraction',
-  entity_profile_build: 'entity_profile_build',
+/** UI-only labels for Monitor phase keys (API/DB keys unchanged). */
+const MONITOR_PHASE_DISPLAY_LABELS: Record<string, string> = {
+  // Chemistry SSOT — mirror api/shared/monitor_run_vocabulary.py CHEMISTRY_PHASE_DISPLAY_LABELS
   collision_sampling: 'Collision sampling (loose bonds)',
   stimulus_rag: 'Stimulus RAG (evidence pull)',
   protein_harden: 'Protein harden (establish edges)',
   embedding_link_candidates: 'Embedding link candidates',
   graph_connection_distillation: 'Graph connection distillation',
+  // claim-topic pair
+  topic_clustering: 'claim-topic · topic_clustering',
+  claim_extraction: 'claim-topic · claim_extraction',
+  // remote worker aliases
+  unified_intake_extraction: 'uie · unified_intake_extraction',
+  storyline_assembly: 'assembly · storyline_assembly',
 };
+
+/** Queue-audit labels; prefer MONITOR_PHASE_DISPLAY_LABELS via formatMonitorPhaseLabel. */
+const QUEUE_AUDIT_PHASE_LABELS: Record<string, string> = {
+  ...MONITOR_PHASE_DISPLAY_LABELS,
+  entity_profile_build: 'entity_profile_build',
+};
+
+function formatMonitorPhaseLabel(phaseName: string): string {
+  return MONITOR_PHASE_DISPLAY_LABELS[phaseName] ?? phaseName;
+}
 
 function formatQueueAuditCheck(phase: QueueAuditPhase): string {
   if (phase.error) return phase.error;
@@ -1708,7 +1726,7 @@ export default function MonitorPage() {
                           }
                         >
                           <TableCell>
-                            {p.phase_name}
+                            {formatMonitorPhaseLabel(p.phase_name ?? '')}
                             {p.scheduling_status === 'suppressed' && (
                               <Typography
                                 component='span'
@@ -2136,7 +2154,7 @@ export default function MonitorPage() {
                     <MenuItem value=''>Select…</MenuItem>
                     {runPhaseOptions.map(name => (
                       <MenuItem key={name} value={name}>
-                        {name}
+                        {formatMonitorPhaseLabel(name)}
                       </MenuItem>
                     ))}
                   </Select>

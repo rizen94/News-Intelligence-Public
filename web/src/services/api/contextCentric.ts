@@ -74,7 +74,27 @@ export interface TrackedEvent {
   created_at: string | null;
   updated_at: string | null;
   domain_keys: string[];
+  anchors?: Array<{ value?: string; kind?: string; owned?: boolean }> | null;
+  particulars?: Record<string, unknown> | null;
+  arc_state?: string | null;
   chronicles?: EventChronicle[];
+}
+
+export interface EventArticleMembership {
+  tracked_event_id: number;
+  domain_key: string;
+  article_id: number;
+  membership_type: string;
+  anchor_ref?: string | null;
+  facet?: string | null;
+  added_by?: string | null;
+}
+
+export interface TrackedEventFacet {
+  tracked_event_id: number;
+  domain_key: string;
+  storyline_id: number;
+  facet: string | null;
 }
 
 export interface EventChronicle {
@@ -105,6 +125,8 @@ export interface PatternDiscovery {
   domain_key: string | null;
   context_ids: number[];
   entity_profile_ids: number[];
+  /** Optional display names enriched by API for briefing / search snippets. */
+  entity_names?: string[];
   confidence: number | null;
   data: unknown;
   created_at: string | null;
@@ -628,6 +650,40 @@ export const contextCentricApi = {
     }
   },
 
+  async getTrackedEventMembership(
+    eventId: number,
+    limit = 100,
+  ): Promise<{ success: boolean; items: EventArticleMembership[]; count: number }> {
+    try {
+      const response = await getApi().get<{
+        success: boolean;
+        items: EventArticleMembership[];
+        count: number;
+      }>(apiPath(`/api/tracked_events/${eventId}/membership`), {
+        ...contextCentricConfig(),
+        params: { limit },
+      });
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to fetch event membership', error);
+    }
+  },
+
+  async getTrackedEventFacets(
+    eventId: number,
+  ): Promise<{ success: boolean; items: TrackedEventFacet[]; count: number }> {
+    try {
+      const response = await getApi().get<{
+        success: boolean;
+        items: TrackedEventFacet[];
+        count: number;
+      }>(apiPath(`/api/tracked_events/${eventId}/facets`), contextCentricConfig());
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to fetch event facets', error);
+    }
+  },
+
   async getTrackedEventLinkedEvents(
     eventId: number,
     limit = 12,
@@ -774,12 +830,16 @@ export const contextCentricApi = {
     domain_key?: string;
     limit?: number;
     offset?: number;
+    min_context_count?: number;
+    briefing?: boolean;
   }) {
     try {
       const response = await getApi().get<{
         items: PatternDiscovery[];
         limit: number;
         offset: number;
+        briefing?: boolean;
+        min_context_count?: number | null;
       }>(apiPath('/api/pattern_discoveries'), { ...contextCentricConfig(), params: params ?? {} });
       return response.data;
     } catch (error) {
@@ -1271,15 +1331,56 @@ export const contextCentricApi = {
     }
   },
 
-  async getArcSpine(arcId: string): Promise<Record<string, unknown>> {
+  async getArcChronicle(arcId: string): Promise<Record<string, unknown>> {
     try {
       const response = await getApi().get<{ success: boolean; data: Record<string, unknown> }>(
-        apiPath(`/api/intelligence/arcs/${encodeURIComponent(arcId)}/spine`),
+        apiPath(`/api/intelligence/arcs/${encodeURIComponent(arcId)}/chronicle`),
         contextCentricConfig(),
       );
       return response.data?.data ?? {};
     } catch (error) {
-      return handleError('Failed to fetch arc spine', error);
+      return handleError('Failed to fetch arc chronicle', error);
+    }
+  },
+
+  /** @deprecated Prefer getArcChronicle */
+  async getArcSpine(arcId: string): Promise<Record<string, unknown>> {
+    return this.getArcChronicle(arcId);
+  },
+
+  async getResearchSubject(
+    domainKey: string,
+    opts?: { entityId?: number; entityName?: string },
+  ): Promise<Record<string, unknown>> {
+    try {
+      const response = await getApi().get<{ success: boolean; data: Record<string, unknown> }>(
+        apiPath(`/api/intelligence/research_subjects/${encodeURIComponent(domainKey)}`),
+        {
+          ...contextCentricConfig(),
+          params: {
+            entity_id: opts?.entityId,
+            entity_name: opts?.entityName,
+          },
+        },
+      );
+      return response.data?.data ?? {};
+    } catch (error) {
+      return handleError('Failed to fetch research subject', error);
+    }
+  },
+
+  async getMatterDocket(
+    storylineId: number,
+    domainKey = 'legal',
+  ): Promise<Record<string, unknown>> {
+    try {
+      const response = await getApi().get<{ success: boolean; data: Record<string, unknown> }>(
+        apiPath(`/api/intelligence/matter_dockets/${storylineId}`),
+        { ...contextCentricConfig(), params: { domain_key: domainKey } },
+      );
+      return response.data?.data ?? {};
+    } catch (error) {
+      return handleError('Failed to fetch matter docket', error);
     }
   },
 

@@ -1074,7 +1074,8 @@ def get_context_grouping_feedback(
 _EVENT_COLS = """id, event_type, event_name, start_date, end_date, geographic_scope,
                    key_participant_entity_ids, milestones, sub_event_ids, created_at, updated_at, domain_keys,
                    editorial_briefing, editorial_briefing_json, briefing_version, briefing_status,
-                   global_narrative, narrative_lenses, global_narrative_version, global_narrative_updated_at, narrative_lenses_updated_at"""
+                   global_narrative, narrative_lenses, global_narrative_version, global_narrative_updated_at, narrative_lenses_updated_at,
+                   anchors, particulars, arc_state"""
 
 
 def _row_to_event(row: tuple) -> dict:
@@ -1109,6 +1110,18 @@ def _row_to_event(row: tuple) -> dict:
         out["global_narrative_updated_at"] = row[19].isoformat()
     if len(row) > 20 and row[20]:
         out["narrative_lenses_updated_at"] = row[20].isoformat()
+    # Event-core first slice (rare-anchor founding)
+    if len(row) > 21:
+        anchors = row[21]
+        out["anchors"] = anchors if isinstance(anchors, (list, dict)) else (anchors or [])
+    if len(row) > 22:
+        particulars = row[22]
+        out["particulars"] = (
+            particulars if isinstance(particulars, (list, dict)) else (particulars or {})
+        )
+    if len(row) > 23:
+        arc_state = row[23]
+        out["arc_state"] = arc_state if isinstance(arc_state, (list, dict)) else (arc_state or {})
     return out
 
 
@@ -1494,6 +1507,79 @@ def get_tracked_event(event_id: int) -> dict:
         except Exception:
             pass
         raise HTTPException(status_code=500, detail="Failed to get tracked event")
+
+
+@router.get("/tracked_events/{event_id}/membership", response_model=dict)
+def get_tracked_event_membership(
+    event_id: int,
+    limit: int = Query(100, ge=1, le=500),
+) -> dict:
+    """Typed event-core article membership for a tracked event (rare-anchor founding)."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM intelligence.tracked_events WHERE id = %s", (event_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Tracked event not found")
+            from services.event_core_membership_service import list_typed_members_for_tracked_event
+
+            items = list_typed_members_for_tracked_event(cur, event_id, limit=limit)
+            for item in items:
+                if item.get("created_at") is not None:
+                    item["created_at"] = item["created_at"].isoformat()
+        return {"success": True, "data": {"items": items, "limit": limit}, "message": None}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("get_tracked_event_membership: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to list event membership")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+@router.get("/tracked_events/{event_id}/facets", response_model=dict)
+def get_tracked_event_facets(event_id: int) -> dict:
+    """Storyline facet links for a tracked event (event-core)."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM intelligence.tracked_events WHERE id = %s", (event_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Tracked event not found")
+            cur.execute(
+                """
+                SELECT id, tracked_event_id, domain_key, storyline_id, facet, created_at
+                FROM intelligence.tracked_event_storyline_facets
+                WHERE tracked_event_id = %s
+                ORDER BY created_at DESC, id DESC
+                """,
+                (event_id,),
+            )
+            cols = [d[0] for d in cur.description]
+            items = []
+            for row in cur.fetchall() or []:
+                item = dict(zip(cols, row))
+                if item.get("created_at") is not None:
+                    item["created_at"] = item["created_at"].isoformat()
+                items.append(item)
+        return {"success": True, "data": {"items": items}, "message": None}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("get_tracked_event_facets: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to list event facets")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 @router.post("/tracked_events/{event_id}/narrative_stack", response_model=dict)

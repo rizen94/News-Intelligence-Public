@@ -467,6 +467,45 @@ async def run_storyline_assembly_for_domain(
     except Exception as e:
         logger.debug("storyline assembly tracked_event link %s: %s", domain_key, e)
 
+    # Event-core: scan recent articles for rare anchors → mint TE + typed membership
+    try:
+        from services.event_core_membership_service import (
+            event_core_membership_enabled,
+            run_rare_anchor_founding_scan,
+        )
+
+        if event_core_membership_enabled():
+            founding = run_rare_anchor_founding_scan(
+                domain_key, lookback_hours=lookback, limit=80
+            )
+            steps["event_core_founding"] = founding
+            try:
+                from shared.database.connection import get_db_connection
+                from services.event_core_membership_service import (
+                    link_facets_from_article_membership,
+                )
+
+                conn = get_db_connection()
+                if conn:
+                    try:
+                        facet_stats = link_facets_from_article_membership(
+                            conn, apply=True, ensure_projections=True
+                        )
+                        steps["event_core_facets"] = facet_stats
+                    finally:
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
+            except Exception as facet_err:
+                logger.debug(
+                    "storyline assembly event-core facets %s: %s",
+                    domain_key,
+                    facet_err,
+                )
+    except Exception as e:
+        logger.debug("storyline assembly event-core founding %s: %s", domain_key, e)
+
     if run_proactive:
         try:
             from domains.storyline_management.services.proactive_detection_service import (
@@ -683,8 +722,13 @@ async def run_storyline_assembly_for_domain(
                 assembly_started,
                 assembly_finished,
                 stats={
-                    "round_processed": unlinked_cleared,
-                    "processed": unlinked_cleared,
+                    "round_processed": max(
+                        int(unlinked_cleared or 0),
+                        int(articles_linked or 0),
+                        int(scanned or 0),
+                        1,
+                    ),
+                    "processed": max(int(unlinked_cleared or 0), int(articles_linked or 0)),
                     "articles_linked": articles_linked,
                     "articles_linked_automation": automation_linked,
                     "articles_attached_discovery": discovery_attached,

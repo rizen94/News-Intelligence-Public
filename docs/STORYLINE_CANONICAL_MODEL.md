@@ -34,11 +34,37 @@ Configured in `api/config/domain_synthesis_config.yaml` via `link_score_profile`
 | medicine | `evidence_thread` | Condition/intervention/finding lineage |
 | artificial-intelligence | `research_topic` | Problem + method family + claim/benchmark |
 
+**Foodborne / public-health outbreaks in politics RSS:** Guardian-style US politics feeds often carry CDC/FDA recall arcs (e.g. cyclospora / Taylor Farms lettuce). Those remain **`politics.event_narrative` storylines** — do not require moving articles into the medicine silo. Medicine `outbreak_keywords` / promote-on-pair tooling is complementary when the feed is medical; politics now has its own `storyline_development.narrative.outbreak_keywords` (cyclospora, lettuce recall, foodborne, …) plus `allow_promote_pair_on_outbreak: true`. Cross-domain Investigate anchors use `intelligence.tracked_events` (e.g. `storyline_id = politics:3716`), not cross-schema `storyline_articles`.
+
+Automation attach under politics `aggressive_membership` must not glue disease-specific articles onto kitchen-sink mega-storylines: if an article’s distinctive subject entities (e.g. Cyclospora) do not overlap the target storyline’s entity fingerprint, silent auto-add is rejected (`StorylineAutomationService._subject_specificity_blocks_attach`).
+
 Chemistry kinds (`research_topic`, `evidence_thread`, `matter_docket`) prefer **edge-first** behavior: softer membership, no aggressive storyline merge, optional event hard-bind.
+
+**Member cap:** chemistry proteins refuse silent attach above `max_member_articles` (default **48**, YAML/`STORYLINE_CHEMISTRY_MEMBER_CAP`). Oversize evidence threads are pruned via core dissimilar drop even when `aggressive_membership: false`. See `api/shared/storyline_attach_caps.py`.
+
+### Domain-shaped explain surfaces (do not conflate)
+
+| Stack | Domains / kinds | Operator home | Do not |
+|-------|-----------------|---------------|--------|
+| **Linear arc chronicle** | politics `event_narrative`, finance `market_regulatory_arc`, curated arcs in `historical_arcs.yaml` | `/{domain}/arcs/:id/chronicle` | Call it a “spine”; force medicine/legal/AI into chapters |
+| **Research subject ledger** | medicine `evidence_thread`, AI `research_topic` | Entity-rooted subject page + claim verdicts | Invent geopolitics-style curated arcs |
+| **Matter docket ledger** | legal `matter_docket` | Case page + procedural rulings + `legal_status` | Use world-history arc chapters |
+
+**Spine glossary (three meanings):**
+
+| Term | Meaning |
+|------|---------|
+| **Intake spine** | Article preprocess: enrich → unified intake → SQL tail |
+| **Identity spine** | Investigation FtM / Wikidata entity resolution |
+| **Arc chronicle** | Linear longitudinal timeline for curated geopolitics/politics/finance frames (formerly “arc spine”) |
+
+Bare “spine” is forbidden in operator UI unless prefixed.
 
 ### Connection inference stages
 
 `hypothesized` → `candidate` → `established` | `quarantined` on proposals (and links when materialized). Phases: `collision_sampling`, `stimulus_rag`, `protein_harden`.
+
+Timescales: hours = intake spine + assembly proteins; hours–days = beaker bonds; weeks–decades = arc chronicles (linear only) or research/docket ledgers (chemistry kinds).
 
 ---
 
@@ -199,6 +225,27 @@ Core products unchanged: **storylines**, **tracked_events**, **entity dossiers**
 
 ---
 
+## Event-core (accepted, 2026-07-24)
+
+**Verdict:** The unit of connection must be **co-reference to a bounded real-world event**, not similarity-to-an-accumulating bag. Full review: [`docs/reviews/assembly_connection_pack/CONCEPTUAL_REVIEW.md`](reviews/assembly_connection_pack/CONCEPTUAL_REVIEW.md). Operator locks: [`OPERATOR_ANSWERS.md`](reviews/assembly_connection_pack/OPERATOR_ANSWERS.md).
+
+| Concept | Rule |
+|---------|------|
+| Megathread identity | **`intelligence.tracked_events`** owns anchors, particulars, arc state |
+| Domain storylines | **Facet projections** (clinical / regulatory / market / legal) — not the event boundary |
+| Membership | Typed (`same_event`, `causal_link`, `same_instrument`, `actor_episode`) with named anchor + provenance; anonymous `related` is inadmissible for new event-core writes |
+| Founding | Rare unowned distinctive anchor → mint TE **before** any mega absorb |
+| Evidence surface | Membership is evidence; summaries select among typed members; RAG is background only |
+| Flag | `EVENT_CORE_MEMBERSHIP_ENABLED` |
+
+**Technical debt to collapse:** Article↔TE today often goes `article_to_context` → `event_chronicle_contexts`, while Stories membership is `{domain}.storyline_articles`. Event-core introduces `intelligence.event_article_membership` as TE-first evidence membership. Single soft `tracked_events.storyline_id` remains 1:1 legacy; multi-facet links use `intelligence.tracked_event_storyline_facets`.
+
+**Invariants:** (I1) no anonymous membership; (I2) membership is evidence; (I3) absorb must not widen the match surface (no SEI merge on silent event-core attach); (I4) titles/summaries never feed attach; (I5) one event instance → one megathread.
+
+Chemistry/graph bonds remain **non-arbitrating** for Stories evidence membership until a later reconcile phase.
+
+---
+
 ## UI ownership
 
 | Shell section | Owns (write) | Owns (read) | Does **not** own |
@@ -217,7 +264,7 @@ Core products unchanged: **storylines**, **tracked_events**, **entity dossiers**
 | Question | Should this **new** article join? | Should this **existing** member stay / stay core? |
 | Hard remove | N/A (reject suggestion) | Unlink via `storyline_articles` DELETE |
 | Soft path | Reject / skip | Lower `relevance_score`; quarantine graph; demote SEI core; NULL weak tracked_event link |
-| Feature flag | `STORYLINE_REVIEW_AGENT_ENABLED` (default on) | `STORYLINE_MEMBERSHIP_REVIEW_ENABLED` (default **off**) |
+| Feature flag | `STORYLINE_REVIEW_AGENT_ENABLED` (default on) | `STORYLINE_MEMBERSHIP_REVIEW_ENABLED` (default **on**); mega auto-apply via `STORYLINE_MEMBERSHIP_MEGA_AUTO_APPLY` (default on) |
 
 UI: Stories → Review Queue → **Suggestions** tab vs **Membership** tab.
 
@@ -271,4 +318,4 @@ Confirm this matches how you use the product:
 
 ---
 
-*Last updated: 2026-07-19 — membership review / decoupling documented.*
+*Last updated: 2026-07-22 — membership review default ON (aligned with code / features.yaml).*

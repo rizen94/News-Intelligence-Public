@@ -456,3 +456,24 @@ trading_signals:
   notes: >
     Event→ticker impact heuristics + GET /api/signals HITL review queue.
     No auto-execution.
+
+event_core_membership:
+  lifecycle: staged
+  enabled: true
+  introduced_in: "10.1.0"
+  modules:
+    - api/services/event_core_membership_service.py
+    - api/services/storyline_event_split_service.py
+    - api/services/storyline_automation_service.py
+    - api/services/storyline_assembly_service.py
+    - api/services/storyline_core_prune_service.py
+    - api/services/storyline_narrative_finisher_service.py
+    - api/scripts/event_core_pilot_metrics.py
+    - api/scripts/run_event_core_split_hygiene.py
+  flags:
+    env: EVENT_CORE_MEMBERSHIP_ENABLED
+  notes: >
+    Event-core: tracked_events as megathread; rare-anchor founding before mega absorb;
+    typed intelligence.event_article_membership. Enable with EVENT_CORE_MEMBERSHIP_ENABLED=true
+    (or FEATURE_OVERRIDE_EVENT_CORE_MEMBERSHIP=true). Requires migration 280.
+    Split hygiene: EVENT_CORE_SPLIT_APPLY / EVENT_CORE_SPLIT_UNLINK.
