@@ -3998,10 +3998,17 @@ class AutomationManager:
             if stats and int(stats.get("processed") or 0) > 0:
                 logger.info("editorial_reduction_pass: %s", stats)
             try:
-                from shared.pipeline_handoffs import after_editorial_reduction
+                from shared.pipeline_handoffs import (
+                    after_editorial_reduction,
+                    route_target_counts,
+                )
 
+                routes = route_target_counts(stats if isinstance(stats, dict) else None)
                 after_editorial_reduction(
-                    self, processed=int((stats or {}).get("processed") or 0)
+                    self,
+                    processed=int((stats or {}).get("processed") or 0),
+                    routed_to_research=routes.get("research", 0),
+                    routed_to_narrative=routes.get("narrative", 0),
                 )
             except Exception as e:
                 logger.debug("editorial_reduction handoff: %s", e)
@@ -4026,10 +4033,16 @@ class AutomationManager:
             if stats and int(stats.get("processed") or 0) > 0:
                 logger.info("editorial_narrative_pass: %s", stats)
             try:
-                from shared.pipeline_handoffs import after_editorial_narrative
+                from shared.pipeline_handoffs import (
+                    after_editorial_narrative,
+                    route_target_counts,
+                )
 
+                routes = route_target_counts(stats if isinstance(stats, dict) else None)
                 after_editorial_narrative(
-                    self, processed=int((stats or {}).get("processed") or 0)
+                    self,
+                    processed=int((stats or {}).get("processed") or 0),
+                    routed_to_reduction=routes.get("reduction", 0),
                 )
             except Exception as e:
                 logger.debug("editorial_narrative handoff: %s", e)
@@ -4054,10 +4067,16 @@ class AutomationManager:
             if stats and int(stats.get("processed") or 0) > 0:
                 logger.info("editorial_research_pass: %s", stats)
             try:
-                from shared.pipeline_handoffs import after_editorial_research
+                from shared.pipeline_handoffs import (
+                    after_editorial_research,
+                    route_target_counts,
+                )
 
+                routes = route_target_counts(stats if isinstance(stats, dict) else None)
                 after_editorial_research(
-                    self, processed=int((stats or {}).get("processed") or 0)
+                    self,
+                    processed=int((stats or {}).get("processed") or 0),
+                    routed_to_reduction=routes.get("reduction", 0),
                 )
             except Exception as e:
                 logger.debug("editorial_research handoff: %s", e)

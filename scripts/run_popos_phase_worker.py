@@ -218,6 +218,21 @@ async def _run_one_cycle(
                         items = max(items, int(result[key]))
             if drain_result_had_work(result):
                 idle_backoff.mark_work(phase)
+                # UIE runs on PopOS under REMOTE_PHASE_WORKER_OWNED_PHASES — Widow never
+                # executes after_unified_intake. Nudge CE catchup + coreference via Widow API.
+                if phase == "unified_intake_extraction" and items > 0:
+                    try:
+                        from shared.pipeline_handoffs import nudge_event_rail_after_uie
+
+                        nudged = nudge_event_rail_after_uie(articles_processed=items)
+                        if nudged:
+                            logger.info(
+                                "uie handoff nudged %s Widow phase(s) after %s articles",
+                                nudged,
+                                items,
+                            )
+                    except Exception as e:
+                        logger.debug("uie remote handoff nudge: %s", e)
             else:
                 hint = None
                 if isinstance(result, dict):
@@ -384,6 +399,46 @@ def main() -> int:
         t0 = time.monotonic()
         try:
             from services.pipeline_phase_heartbeat_service import record_phase_heartbeat
+            from services.pipeline_schedule_service import (
+                automation_phase_allowed,
+                popos_gpu_work_allowed,
+                active_pipeline_window,
+            )
+
+            if not popos_gpu_work_allowed():
+                runnable = [p for p in phases if automation_phase_allowed(p)]
+                if not runnable:
+                    win = active_pipeline_window()
+                    logger.info(
+                        "schedule window=%s — PopOS GPU deferred (desk_light); "
+                        "skipping phases=%s",
+                        win,
+                        phases,
+                    )
+                    try:
+                        record_phase_heartbeat(
+                            f"__popos_worker__{worker_id}",
+                            scheduler_path="popos_worker",
+                            success=True,
+                            items_processed=0,
+                            detail={
+                                "host": "popos",
+                                "status": "desk_gpu_deferred",
+                                "worker_id": worker_id,
+                                "cycle": cycle,
+                                "phases": phases,
+                                "active_window": win,
+                            },
+                        )
+                    except Exception:
+                        pass
+                    if args.once:
+                        return 0
+                    time.sleep(max(int(args.idle_sleep), 60))
+                    continue
+                cycle_phases = runnable
+            else:
+                cycle_phases = phases
 
             record_phase_heartbeat(
                 f"__popos_worker__{worker_id}",
@@ -395,14 +450,15 @@ def main() -> int:
                     "status": "running",
                     "worker_id": worker_id,
                     "cycle": cycle,
-                    "phases": phases,
+                    "phases": cycle_phases,
                 },
             )
         except Exception as hb_exc:
             logger.debug("popos worker cycle start heartbeat: %s", hb_exc)
+            cycle_phases = phases
         summary = asyncio.run(
             _run_one_cycle(
-                phases,
+                cycle_phases,
                 args.budget_seconds,
                 worker_id=worker_id,
                 idle_backoff=idle_backoff,
