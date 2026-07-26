@@ -9,14 +9,22 @@ from __future__ import annotations
 from config.runtime import env_str
 
 # Work-completion order after spine (link indexer runs inside spine_sql_tail).
+# entity_organizer (T1 ambiguous enqueue) before distillation so pending stays
+# for editorial T2 instead of being drained in a prior tick with an empty feed.
+# Event rail: CE restore → coref → continuation before storyline assembly / editorial.
 POST_SPINE_PHASE_ORDER: tuple[str, ...] = (
+    "entity_organizer",
     "graph_connection_distillation",
     "entity_profile_build",
     "event_tracking",
+    "chronological_events_catchup",
+    "event_deduplication",
     "story_continuation",
     "storyline_assembly",
     "storyline_automation",
-    "entity_organizer",
+    "editorial_research_pass",
+    "editorial_narrative_pass",
+    "editorial_reduction_pass",
     "editorial_room_loop",
     "entity_dossier_compile",
 )
@@ -36,7 +44,7 @@ POST_SPINE_RETIRED_PHASES: frozenset[str] = frozenset(
         "daily_briefing_synthesis",
         "digest_generation",
         "storyline_synthesis",
-        "rag_enhancement",
+        # rag_enhancement unretired: targeted top-N hot storylines (refinement / nightly)
         "storyline_enrichment",
         "storyline_processing",
         "investigation_report_refresh",
@@ -44,6 +52,17 @@ POST_SPINE_RETIRED_PHASES: frozenset[str] = frozenset(
         "event_coherence_review",
         "timeline_generation",
         "entity_position_tracker",
+    }
+)
+
+# Briefing batch synthesizers — fully retired (desk promote + content_refinement_queue / RAG).
+# Suppressed even when ASSEMBLY_PIPELINE_MODE=legacy; executors are hard no-ops.
+FULLY_RETIRED_BRIEFING_PHASES: frozenset[str] = frozenset(
+    {
+        "editorial_document_generation",
+        "editorial_briefing_generation",
+        "daily_briefing_synthesis",
+        "digest_generation",
     }
 )
 
@@ -70,13 +89,25 @@ def editorial_room_loop_enabled() -> bool:
     return True
 
 
+def _norm_phase(phase_name: str) -> str:
+    return (phase_name or "").strip().lower().replace("-", "_")
+
+
+def is_fully_retired_briefing_phase(phase_name: str) -> bool:
+    return _norm_phase(phase_name) in FULLY_RETIRED_BRIEFING_PHASES
+
+
 def post_spine_scheduling_suppressed(phase_name: str) -> bool:
-    """When assembly is not legacy, suppress retired full-scan / narrative phases."""
+    """When assembly is not legacy, suppress retired full-scan / narrative phases.
+
+    Fully retired briefing phases are always suppressed (including legacy mode).
+    """
+    p = _norm_phase(phase_name)
+    if p in FULLY_RETIRED_BRIEFING_PHASES:
+        return True
     if assembly_pipeline_mode() == "legacy":
         return False
-    p = (phase_name or "").strip().lower().replace("-", "_")
     return p in POST_SPINE_RETIRED_PHASES
-
 
 def assembly_phases_for_nightly_suffix() -> tuple[str, ...]:
     """Canonical post-spine tail for nightly sequential drain."""

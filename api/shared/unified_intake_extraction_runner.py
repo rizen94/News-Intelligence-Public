@@ -32,6 +32,7 @@ try:
     from shared.pipeline_article_selection import (
         sql_order_coalesce_pub_created,
         sql_order_unified_intake_value_priority,
+        unified_intake_newest_first,
         unified_intake_row_value_sort_key,
         unified_intake_value_priority_order_enabled,
     )
@@ -125,7 +126,7 @@ async def run_unified_intake_extraction_batch_drain(
     order = (
         sql_order_unified_intake_value_priority("a")
         if value_priority
-        else sql_order_coalesce_pub_created("a")
+        else sql_order_coalesce_pub_created("a", newest_first=unified_intake_newest_first())
     )
     select_quality = (
         ", COALESCE(a.quality_score, 0), "

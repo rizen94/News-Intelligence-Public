@@ -26,18 +26,28 @@ Context for AI assistants. Use project terminology consistently.
 
 | Concept | Use This | Avoid |
 |---------|----------|-------|
-| Evolving news clusters | **storylines** (domain-kind **proteins**; see `story_kind`) | stories, threads (unless UI label for research kinds) |
-| Domain protein shape | **`story_kind`** (`event_narrative`, `research_topic`, …) | universal “narrative cluster” |
+| Evolving news clusters | **storylines** (domain shape via `story_kind`) | proteins, chemistry metaphors; “stories/threads” unless UI label for research kinds |
+| Domain storyline shape | **`story_kind`** (`event_narrative`, `research_topic`, …) | universal “narrative cluster”; “protein” |
+| Assembly mental model | **matching → related-event chains → storyline → editorial package** — see [docs/ASSEMBLY_MODEL.md](docs/ASSEMBLY_MODEL.md) | chemistry / beaker / bonds as product vocabulary |
+| Article preprocess band | **intake spine** (`content_enrichment` → `unified_intake_extraction` → `spine_sql_tail`) | bare “spine” in UI/docs |
+| Longitudinal timeline UI | **arc chronicle** (`/{domain}/arcs/:id/chronicle`) | “arc spine” (legacy alias only) |
+| FtM / Wikidata identity DB | **identity spine** (`api/nri_core/spine/`, Investigate spine browser) | bare “spine” for entities |
+| Medicine / AI storyline UX | **research subject** / ailment ledger (`evidence_thread`, `research_topic`) | forcing linear arc chronicles; “protein UX” |
+| Legal storyline UX | **matter docket** ledger (`matter_docket`) + **legal_status** | geopolitics-style arc chapters |
 | Attach / membership scoring profile | **`link_score_profile`** | politics-only weights |
-| Loose → solid connection band | **`inference_stage`** (`hypothesized`/`candidate`/`established`/`quarantined`) | binary linked/unlinked only |
-| Exploratory embedding pairs | **`collision_sampling`** | merge-only embedding links |
-| Selective PDF/chunk pull | **`stimulus_rag`** / `rag_evidence_pull_queue` | bulk deep-research of all papers |
-| Harden + stimulus refinement | **`protein_harden`** | heat-only RAG census |
+| Link confidence (operator) | provisional → promising → established / quarantined | chemistry “bonds”; binary linked/unlinked only |
+| Link confidence (DB enum) | **`inference_stage`** (`hypothesized`/`candidate`/`established`/`quarantined`) — keep code names; prefer operator labels above in docs/UI | promoting enum tokens as product names |
+| Exploratory pair sampling (legacy phase) | matching support; code may still say **`collision_sampling`** | “chemistry collisions” as a product |
+| Selective PDF/chunk pull (legacy phase) | evidence pull when a link needs more source text; code may still say **`stimulus_rag`** / `rag_evidence_pull_queue` | bulk deep-research of all papers; chemistry “stimulus” product |
+| Strengthen links (legacy phase) | promote link confidence / enqueue refinement; code may still say **`protein_harden`** | heat-only RAG census; “harden proteins” as product language |
 | Storyline deep-analysis status | **`ml_processing_status`** (`pending`/`completed`) | `processing_status` alone (create-flag; explorers often misread all-pending as stuck) |
 | Storyline entities (audit) | **`story_entity_index`**, **`article_entities`** | `key_entities` JSONB alone (discovery keywords) |
-| Storyline timeline SSOT | **`public.chronological_events`** | legacy per-domain `timeline_events` (off unless `LEGACY_TIMELINE_EVENTS_WRITES=1`) |
+| Main timeline events | **`public.chronological_events`** (say **timeline events**) | “atoms”; legacy per-domain `timeline_events` (off unless `LEGACY_TIMELINE_EVENTS_WRITES=1`) |
+| Longer-lived follow object | **`intelligence.tracked_events`** (say **tracked events**) | “megathread” |
+| Same-event multi-source cluster | **`event_cluster_id`** / `intelligence.event_coreference_links` | one-shot dedup without soft links |
+| Attach / proposal score blend | **`blend_link_score`** (semantic + entity + canonical IDs + temporal) | fixed 0.80/0.20 only; separate “chemistry score” product |
 | Per-domain silos | **domains** | sections, buckets |
-| Domain keys | **legal**, **medicine**, **artificial-intelligence**, **politics**, **finance** | Politics, FINANCE, science-tech (retired) |
+| Domain keys | **legal**, **medicine**, **artificial-intelligence**, **politics**, **finance**; **neurodiversity** (corpus-mode, v11) | Politics, FINANCE, science-tech (retired) |
 | Feed storage | **rss_feeds** | rssFeeds, RSS Feeds table |
 | Content clusters | **topic_clusters** (pipeline); legacy **topics** (read-only CRUD) | clusters, themes |
 | API routes | **`/api/{domain}/...`** (domain-scoped), **`/api/...`** (global) | `/api/v4/...` (legacy, removed) |
@@ -54,6 +64,21 @@ Context for AI assistants. Use project terminology consistently.
 | Spine queue table depth | **`spine_queue_depth`** (informational) | using as operator ETA |
 | AutomationManager task queues | **`in_memory_queue_depth`** | DB `queue_depth` |
 | Realtime urgent ingest queue | **`urgent_queue_depth`** | pipeline `queue_depth` |
+| Domain processing band | **`processing_mode`** (`corpus` \| `research`) on `public.domains` | blunt `PIPELINE_EXCLUDE_DOMAIN_KEYS` for intake-only silos |
+| Corpus phase band | **`CORPUS_PHASES`** / intake → appraisal → index | running storyline assembly / matching on corpus domains |
+| Research phase band | **`RESEARCH_PHASES`** / storylines + matching/assembly + narratives | counting research backlog for corpus domains |
+| Evidence grade ladder | **`evidence_grade`** (`strong`…`unsubstantiated`) | treating unverified LLM prose as facts |
+| Paper-owned support | **`paper_support`** + quote refusal contract | corroboration-count-only “verification” for literature |
+| Replication / follow-up | **`replication_status`** incl. **`needs_follow_up`** | conflating thin evidence with `contradicted` / false |
+| Corpus findings API | **`GET /api/research/{domain}/findings`** | storyline explorers for corpus-only silos |
+| Editorial package (modal handoff artifact) | **`editorial_package`** / `intelligence.editorial_packages` | passing raw storylines or free-form LLM blobs between modals |
+| Reader longform product | **`news_story`** / `intelligence.news_stories` (bound to `package_id`) | raw storyline prose as the published product |
+| Post-processing modals | **Research** / **Narrative** / **Reduction** / **Editor** (`post_processing_modals.yaml`) | domain silos as process stages |
+| Reduction prune pass | **`editorial_reduction_pass`** (LLM + geo/entity hints → uncouple members/links from the package only → route back; sources kept) | deleting articles/events; manual-only Clear without prune |
+| Narrative assembly pass | **`editorial_narrative_pass`** (attach events/entities/links → Reduction; both-zero or max rounds → Editor) | treating storyline bags as finished reader prose; deleting sources |
+| Research assembly pass | **`editorial_research_pass`** (package-scoped extract→facts→appraise + LLM attach/link → Reduction; both-zero or max rounds → Editor) | finance Quiver/EDGAR in Research modal; deleting sources |
+| Legacy desk editorial (columns remain; writers archived) | `storylines.editorial_document` / desk promote (flag-off) / `api/_archived/editorial/` | confusing with v11 Editor `news_stories` |
+| Local v11 dev DB | **`news_intel_dev`** + `.env.dev` + `dev_guard` | pointing PopOS checkout `.env` at Widow while developing |
 
 ---
 
@@ -78,14 +103,32 @@ Context for AI assistants. Use project terminology consistently.
 | Remote phase ownership | `api/shared/remote_phase_worker.py` |
 | Monitor run vocabulary (activity ↔ run history SSOT) | `api/shared/monitor_run_vocabulary.py`, `docs/MONITOR_REPORTING_AND_METRICS.md`, `docs/monitor_alignment/` |
 | Pipeline queue depth vocabulary (queue_depth SSOT) | `api/shared/pipeline_queue_vocabulary.py`, `api/shared/pipeline_queue_counts.py`, `api/shared/monitor_dimension_metrics.py`, `scripts/verify_pipeline_queue_alignment.py` |
+| High-churn PhaseSpec (adaptive bounds / batch / skip overlay) | `api/shared/phase_spec.py` → overlays `adaptive_batch_policy` + `backlog_metrics` |
+| Adaptive batch auto-tune (default on) | `api/shared/adaptive_batch_policy.py` — `resolve_adaptive_batch` / `AUTOMATION_ADAPTIVE_BATCH_ENABLED` |
+| Event coreference (cluster + soft links) | `api/services/event_coreference_service.py`, `api/services/event_deduplication_service.py`, migration `276_event_coreference_clusters.sql` |
+| Chronological events catchup (post-flush CE restore) | `api/services/chronological_events_catchup_service.py`, `api/scripts/backfill_chronological_events_from_uie.py`, automation `chronological_events_catchup` |
+| Narrative-first storyline lookback | `NARRATIVE_FIRST_STORYLINE_LOOKBACK_DAYS` (default 365) in `narrative_first_linking_service.py` |
+| Domain processing mode (corpus vs research) | `api/shared/domain_processing_mode.py`, migration `282_domain_processing_mode.sql` |
+| Evidence appraisal (corpus) | `api/shared/evidence_grade.py`, `api/services/claim_evidence_appraisal_service.py`, `docs/EVIDENCE_APPRAISAL.md` |
+| Neurodiversity corpus silo | `api/config/domains/specs/neurodiversity.domain.json`, migration `283_neurodiversity_domain_silo.sql` |
+| Editorial packages / news stories (v11) | `api/services/editorial_package_service.py`, `news_story_service.py`, `modal_handoff_service.py`, routes `/api/editorial/*`, migrations `285`–`290`, seed `api/scripts/backfill_editorial_packages_from_legacy.py` |
+| Assembly mental model (operator SSOT) | `docs/ASSEMBLY_MODEL.md` — timeline events → related-event chains → storyline → editorial packages; chemistry metaphors retired |
+| Critical-path phase handoffs | `api/shared/pipeline_handoffs.py` — after UIE/catchup/coref/continuation/editorial batches, `request_phase` next owner; backlog + flat scheduler priority in `backlog_metrics` / `pipeline_admission` |
+| Reduction modality (LLM uncouple + route-back) | `api/services/editorial_package_reduction_service.py`, prompt `api/config/prompts/reduction/package_reduction.md`, automation task `editorial_reduction_pass`, `POST /api/editorial/packages/{id}/reduction/run` — package membership only; never deletes source rows |
+| Narrative modality (LLM assemble + cycle escape) | `api/services/editorial_package_narrative_service.py`, prompt `api/config/prompts/narrative/package_narrative.md`, automation `editorial_narrative_pass`, `POST /api/editorial/packages/{id}/narrative/run` — changes→Reduction; both-zero/max rounds→Editor |
+| Research modality (spine + LLM assemble + cycle escape) | `api/services/editorial_package_research_service.py`, prompt `api/config/prompts/research/package_research.md`, automation `editorial_research_pass`, `POST /api/editorial/packages/{id}/research/run` — extract/promote/appraise scoped to package; changes→Reduction; Research↔Reduction both-zero/max rounds→Editor |
+| Post-processing modal allowlists | `api/config/post_processing_modals.yaml`, `api/shared/post_processing_modals.py` |
+| v11 cutover (do not run on Widow yet) | `docs/V11_CUTOVER_RUNBOOK.md`, `scripts/dev/bootstrap_local_db.sh` |
 | Spine conductor (drain helpers) | `api/services/spine_pipeline_conductor.py` |
 | Link indexer (post-spine pass 0) | `api/services/link_indexer_service.py` |
 | Assembly conductor (drain helpers) | `api/services/assembly_conductor_service.py` |
-| Editorial room loop | `api/services/editorial_room_loop_service.py` |
+| Editorial room loop (archived) | `api/_archived/editorial/editorial_room_loop_service.py` via `api/shared/legacy_editorial_rollback.py` |
 | Assembly phase order / retired phases | `api/shared/assembly_phase_order.py` |
 | Unified intake backlog (actionable vs legacy backfill) | `api/shared/unified_intake_backlog.py` |
 | Signal-first article lanes | `api/shared/article_signal_gate.py`, `docs/SIGNAL_FIRST_OPS.md` |
-| Intake catchup latency (≤6h SLA) | `api/shared/intake_catchup_latency.py`, `api/scripts/intake_catchup_latency.py` (`CATCHUP_SLA_HOURS`) |
+| Title-link fulltext pull gate (CT.gov) | `api/shared/fulltext_pull_gate.py`, `api/services/clinicaltrials_study_fetch.py` |
+| Signal investigation + arc briefs (facts first) | `docs/SIGNAL_INVESTIGATION_PLAYBOOK.md`, `api/services/investigation_report_service.py`, `api/services/slow_report_service.py` |
+| Intake catchup latency (≤6h SLA; preprocess ≤1h) | `api/shared/intake_catchup_latency.py`, `api/scripts/intake_catchup_latency.py` (`CATCHUP_SLA_HOURS`, `PREPROCESS_SLA_HOURS`) |
 | Desk schedule (Widow vs PopOS GPU) | `api/services/pipeline_schedule_service.py` — heavy 01–06 / morning 06–10 / desk 10–01; desk defers GPU only |
 | RSS feed health / silencing | `api/services/rss_feed_health_service.py`, `api/scripts/rss_feed_yield_report.py` |
 | Batched event extraction (legacy rollback) | `api/_archived/intake/event_extraction_runner.py` via `LEGACY_INTAKE_EXTRACTION_ENABLED` |
@@ -128,6 +171,7 @@ Context for AI assistants. Use project terminology consistently.
 ## Domain Structure
 
 - **Pipeline-active domains** (June 2026, Widow): `legal`, `medicine`, `artificial-intelligence`, `politics`, `finance` — all `is_active=true` in `public.domains`. **`get_pipeline_active_domain_keys()`** returns the same five unless `PIPELINE_INCLUDE_DOMAIN_KEYS` / `PIPELINE_EXCLUDE_DOMAIN_KEYS` is set in env.
+- **Corpus-mode (v11, local first):** `neurodiversity` uses `processing_mode=corpus` (intake + evidence appraisal + index only). Do not activate on Widow until [docs/V11_CUTOVER_RUNBOOK.md](docs/V11_CUTOVER_RUNBOOK.md).
 - **Registry vs pipeline:** **Registry active** = `public.domains.is_active`. **Pipeline active** = env-filtered subset via `get_pipeline_active_domain_keys()`. On Widow prod both sets are identical (no `PIPELINE_*` filter).
 - **`science-tech` retired:** schema dropped (migration 212). See [`docs/LEGACY_DOMAIN_RETIREMENT.md`](docs/LEGACY_DOMAIN_RETIREMENT.md) — do not reference as an active silo.
 - **YAML provisioning:** new silos via `api/config/domains/*.yaml` and [`docs/DOMAIN_EXTENSION_TEMPLATE.md`](docs/DOMAIN_EXTENSION_TEMPLATE.md).

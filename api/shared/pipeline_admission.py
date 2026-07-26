@@ -38,11 +38,17 @@ PREPROCESS_PRIORITY: tuple[str, ...] = (
 )
 
 # Post-process / structure-first (Widow-local before remote assembly peers).
-# Chemistry beaker runs early after intake preprocess clears (plan: collision before membership).
+# Event matching rail (catchup → coref → continuation) before legacy chemistry stir.
 POSTPROCESS_PRIORITY: tuple[str, ...] = (
     "mention_resolution",
     "entity_profile_build",
     "event_tracking",
+    "chronological_events_catchup",
+    "event_deduplication",
+    "story_continuation",
+    "editorial_research_pass",
+    "editorial_narrative_pass",
+    "editorial_reduction_pass",
     "graph_connection_distillation",
     "embedding_link_candidates",
     "collision_sampling",
@@ -67,6 +73,12 @@ MAINTENANCE_PRIORITY: tuple[str, ...] = (
     "mention_resolution",
     "entity_profile_build",
     "event_tracking",
+    "chronological_events_catchup",
+    "event_deduplication",
+    "story_continuation",
+    "editorial_research_pass",
+    "editorial_narrative_pass",
+    "editorial_reduction_pass",
     "graph_connection_distillation",
     "embedding_link_candidates",
     "collision_sampling",
@@ -169,6 +181,56 @@ def mode_residual_min() -> int:
     return max(25, _mode_int("residual_min", 100))
 
 
+# Phases whose maintenance-mode scheduling batches work up to ``mode_residual_min()``
+# before running — to avoid waking expensive drains on every trickle. The final partial
+# batch (0 < pending < residual_min) must still drain; see ``residual_tail_drain_due``.
+MAINTENANCE_RESIDUAL_PHASES: frozenset[str] = frozenset(
+    {
+        "mention_resolution",
+        "entity_profile_build",
+        "event_tracking",
+        "graph_connection_distillation",
+        "embedding_link_candidates",
+        "graph_link_drift_review",
+        "storyline_assembly",
+        "topic_clustering",
+        "storyline_automation",
+        "storyline_review_agent",
+        "storyline_membership_review",
+    }
+)
+
+
+def residual_tail_drain_sec() -> int:
+    """Max time a sub-residual (partial) maintenance backlog may sit before the final
+    partial batch runs anyway. Keeps trickle batching efficient while guaranteeing the
+    tail below ``mode_residual_min()`` is never stranded (the last run that finishes the
+    backlog is always allowed)."""
+    return max(60, _mode_int("residual_tail_drain_sec", 900))
+
+
+def residual_tail_drain_due(phase: str, automation: Any, *, now: Any = None) -> bool:
+    """True when a residual phase holding a partial (< residual_min) backlog should drain
+    anyway because it has no recent run within the tail-drain window. Never strands the
+    final partial batch: if we can't establish a recent run, we allow the drain."""
+    try:
+        sched = (getattr(automation, "schedules", None) or {}).get(phase) or {}
+    except Exception:
+        return True
+    last = sched.get("last_run")
+    if last is None:
+        return True
+    from datetime import datetime, timezone
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+    window = max(int(sched.get("interval") or 0), residual_tail_drain_sec())
+    try:
+        return (now - last).total_seconds() >= window
+    except Exception:
+        return True
+
+
 def mode_collection_downstream_max() -> int:
     return _mode_int("collection_downstream_max", 1200, env="COLLECTION_THROTTLE_PENDING_THRESHOLD")
 
@@ -236,19 +298,7 @@ def pending_ok(phase: str, pending: dict[str, int], *, mode: SchedulerMode) -> b
         return True  # further gated by collection_allowed in pick
 
     count = int(pending.get(phase, 0) or 0)
-    if mode == "maintenance" and phase in (
-        "mention_resolution",
-        "entity_profile_build",
-        "event_tracking",
-        "graph_connection_distillation",
-        "embedding_link_candidates",
-        "graph_link_drift_review",
-        "storyline_assembly",
-        "topic_clustering",
-        "storyline_automation",
-        "storyline_review_agent",
-        "storyline_membership_review",
-    ):
+    if mode == "maintenance" and phase in MAINTENANCE_RESIDUAL_PHASES:
         return count >= mode_residual_min()
     return count > 0
 
@@ -553,7 +603,19 @@ def pick_next_phases_flat(
             if phase == "rss_feed_health":
                 if not _rss_feed_health_due(automation):
                     continue
-            elif phase != "collection_cycle":
+            elif phase == "collection_cycle":
+                pass  # collection has its own gate below
+            elif (
+                mode == "maintenance"
+                and phase in MAINTENANCE_RESIDUAL_PHASES
+                and int(pending.get(phase, 0) or 0) > 0
+                and residual_tail_drain_due(phase, automation)
+            ):
+                # Tail-drain escape: the final partial batch (0 < pending < residual_min)
+                # must still run so the backlog reaches zero. Batching held it below the
+                # floor; once the tail-drain window elapses we admit the last run.
+                pass
+            else:
                 continue
         if phase == "collection_cycle":
             if mode == "pressure":

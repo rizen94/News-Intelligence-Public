@@ -59,7 +59,7 @@ from pathlib import Path
 from uuid import uuid4
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
@@ -82,6 +82,25 @@ from shared.domain_registry import (
     resolve_domain_schema,
     schema_to_primary_domain_key,
 )
+
+
+def _domains_for_phase(phase: str) -> list[str]:
+    """Pipeline domains allowed to execute ``phase`` (corpus / research gate)."""
+    from shared.domain_processing_mode import filter_domains_for_phase
+
+    return filter_domains_for_phase(get_pipeline_active_domain_keys(), phase)
+
+
+def _schemas_for_phase(phase: str) -> list[str]:
+    """Schemas for domains allowed to execute ``phase``."""
+    from shared.domain_processing_mode import domain_runs_phase
+
+    return [
+        sch
+        for dk, sch in pipeline_url_schema_pairs()
+        if domain_runs_phase(dk, phase)
+    ]
+
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -255,7 +274,7 @@ def collection_cycle_has_pending_work(
 
 # When combined queue depth (main + requested) >= this, stop enqueueing scheduled work except allowlist.
 # 0 = disabled (recommended). Use workers + Ollama semaphores + DB pool for real limits.
-AUTOMATION_QUEUE_SOFT_CAP = int(env_str("AUTOMATION_QUEUE_SOFT_CAP", "0"))
+AUTOMATION_QUEUE_SOFT_CAP = env_int("AUTOMATION_QUEUE_SOFT_CAP", 0)
 QUEUE_PAUSE_ALLOW_SCHEDULED = frozenset(
     x.strip()
     for x in env_str(
@@ -310,6 +329,7 @@ DEFAULT_AUTOMATION_PER_PHASE_CONCURRENT_CAP_PHASES = frozenset(
         "storyline_automation",
         "storyline_review_agent",
         "storyline_membership_review",
+        "storyline_hygiene",
         "embedding_link_candidates",
         "collision_sampling",
         "stimulus_rag",
@@ -403,9 +423,7 @@ _OLLAMA_YIELD_EXEMPT = frozenset(
 # Cap how long we wait after a dependency completes before a dependent may run. Without this,
 # collection_cycle's large estimated_duration (~1800s) kept dependents (e.g. storyline_discovery)
 # permanently ineligible while collection runs often.
-AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC = int(
-    env_str("AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC", "180")
-)
+AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC = env_int("AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC", 180)
 
 # Phases that constitute "data load"; when none have run recently, downtime loop runs entity organizer
 DATA_LOAD_PHASES = (
@@ -465,6 +483,7 @@ _ANALYSIS_PIPELINE_STEPS_FULL: tuple[tuple[str, ...], ...] = (
         "storyline_automation",
         "storyline_review_agent",
         "storyline_membership_review",
+        "storyline_hygiene",
         "graph_link_drift_review",
         "event_deduplication",
         "mention_resolution",
@@ -542,7 +561,7 @@ class Task:
     retry_count: int = 0
     max_retries: int = 3
     error_message: str | None = None
-    metadata: dict[str, Any] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 def _phase_max_retries(phase_name: str) -> int:
@@ -584,6 +603,11 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "claim_extraction": 600,  # env CLAIM_EXTRACTION_BATCH_LIMIT × CLAIM_EXTRACTION_PARALLEL (LLM-bound)
     "legislative_references": 120,  # Congress.gov HTTP + rate-limit sleep per bill mention
     "claims_to_facts": 180,  # env CLAIMS_TO_FACTS_BATCH_LIMIT; resolver + INSERTs (DB-bound)
+    "claim_evidence_appraisal": 600,  # LLM paper appraisal; CLAIM_EVIDENCE_APPRAISAL_ENABLED
+    "editorial_reduction_pass": 600,  # LLM package prune; EDITORIAL_REDUCTION_ENABLED
+    "editorial_narrative_pass": 600,  # LLM package assembly; EDITORIAL_NARRATIVE_ENABLED
+    "editorial_research_pass": 600,  # LLM research assembly; EDITORIAL_RESEARCH_ENABLED
+    "chronological_events_catchup": 600,  # CE restore; CHRONOLOGICAL_EVENTS_CATCHUP_ENABLED
     "claim_subject_gap_refresh": 120,  # catalog upsert per active domain (DB-bound)
     "extracted_claims_dedupe": 180,  # batched DELETE; see EXTRACTED_CLAIMS_DEDUPE_* env
     "event_tracking": 200,  # observed ~196s avg; was 120
@@ -600,6 +624,7 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "storyline_automation": 180,
     "storyline_review_agent": 120,
     "storyline_membership_review": 180,
+    "storyline_hygiene": 300,
     "embedding_link_candidates": 120,
     "collision_sampling": 60,
     "stimulus_rag": 180,
@@ -671,7 +696,7 @@ class AutomationManager:
         self.health_check_interval = 30  # seconds
         try:
             self.task_timeout = max(
-                60, int(env_str("AUTOMATION_TASK_WALL_TIMEOUT_SECONDS", "300"))
+                60, env_int("AUTOMATION_TASK_WALL_TIMEOUT_SECONDS", 300)
             )
         except ValueError:
             self.task_timeout = 300
@@ -831,6 +856,54 @@ class AutomationManager:
                 "depends_on": ["claim_extraction"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["claims_to_facts"],
             },
+            # v11 corpus: evidence appraisal (feature-flagged; schedule enabled=False by default)
+            "claim_evidence_appraisal": {
+                "interval": 7200,
+                "last_run": None,
+                "enabled": False,
+                "priority": TaskPriority.LOW,
+                "phase": 2,
+                "depends_on": ["claims_to_facts"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
+                    "claim_evidence_appraisal"
+                ],
+            },
+            # v11 Reduction modality: drain in_reduction packages (LLM prune → route back)
+            "editorial_reduction_pass": {
+                "interval": 1800,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 3,
+                "depends_on": ["editorial_narrative_pass", "editorial_research_pass"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
+                    "editorial_reduction_pass"
+                ],
+            },
+            # v11 Narrative modality: drain in_narrative packages (assemble → Reduction/Editor)
+            "editorial_narrative_pass": {
+                "interval": 1800,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 3,
+                "depends_on": ["story_continuation"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
+                    "editorial_narrative_pass"
+                ],
+            },
+            # v11 Research modality: drain in_research packages (spine + assemble → Reduction/Editor)
+            "editorial_research_pass": {
+                "interval": 1800,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 3,
+                "depends_on": ["story_continuation"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
+                    "editorial_research_pass"
+                ],
+            },
             # PHASE 2a.2: Rebuild claim_subject_gap_catalog (operators + claims_to_facts ignore list)
             "claim_subject_gap_refresh": {
                 "interval": 21600,  # 6 hours — DB snapshot only
@@ -905,17 +978,8 @@ class AutomationManager:
                 "depends_on": ["context_sync", "entity_profile_sync"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["entity_profile_build"],
             },
-            # PHASE 2.2: Pattern recognition (network, temporal, behavioral, event)
-            "pattern_recognition": {
-                "interval": 7200,  # 2 hours
-                "last_run": None,
-                "enabled": True,
-                "priority": TaskPriority.NORMAL,
-                "phase": 2,
-                "depends_on": ["context_sync", "entity_profile_sync"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["pattern_recognition"],
-            },
             # Longitudinal intelligence (Phases 1–4): nightly-heavy; yields to ingest
+            # Hard-retired (no schedule): pattern_recognition — see retired_phase_registry
             "embeddings_worker": {
                 "interval": 3600,
                 "last_run": None,
@@ -952,24 +1016,7 @@ class AutomationManager:
                 "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["sanctions_refresh"],
             },
-            "arc_report_generation": {
-                "interval": 604800,
-                "last_run": None,
-                "enabled": True,
-                "priority": TaskPriority.LOW,
-                "phase": 3,
-                "depends_on": ["macro_series_refresh", "embeddings_worker"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["arc_report_generation"],
-            },
-            "longitudinal_matview_refresh": {
-                "interval": 21600,
-                "last_run": None,
-                "enabled": True,
-                "priority": TaskPriority.LOW,
-                "phase": 2,
-                "depends_on": ["external_events_sync"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["longitudinal_matview_refresh"],
-            },
+            # Hard-retired (no schedule): arc_report_generation, longitudinal_matview_refresh
             # PHASE 2.6: Entity dossier compile (articles + storylines + relationships -> entity_dossiers)
             "entity_dossier_compile": {
                 "interval": 3600,  # 1 hour - compile dossiers for entities missing or stale
@@ -990,16 +1037,7 @@ class AutomationManager:
                 "depends_on": ["entity_profile_sync"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["entity_position_tracker"],
             },
-            # Metadata enrichment (language, categories, sentiment, quality) for domain articles
-            "metadata_enrichment": {
-                "interval": 900,  # 15 minutes
-                "last_run": None,
-                "enabled": True,
-                "priority": TaskPriority.NORMAL,
-                "phase": 2,
-                "depends_on": ["collection_cycle"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["metadata_enrichment"],
-            },
+            # Hard-retired (no schedule): metadata_enrichment — superseded by unified intake
             # Entity organizer: cleanup (merge/prune/cap) + relationship extraction; also runs in downtime loop
             "entity_organizer": {
                 "interval": 600,  # 10 minutes - run after we have entities
@@ -1071,16 +1109,7 @@ class AutomationManager:
                     "graph_link_drift_review"
                 ],
             },
-            # PHASE 3: ML Processing (Runs frequently on processed articles)
-            "ml_processing": {
-                "interval": 300,  # 5 minutes - run often, re-enqueue until empty
-                "last_run": None,
-                "enabled": True,
-                "priority": TaskPriority.HIGH,
-                "phase": 3,
-                "depends_on": ["collection_cycle"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["ml_processing"],
-            },
+            # Hard-retired (no schedule): ml_processing — superseded by unified intake
             # PHASE 5: Topic Clustering (Continuous iterative refinement)
             "topic_clustering": {
                 "interval": 300,  # 5 minutes - run often, drain backlog
@@ -1091,17 +1120,7 @@ class AutomationManager:
                 "depends_on": ["collection_cycle"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["topic_clustering"],
             },
-            # PHASE 4: Parallel ML & Entity Processing (Runs frequently)
-            "entity_extraction": {
-                "interval": 300,  # 5 minutes - run often, re-enqueue until empty
-                "last_run": None,
-                "enabled": True,
-                "priority": TaskPriority.NORMAL,
-                "phase": 4,
-                "depends_on": ["collection_cycle"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["entity_extraction"],
-                "parallel_group": "ml_entity_processing",  # Can run in parallel with ML
-            },
+            # Hard-retired (no schedule): entity_extraction — superseded by unified intake
             "unified_intake_extraction": {
                 "interval": 300,
                 "last_run": None,
@@ -1127,32 +1146,11 @@ class AutomationManager:
                 "enabled": True,
                 "priority": TaskPriority.NORMAL,
                 "phase": 4,
-                "depends_on": ["entity_extraction"],
+                "depends_on": ["unified_intake_extraction"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["mention_resolution"],
                 "parallel_group": "ml_entity_processing",
             },
-            # PHASE 4: Parallel ML & Entity Processing (Runs frequently)
-            "quality_scoring": {
-                "interval": 300,  # 5 minutes - run often
-                "last_run": None,
-                "enabled": True,
-                "priority": TaskPriority.NORMAL,
-                "phase": 4,
-                "depends_on": ["collection_cycle"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["quality_scoring"],
-                "parallel_group": "ml_entity_processing",  # Can run in parallel with ML
-            },
-            # PHASE 4: Parallel ML & Entity Processing (Runs frequently)
-            "sentiment_analysis": {
-                "interval": 300,  # 5 minutes - run often, re-enqueue until empty
-                "last_run": None,
-                "enabled": True,
-                "priority": TaskPriority.NORMAL,
-                "phase": 4,
-                "depends_on": ["collection_cycle"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["sentiment_analysis"],
-                "parallel_group": "ml_entity_processing",  # Can run in parallel with ML
-            },
+            # Hard-retired (no schedule): quality_scoring, sentiment_analysis — unified intake
             # PHASE 6: Storyline Discovery (AI auto-creates storylines from article clusters)
             "storyline_discovery": {
                 "interval": 14400,  # 4 hours — discover new storylines from recent articles
@@ -1197,7 +1195,7 @@ class AutomationManager:
                 "enabled": True,
                 "priority": TaskPriority.HIGH,
                 "phase": 7,
-                "depends_on": ["ml_processing", "sentiment_analysis"],
+                "depends_on": ["unified_intake_extraction"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["storyline_processing"],
             },
             # Scheduled batch + governor requests: match incoming articles to automation-enabled storylines
@@ -1230,6 +1228,15 @@ class AutomationManager:
                     "storyline_membership_review"
                 ],
             },
+            "storyline_hygiene": {
+                "interval": 1800,  # 30m — freeze→prune→near-dup merge
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.LOW,
+                "phase": 7,
+                "depends_on": ["storyline_automation"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["storyline_hygiene"],
+            },
             # v8: Enrich existing storylines/dossiers with full-history search (past articles/contexts)
             "storyline_enrichment": {
                 "interval": 43200,  # 12 hours - full-history pass
@@ -1250,27 +1257,29 @@ class AutomationManager:
                 "depends_on": ["storyline_processing"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["rag_enhancement"],
             },
-            # PHASE 9a: Event Extraction (v5.0 - runs after entity extraction)
-            "event_extraction": {
-                "interval": 300,  # 5 minutes - run often, re-enqueue until empty
-                "last_run": None,
-                "enabled": True,
-                "priority": TaskPriority.NORMAL,
-                "phase": 9,
-                "depends_on": ["entity_extraction"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["event_extraction"],
-                "parallel_group": "event_processing",
-            },
-            # PHASE 9b: Event Deduplication (v5.0 - runs after event extraction)
+            # Hard-retired (no schedule): event_extraction — superseded by unified intake
+            # PHASE 9b: Event Deduplication (v5.0 — after unified intake events)
             "event_deduplication": {
                 "interval": 600,  # 10 minutes
                 "last_run": None,
                 "enabled": True,
                 "priority": TaskPriority.NORMAL,
                 "phase": 9,
-                "depends_on": ["event_extraction"],
+                "depends_on": ["unified_intake_extraction", "chronological_events_catchup"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["event_deduplication"],
                 "parallel_group": "event_processing",
+            },
+            # PHASE 9b2: Restore chronological_events for UIE-complete articles missing CE
+            "chronological_events_catchup": {
+                "interval": 1800,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 9,
+                "depends_on": ["unified_intake_extraction"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
+                    "chronological_events_catchup"
+                ],
             },
             # PHASE 9c: Story Continuation Matching (v5.0)
             "story_continuation": {
@@ -1332,38 +1341,7 @@ class AutomationManager:
                 "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["cache_cleanup"],
             },
-            # FULLY RETIRED — desk promote + content_refinement_queue/RAG; never re-enable.
-            "editorial_document_generation": {
-                "interval": 1800,
-                "last_run": None,
-                "enabled": False,
-                "priority": TaskPriority.NORMAL,
-                "phase": 10,
-                "depends_on": [],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
-                    "editorial_document_generation"
-                ],
-            },
-            "editorial_briefing_generation": {
-                "interval": 1800,
-                "last_run": None,
-                "enabled": False,
-                "priority": TaskPriority.NORMAL,
-                "phase": 10,
-                "depends_on": [],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
-                    "editorial_briefing_generation"
-                ],
-            },
-            "digest_generation": {
-                "interval": 3600,
-                "last_run": None,
-                "enabled": False,
-                "priority": TaskPriority.NORMAL,
-                "phase": 11,
-                "depends_on": [],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["digest_generation"],
-            },
+            # Hard-retired (no schedule): editorial_document/briefing, digest_generation
             # Auto storyline synthesis (Wikipedia-style articles)
             "storyline_synthesis": {
                 "interval": 3600,  # 60 minutes
@@ -1374,16 +1352,7 @@ class AutomationManager:
                 "depends_on": ["storyline_processing"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["storyline_synthesis"],
             },
-            # FULLY RETIRED — Briefings page reads storyline editorial_document / TE narratives
-            "daily_briefing_synthesis": {
-                "interval": 14400,
-                "last_run": None,
-                "enabled": False,
-                "priority": TaskPriority.LOW,
-                "phase": 11,
-                "depends_on": [],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["daily_briefing_synthesis"],
-            },
+            # Hard-retired (no schedule): daily_briefing_synthesis
             # PHASE 12: Watchlist Alert Generation (v5.0)
             "watchlist_alerts": {
                 "interval": 1200,  # 20 minutes - Relaxed from 15 min
@@ -1457,6 +1426,15 @@ class AutomationManager:
             },
         }
 
+        # Pristine dependency edges, captured before any suppression strips them,
+        # so an auto-silenced phase can be re-wired when its silence lifts.
+        self._pristine_depends_on: dict[str, list[str]] = {
+            name: list(sched.get("depends_on") or []) for name, sched in self.schedules.items()
+        }
+        # Phases this manager disabled specifically because of auto-silence — the
+        # only ones eligible for re-enable (never resurrect retired/superseded phases).
+        self._auto_silence_disabled: set[str] = set()
+
         self._apply_automation_disabled_schedules()
         self._apply_legacy_intake_schedule_suppression()
         from shared.retired_phase_registry import apply_retired_schedule_suppression
@@ -1511,10 +1489,15 @@ class AutomationManager:
         return phase_name.strip() in set(self.get_disabled_schedule_names())
 
     def _apply_automation_disabled_schedules(self) -> None:
-        """Disable named schedules and strip them from depends_on so dependents still run (Widow cron / PopOS worker)."""
+        """
+        Reconcile schedule enablement against the current disable set.
+
+        Disables named schedules and strips them from depends_on so dependents still
+        run (Widow cron / PopOS worker). Also re-enables phases whose *auto-silence*
+        has since lifted — silence is a backoff, so it must not survive as a
+        permanent disable until the next API restart. Safe to call repeatedly.
+        """
         disabled = set(self.get_disabled_schedule_names())
-        if not disabled:
-            return
         remote_owned: set[str] = set()
         try:
             from shared.remote_phase_worker import remote_owned_phases
@@ -1529,16 +1512,25 @@ class AutomationManager:
             auto_silenced = list_auto_silenced_phases()
         except Exception:
             pass
+
+        self._reenable_lifted_silence_schedules(disabled)
+
+        if not disabled:
+            return
         for name in disabled:
             if name in self.schedules:
+                was_enabled = bool(self.schedules[name].get("enabled", True))
                 self.schedules[name]["enabled"] = False
                 if name in remote_owned:
                     reason = "REMOTE_PHASE_WORKER_OWNED_PHASES"
                 elif name in auto_silenced:
                     reason = "PHASE_AUTO_SILENCE"
+                    self._auto_silence_disabled.add(name)
                 else:
                     reason = "AUTOMATION_DISABLED_SCHEDULES"
-                logger.info("Automation schedule %s disabled (%s)", name, reason)
+                # Reconciler runs every controller cycle — only log real transitions.
+                if was_enabled:
+                    logger.info("Automation schedule %s disabled (%s)", name, reason)
             else:
                 logger.warning("disabled schedule unknown phase %s", name)
         for sched_name, sched in self.schedules.items():
@@ -1553,6 +1545,50 @@ class AutomationManager:
                     sched_name,
                     new_deps,
                 )
+
+    def _reenable_lifted_silence_schedules(self, disabled: set[str]) -> list[str]:
+        """
+        Re-enable phases that were disabled by auto-silence which has since lifted.
+
+        Only phases this manager muted for PHASE_AUTO_SILENCE are eligible, so
+        retired / superseded / remote-owned schedules are never resurrected.
+        Dependency edges stripped when the phase was muted are restored from the
+        pristine snapshot (skipping any edge that is still disabled).
+        """
+        eligible = {
+            name
+            for name in getattr(self, "_auto_silence_disabled", set())
+            if name not in disabled and name in self.schedules
+        }
+        if not eligible:
+            return []
+        restored: list[str] = []
+        for name in sorted(eligible):
+            self.schedules[name]["enabled"] = True
+            self.schedules[name]["last_run"] = None  # eligible on the next tick
+            self._auto_silence_disabled.discard(name)
+            restored.append(name)
+            logger.info(
+                "Automation schedule %s re-enabled (auto-silence lifted — retrying phase)",
+                name,
+            )
+        pristine = getattr(self, "_pristine_depends_on", {}) or {}
+        for sched_name, sched in self.schedules.items():
+            original = pristine.get(sched_name)
+            if not original:
+                continue
+            deps = list(sched.get("depends_on") or [])
+            missing = [
+                d for d in original if d in restored and d not in deps and d not in disabled
+            ]
+            if missing:
+                sched["depends_on"] = [d for d in original if d not in disabled]
+                logger.info(
+                    "Automation: %s depends_on restored after silence lift: %s",
+                    sched_name,
+                    sched["depends_on"],
+                )
+        return restored
 
     def _apply_legacy_intake_schedule_suppression(self) -> None:
         """Disable legacy per-phase intake schedules superseded by unified_intake_extraction."""
@@ -2147,7 +2183,7 @@ class AutomationManager:
 
         loop = asyncio.get_event_loop()
         try:
-            attempts = max(1, int(env_str("AUTOMATION_STARTUP_HEALTH_CHECK_ATTEMPTS", "3")))
+            attempts = max(1, env_int("AUTOMATION_STARTUP_HEALTH_CHECK_ATTEMPTS", 3))
         except ValueError:
             attempts = 3
         try:
@@ -2337,7 +2373,8 @@ class AutomationManager:
                 unsatisfied.append(f"{dep} (never run)")
                 continue
             time_since = (now - dep_schedule["last_run"]).total_seconds()
-            need = dep_schedule.get("estimated_duration", 60) * 0.5
+            need = float(dep_schedule.get("estimated_duration", 60) or 60) * 0.5
+            need = min(need, float(AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC))
             if time_since < need:
                 unsatisfied.append(f"{dep} (run {int(time_since)}s ago)")
         if not unsatisfied:
@@ -2464,7 +2501,7 @@ class AutomationManager:
             if in_nightly_pipeline_window_est():
                 if task_name in _per_phase_nightly_cap_mult_exclude():
                     return min(self.max_concurrent_tasks, base)
-                mult = int(env_str("AUTOMATION_PER_PHASE_CONCURRENT_NIGHTLY_MULT", "4"))
+                mult = env_int("AUTOMATION_PER_PHASE_CONCURRENT_NIGHTLY_MULT", 4)
                 return min(self.max_concurrent_tasks, base * max(1, mult))
         except Exception:
             pass
@@ -2534,6 +2571,22 @@ class AutomationManager:
             lane_token = push_llm_execution_lane(effective_lane)
         except Exception:
             lane_token = None
+
+        try:
+            from shared.retired_phase_registry import is_hard_retired_schedule_phase
+
+            if is_hard_retired_schedule_phase(task.name):
+                logger.warning(
+                    "Refusing hard-retired phase %s — not scheduled; "
+                    "archived runners only via LEGACY_INTAKE_EXTRACTION_ENABLED / scripts",
+                    task.name,
+                )
+                task.status = TaskStatus.COMPLETED
+                task.completed_at = datetime.now(timezone.utc)
+                task.metadata["retired_refuse"] = True
+                return
+        except Exception:
+            pass
 
         try:
             from services.nightly_ingest_window_service import (
@@ -2803,6 +2856,14 @@ class AutomationManager:
                 await self._execute_legislative_references(task)
             elif task.name == "claims_to_facts":
                 await self._execute_claims_to_facts(task)
+            elif task.name == "claim_evidence_appraisal":
+                await self._execute_claim_evidence_appraisal(task)
+            elif task.name == "editorial_reduction_pass":
+                await self._execute_editorial_reduction_pass(task)
+            elif task.name == "editorial_narrative_pass":
+                await self._execute_editorial_narrative_pass(task)
+            elif task.name == "editorial_research_pass":
+                await self._execute_editorial_research_pass(task)
             elif task.name == "claim_subject_gap_refresh":
                 await self._execute_claim_subject_gap_refresh(task)
             elif task.name == "extracted_claims_dedupe":
@@ -2879,6 +2940,8 @@ class AutomationManager:
                 await self._execute_storyline_review_agent(task)
             elif task.name == "storyline_membership_review":
                 await self._execute_storyline_membership_review(task)
+            elif task.name == "storyline_hygiene":
+                await self._execute_storyline_hygiene(task)
             elif task.name == "storyline_enrichment":
                 await self._execute_storyline_enrichment(task)
             elif task.name == "entity_extraction":
@@ -2899,6 +2962,8 @@ class AutomationManager:
                 await self._execute_event_extraction_v5(task)
             elif task.name == "event_deduplication":
                 await self._execute_event_deduplication_v5(task)
+            elif task.name == "chronological_events_catchup":
+                await self._execute_chronological_events_catchup(task)
             elif task.name == "story_continuation":
                 await self._execute_story_continuation_v5(task)
             elif task.name == "watchlist_alerts":
@@ -2943,6 +3008,7 @@ class AutomationManager:
                     task.completed_at,
                     True,
                     None,
+                    metadata=task.metadata or {},
                 )
             # Record completion for last-60m run counts (used by monitoring timeline).
             if not (task.metadata or {}).get("skip_automation_run_history"):
@@ -3003,6 +3069,7 @@ class AutomationManager:
                 finished_at,
                 False,
                 str(e),
+                metadata=task.metadata or {},
             )
             # Record failure for last-60m run counts (used by monitoring timeline).
             try:
@@ -3108,6 +3175,9 @@ class AutomationManager:
             "document_processing",
             "spine_sql_tail",
             "storyline_membership_review",
+            "storyline_hygiene",
+            "story_continuation",
+            "chronological_events_catchup",
         }
     )
 
@@ -3209,6 +3279,30 @@ class AutomationManager:
             await self._record_phase_batch_loop(task, loops_processed=loops_processed, **stats)
 
         return _on_batch
+
+    @staticmethod
+    def _stamp_monitor_batch_throughput(
+        task: Task,
+        *,
+        round_processed: int,
+        items_processed: int | None = None,
+        **extra: Any,
+    ) -> None:
+        """Mark task metadata so Monitor measured rows/run can sample this run.
+
+        ``query_measured_rows_per_run_by_phase`` requires ``batch=true`` and a
+        positive iteration throughput key (prefer ``round_processed`` = batch budget).
+        """
+        if not isinstance(getattr(task, "metadata", None), dict):
+            task.metadata = {}
+        rp = max(0, int(round_processed or 0))
+        task.metadata["batch"] = True
+        task.metadata["round_processed"] = rp
+        if items_processed is not None:
+            task.metadata["items_processed"] = int(items_processed)
+        for key, value in extra.items():
+            if value is not None:
+                task.metadata[key] = value
 
     def _activity_message(self, task: Task) -> str:
         """Human-readable one-line message for monitoring UI."""
@@ -3494,6 +3588,20 @@ class AutomationManager:
                 await self._execute_rss_processing(dummy)
             except Exception as e:
                 logger.warning(f"Collection cycle RSS step failed: {e}")
+            # Fresh intake invalidates stale stall evidence: give every auto-silenced
+            # phase another chance. Anything still broken re-earns its silence via the
+            # failing-streak threshold.
+            try:
+                from services.phase_retry_silence_service import lift_auto_silences
+
+                lifted = await asyncio.to_thread(
+                    lambda: lift_auto_silences(reason="rss_intake", force=True)
+                )
+                if lifted:
+                    self._apply_automation_disabled_schedules()
+                    logger.info("RSS intake lifted auto-silence for: %s", lifted)
+            except Exception as e:
+                logger.debug("collection_cycle silence lift: %s", e)
         # 2. Content enrichment — PipelineController schedules standalone content_enrichment
         try:
             from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
@@ -3619,8 +3727,10 @@ class AutomationManager:
         except Exception:
             sync_limit = 100
         sync_limit = max(1, int(sync_limit))
+        domains = _domains_for_phase("context_sync")
+        total_all = 0
 
-        for domain_key in get_pipeline_active_domain_keys():
+        for domain_key in domains:
             try:
                 # Production: adaptive contexts/batch (default 100)
                 total = await asyncio.get_event_loop().run_in_executor(
@@ -3629,10 +3739,18 @@ class AutomationManager:
                         d, limit=lim
                     ),
                 )
+                total_all += int(total or 0)
                 if total > 0:
                     logger.info(f"Context sync {domain_key}: {total} contexts created")
             except Exception as e:
                 logger.warning(f"Context sync {domain_key} failed: {e}")
+        self._stamp_monitor_batch_throughput(
+            task,
+            round_processed=int(sync_limit) * max(1, len(domains)),
+            items_processed=total_all,
+            adaptive_batch=int(sync_limit),
+            contexts_created=total_all,
+        )
 
     async def _execute_entity_profile_sync(self, task: Task):
         """Sync entity_canonical -> entity_profiles + old_entity_to_new (Phase 1.3 context-centric)."""
@@ -3647,15 +3765,31 @@ class AutomationManager:
 
         from services.entity_profile_sync_service import sync_domain_entity_profiles
 
-        for domain_key in get_pipeline_active_domain_keys():
+        domains = _domains_for_phase("entity_profile_sync")
+        total_all = 0
+        for domain_key in domains:
             try:
                 total = await asyncio.get_event_loop().run_in_executor(
                     None, lambda d=domain_key: sync_domain_entity_profiles(d)
                 )
+                total_all += int(total or 0)
                 if total > 0:
                     logger.info(f"Entity profile sync {domain_key}: {total} new mappings")
             except Exception as e:
                 logger.warning(f"Entity profile sync {domain_key} failed: {e}")
+        per_domain = 40
+        try:
+            from services.backlog_metrics import BATCH_SIZE_PER_TASK
+
+            per_domain = max(1, int(BATCH_SIZE_PER_TASK.get("entity_profile_sync", 40)))
+        except Exception:
+            pass
+        self._stamp_monitor_batch_throughput(
+            task,
+            round_processed=int(per_domain) * max(1, len(domains)),
+            items_processed=total_all,
+            mappings_created=total_all,
+        )
 
     async def _execute_claim_extraction(self, task: Task):
         """Extract claims (subject/predicate/object) from contexts without claims (Phase 2.1 context-centric)."""
@@ -3733,12 +3867,28 @@ class AutomationManager:
         try:
             from services.legislative_reference_service import run_legislative_reference_batch
 
-            stats = await asyncio.to_thread(run_legislative_reference_batch)
+            article_limit = 8
+            try:
+                from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+                article_limit, adaptive_meta = resolve_adaptive_batch(
+                    "legislative_references", article_limit
+                )
+                if isinstance(task.metadata, dict):
+                    task.metadata["adaptive_batch"] = article_limit
+                    task.metadata["adaptive_batch_meta"] = adaptive_meta
+            except Exception:
+                pass
+            stats = await asyncio.to_thread(
+                run_legislative_reference_batch,
+                article_limit_per_domain=article_limit,
+            )
             if stats and not stats.get("skipped") and int(stats.get("articles_scanned") or 0) > 0:
                 logger.info(
-                    "Legislative references: scanned %s articles, %s snapshots",
+                    "Legislative references: scanned %s articles, %s snapshots (batch=%s)",
                     stats.get("articles_scanned"),
                     stats.get("references_upserted"),
+                    article_limit,
                 )
         except Exception as e:
             logger.warning("Legislative references failed: %s", e)
@@ -3769,39 +3919,150 @@ class AutomationManager:
                 )
                 if total > 0:
                     logger.info(
-                        "Claims to facts: %s rows promoted (%s batch(es) in one task)",
+                        "claims_to_facts drain: promoted=%s batches=%s",
                         total,
                         batches,
                     )
-            else:
-                started = datetime.now(timezone.utc)
-                if per_batch is not None:
-                    stats = await asyncio.to_thread(
-                        promote_claims_to_versioned_facts,
-                        None,
-                        per_batch,
-                    )
-                else:
-                    stats = await asyncio.to_thread(promote_claims_to_versioned_facts)
-                finished = datetime.now(timezone.utc)
-                if not isinstance(stats, dict):
-                    return
-                promoted = int(stats.get("promoted") or 0)
-                if promoted > 0:
-                    await record_phase_batch_completion_async(
-                        "claims_to_facts",
-                        started,
-                        finished,
-                        stats={
-                            "promoted": promoted,
-                            "round_processed": promoted,
-                            "processed": promoted,
-                        },
-                    )
-                elif stats.get("candidates", 0) == 0:
-                    logger.debug("Claims to facts: no promotable claims in batch")
+                return
+
+            started = datetime.now(timezone.utc)
+            stats = await asyncio.to_thread(
+                promote_claims_to_versioned_facts,
+                limit=per_batch,
+            )
+            finished = datetime.now(timezone.utc)
+            if stats and int(stats.get("promoted") or 0) > 0:
+                logger.info(
+                    "claims_to_facts: promoted=%s candidates=%s",
+                    stats.get("promoted"),
+                    stats.get("candidates"),
+                )
+            try:
+                await record_phase_batch_completion_async(
+                    "claims_to_facts",
+                    started,
+                    finished,
+                    stats={
+                        "promoted": int((stats or {}).get("promoted") or 0),
+                        "candidates": int((stats or {}).get("candidates") or 0),
+                    },
+                )
+            except Exception:
+                pass
         except Exception as e:
-            logger.warning(f"Claims to facts failed: {e}")
+            logger.warning("claims_to_facts failed: %s", e)
+
+    async def _execute_claim_evidence_appraisal(self, task: Task):
+        """v11 corpus: grade paper findings with quote-required refusal contract."""
+        from config.feature_registry import is_feature_enabled
+        from services.claim_evidence_appraisal_service import (
+            is_enabled,
+            run_claim_evidence_appraisal_batch,
+        )
+
+        if not is_enabled() and not is_feature_enabled("claim_evidence_appraisal"):
+            logger.debug("claim_evidence_appraisal skipped (feature disabled)")
+            return
+        try:
+            limit = 8
+            if isinstance(task.metadata, dict) and task.metadata.get("batch_limit"):
+                limit = int(task.metadata["batch_limit"])
+            stats = await asyncio.to_thread(
+                run_claim_evidence_appraisal_batch,
+                domain_key=None,
+                limit=limit,
+            )
+            if stats and int(stats.get("appraised") or 0) > 0:
+                logger.info("claim_evidence_appraisal: %s", stats)
+        except Exception as e:
+            logger.warning("claim_evidence_appraisal failed: %s", e)
+
+    async def _execute_editorial_reduction_pass(self, task: Task):
+        """v11 Reduction: prune in_reduction packages then route back to research/narrative."""
+        from config.feature_registry import is_feature_enabled
+        from services.editorial_package_reduction_service import (
+            is_enabled,
+            run_reduction_batch,
+        )
+
+        if not is_enabled():
+            logger.debug("editorial_reduction_pass skipped (EDITORIAL_REDUCTION_ENABLED off)")
+            return
+        if not is_feature_enabled("editorial_reduction") and not is_enabled():
+            return
+        try:
+            limit = 5
+            if isinstance(task.metadata, dict) and task.metadata.get("batch_limit"):
+                limit = int(task.metadata["batch_limit"])
+            stats = await asyncio.to_thread(run_reduction_batch, limit=limit)
+            if stats and int(stats.get("processed") or 0) > 0:
+                logger.info("editorial_reduction_pass: %s", stats)
+            try:
+                from shared.pipeline_handoffs import after_editorial_reduction
+
+                after_editorial_reduction(
+                    self, processed=int((stats or {}).get("processed") or 0)
+                )
+            except Exception as e:
+                logger.debug("editorial_reduction handoff: %s", e)
+        except Exception as e:
+            logger.warning("editorial_reduction_pass failed: %s", e)
+
+    async def _execute_editorial_narrative_pass(self, task: Task):
+        """v11 Narrative: assemble in_narrative packages then route to Reduction/Editor."""
+        from services.editorial_package_narrative_service import (
+            is_enabled,
+            run_narrative_batch,
+        )
+
+        if not is_enabled():
+            logger.debug("editorial_narrative_pass skipped (EDITORIAL_NARRATIVE_ENABLED off)")
+            return
+        try:
+            limit = 5
+            if isinstance(task.metadata, dict) and task.metadata.get("batch_limit"):
+                limit = int(task.metadata["batch_limit"])
+            stats = await asyncio.to_thread(run_narrative_batch, limit=limit)
+            if stats and int(stats.get("processed") or 0) > 0:
+                logger.info("editorial_narrative_pass: %s", stats)
+            try:
+                from shared.pipeline_handoffs import after_editorial_narrative
+
+                after_editorial_narrative(
+                    self, processed=int((stats or {}).get("processed") or 0)
+                )
+            except Exception as e:
+                logger.debug("editorial_narrative handoff: %s", e)
+        except Exception as e:
+            logger.warning("editorial_narrative_pass failed: %s", e)
+
+    async def _execute_editorial_research_pass(self, task: Task):
+        """v11 Research: spine + assemble in_research packages then route to Reduction/Editor."""
+        from services.editorial_package_research_service import (
+            is_enabled,
+            run_research_batch,
+        )
+
+        if not is_enabled():
+            logger.debug("editorial_research_pass skipped (EDITORIAL_RESEARCH_ENABLED off)")
+            return
+        try:
+            limit = 5
+            if isinstance(task.metadata, dict) and task.metadata.get("batch_limit"):
+                limit = int(task.metadata["batch_limit"])
+            stats = await asyncio.to_thread(run_research_batch, limit=limit)
+            if stats and int(stats.get("processed") or 0) > 0:
+                logger.info("editorial_research_pass: %s", stats)
+            try:
+                from shared.pipeline_handoffs import after_editorial_research
+
+                after_editorial_research(
+                    self, processed=int((stats or {}).get("processed") or 0)
+                )
+            except Exception as e:
+                logger.debug("editorial_research handoff: %s", e)
+        except Exception as e:
+            logger.warning("editorial_research_pass failed: %s", e)
 
     async def _execute_claim_subject_gap_refresh(self, task: Task):
         """Rebuild intelligence.claim_subject_gap_catalog (open subjects lacking profiles/canonicals)."""
@@ -3868,13 +4129,13 @@ class AutomationManager:
                 from shared.adaptive_batch_policy import resolve_adaptive_batch
 
                 batch_max = max(
-                    25, min(300, int(env_str("EVENT_TRACKING_ASSEMBLY_BATCH_MAX", "300")))
+                    25, min(300, env_int("EVENT_TRACKING_ASSEMBLY_BATCH_MAX", 300))
                 )
                 default_lim = max(
                     1,
                     min(
                         batch_max,
-                        int(env_str("EVENT_TRACKING_ASSEMBLY_BATCH_LIMIT", "25")),
+                        env_int("EVENT_TRACKING_ASSEMBLY_BATCH_LIMIT", 25),
                     ),
                 )
                 track_lim, _meta = resolve_adaptive_batch("event_tracking", default_lim)
@@ -3883,17 +4144,21 @@ class AutomationManager:
                 track_lim = 300
             total = int(await run_event_tracking_batch(limit=track_lim) or 0)
             finished = datetime.now(timezone.utc)
+            await record_phase_batch_completion_async(
+                "event_tracking",
+                started,
+                finished,
+                stats={
+                    "chronicle_entries": total,
+                    "round_processed": max(total, int(track_lim)),
+                    "processed": total,
+                    "batch_limit": int(track_lim),
+                },
+                allow_empty=True,
+            )
+            task.metadata = task.metadata or {}
+            task.metadata["skip_automation_run_history"] = True
             if total > 0:
-                await record_phase_batch_completion_async(
-                    "event_tracking",
-                    started,
-                    finished,
-                    stats={
-                        "chronicle_entries": total,
-                        "round_processed": total,
-                        "processed": total,
-                    },
-                )
                 logger.info(f"Event tracking: {total} chronicle entries added")
         except Exception as e:
             logger.warning(f"Event tracking failed: {e}")
@@ -4016,7 +4281,7 @@ class AutomationManager:
 
                 dossier_max = _entity_dossier_compile_limit()
             except Exception:
-                dossier_max = max(1, min(100, int(env_str("ENTITY_DOSSIER_COMPILE_MAX", "20"))))
+                dossier_max = max(1, min(100, env_int("ENTITY_DOSSIER_COMPILE_MAX", 20)))
             compiled = int(
                 await loop.run_in_executor(
                     self._executor,
@@ -4067,12 +4332,12 @@ class AutomationManager:
 
                 meta_lim, _meta = resolve_adaptive_batch(
                     "metadata_enrichment",
-                    max(1, min(200, int(env_str("METADATA_ENRICHMENT_LIMIT_PER_DOMAIN", "5")))),
+                    max(1, min(200, env_int("METADATA_ENRICHMENT_LIMIT_PER_DOMAIN", 5))),
                 )
             except Exception:
                 meta_lim = max(
                     1,
-                    min(200, int(env_str("METADATA_ENRICHMENT_LIMIT_PER_DOMAIN", "5"))),
+                    min(200, env_int("METADATA_ENRICHMENT_LIMIT_PER_DOMAIN", 5)),
                 )
             total = await mod.run_metadata_enrichment_batch_for_domains(
                 limit_per_domain=max(1, int(meta_lim))
@@ -4090,7 +4355,27 @@ class AutomationManager:
         task.metadata = task.metadata or {}
         started = datetime.now(timezone.utc)
         try:
-            result = await run_enhancement_cycle()
+            enrich_lim = 10
+            build_lim = 10
+            try:
+                from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+                enrich_lim, enrich_meta = resolve_adaptive_batch("entity_enrichment", enrich_lim)
+                build_lim, build_meta = resolve_adaptive_batch("entity_profile_build", build_lim)
+                task.metadata["adaptive_batch"] = {
+                    "entity_enrichment": int(enrich_lim),
+                    "entity_profile_build": int(build_lim),
+                }
+                task.metadata["adaptive_batch_meta"] = {
+                    "entity_enrichment": enrich_meta,
+                    "entity_profile_build": build_meta,
+                }
+            except Exception:
+                pass
+            result = await run_enhancement_cycle(
+                enrich_limit=max(1, int(enrich_lim)),
+                build_limit=max(1, int(build_lim)),
+            )
             finished = datetime.now(timezone.utc)
             built = int(result.get("entity_profiles_built") or 0)
             enriched = int(result.get("entity_profiles_enriched") or 0)
@@ -4135,6 +4420,16 @@ class AutomationManager:
         try:
             auto_enqueue_comprehensive_rag_for_automation()
             stats = await process_content_refinement_queue_batch()
+            processed = int((stats or {}).get("processed") or 0)
+            batch_limit = int((stats or {}).get("batch_limit") or processed or 4)
+            self._stamp_monitor_batch_throughput(
+                task,
+                round_processed=max(processed, batch_limit),
+                items_processed=processed,
+                failed=int((stats or {}).get("failed") or 0),
+                pending_before=int((stats or {}).get("pending_before") or 0),
+                pending_after=int((stats or {}).get("pending_after") or 0),
+            )
             logger.info(
                 "Content refinement queue: pending_before=%s processed=%s failed=%s by_type=%s pending_after=%s",
                 stats.get("pending_before"),
@@ -4230,7 +4525,7 @@ class AutomationManager:
             try:
                 nightly_meta["nightly_limit"] = max(
                     50,
-                    int(env_str("NIGHTLY_CLAIM_EXTRACTION_BATCH_LIMIT", "250")),
+                    env_int("NIGHTLY_CLAIM_EXTRACTION_BATCH_LIMIT", 250),
                 )
             except ValueError:
                 nightly_meta["nightly_limit"] = 250
@@ -4371,10 +4666,22 @@ class AutomationManager:
         try:
             from services.entity_organizer_service import run_cycle
 
+            relationship_limit = 100
+            try:
+                from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+                relationship_limit, adaptive_meta = resolve_adaptive_batch(
+                    "entity_organizer", relationship_limit
+                )
+                if isinstance(task.metadata, dict):
+                    task.metadata["adaptive_batch"] = relationship_limit
+                    task.metadata["adaptive_batch_meta"] = adaptive_meta
+            except Exception:
+                pass
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 self.executor,
-                lambda: run_cycle(domain_key=None, relationship_limit=100),
+                lambda: run_cycle(domain_key=None, relationship_limit=relationship_limit),
             )
             total_actions = result.get("cleanup", {}).get("total_actions", 0)
             rel = result.get("relationships_extracted", 0)
@@ -4457,8 +4764,10 @@ class AutomationManager:
                 logger.info("Graph connection distillation: %s", stats)
             processed = 0
             examined = 0
+            batch_limit = 0
             if isinstance(stats, dict):
                 examined = int(stats.get("examined") or 0)
+                batch_limit = int(stats.get("batch_limit") or 0)
                 processed = int(
                     stats.get("processed")
                     or sum(
@@ -4474,17 +4783,18 @@ class AutomationManager:
                         )
                     )
                 )
-            # Always record a measurable batch row when we examined work; also
-            # record empty examined so stall logic sees a real batch attempt.
+            # Prefer real work; fall back to configured batch_limit so empty
+            # examined rounds remain measurable (throughput > 0).
+            round_n = max(processed, examined, batch_limit, 1)
             await record_phase_batch_completion_async(
                 "graph_connection_distillation",
                 started,
                 finished,
                 stats={
-                    "round_processed": max(processed, examined),
+                    "round_processed": round_n,
                     "processed": max(processed, examined),
                     "examined": examined,
-                    "batch_limit": int((stats or {}).get("batch_limit") or 0),
+                    "batch_limit": batch_limit,
                 },
                 allow_empty=True,
             )
@@ -5320,7 +5630,7 @@ class AutomationManager:
             try:
                 batch_limit = max(
                     5,
-                    int(env_str("STORYLINE_AUTOMATION_BATCH_PER_DOMAIN", "15")),
+                    env_int("STORYLINE_AUTOMATION_BATCH_PER_DOMAIN", 15),
                 )
             except ValueError:
                 pass
@@ -5331,7 +5641,7 @@ class AutomationManager:
                 batch_limit = max(5, int(batch_limit))
             except Exception:
                 pass
-            for d in get_pipeline_active_domain_keys():
+            for d in _domains_for_phase("storyline_automation"):
                 # Optional operator pause (empty default — not a permanent domain policy).
                 excluded_raw = env_str("STORYLINE_AUTOMATION_EXCLUDE_DOMAINS", "") or ""
                 excluded = {x.strip() for x in excluded_raw.split(",") if x.strip()}
@@ -5393,6 +5703,15 @@ class AutomationManager:
                         task.metadata["skip_automation_run_history"] = True
                 except Exception as e:
                     logger.debug("Storyline automation batch %s: %s", d, e)
+            if not (task.metadata or {}).get("skip_automation_run_history"):
+                # Idle sweep (nothing due): still stamp budget so Monitor can measure.
+                n_dom = len(_domains_for_phase("storyline_automation")) or 1
+                self._stamp_monitor_batch_throughput(
+                    task,
+                    round_processed=int(batch_limit) * int(n_dom),
+                    items_processed=0,
+                    adaptive_batch=int(batch_limit),
+                )
             logger.info("Storyline automation: batch run across domains completed")
 
     async def _execute_storyline_review_agent(self, task: Task):
@@ -5404,7 +5723,7 @@ class AutomationManager:
         batch_limit = 60
         adaptive_meta: dict = {}
         try:
-            batch_limit = max(10, int(env_str("STORYLINE_REVIEW_BATCH_SIZE", "60") or "60"))
+            batch_limit = max(10, env_int("STORYLINE_REVIEW_BATCH_SIZE", 60))
         except ValueError:
             batch_limit = 60
         try:
@@ -5507,7 +5826,7 @@ class AutomationManager:
 
     async def _execute_storyline_membership_review(self, task: Task):
         """Decouple off-topic storyline members; soft-deprioritize weak connections."""
-        if env_str("STORYLINE_MEMBERSHIP_REVIEW_ENABLED", "false").lower() not in (
+        if env_str("STORYLINE_MEMBERSHIP_REVIEW_ENABLED", "true").lower() not in (
             "1",
             "true",
             "yes",
@@ -5517,11 +5836,11 @@ class AutomationManager:
             run_storyline_membership_review_all_domains,
         )
 
-        limit = 8
+        limit = 100
         try:
-            limit = max(1, int(env_str("STORYLINE_MEMBERSHIP_REVIEW_MAX_STORYLINES", "8") or "8"))
+            limit = max(1, env_int("STORYLINE_MEMBERSHIP_REVIEW_MAX_STORYLINES", 100))
         except ValueError:
-            limit = 8
+            limit = 100
         adaptive_meta: dict = {}
         try:
             from shared.adaptive_batch_policy import resolve_adaptive_batch
@@ -5592,7 +5911,18 @@ class AutomationManager:
             try:
                 from services.storyline_membership_llm_agent import run_membership_llm_midband
 
-                llm_stats = await run_membership_llm_midband(batch_limit=40, dry_run=dry_run)
+                llm_limit = 40
+                try:
+                    from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+                    llm_limit, _llm_meta = resolve_adaptive_batch(
+                        "storyline_review_agent", llm_limit
+                    )
+                except Exception:
+                    llm_limit = 40
+                llm_stats = await run_membership_llm_midband(
+                    batch_limit=llm_limit, dry_run=dry_run
+                )
                 if isinstance(task.metadata, dict):
                     task.metadata["membership_llm"] = llm_stats
                 logger.info("Storyline membership LLM mid-band: %s", llm_stats)
@@ -5601,33 +5931,136 @@ class AutomationManager:
         except Exception as e:
             logger.warning("Storyline membership review failed: %s", e)
 
+    async def _execute_storyline_hygiene(self, task: Task):
+        """Freeze → core prune → near-dup title merge (move-not-copy)."""
+        if env_str("STORYLINE_HYGIENE_ENABLED", "true").lower() not in (
+            "1",
+            "true",
+            "yes",
+        ):
+            return
+        from services.storyline_hygiene_service import run_storyline_hygiene_all_domains
+
+        limit = 25
+        try:
+            limit = max(1, env_int("STORYLINE_HYGIENE_MAX_STORYLINES", 25))
+        except ValueError:
+            limit = 25
+        max_merges = 5
+        try:
+            max_merges = max(0, env_int("STORYLINE_HYGIENE_MAX_MERGES", 5))
+        except ValueError:
+            max_merges = 5
+        adaptive_meta: dict = {}
+        try:
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            limit, adaptive_meta = resolve_adaptive_batch("storyline_hygiene", limit)
+            limit = max(1, int(limit))
+            if isinstance(task.metadata, dict):
+                task.metadata["adaptive_batch"] = limit
+                if adaptive_meta:
+                    task.metadata["adaptive_batch_meta"] = adaptive_meta
+        except Exception:
+            adaptive_meta = {}
+        dry_run = env_str("STORYLINE_HYGIENE_DRY_RUN", "false").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        try:
+            result = run_storyline_hygiene_all_domains(
+                limit_per_domain=limit,
+                max_merges_per_domain=max_merges,
+                dry_run=dry_run,
+            )
+            totals = result.get("totals") or {}
+            if isinstance(task.metadata, dict):
+                task.metadata.update(
+                    {
+                        "dry_run": dry_run,
+                        "pruned": int(totals.get("pruned", 0) or 0),
+                        "unlinked": int(totals.get("unlinked", 0) or 0),
+                        "merged": int(totals.get("merged", 0) or 0),
+                        "merge_skipped": int(totals.get("merge_skipped", 0) or 0),
+                        "merge_candidates": int(totals.get("merge_candidates", 0) or 0),
+                        "errors": int(totals.get("errors", 0) or 0),
+                        "items_processed": int(totals.get("pruned", 0) or 0),
+                    }
+                )
+            logger.info(
+                "Storyline hygiene: dry_run=%s limit=%s merges=%s totals=%s",
+                dry_run,
+                limit,
+                max_merges,
+                totals,
+            )
+            try:
+                await self._record_phase_batch_loop(
+                    task,
+                    loops_processed=1,
+                    round_processed=int(totals.get("pruned", 0) or 0),
+                    items_processed=int(totals.get("pruned", 0) or 0),
+                )
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning("Storyline hygiene failed: %s", e)
+
     async def _execute_embedding_link_candidates(self, task: Task):
         from shared.chemistry_beaker import embedding_link_candidates_enabled
 
         if not embedding_link_candidates_enabled():
+            task.metadata = task.metadata or {}
+            task.metadata["skip_automation_run_history"] = True
             return
         from services.embedding_link_candidate_service import (
-            run_embedding_link_candidates_all_domains,
+            run_embedding_link_candidates_for_domain,
         )
 
         limit = 12
         try:
-            limit = max(1, int(env_str("EMBEDDING_LINK_MAX_STORYLINES", "12") or "12"))
+            limit = max(1, env_int("EMBEDDING_LINK_MAX_STORYLINES", 12))
         except ValueError:
             limit = 12
         try:
-            result = run_embedding_link_candidates_all_domains(limit_per_domain=limit)
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            limit, adaptive_meta = resolve_adaptive_batch("embedding_link_candidates", limit)
+            if isinstance(task.metadata, dict):
+                task.metadata["adaptive_batch"] = limit
+                task.metadata["adaptive_batch_meta"] = adaptive_meta
+        except Exception:
+            pass
+        try:
+            domains = _domains_for_phase("embedding_link_candidates")
+            by_domain = {}
+            totals = {"proposals": 0, "merges_enqueued": 0, "scanned": 0, "errors": 0}
+            for dk in domains:
+                res = run_embedding_link_candidates_for_domain(dk, limit=limit)
+                by_domain[dk] = res
+                for k in totals:
+                    totals[k] += int(res.get(k, 0) or 0)
+            result = {"by_domain": by_domain, "totals": totals}
             totals = result.get("totals") or {}
+            # Monitor measured rows/run requires metadata.batch=true. Use
+            # per-domain adaptive limit × active domains so AVG matches
+            # configured_rows_per_run (per-domain adaptive phases).
+            doms = len(domains) or 1
             if isinstance(task.metadata, dict):
                 task.metadata.update(
                     {
                         "proposals": int(totals.get("proposals", 0) or 0),
                         "merges_enqueued": int(totals.get("merges_enqueued", 0) or 0),
                         "scanned": int(totals.get("scanned", 0) or 0),
-                        "items_processed": int(totals.get("proposals", 0) or 0),
                     }
                 )
-            logger.info("Embedding link candidates: totals=%s", totals)
+                self._stamp_monitor_batch_throughput(
+                    task,
+                    round_processed=int(limit) * int(doms),
+                    items_processed=int(totals.get("proposals", 0) or 0),
+                )
+            logger.info("Embedding link candidates: totals=%s batch=%s", totals, limit)
         except Exception as e:
             logger.warning("Embedding link candidates failed: %s", e)
 
@@ -5635,15 +6068,50 @@ class AutomationManager:
         from shared.chemistry_beaker import collision_sampling_enabled
 
         if not collision_sampling_enabled():
+            task.metadata = task.metadata or {}
+            task.metadata["skip_automation_run_history"] = True
             return
         from services.embedding_link_candidate_service import run_random_collision_sample
 
+        pairs = 8
         try:
-            result = run_random_collision_sample()
+            pairs = max(1, env_int("COLLISION_SAMPLING_PAIRS", 8))
+        except ValueError:
+            pairs = 8
+        try:
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            pairs, adaptive_meta = resolve_adaptive_batch("collision_sampling", pairs)
             if isinstance(task.metadata, dict):
-                task.metadata["items_processed"] = int(result.get("proposals") or 0)
-                task.metadata.update({k: result.get(k) for k in ("proposals", "errors")})
-            logger.info("Collision sampling: %s", result)
+                task.metadata["adaptive_batch"] = pairs
+                task.metadata["adaptive_batch_meta"] = adaptive_meta
+        except Exception:
+            pass
+        try:
+            domains = _domains_for_phase("collision_sampling")
+            proposals = 0
+            errors = 0
+            for dk in domains:
+                result = run_random_collision_sample(domain_key=dk, pairs=pairs)
+                proposals += int((result or {}).get("proposals") or 0)
+                errors += int((result or {}).get("errors") or 0)
+            if isinstance(task.metadata, dict):
+                # batch + round_processed=pairs so measured rows/run tracks adaptive
+                # pair budget (not proposal count, which is often pairs × domains).
+                self._stamp_monitor_batch_throughput(
+                    task,
+                    round_processed=int(pairs),
+                    items_processed=proposals,
+                    proposals=proposals,
+                    errors=errors,
+                )
+            logger.info(
+                "Collision sampling: proposals=%s errors=%s pairs=%s domains=%s",
+                proposals,
+                errors,
+                pairs,
+                len(domains),
+            )
         except Exception as e:
             logger.warning("Collision sampling failed: %s", e)
 
@@ -5651,6 +6119,8 @@ class AutomationManager:
         from shared.chemistry_beaker import stimulus_rag_enabled
 
         if not stimulus_rag_enabled():
+            task.metadata = task.metadata or {}
+            task.metadata["skip_automation_run_history"] = True
             return
         from services.rag_evidence_pull_service import (
             drain_queued_evidence_pulls,
@@ -5658,24 +6128,43 @@ class AutomationManager:
             screen_hypothesized_bonds_for_evidence_pull,
         )
 
+        screen_limit = 20
         try:
-            screened = screen_ai_arxiv_for_evidence_pull(limit=20)
-            bond_screened = screen_hypothesized_bonds_for_evidence_pull(limit=25)
-            drained = drain_queued_evidence_pulls(limit=3)
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            screen_limit, adaptive_meta = resolve_adaptive_batch("stimulus_rag", screen_limit)
+            if isinstance(task.metadata, dict):
+                task.metadata["adaptive_batch"] = screen_limit
+                task.metadata["adaptive_batch_meta"] = adaptive_meta
+        except Exception:
+            pass
+        bond_limit = screen_limit
+        drain_limit = max(1, min(8, max(3, screen_limit // 7)))
+        try:
+            screened = screen_ai_arxiv_for_evidence_pull(limit=screen_limit)
+            bond_screened = screen_hypothesized_bonds_for_evidence_pull(limit=bond_limit)
+            drained = drain_queued_evidence_pulls(limit=drain_limit)
             if isinstance(task.metadata, dict):
                 task.metadata["screened"] = screened
                 task.metadata["bond_screened"] = bond_screened
                 task.metadata["drained"] = drained
-                task.metadata["items_processed"] = (
+                items = (
                     int(drained.get("processed") or 0)
                     + int(screened.get("enqueued") or 0)
                     + int(bond_screened.get("enqueued") or 0)
                 )
+                self._stamp_monitor_batch_throughput(
+                    task,
+                    round_processed=int(screen_limit),
+                    items_processed=items,
+                )
             logger.info(
-                "Stimulus RAG: screen=%s bonds=%s drain=%s",
+                "Stimulus RAG: screen=%s bonds=%s drain=%s (screen_lim=%s drain_lim=%s)",
                 screened,
                 bond_screened,
                 drained,
+                screen_limit,
+                drain_limit,
             )
         except Exception as e:
             logger.warning("Stimulus RAG failed: %s", e)
@@ -5684,17 +6173,36 @@ class AutomationManager:
         from shared.chemistry_beaker import protein_harden_enabled
 
         if not protein_harden_enabled():
+            task.metadata = task.metadata or {}
+            task.metadata["skip_automation_run_history"] = True
             return
         from services.protein_harden_service import run_protein_harden
 
+        limit = 40
         try:
-            result = run_protein_harden()
+            limit = max(1, env_int("PROTEIN_HARDEN_BATCH", 40))
+        except ValueError:
+            limit = 40
+        try:
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            limit, adaptive_meta = resolve_adaptive_batch("protein_harden", limit)
+            if isinstance(task.metadata, dict):
+                task.metadata["adaptive_batch"] = limit
+                task.metadata["adaptive_batch_meta"] = adaptive_meta
+        except Exception:
+            pass
+        try:
+            result = run_protein_harden(limit=limit)
             if isinstance(task.metadata, dict):
                 task.metadata.update(result)
-                task.metadata["items_processed"] = int(result.get("promoted") or 0) + int(
-                    result.get("refined") or 0
+                self._stamp_monitor_batch_throughput(
+                    task,
+                    round_processed=int(limit),
+                    items_processed=int(result.get("promoted") or 0)
+                    + int(result.get("refined") or 0),
                 )
-            logger.info("Protein harden: %s", result)
+            logger.info("Protein harden: %s batch=%s", result, limit)
         except Exception as e:
             logger.warning("Protein harden failed: %s", e)
 
@@ -5707,14 +6215,42 @@ class AutomationManager:
             return
         from services.graph_link_drift_service import rescore_active_graph_links
 
+        limit = 40
         try:
-            stats = rescore_active_graph_links()
+            limit = max(1, env_int("GRAPH_LINK_DRIFT_BATCH", 40))
+        except ValueError:
+            limit = 40
+        adaptive_meta: dict = {}
+        try:
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            limit, adaptive_meta = resolve_adaptive_batch("graph_link_drift_review", limit)
+            limit = max(1, int(limit))
+            if isinstance(task.metadata, dict):
+                task.metadata["adaptive_batch"] = limit
+                if adaptive_meta:
+                    task.metadata["adaptive_batch_meta"] = adaptive_meta
+        except Exception:
+            adaptive_meta = {}
+
+        try:
+            stats = rescore_active_graph_links(limit=limit)
             if isinstance(task.metadata, dict):
                 task.metadata.update(stats)
-                task.metadata["items_processed"] = int(stats.get("updated", 0) or 0) + int(
-                    stats.get("quarantined", 0) or 0
+                self._stamp_monitor_batch_throughput(
+                    task,
+                    # Prefer round_processed=limit so measured rows/run tracks adaptive
+                    # batch size (examined/updated may be lower on short queues).
+                    round_processed=int(limit),
+                    items_processed=int(stats.get("updated", 0) or 0)
+                    + int(stats.get("quarantined", 0) or 0),
                 )
-            logger.info("Graph link drift review: %s", stats)
+            logger.info(
+                "Graph link drift review: limit=%s adaptive=%s stats=%s",
+                limit,
+                bool(adaptive_meta.get("adaptive")) if adaptive_meta else False,
+                stats,
+            )
         except Exception as e:
             logger.warning("Graph link drift review failed: %s", e)
 
@@ -5736,15 +6272,20 @@ class AutomationManager:
     async def _execute_storyline_assembly(self, task: Task):
         """Run proactive detection + discovery + automation for one domain or all pipeline domains."""
         from services.storyline_assembly_service import (
-            run_storyline_assembly_all_domains,
             run_storyline_assembly_for_domain,
         )
+        from shared.domain_processing_mode import domain_runs_phase
 
         meta = task.metadata or {}
         domain = meta.get("domain")
         task.metadata = task.metadata or {}
         try:
             if domain:
+                if not domain_runs_phase(domain, "storyline_assembly"):
+                    logger.debug(
+                        "Storyline assembly skipped corpus domain=%s", domain
+                    )
+                    return
                 result = await run_storyline_assembly_for_domain(domain)
                 task.metadata["skip_automation_run_history"] = True
                 logger.info(
@@ -5755,9 +6296,21 @@ class AutomationManager:
                     list((result.get("steps") or {}).keys()),
                 )
             else:
-                batch = await run_storyline_assembly_all_domains()
-                task.metadata["skip_automation_run_history"] = True
-                for dk, res in (batch.get("domains") or {}).items():
+                from services.storyline_assembly_service import (
+                    domains_needing_assembly,
+                    count_unlinked_articles,
+                )
+
+                allowed = set(_domains_for_phase("storyline_assembly"))
+                domains = [dk for dk in domains_needing_assembly() if dk in allowed]
+                if domains:
+                    domains = sorted(
+                        domains,
+                        key=lambda dk: count_unlinked_articles(dk),
+                        reverse=True,
+                    )
+                for dk in domains:
+                    res = await run_storyline_assembly_for_domain(dk)
                     if res.get("unlinked_before", 0) != res.get("unlinked_after", 0):
                         logger.info(
                             "Storyline assembly [%s]: unlinked %s → %s",
@@ -5765,6 +6318,7 @@ class AutomationManager:
                             res.get("unlinked_before"),
                             res.get("unlinked_after"),
                         )
+                task.metadata["skip_automation_run_history"] = True
         except Exception as e:
             logger.warning("Storyline assembly failed: %s", e)
 
@@ -5781,7 +6335,7 @@ class AutomationManager:
             except Exception:
                 fv_limit = 20
             fv_limit = max(1, int(fv_limit))
-            for domain in get_pipeline_active_domain_keys():
+            for domain in _domains_for_phase("fact_verification"):
                 try:
                     result = await loop.run_in_executor(
                         self._executor,
@@ -5900,7 +6454,14 @@ class AutomationManager:
             processed,
             result.get("batch_rounds", 0),
         )
-        # Intake batch done — stir beaker when enrichment+UIE queues are clear enough.
+        # Critical path: CE restore (if needed) → event coreference before chemistry stir.
+        try:
+            from shared.pipeline_handoffs import after_unified_intake
+
+            after_unified_intake(self, articles_processed=processed)
+        except Exception as e:
+            logger.debug("unified_intake event-rail handoff: %s", e)
+        # Legacy chemistry beaker — secondary; gated by CHEMISTRY_BEAKER_ENABLED.
         try:
             from shared.chemistry_beaker import kickoff_beaker_phases
 
@@ -5946,7 +6507,7 @@ class AutomationManager:
             "yes",
         ):
             try:
-                post_lim = int(env_str("ENTITY_EXTRACTION_POST_MENTION_LIMIT", "1500"))
+                post_lim = env_int("ENTITY_EXTRACTION_POST_MENTION_LIMIT", 1500)
             except ValueError:
                 post_lim = 1500
             from services.context_processor_service import backfill_context_entity_mentions_for_domain
@@ -6008,40 +6569,60 @@ class AutomationManager:
                 raise
 
     async def _execute_event_deduplication_v5(self, task: Task):
-        """v5.0 -- Deduplicate events across sources. Skips cleanly if chronological_events is missing."""
+        """v5.0 -- Deduplicate / coreference events. Skips cleanly if chronological_events is missing."""
         try:
-            from services.event_deduplication_service import EventDeduplicationService
+            from services.event_coreference_service import coreference_recent
 
             conn = await self._get_db_connection()
             try:
-                svc = EventDeduplicationService(conn)
-                # Simple direct call with fallback to ensure method exists
+                dedupe_limit = 100
                 try:
-                    stats = await svc.deduplicate_recent(limit=100)
-                    logger.info(
-                        f"v5 event deduplication completed: "
-                        f"checked={stats['checked']}, merged={stats['merged']}"
+                    from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+                    dedupe_limit, adaptive_meta = resolve_adaptive_batch(
+                        "event_deduplication", dedupe_limit
                     )
-                except AttributeError as attr_err:
-                    if "deduplicate_recent" in str(attr_err):
-                        # Try to reload the module to fix potential import caching issues
-                        logger.warning("Method not found, attempting module reload: %s", attr_err)
-                        import importlib
-                        import sys
-                        # Remove from cache if present
-                        module_name = "services.event_deduplication_service"
-                        if module_name in sys.modules:
-                            del sys.modules[module_name]
-                        # Re-import
-                        from services.event_deduplication_service import EventDeduplicationService as NewEventDeduplicationService
-                        svc_fresh = NewEventDeduplicationService(conn)
-                        stats = await svc_fresh.deduplicate_recent(limit=100)
-                        logger.info(
-                            f"v5 event deduplication completed (after reload): "
-                            f"checked={stats['checked']}, merged={stats['merged']}"
+                    if isinstance(task.metadata, dict):
+                        task.metadata["adaptive_batch"] = dedupe_limit
+                        task.metadata["adaptive_batch_meta"] = adaptive_meta
+                except Exception:
+                    pass
+                stats = await coreference_recent(conn, limit=dedupe_limit)
+                if isinstance(task.metadata, dict):
+                    task.metadata["dedup_stats"] = {
+                        k: stats.get(k, 0)
+                        for k in (
+                            "checked",
+                            "merged",
+                            "hard_merges",
+                            "soft_links",
+                            "chains_collapsed",
+                            "soft_pruned",
                         )
-                    else:
-                        raise
+                    }
+                logger.info(
+                    "v5 event deduplication completed: "
+                    "checked=%s, merged=%s, hard_merges=%s, soft_links=%s, "
+                    "chains_collapsed=%s, soft_pruned=%s (batch=%s)",
+                    stats.get("checked", 0),
+                    stats.get("merged", 0),
+                    stats.get("hard_merges", 0),
+                    stats.get("soft_links", 0),
+                    stats.get("chains_collapsed", 0),
+                    stats.get("soft_pruned", 0),
+                    dedupe_limit,
+                )
+                try:
+                    from shared.pipeline_handoffs import after_event_deduplication
+
+                    after_event_deduplication(
+                        self,
+                        merged=int(stats.get("merged") or 0),
+                        soft_links=int(stats.get("soft_links") or 0),
+                        hard_merges=int(stats.get("hard_merges") or 0),
+                    )
+                except Exception as e:
+                    logger.debug("event_deduplication handoff: %s", e)
             finally:
                 conn.close()
         except Exception as e:
@@ -6053,8 +6634,45 @@ class AutomationManager:
                 logger.error(f"Event deduplication failed: {e}", exc_info=True)
                 raise
 
+    async def _execute_chronological_events_catchup(self, task: Task):
+        """Re-extract chronological_events for UIE-complete articles with zero CE rows."""
+        from services.chronological_events_catchup_service import (
+            is_enabled,
+            run_catchup_batch_sync,
+        )
+
+        if not is_enabled():
+            logger.debug(
+                "chronological_events_catchup skipped (CHRONOLOGICAL_EVENTS_CATCHUP_ENABLED off)"
+            )
+            return
+        try:
+            limit = 5
+            if isinstance(task.metadata, dict) and task.metadata.get("batch_limit"):
+                limit = int(task.metadata["batch_limit"])
+            stats = await asyncio.to_thread(run_catchup_batch_sync, limit=limit)
+            if stats and int(stats.get("processed") or 0) > 0:
+                logger.info("chronological_events_catchup: %s", stats)
+            await self._record_phase_batch_loop(
+                task,
+                loops_processed=1,
+                round_processed=int(stats.get("processed") or 0),
+                items_processed=int(stats.get("saved_total") or 0),
+            )
+            try:
+                from shared.pipeline_handoffs import after_chronological_events_catchup
+
+                after_chronological_events_catchup(
+                    self, saved_total=int((stats or {}).get("saved_total") or 0)
+                )
+            except Exception as e:
+                logger.debug("chronological_events_catchup handoff: %s", e)
+        except Exception as e:
+            logger.warning("chronological_events_catchup failed: %s", e)
+
     async def _execute_story_continuation_v5(self, task: Task):
         """v5.0 -- Match events to existing storylines and manage lifecycle states. Runs per domain (storylines/story_entity_index are per-schema)."""
+        from services.pipeline_phase_heartbeat_service import record_phase_heartbeat
         from services.story_continuation_service import StoryContinuationService
 
         conn = await self._get_db_connection()
@@ -6063,10 +6681,20 @@ class AutomationManager:
             return
         try:
             total = {"checked": 0, "linked": 0, "flagged": 0}
-            for schema in get_pipeline_schema_names_active():
+            cont_limit = 30
+            try:
+                from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+                cont_limit, adaptive_meta = resolve_adaptive_batch("story_continuation", cont_limit)
+                if isinstance(task.metadata, dict):
+                    task.metadata["adaptive_batch"] = cont_limit
+                    task.metadata["adaptive_batch_meta"] = adaptive_meta
+            except Exception:
+                pass
+            for schema in _schemas_for_phase("story_continuation"):
                 try:
                     svc = StoryContinuationService(conn, schema=schema)
-                    stats = await svc.process_recent_events(limit=30)
+                    stats = await svc.process_recent_events(limit=cont_limit)
                     svc.update_lifecycle_states()
                     total["checked"] += stats["checked"]
                     total["linked"] += stats["linked"]
@@ -6085,6 +6713,33 @@ class AutomationManager:
                 f"v5 story continuation completed: "
                 f"checked={total['checked']}, linked={total['linked']}, flagged={total['flagged']}"
             )
+            await self._record_phase_batch_loop(
+                task,
+                loops_processed=1,
+                round_processed=total["checked"],
+                items_processed=total["linked"] + total["flagged"],
+            )
+            try:
+                from shared.pipeline_handoffs import after_story_continuation
+
+                after_story_continuation(self, linked=int(total.get("linked") or 0))
+            except Exception as e:
+                logger.debug("story_continuation handoff: %s", e)
+            try:
+                record_phase_heartbeat(
+                    "story_continuation",
+                    scheduler_path="automation",
+                    success=True,
+                    items_processed=total["checked"],
+                    detail={
+                        "status": "complete",
+                        "linked": total["linked"],
+                        "flagged": total["flagged"],
+                        "checked": total["checked"],
+                    },
+                )
+            except Exception as hb_err:
+                logger.debug("story_continuation heartbeat: %s", hb_err)
         finally:
             conn.close()
 
@@ -6097,6 +6752,7 @@ class AutomationManager:
             svc = WatchlistService(conn)
             reactivation = svc.generate_reactivation_alerts()
             new_events = svc.generate_new_event_alerts()
+
             logger.info(f"v5 watchlist alerts: {reactivation} reactivation, {new_events} new-event")
         except Exception as e:
             if "does not exist" in str(e) or "relation" in str(e).lower():

@@ -53,6 +53,30 @@ logger = logging.getLogger(__name__)
 _shared_backlog_conn: ContextVar[Any] = ContextVar("shared_backlog_conn", default=None)
 
 
+def _domain_keys_for_phase(phase: str) -> list[str]:
+    """Domains that may run/count ``phase`` (corpus/research gate).
+
+    Skipping the drain but still counting backlog causes phantom backlog
+    (same class of bug as CTF / membership miscounts).
+    """
+    from shared.pipeline_domain_sql import pipeline_domain_keys_for_phase
+
+    return pipeline_domain_keys_for_phase(phase)
+
+
+def _schemas_for_phase(phase: str) -> list[str]:
+    """Schemas for domains that may run/count ``phase``."""
+    from shared.pipeline_domain_sql import pipeline_schema_names_for_phase
+
+    return pipeline_schema_names_for_phase(phase)
+
+
+def _pairs_for_phase(phase: str) -> list[tuple[str, str]]:
+    from shared.pipeline_domain_sql import pipeline_url_schema_pairs_for_phase
+
+    return pipeline_url_schema_pairs_for_phase(phase)
+
+
 class _SharedBacklogConn:
     """Proxy around a live connection whose ``close()`` is a no-op during batch refresh."""
 
@@ -286,6 +310,11 @@ RAW_PENDING_COUNT_KEYS = frozenset(
         "entity_organizer",
         "event_deduplication",
         "story_continuation",
+        "chronological_events_catchup",
+        "editorial_research_pass",
+        "editorial_narrative_pass",
+        "editorial_reduction_pass",
+        "claim_evidence_appraisal",
     }
 )
 
@@ -368,6 +397,7 @@ def _get_raw_pending_counts() -> Dict[str, int]:
         _set("storyline_hygiene", _count_storyline_hygiene_pending)
         # Prefer callables so _set can recover a poisoned shared txn before each COUNT.
         _set("claims_to_facts", _count_claims_to_facts_pending)
+        _set("claim_evidence_appraisal", _count_claim_evidence_appraisal_pending)
         _set("legislative_references", _count_legislative_references_backlog)
         _set("entity_profile_sync", _count_entity_profile_sync_pending)
         _set("entity_enrichment", _count_entity_enrichment_pending)
@@ -384,6 +414,10 @@ def _get_raw_pending_counts() -> Dict[str, int]:
         _set("entity_organizer", _count_entity_organizer_pending)
         _set("event_deduplication", _count_event_deduplication_pending)
         _set("story_continuation", _count_story_continuation_pending)
+        _set("chronological_events_catchup", _count_chronological_events_catchup_pending)
+        _set("editorial_research_pass", _count_editorial_research_pending)
+        _set("editorial_narrative_pass", _count_editorial_narrative_pending)
+        _set("editorial_reduction_pass", _count_editorial_reduction_pending)
         nightly_base = (
             int(raw.get("content_enrichment", 0) or 0)
             + int(raw.get("context_sync", 0) or 0)
@@ -956,7 +990,10 @@ def _count_event_tracking_backlog() -> int:
     max_age_days, min_len = _event_tracking_scan_window_params()
     from shared.pipeline_domain_sql import pipeline_domain_any_sql
 
-    domain_sql, domain_keys = pipeline_domain_any_sql("c.domain_key")
+    # Exclude corpus domains — drain skips them; counting them is phantom backlog.
+    domain_sql, domain_keys = pipeline_domain_any_sql(
+        "c.domain_key", phase="event_tracking"
+    )
     if not domain_keys:
         return 0
     conn = _get_conn()
@@ -1060,7 +1097,10 @@ def _count_entity_profile_build_backlog() -> int:
     conn = _get_conn()
     if not conn:
         raise RuntimeError("entity_profile_build backlog count: no DB connection")
-    domain_sql, domain_keys = pipeline_domain_any_sql("ep.domain_key")
+    # Corpus domains never run entity_profile_build — exclude to avoid phantom backlog.
+    domain_sql, domain_keys = pipeline_domain_any_sql(
+        "ep.domain_key", phase="entity_profile_build"
+    )
     if not domain_keys:
         return 0
     upstream_sql = ""
@@ -1595,7 +1635,7 @@ def _count_storyline_discovery_pending() -> int:
         pass_sql = f" AND ({sql_article_pass_null('storyline_discovery', 'a')}) "
     _ord = sql_order_created_at()
     try:
-        for schema in get_pipeline_schema_names_active():
+        for schema in _schemas_for_phase("storyline_discovery"):
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '5s'")
                 cur.execute(
@@ -1630,9 +1670,18 @@ def _count_storyline_discovery_pending() -> int:
 def _count_storyline_assembly_pending() -> int:
     """Domains above assembly threshold only — matches PopOS idle gate / drain."""
     try:
-        from services.storyline_assembly_service import count_assembly_actionable_pending
+        from services.storyline_assembly_service import (
+            count_unlinked_articles,
+            domains_needing_assembly,
+        )
 
-        return int(count_assembly_actionable_pending() or 0)
+        # Gate: corpus domains must not contribute research backlog.
+        allowed = set(_domain_keys_for_phase("storyline_assembly"))
+        return sum(
+            count_unlinked_articles(dk)
+            for dk in domains_needing_assembly()
+            if dk in allowed
+        )
     except Exception as e:
         logger.debug("backlog storyline_assembly count: %s", e)
         return 0
@@ -1645,7 +1694,7 @@ def _count_proactive_detection_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in get_pipeline_schema_names_active():
+        for schema in _schemas_for_phase("proactive_detection"):
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '5s'")
                 cur.execute(
@@ -1675,7 +1724,7 @@ def _count_storyline_automation_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in get_pipeline_schema_names_active():
+        for schema in _schemas_for_phase("storyline_automation"):
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -1727,7 +1776,11 @@ def _count_storyline_membership_review_pending() -> int:
 
         if not membership_review_enabled():
             return 0
-        return int(count_storylines_needing_membership_review() or 0)
+        # Sum only research domains — corpus backlog here is phantom.
+        total = 0
+        for dk in _domain_keys_for_phase("storyline_membership_review"):
+            total += int(count_storylines_needing_membership_review(domain_key=dk) or 0)
+        return total
     except Exception as e:
         logger.debug("backlog storyline_membership_review count: %s", e)
         return 0
@@ -1764,6 +1817,8 @@ def _count_rag_enhancement_pending() -> int:
     try:
         from shared.rag_enhancement_eligibility import count_rag_enhancement_pending
 
+        if not _domain_keys_for_phase("rag_enhancement"):
+            return 0
         return int(count_rag_enhancement_pending() or 0)
     except Exception as e:
         logger.debug("backlog rag_enhancement count: %s", e)
@@ -1871,6 +1926,23 @@ def _count_claims_to_facts_pending() -> int:
             pass
 
 
+
+def _count_claim_evidence_appraisal_pending() -> int:
+    """SSOT: documents/articles due for corpus evidence appraisal.
+
+    Skip drain but still counting here would create phantom backlog for research
+    domains — counter is scoped to corpus domains inside the service.
+    """
+    try:
+        from services.claim_evidence_appraisal_service import count_claim_evidence_appraisal_due
+
+        return int(count_claim_evidence_appraisal_due() or 0)
+    except Exception as e:
+        logger.debug("backlog claim_evidence_appraisal count: %s", e)
+        return 0
+
+
+
 def _count_entity_profile_sync_pending() -> int:
     """entity_canonical rows without intelligence.old_entity_to_new mapping (per domain).
 
@@ -1880,7 +1952,8 @@ def _count_entity_profile_sync_pending() -> int:
         return 0
     total = 0
     try:
-        for domain_key, schema in pipeline_url_schema_pairs():
+        # Research-band phase — exclude corpus to avoid phantom backlog.
+        for domain_key, schema in _pairs_for_phase("entity_profile_sync"):
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '5s'")
                 cur.execute(
@@ -1968,7 +2041,9 @@ def _count_entity_dossier_compile_pending() -> int:
     conn = _get_conn()
     if not conn:
         return 0
-    domain_sql, domain_keys = pipeline_domain_any_sql("ep.domain_key")
+    domain_sql, domain_keys = pipeline_domain_any_sql(
+        "ep.domain_key", phase="entity_dossier_compile"
+    )
     if not domain_keys:
         return 0
     needs_compile = sql_entity_dossier_needs_compile("ep", "ed")
@@ -2136,7 +2211,14 @@ def _count_graph_connection_distillation_pending() -> int:
     try:
         from services.graph_connection_queue_service import count_pending_graph_connection_proposals
 
-        return int(count_pending_graph_connection_proposals(actionable_only=True))
+        allowed = _domain_keys_for_phase("graph_connection_distillation")
+        if not allowed:
+            return 0
+        return int(
+            count_pending_graph_connection_proposals(
+                actionable_only=True, domain_keys=allowed
+            )
+        )
     except Exception as e:
         logger.debug("backlog graph_connection_distillation count: %s", e)
         return 0
@@ -2149,7 +2231,10 @@ def _count_embedding_link_candidates_pending() -> int:
             count_embedding_link_candidates_due,
         )
 
-        return int(count_embedding_link_candidates_due() or 0)
+        total = 0
+        for dk in _domain_keys_for_phase("embedding_link_candidates"):
+            total += int(count_embedding_link_candidates_due(domain_key=dk) or 0)
+        return total
     except Exception as e:
         logger.debug("backlog embedding_link_candidates count: %s", e)
         return 0
@@ -2162,6 +2247,8 @@ def _count_collision_sampling_pending() -> int:
             count_collision_sampling_actionable,
         )
 
+        if not _domain_keys_for_phase("collision_sampling"):
+            return 0
         return int(count_collision_sampling_actionable() or 0)
     except Exception as e:
         logger.debug("backlog collision_sampling count: %s", e)
@@ -2236,6 +2323,62 @@ def _count_story_continuation_pending() -> int:
             pass
 
 
+def _count_chronological_events_catchup_pending() -> int:
+    """UIE-complete articles missing chronological_events (CE restore backlog)."""
+    try:
+        from services.chronological_events_catchup_service import (
+            count_uie_without_chrono,
+            is_enabled,
+        )
+
+        if not is_enabled():
+            return 0
+        stats = count_uie_without_chrono()
+        return int((stats or {}).get("total") or 0)
+    except Exception as e:
+        logger.debug("backlog chronological_events_catchup count: %s", e)
+        return 0
+
+
+def _count_editorial_research_pending() -> int:
+    """Packages waiting on Research modal drain (capped probe)."""
+    try:
+        from services.editorial_package_research_service import is_enabled, list_research_due
+
+        if not is_enabled():
+            return 0
+        return len(list_research_due(limit=50))
+    except Exception as e:
+        logger.debug("backlog editorial_research_pass count: %s", e)
+        return 0
+
+
+def _count_editorial_narrative_pending() -> int:
+    """Packages waiting on Narrative modal drain (capped probe)."""
+    try:
+        from services.editorial_package_narrative_service import is_enabled, list_narrative_due
+
+        if not is_enabled():
+            return 0
+        return len(list_narrative_due(limit=50))
+    except Exception as e:
+        logger.debug("backlog editorial_narrative_pass count: %s", e)
+        return 0
+
+
+def _count_editorial_reduction_pending() -> int:
+    """Packages waiting on Reduction modal drain (capped probe)."""
+    try:
+        from services.editorial_package_reduction_service import is_enabled, list_reduction_due
+
+        if not is_enabled():
+            return 0
+        return len(list_reduction_due(limit=50))
+    except Exception as e:
+        logger.debug("backlog editorial_reduction_pass count: %s", e)
+        return 0
+
+
 def _count_entity_organizer_pending() -> int:
     """Articles past unified intake with no link_indexer pass (organizer relationship work)."""
     conn = _get_conn()
@@ -2246,7 +2389,7 @@ def _count_entity_organizer_pending() -> int:
     try:
         from shared.pipeline_pass_marker import sql_article_pass_cleared
 
-        for schema in get_pipeline_schema_names_active():
+        for schema in _schemas_for_phase("entity_organizer"):
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '5s'")
                 cur.execute(
@@ -2284,6 +2427,8 @@ def _count_stimulus_rag_pending() -> int:
     try:
         from services.rag_evidence_pull_service import count_evidence_pull_pending
 
+        if not _domain_keys_for_phase("stimulus_rag"):
+            return 0
         return int(count_evidence_pull_pending() or 0)
     except Exception:
         return 0
@@ -2293,6 +2438,8 @@ def _count_protein_harden_pending() -> int:
     try:
         from services.protein_harden_service import count_protein_harden_pending
 
+        if not _domain_keys_for_phase("protein_harden"):
+            return 0
         return int(count_protein_harden_pending() or 0)
     except Exception:
         return 0
@@ -2451,6 +2598,11 @@ SKIP_WHEN_EMPTY = frozenset({
     "entity_organizer",
     "event_deduplication",
     "story_continuation",
+    "chronological_events_catchup",
+    "editorial_research_pass",
+    "editorial_narrative_pass",
+    "editorial_reduction_pass",
+    "claim_evidence_appraisal",
 })
 
 # PhaseSpec high-churn phases union into skip set (keeps specs from drifting off SKIP_WHEN_EMPTY).

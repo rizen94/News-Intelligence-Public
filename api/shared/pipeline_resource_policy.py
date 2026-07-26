@@ -120,7 +120,18 @@ PHASE_POLICIES: dict[str, PhasePolicy] = {
         Host.WIDOW_CPU, Tier.BULK, "cpu", "cpu_light", default_batch=8
     ),
     "claims_to_facts": PhasePolicy(
-        Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy", default_batch=500, run_budget_seconds=900
+        Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy", default_batch=200, run_budget_seconds=900
+    ),
+    "claim_evidence_appraisal": PhasePolicy(
+        Host.POPOS_GPU,
+        Tier.REFINEMENT,
+        "gpu",
+        "gpu_heavy",
+        requires_llm=True,
+        batched_llm=True,
+        default_batch=8,
+        default_parallel=2,
+        run_budget_seconds=900,
     ),
     "claim_subject_gap_refresh": PhasePolicy(Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy"),
     "extracted_claims_dedupe": PhasePolicy(Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy"),
@@ -230,8 +241,11 @@ PHASE_POLICIES: dict[str, PhasePolicy] = {
         Host.POPOS_GPU, Tier.REFINEMENT, "gpu", "gpu_heavy", requires_llm=True
     ),
     "storyline_membership_review": PhasePolicy(
-        Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy", default_batch=8
-    ),  # adaptive: 8–48 via adaptive_batch_policy (per-domain)
+        Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy", default_batch=100
+    ),  # adaptive: min 100, uncapped (per-domain storyline pick + LLM mid-band)
+    "storyline_hygiene": PhasePolicy(
+        Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy", default_batch=25
+    ),  # freeze→prune→near-dup merge; adaptive 10–60
     "embedding_link_candidates": PhasePolicy(
         Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy", default_batch=12
     ),
@@ -246,7 +260,7 @@ PHASE_POLICIES: dict[str, PhasePolicy] = {
     ),
     "graph_link_drift_review": PhasePolicy(
         Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy", default_batch=40
-    ),
+    ),  # adaptive: 20–120 via adaptive_batch_policy
     "storyline_enrichment": PhasePolicy(
         Host.POPOS_HEAVY, Tier.REFINEMENT, "gpu", "gpu_heavy", requires_llm=True
     ),
@@ -460,6 +474,7 @@ _INTAKE_PREPROCESS_DEFER_EXEMPT: frozenset[str] = frozenset(
         "mention_resolution",
         "entity_profile_build",
         "storyline_membership_review",
+        "storyline_hygiene",
     }
 )
 
@@ -659,6 +674,12 @@ STRUCTURE_BAND_PHASES: frozenset[str] = frozenset(
         "storyline_automation",
         "storyline_review_agent",
         "event_tracking",
+        "chronological_events_catchup",
+        "event_deduplication",
+        "story_continuation",
+        "editorial_research_pass",
+        "editorial_narrative_pass",
+        "editorial_reduction_pass",
         "graph_connection_distillation",
         "embedding_link_candidates",
         "collision_sampling",
@@ -689,6 +710,12 @@ _STRUCTURE_CATCHUP_PENDING_PHASES: frozenset[str] = frozenset(
         "storyline_automation",
         "storyline_review_agent",
         "event_tracking",
+        "chronological_events_catchup",
+        "event_deduplication",
+        "story_continuation",
+        "editorial_research_pass",
+        "editorial_narrative_pass",
+        "editorial_reduction_pass",
         "graph_connection_distillation",
         "embedding_link_candidates",
         "collision_sampling",

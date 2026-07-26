@@ -35,7 +35,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from config.runtime import env_int
+from shared.pg_savepoint import execute_with_savepoint
 from shared.services.llm_service import LLMService, ModelType
+from shared.story_entity_index import map_entity_type_for_sei
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +98,31 @@ DORMANT_DAYS = 30
 AUTO_LINK_THRESHOLD = 0.8
 REVIEW_THRESHOLD = 0.5
 
+# Cap on how many of the source article's entities feed candidate lookup.
+ARTICLE_ENTITY_SIGNAL_LIMIT = 60
+
+
+def _min_entity_overlap() -> int:
+    return max(1, min(5, env_int("CONTINUATION_MIN_ENTITY_OVERLAP", 2)))
+
+
+def _rare_entity_max_storylines() -> int:
+    """A matched entity in <= this many storylines is distinctive enough to admit alone."""
+    return max(0, min(10, env_int("CONTINUATION_RARE_ENTITY_MAX_STORYLINES", 2)))
+
+
+def _candidate_limit() -> int:
+    return max(1, min(50, env_int("CONTINUATION_CANDIDATE_LIMIT", 10)))
+
+
+def _hub_entity_count() -> int:
+    """Storylines indexing more entities than this are 'hubs' and match almost anything.
+
+    Overbroad storylines (catch-all clusters) otherwise absorb every new event, so
+    they must clear a higher bar than a focused storyline.
+    """
+    return max(10, env_int("CONTINUATION_HUB_ENTITY_COUNT", 150))
+
 
 class StoryContinuationService:
     """Matches new events to existing storylines across unbounded time windows."""
@@ -114,17 +142,40 @@ class StoryContinuationService:
         Attempt to match a single event to an existing storyline.
 
         Returns a dict with match info if found, else None.
+        Prefers cluster-root events when resolving temporal/entity features.
         """
         event = self._load_event(event_id)
         if not event:
             return None
 
+        # Prefer cluster root for scoring dates / continuity
+        try:
+            from services.event_coreference_service import resolve_cluster_root
+
+            root_id = resolve_cluster_root(self.conn, int(event_id))
+            if root_id != int(event_id):
+                root_event = self._load_event(root_id)
+                if root_event:
+                    # Keep member id for linking; borrow root date/source_count cues
+                    event["cluster_root_id"] = root_id
+                    event["actual_event_date"] = (
+                        root_event.get("actual_event_date") or event.get("actual_event_date")
+                    )
+        except Exception:
+            pass
+
         actor_names = self._extract_names(event["key_actors"])
         entity_names = self._extract_names(event["entities"])
-        all_names = list(set(actor_names + entity_names))
+        # LLM actors are often descriptive prose ("city authorities"); the source
+        # article's extracted entities are the same vocabulary story_entity_index
+        # was built from, so they carry the real matching signal.
+        article_names, canonical_ids = self._article_entity_signals(event.get("source_article_id"))
+        all_names = list({*actor_names, *entity_names, *article_names})
 
         # Step 1: entity lookup (no time constraint)
-        candidates = self._find_candidates_by_entities(all_names, event["id"])
+        candidates = self._find_candidates_by_entities(
+            all_names, event["id"], canonical_ids=canonical_ids
+        )
 
         if not candidates:
             return None
@@ -134,13 +185,158 @@ class StoryContinuationService:
         if not candidates:
             return None
 
+        # Step 2b: pre-LLM rank with blend_link_score (temporal + entity)
+        candidates = self._rank_candidates_with_blend(candidates, event)
+
         # Step 3: LLM verification (top 3)
         best_match = await self._verify_candidates(candidates[:3], event)
         if best_match:
             self._link_event(event, best_match)
+            try:
+                self._maybe_causal_from_continuation(event, best_match)
+            except Exception:
+                pass
             return best_match
 
         return None
+
+    def _rank_candidates_with_blend(self, candidates: list[dict], event: dict) -> list[dict]:
+        """Re-order candidates by blend_link_score before LLM gate."""
+        try:
+            from services.domain_synthesis_config import (
+                get_domain_synthesis_config,
+                temporal_proximity_score,
+            )
+            from services.embedding_link_candidate_service import blend_link_score, days_apart
+        except Exception:
+            return candidates
+
+        domain_key = self.schema or "politics"
+        try:
+            half = get_domain_synthesis_config(domain_key).link_score_profile.temporal_half_life_days
+        except Exception:
+            half = 14.0
+
+        event_date = event.get("actual_event_date")
+        ranked: list[tuple[float, dict]] = []
+        cursor = self.conn.cursor()
+        try:
+            for cand in candidates:
+                sid = cand["storyline_id"]
+                # Entity overlap as Jaccard proxy
+                matched = cand.get("matched_entities") or []
+                overlap_n = int(cand.get("entity_overlap") or len(matched) or 0)
+                canonical_n = int(cand.get("canonical_overlap") or 0)
+                # Identity-resolved matches are worth more than raw name hits.
+                effective_n = overlap_n + canonical_n
+                # Approximate: overlap / (overlap + 2) as soft jaccard
+                ent_j = float(effective_n) / float(effective_n + 2) if effective_n else 0.0
+                # Damp broad storylines: a hit inside a 400-entity index is weak evidence.
+                index_size = int(cand.get("index_size") or 0)
+                hub_cut = _hub_entity_count()
+                if index_size > hub_cut:
+                    ent_j *= (float(hub_cut) / float(index_size)) ** 0.5
+                # Storyline last event date
+                cursor.execute(
+                    """
+                    SELECT MAX(actual_event_date)
+                    FROM chronological_events
+                    WHERE storyline_id = %s::text AND canonical_event_id IS NULL
+                    """,
+                    (sid,),
+                )
+                row = cursor.fetchone()
+                sl_date = row[0] if row else None
+                gap = days_apart(event_date, sl_date)
+                temp_p = temporal_proximity_score(gap, half_life_days=half)
+                # Semantic proxy from entity overlap strength
+                sem = min(1.0, 0.45 + 0.15 * effective_n)
+                causal_b = 0.0
+                try:
+                    from services.causal_edges_service import has_causal_edge_between
+
+                    # Prefer cluster-root event id when available for continuity cues.
+                    _eid = int(event.get("cluster_root_id") or event.get("id") or 0)
+                    if _eid and sid is not None:
+                        if has_causal_edge_between(
+                            "chronological_event",
+                            _eid,
+                            "storyline",
+                            int(sid),
+                            domain_key=domain_key,
+                        ) or has_causal_edge_between(
+                            "storyline",
+                            int(sid),
+                            "chronological_event",
+                            _eid,
+                            domain_key=domain_key,
+                        ):
+                            causal_b = 1.0
+                except Exception:
+                    causal_b = 0.0
+                score = blend_link_score(
+                    semantic=sem,
+                    entity_jaccard=ent_j,
+                    temporal_proximity=temp_p,
+                    domain_key=domain_key,
+                    causal_boost=causal_b,
+                )
+                cand["blend_score"] = score
+                cand["temporal_proximity"] = temp_p
+                cand["causal_boost"] = causal_b
+                ranked.append((score, cand))
+        finally:
+            cursor.close()
+        ranked.sort(key=lambda x: x[0], reverse=True)
+        return [c for _, c in ranked]
+
+    def _maybe_causal_from_continuation(self, event: dict, match: dict) -> None:
+        """Phase 3b: upsert causal edge when continuation links event to storyline with prior events."""
+        from services.causal_edges_service import upsert_causal_edge
+
+        sid = match.get("storyline_id")
+        eid = int(event["id"])
+        if sid is None:
+            return
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT id FROM chronological_events
+                WHERE storyline_id = %s::text
+                  AND id != %s
+                  AND canonical_event_id IS NULL
+                ORDER BY actual_event_date ASC NULLS LAST
+                LIMIT 1
+                """,
+                (sid, eid),
+            )
+            prior = cursor.fetchone()
+            if not prior:
+                return
+            conf = float(match.get("confidence") or match.get("blend_score") or 0.65)
+            grade = "moderate" if conf >= 0.7 else "weak"
+            domain_key = self.schema
+            upsert_causal_edge(
+                cause_kind="chronological_event",
+                cause_id=int(prior[0]),
+                effect_kind="chronological_event",
+                effect_id=eid,
+                relation="contributes_to",
+                confidence=max(0.4, min(0.95, conf)),
+                evidence_grade=grade,
+                domain_key=domain_key,
+                source="story_continuation",
+                reasoning_steps=[
+                    {
+                        "action": "story_continuation_link",
+                        "storyline_id": sid,
+                        "event_id": eid,
+                    }
+                ],
+            )
+        finally:
+            cursor.close()
 
     async def process_recent_events(self, limit: int = 30) -> dict[str, int]:
         """Batch-match unlinked events to storylines. Uses story_entity_index and storylines in current search_path."""
@@ -184,12 +380,13 @@ class StoryContinuationService:
         Rebuild the entity index for a storyline from its linked events.
         Called after a new event is linked.
         """
+        schema = self.schema or "public"
         cursor = self.conn.cursor()
         try:
             cursor.execute(
                 """
                 SELECT key_actors, entities
-                FROM chronological_events
+                FROM public.chronological_events
                 WHERE storyline_id = %s::text
                   AND canonical_event_id IS NULL
             """,
@@ -198,18 +395,25 @@ class StoryContinuationService:
             rows = cursor.fetchall()
 
             entity_counts: dict[tuple[str, str], dict] = {}
+            # Both lists default to `other`: event payloads carry no entity types, and
+            # guessing `person` both mistypes organisations and splits one entity across
+            # two rows (the unique key includes entity_type).
             for actors_json, entities_json in rows:
-                for item_json, default_type in [(actors_json, "person"), (entities_json, "other")]:
+                for item_json, default_type in [(actors_json, "other"), (entities_json, "other")]:
                     items = self._parse_json(item_json)
                     if not isinstance(items, list):
                         continue
                     for item in items:
                         if isinstance(item, dict):
                             name = item.get("name", "").strip()
-                            etype = item.get("entity_type", item.get("role", default_type))
+                            # `role` is free-text prose ("Investigating body") and is not a
+                            # type — only entity_type may seed the CHECK-constrained column.
+                            etype = map_entity_type_for_sei(
+                                item.get("entity_type") or default_type
+                            )
                         else:
                             name = str(item).strip()
-                            etype = default_type
+                            etype = map_entity_type_for_sei(default_type)
                         if not name:
                             continue
                         key = (name.lower(), etype)
@@ -222,11 +426,15 @@ class StoryContinuationService:
                             }
                         entity_counts[key]["count"] += 1
 
-            for (norm_name, etype), info in entity_counts.items():
+            skipped = 0
+            for idx, ((norm_name, etype), info) in enumerate(entity_counts.items()):
                 is_core = info["count"] >= 3
-                cursor.execute(
-                    """
-                    INSERT INTO story_entity_index
+                ok = execute_with_savepoint(
+                    cursor,
+                    self.conn,
+                    f"sei_upsert_{storyline_id}_{idx}",
+                    f"""
+                    INSERT INTO {schema}.story_entity_index
                         (storyline_id, entity_name, entity_role, entity_type,
                          mention_count, is_core_entity, last_seen_at)
                     VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
@@ -237,6 +445,15 @@ class StoryContinuationService:
                         last_seen_at = CURRENT_TIMESTAMP
                 """,
                     (storyline_id, info["name"], info["role"], etype, info["count"], is_core),
+                )
+                if not ok:
+                    skipped += 1
+            if skipped:
+                logger.warning(
+                    "Entity index storyline %s: %s/%s rows rejected",
+                    storyline_id,
+                    skipped,
+                    len(entity_counts),
                 )
 
             self.conn.commit()
@@ -292,7 +509,8 @@ class StoryContinuationService:
         cursor.execute(
             """
             SELECT id, title, description, event_type, actual_event_date,
-                   location, key_actors, entities, continuation_signals
+                   location, key_actors, entities, continuation_signals,
+                   source_article_id
             FROM chronological_events
             WHERE id = %s
         """,
@@ -312,33 +530,131 @@ class StoryContinuationService:
             "key_actors": self._parse_json(row[6]),
             "entities": self._parse_json(row[7]),
             "continuation_signals": self._parse_json(row[8]),
+            "source_article_id": row[9],
         }
 
-    def _find_candidates_by_entities(self, entity_names: list[str], event_id: int) -> list[dict]:
-        if not entity_names:
-            return []
-
+    def _article_entity_signals(self, article_id: Any) -> tuple[list[str], list[int]]:
+        """Entity names + canonical ids extracted from the event's source article."""
+        if article_id is None or not self.schema:
+            return [], []
         cursor = self.conn.cursor()
-        placeholders = ",".join(["%s"] * len(entity_names))
-        lower_names = [n.lower() for n in entity_names]
-
-        schema = self.schema or "public"
         try:
             cursor.execute(
                 f"""
-                SELECT sei.storyline_id, s.title, s.summary, s.status,
-                       COUNT(DISTINCT sei.entity_name) AS overlap,
-                       ARRAY_AGG(DISTINCT sei.entity_name) AS matched_entities
-                FROM {schema}.story_entity_index sei
-                JOIN {schema}.storylines s ON s.id = sei.storyline_id
-                WHERE LOWER(sei.entity_name) IN ({placeholders})
-                  AND s.status NOT IN ('archived', 'concluded')
-                GROUP BY sei.storyline_id, s.title, s.summary, s.status
-                HAVING COUNT(DISTINCT sei.entity_name) >= 2
-                ORDER BY overlap DESC
-                LIMIT 10
-            """,
-                lower_names,
+                SELECT DISTINCT entity_name, canonical_entity_id
+                FROM {self.schema}.article_entities
+                WHERE article_id = %s AND entity_name IS NOT NULL
+                LIMIT %s
+                """,
+                (int(article_id), ARTICLE_ENTITY_SIGNAL_LIMIT),
+            )
+            names: list[str] = []
+            canonical_ids: list[int] = []
+            for name, cid in cursor.fetchall():
+                if name and name.strip():
+                    names.append(name.strip())
+                if cid is not None:
+                    canonical_ids.append(int(cid))
+            return names, sorted(set(canonical_ids))
+        except Exception as e:
+            logger.debug("article entity signals article=%s: %s", article_id, e)
+            return [], []
+        finally:
+            cursor.close()
+
+    def _find_candidates_by_entities(
+        self,
+        entity_names: list[str],
+        event_id: int,
+        *,
+        canonical_ids: list[int] | None = None,
+    ) -> list[dict]:
+        """Candidate storylines by shared entities.
+
+        Admits a storyline when any of these hold:
+          - ``min_overlap`` distinct entity names match (original rule);
+          - at least one canonical entity id matches (identity-resolved, high trust);
+          - one name matches and that entity is rare across storylines (distinctive).
+        Recall is deliberately wide — the LLM verification gate downstream decides.
+        """
+        cids = [int(c) for c in (canonical_ids or [])]
+        if not entity_names and not cids:
+            return []
+
+        lower_names = sorted({n.lower().strip() for n in entity_names if n and n.strip()})
+        schema = self.schema or "public"
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(
+                f"""
+                WITH sig_names AS (
+                    SELECT UNNEST(%(names)s::text[]) AS nm
+                ),
+                sig_ids AS (
+                    SELECT UNNEST(%(ids)s::int[]) AS cid
+                ),
+                matches AS (
+                    SELECT sei.storyline_id,
+                           sei.entity_name,
+                           sei.canonical_entity_id,
+                           COALESCE(sei.is_core_entity, FALSE) AS is_core,
+                           (sei.canonical_entity_id IS NOT NULL
+                            AND sei.canonical_entity_id IN (SELECT cid FROM sig_ids)) AS by_canonical
+                    FROM {schema}.story_entity_index sei
+                    WHERE LOWER(sei.entity_name) IN (SELECT nm FROM sig_names)
+                       OR (sei.canonical_entity_id IS NOT NULL
+                           AND sei.canonical_entity_id IN (SELECT cid FROM sig_ids))
+                ),
+                rarity AS (
+                    SELECT LOWER(entity_name) AS nm, COUNT(DISTINCT storyline_id) AS story_count
+                    FROM {schema}.story_entity_index
+                    WHERE LOWER(entity_name) IN (SELECT nm FROM sig_names)
+                    GROUP BY 1
+                ),
+                sizes AS (
+                    SELECT storyline_id, COUNT(*) AS sei_size
+                    FROM {schema}.story_entity_index
+                    GROUP BY 1
+                )
+                SELECT m.storyline_id, s.title, s.summary, s.status,
+                       COUNT(DISTINCT m.entity_name) AS overlap,
+                       COUNT(DISTINCT m.canonical_entity_id)
+                           FILTER (WHERE m.by_canonical) AS canonical_overlap,
+                       BOOL_OR(m.is_core) AS core_hit,
+                       MIN(COALESCE(r.story_count, 9999)) AS min_story_count,
+                       COALESCE(MAX(z.sei_size), 0) AS sei_size,
+                       ARRAY_AGG(DISTINCT m.entity_name) AS matched_entities
+                FROM matches m
+                JOIN {schema}.storylines s ON s.id = m.storyline_id
+                LEFT JOIN rarity r ON r.nm = LOWER(m.entity_name)
+                LEFT JOIN sizes z ON z.storyline_id = m.storyline_id
+                WHERE s.status NOT IN ('archived', 'concluded')
+                GROUP BY m.storyline_id, s.title, s.summary, s.status
+                HAVING
+                    CASE WHEN COALESCE(MAX(z.sei_size), 0) > %(hub)s THEN
+                        -- Hub storyline: only strong, identity-resolved evidence admits it.
+                        COUNT(DISTINCT m.canonical_entity_id) FILTER (WHERE m.by_canonical) >= 2
+                        OR COUNT(DISTINCT m.entity_name) >= %(hub_min_overlap)s
+                    ELSE
+                        COUNT(DISTINCT m.entity_name) >= %(min_overlap)s
+                        OR COUNT(DISTINCT m.canonical_entity_id) FILTER (WHERE m.by_canonical) >= 1
+                        OR (
+                            COUNT(DISTINCT m.entity_name) >= 1
+                            AND MIN(COALESCE(r.story_count, 9999)) <= %(rare)s
+                        )
+                    END
+                ORDER BY canonical_overlap DESC, overlap DESC
+                LIMIT %(limit)s
+                """,
+                {
+                    "names": lower_names,
+                    "ids": cids,
+                    "hub": _hub_entity_count(),
+                    "hub_min_overlap": max(4, _min_entity_overlap() * 2),
+                    "min_overlap": _min_entity_overlap(),
+                    "rare": _rare_entity_max_storylines(),
+                    "limit": _candidate_limit(),
+                },
             )
 
             results = []
@@ -350,7 +666,11 @@ class StoryContinuationService:
                         "summary": row[2],
                         "status": row[3],
                         "entity_overlap": row[4],
-                        "matched_entities": row[5],
+                        "canonical_overlap": row[5],
+                        "core_entity_hit": bool(row[6]),
+                        "entity_rarity": row[7],
+                        "index_size": row[8],
+                        "matched_entities": row[9],
                     }
                 )
             return results
@@ -455,6 +775,36 @@ class StoryContinuationService:
                 (storyline_id, event["id"]),
             )
 
+            # Attach source article to the storyline when present (membership only).
+            aid = event.get("source_article_id")
+            if aid is not None:
+                try:
+                    conf = float(match.get("confidence") or 0.7)
+                except (TypeError, ValueError):
+                    conf = 0.7
+                conf = max(0.0, min(1.0, conf))
+                # Savepoint: a rejected attach must not abort the storyline updates below.
+                attached = execute_with_savepoint(
+                    cursor,
+                    self.conn,
+                    f"continuation_attach_{event['id']}",
+                    f"""
+                    INSERT INTO {schema}.storyline_articles
+                    (storyline_id, article_id, relevance_score, confidence_score,
+                     relationship_type, added_at, added_by, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, 'related', NOW(), 'story_continuation',
+                            NOW(), NOW())
+                    ON CONFLICT (storyline_id, article_id) DO NOTHING
+                    """,
+                    (int(storyline_id), int(aid), conf, conf),
+                )
+                if not attached:
+                    logger.warning(
+                        "continuation storyline_articles attach failed storyline=%s article=%s",
+                        storyline_id,
+                        aid,
+                    )
+
             # Reactivate dormant storylines
             cursor.execute(
                 f"""
@@ -482,6 +832,22 @@ class StoryContinuationService:
 
             self.conn.commit()
             self.update_entity_index(storyline_id)
+            # Admit / refresh editorial package so Research modal can pick it up.
+            try:
+                from shared.domain_registry import schema_to_primary_domain_key
+                from services.editorial_package_service import ensure_package_from_storyline
+
+                dk = schema_to_primary_domain_key(schema)
+                ensure_package_from_storyline(
+                    domain_key=dk,
+                    storyline_id=int(storyline_id),
+                    actor="story_continuation",
+                    refresh_members=True,
+                )
+            except Exception as e:
+                logger.debug(
+                    "continuation editorial seed storyline=%s: %s", storyline_id, e
+                )
             logger.info(
                 f"Linked event {event['id']} to storyline {storyline_id} "
                 f"(confidence={match.get('confidence', 0):.2f}, auto={match.get('auto_linked')})"

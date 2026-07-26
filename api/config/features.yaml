@@ -28,7 +28,7 @@ entity_extraction:
   flags:
     env: LEGACY_INTAKE_EXTRACTION_ENABLED
   archive_path: api/_archived/intake/entity_extraction_runner.py
-  notes: Rollback via LEGACY_INTAKE_EXTRACTION_ENABLED=true
+  notes: Rollback via LEGACY_INTAKE_EXTRACTION_ENABLED=true (archived runner only — no schedule)
 
 event_extraction:
   lifecycle: archived
@@ -40,7 +40,7 @@ event_extraction:
   flags:
     env: LEGACY_INTAKE_EXTRACTION_ENABLED
   archive_path: api/_archived/intake/event_extraction_runner.py
-  notes: Rollback via LEGACY_INTAKE_EXTRACTION_ENABLED=true
+  notes: Rollback via LEGACY_INTAKE_EXTRACTION_ENABLED=true (archived runner only — no schedule)
 
 sentiment_analysis:
   lifecycle: archived
@@ -217,24 +217,28 @@ entity_dossier_compile:
     yaml: context_centric.tasks.entity_dossier_compile
 
 pattern_recognition:
-  lifecycle: under_developed
+  lifecycle: archived
   enabled: false
   phase_name: pattern_recognition
   flags:
     yaml: context_centric.tasks.pattern_recognition
-  notes: Disabled until pattern_discoveries has baseline data
+  notes: >
+    Hard-retired from AutomationManager schedules. Do not re-add a schedule entry.
+    Re-introduce only via a new feature design + features.yaml incorporated entry.
 
 arc_report_generation:
-  lifecycle: under_developed
+  lifecycle: archived
   enabled: false
   phase_name: arc_report_generation
-  notes: Longitudinal table empty; scheduler off
+  notes: >
+    Hard-retired from schedules (longitudinal table empty). Do not re-add schedule.
 
 longitudinal_matview_refresh:
-  lifecycle: under_developed
+  lifecycle: archived
   enabled: false
   phase_name: longitudinal_matview_refresh
-  notes: Longitudinal table empty; scheduler off
+  notes: >
+    Hard-retired from schedules. Do not re-add schedule until arc_definitions is populated.
 
 relationship_extraction:
   lifecycle: archived
@@ -295,7 +299,9 @@ embedding_link_candidates:
   modules: [api/services/embedding_link_candidate_service.py]
   flags:
     env: EMBEDDING_LINK_CANDIDATES_ENABLED
-  notes: Cosine-ranked graph_connection_proposals from embedding_chunks (beaker loose-bond factory)
+  notes: >
+    Legacy name — cosine-ranked graph_connection_proposals from embedding_chunks;
+    part of related-event matching / storyline formation (not a separate chemistry product).
 
 collision_sampling:
   lifecycle: incorporated
@@ -306,8 +312,9 @@ collision_sampling:
   flags:
     env: COLLISION_SAMPLING_ENABLED
   notes: >
-    Chemistry beaker — random storyline pair collisions as hypothesized proposals
-    (epsilon exploration outside prior-driven embedding links). Gated by CHEMISTRY_BEAKER_ENABLED.
+    Legacy name — exploratory pair sampling as provisional proposals (epsilon outside
+    prior-driven embedding links). Part of matching / storyline formation; do not expand
+    as a chemistry product. Gated by CHEMISTRY_BEAKER_ENABLED.
 
 stimulus_rag:
   lifecycle: incorporated
@@ -318,7 +325,8 @@ stimulus_rag:
   flags:
     env: RAG_EVIDENCE_PULL_ENABLED
   notes: >
-    Selective RAG evidence pull (arXiv PDF etc.) when loose connections need more source text.
+    Legacy name — selective evidence pull (arXiv PDF etc.) when a provisional link needs
+    more source text. Matching support only; do not expand as a chemistry product.
     Gated by CHEMISTRY_BEAKER_ENABLED.
 
 protein_harden:
@@ -330,9 +338,9 @@ protein_harden:
   flags:
     env: PROTEIN_HARDEN_ENABLED
   notes: >
-    Chemistry beaker — promote hypothesized→candidate and enqueue refinement from
-    established links (stimulus/harden), not storyline heat census.
-    Gated by CHEMISTRY_BEAKER_ENABLED.
+    Legacy name — promote provisional→promising link confidence and enqueue refinement
+    from established links (not storyline heat census). Part of matching / storyline
+    formation; do not expand as a chemistry product. Gated by CHEMISTRY_BEAKER_ENABLED.
 
 storyline_membership_llm:
   lifecycle: staged
@@ -353,32 +361,37 @@ graph_link_drift_review:
     env: GRAPH_LINK_DRIFT_REVIEW_ENABLED
   notes: Re-score stale active graph links; quarantine on drift
 
-# Fully retired briefing batch synthesizers (replaced by desk promote + RAG)
+# Fully retired briefing batch synthesizers (replaced by desk promote + RAG).
+# Hard-retired: no AutomationManager schedule entries — do not re-add.
 editorial_document_generation:
   lifecycle: archived
   enabled: false
   introduced_in: "8.0.0"
-  modules: [api/services/editorial_document_service.py]
-  notes: Fully retired 2026-07 — use content_refinement_queue / desk promote
+  phase_name: editorial_document_generation
+  modules: [api/_archived/editorial/editorial_document_service.py]
+  notes: Fully retired 2026-07 — archived under api/_archived/editorial/. No schedule.
 
 editorial_briefing_generation:
   lifecycle: archived
   enabled: false
   introduced_in: "8.0.0"
-  modules: [api/services/editorial_document_service.py]
-  notes: Fully retired 2026-07 — use desk promote or narrative_stack API
+  phase_name: editorial_briefing_generation
+  modules: [api/_archived/editorial/editorial_document_service.py]
+  notes: Fully retired 2026-07 — archived; use packages or narrative_stack API. No schedule.
 
 daily_briefing_synthesis:
   lifecycle: archived
   enabled: false
   introduced_in: "8.0.0"
-  notes: Fully retired 2026-07 — Briefings page uses GET /api/{domain}/report
+  phase_name: daily_briefing_synthesis
+  notes: Fully retired 2026-07 — Briefings page uses GET /api/{domain}/report. No schedule.
 
 digest_generation:
   lifecycle: archived
   enabled: false
   introduced_in: "8.0.0"
-  notes: Fully retired 2026-07
+  phase_name: digest_generation
+  notes: Fully retired 2026-07. No schedule.
 
 desk_agent_writeback:
   lifecycle: staged
@@ -392,17 +405,121 @@ desk_agent_writeback:
   notes: >
     OWUI editor promote path — PATCH storyline editorial / tracked_event narrative,
     graph proposal accept/reject, POST /api/desk/promote_investigation. Default off.
+    v11 local (.env.dev) keeps this off; packages are the handoff artifact.
+
+editorial_packages:
+  lifecycle: staged
+  enabled: true
+  introduced_in: "11.0.0"
+  modules:
+    - api/services/editorial_package_service.py
+    - api/services/news_story_service.py
+    - api/services/modal_handoff_service.py
+    - api/domains/intelligence_hub/routes/editorial_packages.py
+    - api/shared/editorial_package_vocab.py
+    - api/shared/post_processing_modals.py
+  flags:
+    env: EDITORIAL_PACKAGES_ENABLED
+  notes: >
+    v11 Editorial Package artifact + news_stories with citation gate.
+    Local default on; Widow apply only after cutover (migration 285+).
+
+editorial_reduction:
+  lifecycle: staged
+  enabled: true
+  introduced_in: "11.0.0"
+  phase_name: editorial_reduction_pass
+  modules:
+    - api/services/editorial_package_reduction_service.py
+    - api/config/prompts/reduction/package_reduction.md
+    - api/domains/intelligence_hub/routes/editorial_packages.py
+  flags:
+    env: EDITORIAL_REDUCTION_ENABLED
+  notes: >
+    Reduction modality LLM pass: uncouple unrelated / weak / geo+entity-mismatched
+    members and links from the editorial package only (status=removed|quarantined).
+    Never deletes articles, events, entities, or claims. Auto-applies
+    (EDITORIAL_REDUCTION_AUTO_APPLY, default true). Cycle escape: when both
+    Narrative and Reduction report zero changes (or max rounds), clear → Editor.
+    Otherwise routes back to research|narrative. Requires migration 288+.
+
+editorial_narrative:
+  lifecycle: staged
+  enabled: true
+  introduced_in: "11.0.0"
+  phase_name: editorial_narrative_pass
+  modules:
+    - api/services/editorial_package_narrative_service.py
+    - api/config/prompts/narrative/package_narrative.md
+    - api/domains/intelligence_hub/routes/editorial_packages.py
+  flags:
+    env: EDITORIAL_NARRATIVE_ENABLED
+  notes: >
+    Narrative modality LLM assembly: attach events/entities/articles, assign
+    anchors, create defensible links, update summary_stub. Package membership
+    only. Changes → Reduction; both-zero or max rounds → Editor. Requires
+    migration 289.
+
+editorial_research:
+  lifecycle: staged
+  enabled: true
+  introduced_in: "11.0.0"
+  phase_name: editorial_research_pass
+  modules:
+    - api/services/editorial_package_research_service.py
+    - api/config/prompts/research/package_research.md
+    - api/domains/intelligence_hub/routes/editorial_packages.py
+  flags:
+    env: EDITORIAL_RESEARCH_ENABLED
+  notes: >
+    Research modality: package-scoped claim extract → facts promote → optional
+    literature appraisal, then LLM attach/link of claims/facts/papers/hypotheses.
+    Changes → Reduction; Research zero + last Reduction zero → Editor; max rounds
+    → Editor. Domains stay Research allowlist. Requires migration 290.
+
+chronological_events_catchup:
+  lifecycle: staged
+  enabled: true
+  introduced_in: "10.1.0"
+  phase_name: chronological_events_catchup
+  modules:
+    - api/services/chronological_events_catchup_service.py
+    - api/scripts/backfill_chronological_events_from_uie.py
+  flags:
+    env: CHRONOLOGICAL_EVENTS_CATCHUP_ENABLED
+  notes: >
+    Re-extract chronological_events for UIE-complete articles that have none
+    (post-flush recovery). Direct EventExtractionService path; does not redo UIE.
+    Feeds story_continuation input queue. Backlog-scheduled + handoff from UIE
+    via api/shared/pipeline_handoffs.py (after_unified_intake).
+
+legacy_editorial_writers:
+  lifecycle: archived
+  enabled: false
+  introduced_in: "11.0.0"
+  modules:
+    - api/_archived/editorial/editorial_document_service.py
+    - api/_archived/editorial/editorial_room_loop_service.py
+    - api/shared/legacy_editorial_rollback.py
+  flags:
+    env: LEGACY_EDITORIAL_WRITERS_ENABLED
+  notes: >
+    Archived desk/doc writers. Shims at old service paths no-op unless
+    LEGACY_EDITORIAL_WRITERS_ENABLED=1 (or EDITORIAL_ROOM_LOOP_ENABLED on Widow).
 
 editorial_room_investigation_round:
   lifecycle: staged
   enabled: false
   introduced_in: "10.1.0"
-  modules: [api/services/editorial_room_loop_service.py, api/services/vault_bridge_service.py]
+  modules:
+    - api/_archived/editorial/editorial_room_loop_service.py
+    - api/services/vault_bridge_service.py
+    - api/shared/legacy_editorial_rollback.py
   flags:
     env: EDITORIAL_ROOM_INVESTIGATION_ROUND_ENABLED
   notes: >
-    Headless draft_investigation → 20_Investigations/. Editor lens tags only
-    (EDITORIAL_ROOM_EDITOR_LENS_ENABLED); never promotes long-form to Postgres.
+    Headless draft_investigation → 20_Investigations/. Writer archived; shim no-ops
+    unless LEGACY_EDITORIAL_WRITERS_ENABLED / EDITORIAL_ROOM_LOOP_ENABLED.
 
 phase_auto_silence:
   lifecycle: incorporated
@@ -473,7 +590,328 @@ event_core_membership:
   flags:
     env: EVENT_CORE_MEMBERSHIP_ENABLED
   notes: >
-    Event-core: tracked_events as megathread; rare-anchor founding before mega absorb;
-    typed intelligence.event_article_membership. Enable with EVENT_CORE_MEMBERSHIP_ENABLED=true
+    Event-core membership: tracked_events as longer-lived follow objects; rare-anchor
+    founding before oversized absorb; typed intelligence.event_article_membership.
+    **Not** the event→storyline attach SSOT — that is `story_continuation`.
+    Enable with EVENT_CORE_MEMBERSHIP_ENABLED=true
     (or FEATURE_OVERRIDE_EVENT_CORE_MEMBERSHIP=true). Requires migration 280.
     Split hygiene: EVENT_CORE_SPLIT_APPLY / EVENT_CORE_SPLIT_UNLINK.
+
+fulltext_pull_gate:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  incorporated_in: "10.1.0"
+  phase_name: content_enrichment
+  modules:
+    - api/shared/fulltext_pull_gate.py
+    - api/services/clinicaltrials_study_fetch.py
+  flags:
+    env: FULLTEXT_PULL_GATE_ENABLED
+  notes: >
+    Title-link sources (ClinicalTrials.gov): triage before body fetch. Worth-pull uses
+    interest keywords / subject entities → ClinicalTrials API summary; else
+    enrichment_status=pull_deferred and phase out of LLM lanes. Do not treat RSS
+    chrome as enriched content.
+
+research_subject_ledger:
+  lifecycle: incorporated
+  enabled: true
+  notes: Medicine/AI entity-rooted claim ledger (hypothesis → proved/disproved)
+
+matter_docket_ledger:
+  lifecycle: incorporated
+  enabled: true
+  notes: Legal matter_docket rulings + running legal_status
+
+storyline_hygiene:
+  lifecycle: staged
+  enabled: true
+  introduced_in: "10.1.0"
+  phase_name: storyline_hygiene
+  modules: [api/services/storyline_hygiene_service.py]
+  flags:
+    env: STORYLINE_HYGIENE_ENABLED
+  notes: >
+    Scheduled freeze → core dissimilar prune → near-duplicate title merge (move-not-copy).
+    Prevents kitchen-sink re-inflation after prune; collapses near-dup titles like US-Iran oil pairs.
+    Env: STORYLINE_HYGIENE_DRY_RUN, STORYLINE_HYGIENE_MIN_ARTICLES, STORYLINE_HYGIENE_MAX_UNLINKS,
+    STORYLINE_HYGIENE_TITLE_SIM, STORYLINE_HYGIENE_FREEZE_HOURS.
+
+arc_stage_inference:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  modules: [api/services/arc_stage_service.py]
+  flags:
+    env: ARC_STAGE_INFERENCE_ENABLED
+  notes: >
+    Infer filing→hearing→ruling (etc.) arc_stage onto quality_metrics;
+    small attach prior hook in blend_link_score when enabled.
+
+stimulus_rag_court_pdf:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  modules: [api/services/rag_evidence_pull_service.py]
+  flags:
+    env: RAG_EVIDENCE_PULL_COURT_PDF_ENABLED
+  notes: Court PDF stimulus RAG source type (requires stimulus_rag).
+
+stimulus_rag_federal_register:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  modules: [api/services/rag_evidence_pull_service.py]
+  flags:
+    env: RAG_EVIDENCE_PULL_FEDERAL_REGISTER_ENABLED
+  notes: Federal Register URL fetch stimulus source type.
+
+stimulus_rag_who_cdc:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  modules: [api/services/rag_evidence_pull_service.py]
+  flags:
+    env: RAG_EVIDENCE_PULL_WHO_CDC_ENABLED
+  notes: WHO/CDC bulletin URL fetch stimulus source type.
+
+stimulus_rag_url_fetch:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  modules: [api/services/rag_evidence_pull_service.py]
+  flags:
+    env: RAG_EVIDENCE_PULL_URL_FETCH_ENABLED
+  notes: Generic URL fetch stimulus source type.
+
+narrative_gap_detection:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  phase_name: null
+  modules:
+    - api/services/narrative_gap_service.py
+    - api/scripts/run_narrative_gap_scan.py
+  flags:
+    env: NARRATIVE_GAP_DETECTION_ENABLED
+  notes: >
+    Typed-arc missing next-stage detection → rag_evidence_pull_queue tickets.
+    Optional / feature staged; operator script run_narrative_gap_scan.py.
+
+expectation_tracking:
+  lifecycle: staged
+  enabled: true
+  introduced_in: "10.1.0"
+  modules:
+    - api/services/expectation_tracking_service.py
+    - api/scripts/run_expectation_tracking.py
+    - api/domains/intelligence_hub/routes/narrative_enhancement.py
+  flags:
+    env: EXPECTATION_TRACKING_ENABLED
+  notes: >
+    Forward-looking claims with due dates (C3). Staged enabled for code paths;
+    requires migration 279 narrative_expectations table. GET /api/expectations.
+
+source_disagreement:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  modules:
+    - api/services/source_disagreement_service.py
+    - api/domains/intelligence_hub/routes/narrative_enhancement.py
+  notes: Claim/title variant summary per canonical event cluster (C4).
+
+entity_dossier_diffs:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  modules:
+    - api/services/entity_dossier_diff_service.py
+    - api/domains/intelligence_hub/routes/narrative_enhancement.py
+  notes: Weekly versioned_facts diff for entity dossiers (C6).
+
+hyperedge_meta_storylines:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  modules:
+    - api/services/hyperedge_meta_storyline_service.py
+    - api/domains/intelligence_hub/routes/narrative_enhancement.py
+  notes: Hyperedge proposals as umbrella meta-storylines with member timelines (C7).
+
+storyline_lifecycle:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  modules: [api/services/storyline_lifecycle_service.py]
+  flags:
+    env: STORYLINE_LIFECYCLE_ENABLED
+  notes: >
+    emerging→active→dormant→resolved/merged/split via event velocity (C2).
+    Stored on quality_metrics.storyline_lifecycle.
+
+storyline_dual_centroid:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  modules: [api/services/storyline_centroid.py]
+  flags:
+    env: STORYLINE_DUAL_CENTROID_ENABLED
+  notes: >
+    Trailing-window centroid alongside full history for matching (C8).
+    Default off (STORYLINE_DUAL_CENTROID_ENABLED=false).
+
+trading_signal_outcomes:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  modules:
+    - api/services/trading_signals_service.py
+    - api/scripts/run_trading_signal_outcomes.py
+  notes: Stooq CSV retrospective scoring writeback onto trading_signals (C10).
+
+entity_position_versioned_facts:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  modules: [api/services/entity_position_tracker_service.py]
+  notes: >
+    Mirror entity_positions into versioned_facts when profile resolvable (A9 deepen).
+
+# --- Phase 1 public-data collectors (Narrative Enhancement) ---
+# Enable via FEATURE_OVERRIDE_<KEY>=true or env *_COLLECTOR_ENABLED=true.
+# Run: PYTHONPATH=api python api/scripts/run_public_data_collectors.py --source all
+
+courtlistener_collector:
+  lifecycle: under_developed
+  enabled: false
+  introduced_in: "10.1.0"
+  modules: [api/collectors/courtlistener_collector.py]
+  flags:
+    env: COURTLISTENER_COLLECTOR_ENABLED
+  notes: >
+    CourtListener REST v4 opinions → chronological_events (extraction_method=courtlistener).
+    Requires COURTLISTENER_API_TOKEN.
+
+federal_register_collector:
+  lifecycle: under_developed
+  enabled: false
+  introduced_in: "10.1.0"
+  modules: [api/collectors/federal_register_collector.py]
+  flags:
+    env: FEDERAL_REGISTER_COLLECTOR_ENABLED
+  notes: Federal Register API v1 documents → chronological_events (no API key).
+
+congress_status_collector:
+  lifecycle: under_developed
+  enabled: false
+  introduced_in: "10.1.0"
+  modules:
+    - api/collectors/congress_status_collector.py
+    - api/services/legislative_reference_service.py
+  flags:
+    env: CONGRESS_STATUS_COLLECTOR_ENABLED
+  notes: >
+    Congress.gov bill actions as timeline events. Coordinates with
+    legislative_reference_service.emit_status_events_for_bill; needs CONGRESS_GOV_API_KEY.
+
+ma_newton_collector:
+  lifecycle: under_developed
+  enabled: false
+  introduced_in: "10.1.0"
+  modules: [api/collectors/ma_newton_collector.py]
+  flags:
+    env: MA_NEWTON_COLLECTOR_ENABLED
+  notes: MA legislature API + Newton agenda stubs; graceful skip if unreachable.
+
+edgar_collector:
+  lifecycle: under_developed
+  enabled: false
+  introduced_in: "10.1.0"
+  modules: [api/collectors/edgar_collector.py]
+  flags:
+    env: EDGAR_COLLECTOR_ENABLED
+  notes: SEC EDGAR 8-K/10-K/13D → finance chronological_events. Needs EDGAR_USER_AGENT.
+
+fred_economic_events:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  modules:
+    - api/services/macro_series_service.py
+    - api/services/alfred_client.py
+  flags:
+    env: FRED_ECONOMIC_EVENTS_ENABLED
+  notes: >
+    Widen LONGITUDINAL_MACRO_SERIES_IDS; emit economic_event chronological rows on
+    new FRED observations (macro_series_refresh path).
+
+gdelt_events_aid_collector:
+  lifecycle: under_developed
+  enabled: false
+  introduced_in: "10.1.0"
+  modules: [api/collectors/gdelt_events_aid_collector.py]
+  flags:
+    env: GDELT_EVENTS_AID_COLLECTOR_ENABLED
+  notes: >
+    GDELT 2.0 Events as coreference AID only (extraction_method=gdelt_aid).
+    Does NOT replace NI event extraction.
+
+acled_ucdp_collector:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  modules:
+    - api/services/acled_client.py
+    - api/services/ucdp_client.py
+  flags:
+    env: ACLED_COLLECTOR_ENABLED
+  notes: >
+    Completes external_events_sync path. ACLED needs ACLED_API_KEY+ACLED_EMAIL;
+    UCDP optional UCDP_ACCESS_TOKEN. Default ACLED/UCDP env collectors remain on
+    when credentials present (see ACLED_COLLECTOR_ENABLED / UCDP_COLLECTOR_ENABLED).
+
+# --- v11 corpus literature collectors + evidence appraisal ---
+
+europepmc_collector:
+  lifecycle: under_developed
+  enabled: false
+  introduced_in: "11.0.0"
+  modules:
+    - api/collectors/europepmc_collector.py
+    - api/collectors/publication_article_upsert.py
+  flags:
+    env: EUROPEPMC_COLLECTOR_ENABLED
+  notes: >
+    Europe PMC REST search + OA fullTextXML → domain articles + processed_documents.
+    Also enabled when NEURODIVERSITY_COLLECTORS_ENABLED=true. Default domain neurodiversity.
+
+pubmed_eutils_collector:
+  lifecycle: under_developed
+  enabled: false
+  introduced_in: "11.0.0"
+  modules:
+    - api/collectors/pubmed_eutils_collector.py
+    - api/collectors/publication_article_upsert.py
+    - api/shared/evidence_grade.py
+  flags:
+    env: PUBMED_EUTILS_COLLECTOR_ENABLED
+  notes: >
+    NCBI E-utilities esearch/efetch; MeSH PublicationType → study_design.
+    Optional NCBI_EMAIL / NCBI_API_KEY. Also NEURODIVERSITY_COLLECTORS_ENABLED.
+
+claim_evidence_appraisal:
+  lifecycle: under_developed
+  enabled: false
+  introduced_in: "11.0.0"
+  phase_name: claim_evidence_appraisal
+  modules:
+    - api/services/claim_evidence_appraisal_service.py
+    - api/shared/evidence_grade.py
+    - api/config/prompts/research/evidence_appraisal.md
+  flags:
+    env: CLAIM_EVIDENCE_APPRAISAL_ENABLED
+  notes: >
+    Corpus evidence appraisal → intelligence.claim_evidence_appraisal.
+    Refusal contract: no quotes ⇒ insufficient_reporting.

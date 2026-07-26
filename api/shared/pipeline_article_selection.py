@@ -42,6 +42,23 @@ def article_selection_newest_first() -> bool:
     return False
 
 
+def unified_intake_newest_first() -> bool:
+    """UIE steady-state: newest first so fresh intake clears inside preprocess SLA.
+
+    Override with ``UNIFIED_INTAKE_ARTICLE_SELECTION_ORDER`` (fifo|lifo|newest_first).
+    When unset, defaults to newest_first. During ``BULK_CATCHUP_ACTIVE``, follows the
+    global ``PIPELINE_ARTICLE_SELECTION_ORDER`` (usually fifo for backlog drain).
+    """
+    raw = env_str("UNIFIED_INTAKE_ARTICLE_SELECTION_ORDER", "").strip().lower()
+    if raw in ("lifo", "newest_first", "newest", "desc"):
+        return True
+    if raw in ("fifo", "oldest", "oldest_first", "asc"):
+        return False
+    if env_str("BULK_CATCHUP_ACTIVE", "").lower() in ("1", "true", "yes"):
+        return article_selection_newest_first()
+    return True
+
+
 def pipeline_article_selection_mode_report() -> dict[str, str]:
     """Resolved mode for logs, Monitor, or health payloads (env string may be empty)."""
     raw = (env_str("PIPELINE_ARTICLE_SELECTION_ORDER") or "fifo").strip()
@@ -70,9 +87,11 @@ def sql_order_id(_column: str = "id") -> str:
     return "DESC" if article_selection_newest_first() else "ASC"
 
 
-def sql_order_coalesce_pub_created(alias: str = "a") -> str:
+def sql_order_coalesce_pub_created(alias: str = "a", *, newest_first: bool | None = None) -> str:
     """``ORDER BY`` fragment using published_at with created_at fallback."""
-    direction = "DESC" if article_selection_newest_first() else "ASC"
+    if newest_first is None:
+        newest_first = article_selection_newest_first()
+    direction = "DESC" if newest_first else "ASC"
     return f"COALESCE({alias}.published_at, {alias}.created_at) {direction} NULLS LAST"
 
 

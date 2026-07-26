@@ -237,13 +237,26 @@ No Neo4j — link candidates and drift review run on Postgres:
 | `stimulus_rag` | `RAG_EVIDENCE_PULL_ENABLED=false` | Selective RAG / arXiv PDF pull when bonds need evidence |
 | `protein_harden` | `PROTEIN_HARDEN_ENABLED=false` | Promote hypothesized→candidate; enqueue refinement from established links |
 | `graph_connection_distillation` | on | Materialize proposals → `graph_connection_links` (`established`); merge gated by `story_kind` |
-| `graph_link_drift_review` | `GRAPH_LINK_DRIFT_REVIEW_ENABLED=false` | Re-score stale/weak active links; quarantine below floor |
+| `graph_link_drift_review` | `GRAPH_LINK_DRIFT_REVIEW_ENABLED=false` | Re-score stale/weak active links; quarantine below floor. Enable: set env true + restart API, or `api/scripts/run_graph_link_drift_dry_run.py [--apply]`. Temporal decay: `GRAPH_LINK_DRIFT_TEMPORAL_HALF_LIFE_DAYS` (default 21). |
 
 Domain protein shapes (`story_kind` + `link_score_profile`) live in `api/config/domain_synthesis_config.yaml`. See [STORYLINE_CANONICAL_MODEL.md](STORYLINE_CANONICAL_MODEL.md).
 
 Cross-domain associates use `endpoints.left` / `endpoints.right` and materialize as `associated_cross_domain` with domain-qualified endpoint kinds. Link provenance: migration 270 + [GRAPH_EDGE_PROVENANCE.md](GRAPH_EDGE_PROVENANCE.md).
 
-**Post-RSS beaker kickoff:** After `collection_cycle` RSS (and after each `unified_intake_extraction` batch), when enrichment+UIE pending ≤ `catchup_clear_threshold`, AutomationManager requests `post_intake_beaker_phases` (`CHEMISTRY_BEAKER_ENABLED`, default on). See `api/shared/chemistry_beaker.py`, `api/config/schedulers.yaml` → `chemistry_beaker`, and `orchestrator_governance.yaml` → `pipeline_controller.post_intake_beaker_phases`.
+**Post-RSS beaker kickoff:** After `collection_cycle` RSS (and after each `unified_intake_extraction` batch), when enrichment+UIE pending ≤ `catchup_clear_threshold`, AutomationManager may still request `post_intake_beaker_phases` (`CHEMISTRY_BEAKER_ENABLED`, default on). Treat as **legacy matching support**, not the critical path. See `api/shared/chemistry_beaker.py`.
+
+**Critical-path handoffs (2026-07):** After each successful batch on the event/editorial rail, AutomationManager also `request_phase`s the next owner via `api/shared/pipeline_handoffs.py` (does not wait solely on interval). Operator model: [ASSEMBLY_MODEL.md](ASSEMBLY_MODEL.md).
+
+| After batch | Requests |
+|---|---|
+| `unified_intake_extraction` | `chronological_events_catchup` (if CE watchdog &gt; 0) → `event_deduplication` |
+| `chronological_events_catchup` | `event_deduplication` |
+| `event_deduplication` | `story_continuation` |
+| `story_continuation` | `editorial_research_pass` (+ `ensure_package_from_storyline` on each link) |
+| `editorial_research_pass` / `editorial_narrative_pass` | `editorial_reduction_pass` |
+| `editorial_reduction_pass` | `editorial_research_pass` + `editorial_narrative_pass` |
+
+These phases are also in `RAW_PENDING_COUNT_KEYS` / flat postprocess+maintenance priority / structure band / `_CATCHUP_DRIVER_PHASES`, so they schedule when backlog &gt; 0.
 
 #### Storyline status and entity columns (explorer guidance)
 
@@ -254,6 +267,8 @@ Cross-domain associates use `endpoints.left` / `endpoints.right` and materialize
 | `key_entities` | Discovery keyword seed — often generic. |
 | `{schema}.story_entity_index` + `article_entities` | Proper NER / entity audit path. |
 | `public.chronological_events` | Timeline SSOT (legacy `timeline_events` writes off by default). |
+
+**Post-flush CE restore:** After `chronological_events` was truncated while UIE pass markers remained, run automation phase `chronological_events_catchup` (or `api/scripts/backfill_chronological_events_from_uie.py`). Requires unique index `ux_chronological_events_event_fingerprint_source_article_id` (migration 257). Env: `CHRONOLOGICAL_EVENTS_CATCHUP_ENABLED`, `CHRONOLOGICAL_EVENTS_CATCHUP_BATCH`, `CHRONOLOGICAL_EVENTS_CATCHUP_LOOKBACK_DAYS`.
 | `quality_score` | Discovery may set importance; RAG uses `COALESCE(quality_score, 0.90)` so non-null discovery scores are preserved. |
 
 Retired schedulers: `POST_SPINE_RETIRED_PHASES` in `api/shared/assembly_phase_order.py` + `AUTOMATION_DISABLED_SCHEDULES`. Monitor zeros retired phase pending via `apply_intake_mode_pending_mask()`.
@@ -287,7 +302,7 @@ Phases **not** in `OLLAMA_AUTOMATION_PHASES` (e.g. `collection_cycle`, `context_
 
 Implemented in `_execute_collection_cycle`. Typical **ordered** sub-steps (exact branches depend on env and nightly window):
 
-1. **RSS** — `_execute_rss_processing` → `collectors.rss_collector.collect_rss_feeds()` unless `AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE`. Reads all active `{schema}.rss_feeds` (via `url_schema_pairs()`), inserts/updates `{schema}.articles` with deduplication, filtering (quality, clickbait, ads, etc.). **Body text:** `_extract_rss_entry_body` picks the **longest plaintext** among `entry.content` blocks (content:encoded) and summary/description so snippets do not win over full feed HTML when both exist. **Inline full-text fetch:** if visible text is shorter than **`RSS_FULLTEXT_FETCH_THRESHOLD_CHARS`** (default 900), trafilatura fetches the article URL at ingest (and on same-URL updates when content changes); set **`RSS_ALWAYS_FETCH_FULLTEXT=true`** to always fetch. Secondary helper **`collect_rss_feed`** uses the same extraction path as the main collector.
+1. **RSS** — `_execute_rss_processing` → `collectors.rss_collector.collect_rss_feeds()` unless `AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE`. Reads all active `{schema}.rss_feeds` (via `url_schema_pairs()`), inserts/updates `{schema}.articles` with deduplication, filtering (quality, clickbait, ads, etc.). **Body text:** `_extract_rss_entry_body` picks the **longest plaintext** among `entry.content` blocks (content:encoded) and summary/description so snippets do not win over full feed HTML when both exist. **Inline full-text fetch:** if visible text is shorter than **`RSS_FULLTEXT_FETCH_THRESHOLD_CHARS`** (default 900), trafilatura fetches the article URL at ingest (and on same-URL updates when content changes); set **`RSS_ALWAYS_FETCH_FULLTEXT=true`** to always fetch.
 2. **Content enrichment drain** — Loops `content_enrichment` batches until cap or empty (skipped in nightly window when `nightly_enrichment_context` owns the drain). Uses `article_content_enrichment_service` / trafilatura-style fetch for URLs with thin RSS body (`enrichment_status` pending/failed, attempts < cap).
 3. **Document collection / processing** — PDFs and `intelligence.processed_documents` pipeline as configured.
 4. **Pending collection queue** — Any URL queue drained after RSS.
@@ -371,9 +386,10 @@ Below: **Task** = scheduler key in `schedules`. **Backlog key** = name in `pipel
 
 | Task | Default interval | depends_on | Primary implementation | Inputs / selection | Outputs |
 |------|------------------|------------|------------------------|--------------------|---------|
-| `event_extraction` | 300s | `entity_extraction` | `_execute_event_extraction_v5` | Articles / entities for events | Domain + global event tables |
-| `event_deduplication` | 600s | `event_extraction` | `_execute_event_deduplication_v5` | Duplicate event candidates | Deduplicated events |
-| `story_continuation` | 600s | `event_deduplication` | `_execute_story_continuation_v5` | Events + storylines | Continuation links |
+| `event_extraction` | 300s | `entity_extraction` | `_execute_event_extraction_v5` | Legacy path only (`LEGACY_INTAKE_EXTRACTION_ENABLED`) | Domain + global event tables |
+| `chronological_events_catchup` | 1800s | `unified_intake_extraction` | `_execute_chronological_events_catchup` | UIE-complete articles missing CE rows | Restored `chronological_events` |
+| `event_deduplication` | 600s | `unified_intake_extraction`, `chronological_events_catchup` | `_execute_event_deduplication_v5` | Unmerged / soft-link CE candidates | Coreference merges + `event_coreference_links` |
+| `story_continuation` | 600s | `event_deduplication` | `_execute_story_continuation_v5` | Events + storylines | Event→storyline attach + package seed |
 | `timeline_generation` | 300s | `rag_enhancement` | `_execute_timeline_generation` | Storylines / events for chronological_events | `chronological_events` |
 | `entity_enrichment` | 1800s | `entity_profile_sync` | `_execute_entity_enrichment` | Profile IDs to enrich (e.g. Wikipedia) | `entity_profiles` external fields |
 | `story_enhancement` | 300s | — | `_execute_story_enhancement` | Story update queues | Story enhancement records |
@@ -383,6 +399,9 @@ Below: **Task** = scheduler key in `schedules`. **Backlog key** = name in `pipel
 
 | Task | Default interval | depends_on | Primary implementation | Inputs / selection | Outputs |
 |------|------------------|------------|------------------------|--------------------|---------|
+| `editorial_research_pass` | 1800s | `story_continuation` | `_execute_editorial_research_pass` | `in_research` packages | Package members/links; routes → Reduction/Editor |
+| `editorial_narrative_pass` | 1800s | `story_continuation` | `_execute_editorial_narrative_pass` | `in_narrative` packages | Package assembly; routes → Reduction/Editor |
+| `editorial_reduction_pass` | 1800s | research/narrative | `_execute_editorial_reduction_pass` | `in_reduction` packages | Uncouple members; routes back |
 | `editorial_document_generation` | — | — | **FULLY RETIRED** | — | Use `content_refinement_queue` / desk promote |
 | `editorial_briefing_generation` | — | — | **FULLY RETIRED** | — | Use desk promote / `narrative_stack` |
 | `digest_generation` | — | — | **FULLY RETIRED** | — | Briefings = `GET /api/{domain}/report` |

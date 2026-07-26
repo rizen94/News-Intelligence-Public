@@ -1,11 +1,21 @@
 # News Intelligence — Project Status
 
-> **MIGRATION COMPLETE AND FINAL (June 2026)**  
+> **MIGRATION COMPLETE AND FINAL (June 2026)**
 > PopOS → Widow migration is done. **Do not develop on the PopOS local copy** — it is headed for NAS cold storage. All active development, queries, and operations belong on **Widow**.
 
 > **v10.1 in progress:** Active development on branch `release/10.1`. Production `/opt/news-intelligence` cuts over at tag `v10.1.0` only — no partial rsync during development. See [docs/UPGRADE_10.1.md](docs/UPGRADE_10.1.md).
 
 ---
+
+
+## v11 cutover (Widow) — 2026-07-25
+
+- Migrations **282–287** applied on Widow `news_intel` `:5432` and ledgered.
+- Code + SPA deployed to `/opt/news-intelligence` and `/var/www/news-intelligence/web/dist`.
+- Flags: packages on; `EDITORIAL_ROOM_LOOP_ENABLED=false`; `LEGACY_EDITORIAL_WRITERS_ENABLED=0`; collectors/appraisal **off**.
+- Legacy seed: **52** packages / **2679** members / **31** draft `news_stories` (idempotent re-run creates 0).
+- Repair during cutover: mig **287** allows `modal='system'` on packages/members/decisions (seed initially failed check constraint).
+- API smoke: `/api/editorial/*`, registry domains (incl. neurodiversity corpus), monitoring overview + processing_progress OK.
 
 ## Where to work
 
@@ -84,6 +94,16 @@ Post-cutover bake (complete June 2026): `nri` schema dropped; `/api/nri/*` shims
 | Entity extraction robustness | Improved JSON parsing with repair/retry mechanisms; topic extraction uses fast NER fallback |
 
 Docs: [docs/PIPELINE_AND_AUTOMATION.md](docs/PIPELINE_AND_AUTOMATION.md), [docs/MONITOR_REPORTING_AND_METRICS.md](docs/MONITOR_REPORTING_AND_METRICS.md).
+
+---
+
+## Event-rail + editorial handoffs (July 2026)
+
+**Status: deployed on Widow** (API restart 2026-07-25). Stages pass work along the critical path via backlog counts **and** inline `request_phase` (`api/shared/pipeline_handoffs.py`):
+
+`UIE → CE catchup (if needed) → event_deduplication → story_continuation → editorial Research/Narrative/Reduction`
+
+Operator SSOT: [docs/ASSEMBLY_MODEL.md](docs/ASSEMBLY_MODEL.md). Pipeline tables: [docs/PIPELINE_AND_AUTOMATION.md](docs/PIPELINE_AND_AUTOMATION.md).
 
 ---
 

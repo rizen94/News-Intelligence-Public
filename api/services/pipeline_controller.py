@@ -214,6 +214,12 @@ _CATCHUP_DRIVER_PHASES: frozenset[str] = frozenset(
         "storyline_assembly",
         "storyline_automation",
         "event_tracking",
+        "chronological_events_catchup",
+        "event_deduplication",
+        "story_continuation",
+        "editorial_research_pass",
+        "editorial_narrative_pass",
+        "editorial_reduction_pass",
         "graph_connection_distillation",
         "embedding_link_candidates",
         "collision_sampling",
@@ -1442,19 +1448,18 @@ def _pick_next_phases_legacy(
 
 
 def _widow_resources_ok(resources: Any, automation: Any) -> bool:
+    """True when Widow host memory/CPU leave room for more work.
+
+    Does **not** consult DB pool utilization — pool pressure is handled by worker
+    concurrency limits and ``DB_POOL_WORKER_*``, not by treating pool busy as
+    host-resource failure (and never by shrinking adaptive batch).
+    """
     mem_headroom = 0.5
-    db_headroom = 0.2
+    cpu_headroom = 0.5
     if resources is not None:
         mem_headroom = float(getattr(resources, "local_memory_headroom", 0.5) or 0.5)
-        db_headroom = float(getattr(resources, "db_headroom", 0.5) or 0.5)
-    try:
-        from shared.database.connection import automation_db_pool_should_defer_phase
-
-        if automation_db_pool_should_defer_phase("__controller__"):
-            return db_headroom > 0.05
-    except Exception:
-        pass
-    return mem_headroom > 0.08 or db_headroom > 0.05
+        cpu_headroom = float(getattr(resources, "local_cpu_headroom", 0.5) or 0.5)
+    return mem_headroom > 0.08 or cpu_headroom > 0.05
 
 
 @dataclass
@@ -1569,14 +1574,23 @@ class PipelineController:
         self.phase_health = assess_all_phase_health(pending, self._pending_history)
         self._update_stall_holds()
         try:
-            from services.phase_retry_silence_service import apply_auto_silence_from_health
+            from services.phase_retry_silence_service import (
+                apply_auto_silence_from_health,
+                lift_auto_silences,
+            )
 
-            newly = apply_auto_silence_from_health(self.phase_health)
+            # Lift first: a phase whose queue grew since it was muted has new work
+            # to prove itself against, so it should not stay silenced on stale evidence.
+            lifted = lift_auto_silences(reason="queue_growth", pending=pending)
+            newly = apply_auto_silence_from_health(self.phase_health, pending)
+            # Reconcile every cycle so lifts re-enable schedules without an API restart.
+            try:
+                automation._apply_automation_disabled_schedules()
+            except Exception:
+                pass
+            if lifted:
+                logger.info("PipelineController lifted auto-silence (new work): %s", lifted)
             if newly:
-                try:
-                    automation._apply_automation_disabled_schedules()
-                except Exception:
-                    pass
                 logger.info("PipelineController auto-silenced phases: %s", newly)
         except Exception as silence_err:
             logger.debug("auto-silence hook: %s", silence_err)

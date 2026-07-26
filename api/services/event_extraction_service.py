@@ -106,8 +106,8 @@ Article publication date: {pub_date}
 Article text:
 {content}
 
-Respond with ONLY a JSON array of event objects. If no discrete events are found, return an empty array [].
-Do NOT include any text outside the JSON array. Use valid JSON only (double quotes, no trailing commas)."""
+Respond with ONLY a JSON array of event objects (preferred), or a single event object if there is exactly one event. If no discrete events are found, return an empty array [].
+Do NOT include any text outside the JSON. Use valid JSON only (double quotes, no trailing commas)."""
 
 # Batched prompt: extracts events from multiple articles in one LLM call
 BATCH_EVENT_EXTRACTION_PROMPT = """You are an expert news analyst. Given {article_count} news articles below, extract ALL discrete real-world events from EACH article.
@@ -153,16 +153,55 @@ def _repair_json_array_text(text: str) -> str:
     return t
 
 
+def _coerce_events_payload(parsed: Any) -> list[dict]:
+    """Normalize LLM JSON (array, single event object, or wrapped list) to event dicts."""
+    if isinstance(parsed, list):
+        return [x for x in parsed if isinstance(x, dict)]
+    if isinstance(parsed, dict):
+        for k in ("events", "items", "data", "results"):
+            v = parsed.get(k)
+            if isinstance(v, list):
+                return [x for x in v if isinstance(x, dict)]
+        # Single event object (common when the article yields one beat)
+        if parsed.get("event_title") or parsed.get("title"):
+            return [parsed]
+    return []
+
+
+def _raw_decode_json_value(text: str, start: int) -> Any | None:
+    """Decode one JSON value starting at ``start`` (skips leading whitespace)."""
+    decoder = json.JSONDecoder()
+    try:
+        value, _ = decoder.raw_decode(text, start)
+        return value
+    except json.JSONDecodeError:
+        return None
+
+
 def _extract_event_dicts_from_text(text: str) -> list[dict]:
-    """Fallback: pull top-level `{...}` objects when array parse fails."""
+    """Fallback: scan for JSON objects/arrays that look like event payloads."""
     out: list[dict] = []
-    for chunk in re.findall(r"\{[^{}]*\}", text, flags=re.DOTALL):
-        try:
-            obj = json.loads(_repair_json_array_text(chunk))
-            if isinstance(obj, dict) and obj.get("event_title"):
-                out.append(obj)
-        except json.JSONDecodeError:
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch not in "{[":
+            i += 1
             continue
+        value = _raw_decode_json_value(text, i)
+        if value is None:
+            i += 1
+            continue
+        # Advance past the decoded value
+        try:
+            _, end = json.JSONDecoder().raw_decode(text, i)
+            i = end
+        except json.JSONDecodeError:
+            i += 1
+            continue
+        for obj in _coerce_events_payload(value):
+            if obj.get("event_title") or obj.get("title"):
+                out.append(obj)
     return out
 
 # Research-oriented silos (AI, medicine, climate): fewer “political” discrete beats; stress evidence.
@@ -271,8 +310,9 @@ class EventExtractionService:
             )
             raw_response = gen.text
             extraction_model = gen.model
-            events_raw = self._parse_json_response(raw_response)
-            if not events_raw:
+            events_raw, parsed_ok = self._parse_json_response_detailed(raw_response)
+            # Only retry a malformed answer; a valid empty answer means no events.
+            if not events_raw and not parsed_ok:
                 retry_prompt = prompt + _JSON_RETRY_SUFFIX
                 gen2 = await self._caller.generate(
                     retry_prompt,
@@ -486,44 +526,58 @@ class EventExtractionService:
         return {}
 
     def _parse_json_response(self, response: str) -> list[dict]:
-        """Extract a JSON array from the LLM response, tolerating markdown fences."""
+        events, _ = self._parse_json_response_detailed(response)
+        return events
+
+    def _parse_json_response_detailed(self, response: str) -> tuple[list[dict], bool]:
+        """Extract event dicts from LLM JSON, reporting whether the payload parsed.
+
+        Returns ``(events, parsed_ok)``. ``parsed_ok`` is True when the response was
+        decodable JSON — including a well-formed empty answer such as ``{}`` or ``[]``.
+        Callers use it to avoid a pointless retry: with Ollama ``format=json`` an empty
+        object means "no events here", not "the model broke the format".
+
+        Note: do **not** naively slice from the first ``[`` to the last ``]`` — a single
+        event object contains nested arrays (e.g. ``key_actors``), and that heuristic
+        grabs the wrong span.
+        """
         text = response.strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[-1]
         if text.endswith("```"):
             text = text.rsplit("```", 1)[0]
         text = text.strip()
+        if not text:
+            return [], False
 
-        start = text.find("[")
-        end = text.rfind("]")
-        if start != -1 and end != -1 and end > start:
-            slice_text = _repair_json_array_text(text[start : end + 1])
-            try:
-                parsed = json.loads(slice_text)
-                if isinstance(parsed, list):
-                    return [x for x in parsed if isinstance(x, dict)]
-            except json.JSONDecodeError as e:
-                logger.warning(f"JSON parse error: {e}")
+        repaired = _repair_json_array_text(text)
 
-        if isinstance(text, str) and text.startswith("{"):
-            try:
-                parsed = json.loads(_repair_json_array_text(text))
-                if isinstance(parsed, dict):
-                    for k in ("events", "items", "data", "results"):
-                        v = parsed.get(k)
-                        if isinstance(v, list):
-                            return [x for x in v if isinstance(x, dict)]
-            except json.JSONDecodeError:
-                pass
+        # 1) Whole-payload decode (preferred)
+        try:
+            return _coerce_events_payload(json.loads(repaired)), True
+        except json.JSONDecodeError:
+            pass
 
-        fallback = _extract_event_dicts_from_text(text)
+        # 2) First complete JSON value (array or object) via raw_decode
+        for opener in ("[", "{"):
+            start = repaired.find(opener)
+            if start == -1:
+                continue
+            value = _raw_decode_json_value(repaired, start)
+            if value is None:
+                continue
+            coerced = _coerce_events_payload(value)
+            if coerced:
+                return coerced, True
+
+        # 3) Scan for embedded event-shaped objects
+        fallback = _extract_event_dicts_from_text(repaired)
         if fallback:
             logger.info("event_extraction: recovered %s events via object fallback", len(fallback))
-            return fallback
+            return fallback, True
 
-        if start == -1 or end == -1:
-            logger.warning("No JSON array found in LLM response")
-        return []
+        logger.warning("No JSON array found in LLM response")
+        return [], False
 
     def _normalise_event(
         self,
@@ -538,7 +592,7 @@ class EventExtractionService:
         """Validate, resolve dates, compute fingerprint, return DB-ready dict."""
         if not isinstance(raw, dict):
             return None
-        title = (raw.get("event_title") or "").strip()
+        title = (raw.get("event_title") or raw.get("title") or "").strip()
         if not title:
             return None
 
@@ -608,6 +662,14 @@ class EventExtractionService:
             "date_precision": date_precision,
             "event_sequence_position": sequence,
             "temporal_status": temporal_status,
+            # Dual timestamps: world time vs source publication vs ingest
+            "event_date": (
+                datetime.combine(resolved_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+                if resolved_date is not None
+                else None
+            ),
+            "ingestion_date": datetime.now(timezone.utc),
+            "vintage_date": pub_date if isinstance(pub_date, datetime) else None,
         }
 
     async def save_events(
@@ -656,7 +718,8 @@ class EventExtractionService:
                         extraction_model, extraction_confidence, importance_score,
                         location, entities, event_fingerprint, source_count,
                         key_actors, outcome, is_ongoing, continuation_signals,
-                        date_precision, event_sequence_position, temporal_status
+                        date_precision, event_sequence_position, temporal_status,
+                        event_date, ingestion_date, vintage_date
                     ) VALUES (
                         %(event_id)s, %(storyline_id)s, %(title)s, %(description)s,
                         %(event_type)s, %(actual_event_date)s,
@@ -667,7 +730,8 @@ class EventExtractionService:
                         %(event_fingerprint)s, %(source_count)s,
                         %(key_actors)s, %(outcome)s, %(is_ongoing)s,
                         %(continuation_signals)s, %(date_precision)s,
-                        %(event_sequence_position)s, %(temporal_status)s
+                        %(event_sequence_position)s, %(temporal_status)s,
+                        %(event_date)s, %(ingestion_date)s, %(vintage_date)s
                     )
                     ON CONFLICT (event_fingerprint, source_article_id) DO NOTHING
                 """,
