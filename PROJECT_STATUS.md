@@ -105,6 +105,10 @@ Docs: [docs/PIPELINE_AND_AUTOMATION.md](docs/PIPELINE_AND_AUTOMATION.md), [docs/
 
 Operator SSOT: [docs/ASSEMBLY_MODEL.md](docs/ASSEMBLY_MODEL.md). Pipeline tables: [docs/PIPELINE_AND_AUTOMATION.md](docs/PIPELINE_AND_AUTOMATION.md).
 
+### PopOS GPU ownership (July 2026)
+
+Widow `REMOTE_PHASE_WORKER_OWNED_PHASES` now also includes editorial trio + CE catchup. PopOS split unit `news-intelligence-popos-worker-editorial` drains Research/Narrative/Reduction against local Ollama; UIE unit also runs `chronological_events_catchup`. See [docs/POPOS_PHASE_WORKER.md](docs/POPOS_PHASE_WORKER.md).
+
 ---
 
 ## Production vs dev tree

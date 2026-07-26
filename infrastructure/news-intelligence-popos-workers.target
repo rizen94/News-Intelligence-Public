@@ -1,0 +1,7 @@
+[Unit]
+Description=News Intelligence PopOS phase workers (uie + claim/topic + assembly + editorial)
+Wants=news-intelligence-popos-worker-uie.service news-intelligence-popos-worker-claim-topic.service news-intelligence-popos-worker-assembly.service news-intelligence-popos-worker-editorial.service
+After=network-online.target
+
+[Install]
+WantedBy=default.target

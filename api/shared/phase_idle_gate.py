@@ -239,6 +239,36 @@ def _probe_spine_sql_tail() -> bool:
         return True
 
 
+def _probe_editorial_research() -> bool:
+    from services.editorial_package_research_service import is_enabled, list_research_due
+
+    return bool(is_enabled() and list_research_due(limit=1))
+
+
+def _probe_editorial_narrative() -> bool:
+    from services.editorial_package_narrative_service import is_enabled, list_narrative_due
+
+    return bool(is_enabled() and list_narrative_due(limit=1))
+
+
+def _probe_editorial_reduction() -> bool:
+    from services.editorial_package_reduction_service import is_enabled, list_reduction_due
+
+    return bool(is_enabled() and list_reduction_due(limit=1))
+
+
+def _probe_chronological_events_catchup() -> bool:
+    from services.chronological_events_catchup_service import (
+        count_uie_without_chrono,
+        is_enabled,
+    )
+
+    if not is_enabled():
+        return False
+    stats = count_uie_without_chrono()
+    return int((stats or {}).get("total") or 0) > 0
+
+
 _PROBES: dict[str, Callable[[], bool]] = {
     "claim_extraction": _probe_claim_extraction,
     "unified_intake_extraction": _probe_unified_intake_extraction,
@@ -247,6 +277,10 @@ _PROBES: dict[str, Callable[[], bool]] = {
     "content_enrichment": _probe_content_enrichment,
     "entity_profile_build": _probe_entity_profile_build,
     "spine_sql_tail": _probe_spine_sql_tail,
+    "editorial_research_pass": _probe_editorial_research,
+    "editorial_narrative_pass": _probe_editorial_narrative,
+    "editorial_reduction_pass": _probe_editorial_reduction,
+    "chronological_events_catchup": _probe_chronological_events_catchup,
 }
 
 
@@ -289,6 +323,8 @@ def drain_result_had_work(result: object) -> bool:
         "llm_processed",
         "legacy_backfilled",
         "batches",
+        "saved_total",
+        "changed_total",
     ):
         val = result.get(key)
         if isinstance(val, int) and val > 0:

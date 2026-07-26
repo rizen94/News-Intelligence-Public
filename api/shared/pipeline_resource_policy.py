@@ -301,6 +301,43 @@ PHASE_POLICIES: dict[str, PhasePolicy] = {
     "timeline_generation": PhasePolicy(
         Host.WIDOW_CPU, Tier.BULK, "cpu", "db_heavy", requires_llm=True, default_batch=12
     ),
+    # v11 editorial modal drains — PopOS local Ollama (remote-owned when worker up).
+    "editorial_research_pass": PhasePolicy(
+        Host.POPOS_GPU,
+        Tier.REFINEMENT,
+        "gpu",
+        "gpu_heavy",
+        requires_llm=True,
+        default_batch=5,
+        run_budget_seconds=900,
+    ),
+    "editorial_narrative_pass": PhasePolicy(
+        Host.POPOS_GPU,
+        Tier.REFINEMENT,
+        "gpu",
+        "gpu_heavy",
+        requires_llm=True,
+        default_batch=5,
+        run_budget_seconds=900,
+    ),
+    "editorial_reduction_pass": PhasePolicy(
+        Host.POPOS_GPU,
+        Tier.REFINEMENT,
+        "gpu",
+        "gpu_heavy",
+        requires_llm=True,
+        default_batch=5,
+        run_budget_seconds=900,
+    ),
+    "chronological_events_catchup": PhasePolicy(
+        Host.POPOS_GPU,
+        Tier.BULK,
+        "gpu",
+        "gpu_heavy",
+        requires_llm=True,
+        default_batch=5,
+        run_budget_seconds=600,
+    ),
     # Maintenance
     "health_check": PhasePolicy(Host.WIDOW_DB, Tier.BULK, "cpu", "cpu_light"),
     "pending_db_flush": PhasePolicy(Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy"),

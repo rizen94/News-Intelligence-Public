@@ -219,7 +219,7 @@ async def _run_one_cycle(
             if drain_result_had_work(result):
                 idle_backoff.mark_work(phase)
                 # UIE runs on PopOS under REMOTE_PHASE_WORKER_OWNED_PHASES — Widow never
-                # executes after_unified_intake. Nudge CE catchup + coreference via Widow API.
+                # executes after_unified_intake. Nudge CE catchup + coref via Widow API.
                 if phase == "unified_intake_extraction" and items > 0:
                     try:
                         from shared.pipeline_handoffs import nudge_event_rail_after_uie
@@ -233,6 +233,26 @@ async def _run_one_cycle(
                             )
                     except Exception as e:
                         logger.debug("uie remote handoff nudge: %s", e)
+                # CE catchup on PopOS → wake Widow coreference (local DB phase).
+                if phase == "chronological_events_catchup":
+                    saved = 0
+                    if isinstance(result, dict):
+                        saved = int(result.get("saved_total") or 0)
+                    if saved > 0:
+                        try:
+                            from shared.pipeline_handoffs import nudge_widow_phases
+
+                            n = nudge_widow_phases(
+                                ["event_deduplication"],
+                                reason="after_ce_catchup_remote",
+                            )
+                            if n:
+                                logger.info(
+                                    "catchup handoff nudged event_deduplication (%s saved)",
+                                    saved,
+                                )
+                        except Exception as e:
+                            logger.debug("catchup remote handoff nudge: %s", e)
             else:
                 hint = None
                 if isinstance(result, dict):
@@ -354,7 +374,15 @@ def main() -> int:
         logger.error("WORKER_EXECUTION_HOST must be popos/remote/worker")
         return 2
 
-    phases = sorted(worker_phases())
+    # Preserve --phases CSV order when set; otherwise stable sort of WORKER_PHASES.
+    raw_phases = (os.environ.get("WORKER_PHASES") or "").strip()
+    if raw_phases:
+        phases = [x.strip() for x in raw_phases.split(",") if x.strip()]
+        # Keep only supported / configured worker phases, in given order.
+        allowed = worker_phases()
+        phases = [p for p in phases if p in allowed] or sorted(allowed)
+    else:
+        phases = sorted(worker_phases())
     if not phases:
         logger.error("WORKER_PHASES empty")
         return 2

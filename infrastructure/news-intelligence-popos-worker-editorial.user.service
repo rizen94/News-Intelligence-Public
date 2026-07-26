@@ -1,0 +1,35 @@
+# Split PopOS worker — v11 editorial modal drains (local RTX 5090 Ollama).
+
+[Unit]
+Description=News Intelligence PopOS worker (editorial Research/Narrative/Reduction)
+After=network-online.target
+Wants=network-online.target
+PartOf=news-intelligence-popos-workers.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pete/ni-popos-worker
+Environment=PYTHONPATH=/home/pete/ni-popos-worker/api
+Environment=WORKER_EXECUTION_HOST=popos
+Environment=OLLAMA_HOST=http://127.0.0.1:11434
+Environment=OLLAMA_DUAL_HOST_ROUTING_ENABLED=false
+Environment=AUTOMATION_DUAL_LANE=false
+Environment=BULK_DUAL_LANE_CATCHUP=false
+Environment=OLLAMA_PRIORITY=low
+Environment=EDITORIAL_RESEARCH_ENABLED=true
+Environment=EDITORIAL_NARRATIVE_ENABLED=true
+Environment=EDITORIAL_REDUCTION_ENABLED=true
+EnvironmentFile=-/home/pete/ni-popos-worker/.env
+EnvironmentFile=-/home/pete/ni-popos-worker/.env.popos_worker
+ExecStartPre=/bin/mkdir -p /home/pete/ni-popos-worker/logs
+ExecStart=/home/pete/ni-popos-worker/.venv/bin/python /home/pete/ni-popos-worker/scripts/run_popos_phase_worker.py --worker-id editorial --phases editorial_research_pass,editorial_narrative_pass,editorial_reduction_pass --idle-sleep 20 --budget-seconds 900
+Restart=always
+RestartSec=15
+TimeoutStartSec=120
+MemoryMax=12G
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ni-popos-worker-editorial
+
+[Install]
+WantedBy=default.target news-intelligence-popos-workers.target
