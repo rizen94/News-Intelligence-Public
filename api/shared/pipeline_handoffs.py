@@ -75,7 +75,7 @@ def after_unified_intake(automation: Any, *, articles_processed: int = 0) -> Non
 
         if catchup_enabled():
             wd = count_uie_without_chrono()
-            if int((wd or {}).get("total") or 0) > 0:
+            if int((wd or {}).get("missing_ce_total") or (wd or {}).get("total") or 0) > 0:
                 _safe_request(automation, "chronological_events_catchup")
     except Exception as e:
         logger.debug("after_unified_intake catchup probe: %s", e)
@@ -202,7 +202,7 @@ def nudge_event_rail_after_uie(*, articles_processed: int = 0) -> int:
 
         if catchup_enabled():
             wd = count_uie_without_chrono()
-            if int((wd or {}).get("total") or 0) > 0:
+            if int((wd or {}).get("missing_ce_total") or (wd or {}).get("total") or 0) > 0:
                 phases.insert(0, "chronological_events_catchup")
     except Exception as e:
         logger.debug("nudge_event_rail catchup probe: %s", e)

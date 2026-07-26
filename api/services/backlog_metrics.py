@@ -2334,7 +2334,7 @@ def _count_chronological_events_catchup_pending() -> int:
         if not is_enabled():
             return 0
         stats = count_uie_without_chrono()
-        return int((stats or {}).get("total") or 0)
+        return int((stats or {}).get("missing_ce_total") or (stats or {}).get("total") or 0)
     except Exception as e:
         logger.debug("backlog chronological_events_catchup count: %s", e)
         return 0

@@ -266,7 +266,7 @@ def _probe_chronological_events_catchup() -> bool:
     if not is_enabled():
         return False
     stats = count_uie_without_chrono()
-    return int((stats or {}).get("total") or 0) > 0
+    return int((stats or {}).get("missing_ce_total") or (stats or {}).get("total") or 0) > 0
 
 
 _PROBES: dict[str, Callable[[], bool]] = {
