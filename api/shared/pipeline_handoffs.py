@@ -160,7 +160,7 @@ def nudge_widow_phases(phases: list[str], *, reason: str = "remote_handoff") -> 
     base = (env_str("WIDOW_API_BASE", "") or env_str("NI_API_BASE", "") or "").strip().rstrip("/")
     if not base:
         base = "http://192.168.93.101:8000"
-    url = f"{base}/api/monitoring/trigger_phase"
+    url = f"{base}/api/system_monitoring/monitoring/trigger_phase"
     ok = 0
     try:
         import urllib.error
