@@ -103,7 +103,12 @@ def list_articles_needing_chrono(
     limit: int,
     lookback_days: int | None = None,
 ) -> list[dict[str, Any]]:
-    """UIE-complete articles with no CE rows for this schema's article ids."""
+    """UIE-complete articles with no CE rows for this schema's article ids.
+
+    Excludes articles already marked ``event_extraction`` empty/legitimate so
+    catchup does not re-burn the same no-event rows forever while unmarked
+    work (or a stale probe) remains.
+    """
     days = lookback_days if lookback_days is not None else get_lookback_days()
     lim = max(1, min(100, int(limit)))
     sql = f"""
@@ -126,6 +131,18 @@ def list_articles_needing_chrono(
                 SELECT 1 FROM public.chronological_events ce
                 WHERE ce.source_article_id = a.id
           )
+          AND COALESCE(
+                a.metadata #>> '{{pipeline,event_extraction,last_terminal_state}}',
+                ''
+              ) NOT IN (
+                'completed_empty',
+                'processed_empty_legitimate',
+                'TERMINAL_PROCESSED_EMPTY_LEGITIMATE'
+              )
+          AND COALESCE(
+                a.metadata #>> '{{pipeline,event_extraction,status}}',
+                ''
+              ) NOT IN ('completed_empty', 'processed_empty')
           AND (
                 a.published_at IS NULL
              OR a.published_at >= NOW() - (%s || ' days')::interval

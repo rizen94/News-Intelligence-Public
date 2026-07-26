@@ -45,6 +45,24 @@ def _httpx_ollama_timeout(lane: str | None = None) -> float:
             return default
     return default
 
+
+def ollama_priority_headers() -> dict[str, str]:
+    """
+    Homelab ollama-proxy priority: NI background work is LOW.
+
+    Widow clients are usually LOW via OLLAMA_LOW_PRIORITY_CIDRS (192.168.93.101).
+    PopOS phase workers call 127.0.0.1 and must send X-Ollama-Priority: low so they
+    never set proxy in_flight=high (desk presence treats HIGH as interactive).
+    """
+    raw = (env_str("OLLAMA_PRIORITY", "low") or "low").strip().lower()
+    if raw in ("", "low", "background", "ni"):
+        return {"X-Ollama-Priority": "low"}
+    if raw in ("high", "interactive"):
+        return {"X-Ollama-Priority": "high"}
+    # Unknown → still prefer low for NI callers
+    return {"X-Ollama-Priority": "low"}
+
+
 logger = logging.getLogger(__name__)
 
 # Global cap. Burst (48h catch-up): 6; revert to 5 after
@@ -166,26 +184,8 @@ class LLMService:
         self.dual_host_enabled = env_str(
             "OLLAMA_DUAL_HOST_ROUTING_ENABLED", "false"
         ).lower() in ("1", "true", "yes")
-        base_timeout = _httpx_ollama_timeout()
-        cpu_timeout = _httpx_ollama_timeout("cpu")
-        gpu_timeout = _httpx_ollama_timeout("gpu")
-        self.client = httpx.AsyncClient(timeout=base_timeout)
-        self.cpu_client = (
-            self.client
-            if self.ollama_cpu_host == self.ollama_base_url
-            else httpx.AsyncClient(timeout=cpu_timeout)
-        )
-        self.gpu_client = (
-            self.client
-            if self.ollama_gpu_host == self.ollama_base_url
-            else httpx.AsyncClient(timeout=gpu_timeout)
-        )
-        # popOS client for 70B model on remote RTX5090
-        self.pop_os_client = (
-            self.client
-            if self.ollama_pop_os_host == self.ollama_base_url
-            else httpx.AsyncClient(timeout=gpu_timeout)
-        )
+        self._client_loop_id: int | None = None
+        self._init_http_clients()
         self._pop_os_available = True
         self._pop_os_last_check = None
         self.model_performance = {
@@ -214,6 +214,66 @@ class LLMService:
                 "best_for": ["fast_simple", "readability_quality"],
             },
         }
+
+    def _init_http_clients(self) -> None:
+        """(Re)create httpx AsyncClients. Bound to the loop that first uses them."""
+        base_timeout = _httpx_ollama_timeout()
+        cpu_timeout = _httpx_ollama_timeout("cpu")
+        gpu_timeout = _httpx_ollama_timeout("gpu")
+        priority_headers = ollama_priority_headers()
+        self.client = httpx.AsyncClient(timeout=base_timeout, headers=priority_headers)
+        self.cpu_client = (
+            self.client
+            if self.ollama_cpu_host == self.ollama_base_url
+            else httpx.AsyncClient(timeout=cpu_timeout, headers=priority_headers)
+        )
+        self.gpu_client = (
+            self.client
+            if self.ollama_gpu_host == self.ollama_base_url
+            else httpx.AsyncClient(timeout=gpu_timeout, headers=priority_headers)
+        )
+        self.pop_os_client = (
+            self.client
+            if self.ollama_pop_os_host == self.ollama_base_url
+            else httpx.AsyncClient(timeout=gpu_timeout, headers=priority_headers)
+        )
+
+    def _collect_distinct_clients(self) -> list[httpx.AsyncClient]:
+        seen: set[int] = set()
+        out: list[httpx.AsyncClient] = []
+        for c in (self.client, self.cpu_client, self.gpu_client, self.pop_os_client):
+            if c is None or id(c) in seen:
+                continue
+            seen.add(id(c))
+            out.append(c)
+        return out
+
+    async def _ensure_clients_for_running_loop(self, *, force: bool = False) -> None:
+        """
+        Recreate AsyncClients when the running event loop changed.
+
+        Nested ``asyncio.run`` / temporary loops (e.g. sync appraisal inside Research)
+        bind httpx to a loop that is then closed — later calls fail with
+        ``Event loop is closed``. Rebind before each Ollama call.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop_id = id(loop)
+        if not force and self._client_loop_id is None:
+            self._client_loop_id = loop_id
+            return
+        if not force and self._client_loop_id == loop_id:
+            return
+        old = self._collect_distinct_clients()
+        self._init_http_clients()
+        self._client_loop_id = loop_id
+        for c in old:
+            try:
+                await c.aclose()
+            except Exception:
+                pass
 
     def select_model(
         self,
@@ -377,6 +437,7 @@ class LLMService:
                             "num_predict": max(1, int(max_tokens or 2000)),
                         },
                     },
+                    headers=ollama_priority_headers(),
                 )
                 if response.status_code != 200:
                     logger.error(
@@ -555,24 +616,36 @@ class LLMService:
 
     async def generate_storyline_analysis(self, storyline_context: str) -> dict[str, Any]:
         """
-        Generate comprehensive storyline analysis using Llama 3.1 8B
+        Generate comprehensive storyline analysis using Llama 3.1 8B.
+
+        Hard rule: stay anchored to the named storyline — never emit a generic
+        "Global Update / Global Tensions" kitchen-sink wrap-up of unrelated arcs.
         """
         model = ModelType.LLAMA_8B
 
         prompt = f"""
-        Analyze this storyline and provide a comprehensive report:
-        1. Main narrative thread
-        2. Key developments
-        3. Timeline of events
-        4. Stakeholders involved
-        5. Potential future developments
-        6. Quality assessment
+You are writing the analysis for ONE specific news storyline.
+Stay strictly on that storyline's title and the articles provided for it.
 
-        Storyline context:
-        {storyline_context}
+FORBIDDEN:
+- Generic "Global Update", "Global Tensions", "Global Turmoil", "world in flux" roundups
+- Mixing unrelated countries/arcs that are not clearly about this storyline's title
+- Opening with a world-tour lede that could apply to any story
 
-        Write a professional, journalistic analysis that would be suitable for publication.
-        """
+If the article list is thin or off-topic for the title, say so briefly and summarize
+only what clearly belongs to the title — do not invent a global mega-narrative.
+
+Provide a professional journalistic report covering:
+1. Main narrative thread (must match the storyline title)
+2. Key developments for THIS story only
+3. Timeline of events for THIS story
+4. Stakeholders involved in THIS story
+5. Potential future developments for THIS story
+6. Quality / source assessment
+
+Storyline context:
+{storyline_context}
+"""
 
         try:
             start_time = datetime.now()
@@ -680,16 +753,20 @@ class LLMService:
                 model, prompt, execution_lane=execution_lane, invocation_kind=invocation_kind, batch_size=batch_size
             )
 
-async def _call_ollama_impl(
+    async def _call_ollama_impl(
         self,
         model: ModelType,
         prompt: str,
         execution_lane: str | None = None,
         invocation_kind: Any | None = None,
         batch_size: int = 1,
+        *,
+        _loop_retry: bool = False,
     ) -> str:
         """Inner Ollama call (no semaphore). Routes 70B to popOS, smaller models to local GPU."""
         from services.circuit_breaker_service import get_circuit_breaker_service
+
+        await self._ensure_clients_for_running_loop()
 
         cb_service = get_circuit_breaker_service()
         # Pass model to enable 70B -> popOS routing
@@ -744,6 +821,7 @@ async def _call_ollama_impl(
             response = await client.post(
                 f"{base_url}/api/generate",
                 json=payload,
+                headers=ollama_priority_headers(),
             )
 
             if response.status_code == 200:
@@ -761,9 +839,24 @@ async def _call_ollama_impl(
             await cb._record_failure()
             raise Exception(f"Cannot connect to {cb_key} service")
         except Exception as e:
-            if "circuit breaker" not in str(e).lower():
+            msg = str(e).lower()
+            if (
+                not _loop_retry
+                and ("event loop is closed" in msg or "bound to a different event loop" in msg)
+            ):
+                await self._ensure_clients_for_running_loop(force=True)
+                return await self._call_ollama_impl(
+                    model,
+                    prompt,
+                    execution_lane=execution_lane,
+                    invocation_kind=invocation_kind,
+                    batch_size=batch_size,
+                    _loop_retry=True,
+                )
+            if "circuit breaker" not in msg:
                 await cb._record_failure()
                 raise Exception(f"{cb_key} API error: {str(e)}")
+            raise
 
     async def get_model_status(self, timeout_seconds: float | None = None) -> dict[str, Any]:
         """
@@ -809,12 +902,13 @@ async def _call_ollama_impl(
             return {"success": False, "error": f"Cannot connect to Ollama: {str(e)}"}
 
     async def close(self):
-        """Close HTTP client"""
-        await self.client.aclose()
-        if self.cpu_client is not self.client:
-            await self.cpu_client.aclose()
-        if self.gpu_client is not self.client and self.gpu_client is not self.cpu_client:
-            await self.gpu_client.aclose()
+        """Close HTTP clients"""
+        for c in self._collect_distinct_clients():
+            try:
+                await c.aclose()
+            except Exception:
+                pass
+        self._client_loop_id = None
 
 
 # Global LLM service instance

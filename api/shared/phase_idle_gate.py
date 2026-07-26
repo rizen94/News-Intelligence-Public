@@ -196,7 +196,9 @@ def _probe_entity_profile_build() -> bool:
     from shared.entity_profile_eligibility import sql_entity_profile_needs_build
     from shared.pipeline_domain_sql import pipeline_domain_any_sql
 
-    domain_sql, domain_keys = pipeline_domain_any_sql("ep.domain_key")
+    domain_sql, domain_keys = pipeline_domain_any_sql(
+        "ep.domain_key", phase="entity_profile_build"
+    )
     if not domain_keys:
         return False
     upstream_sql = ""
@@ -217,7 +219,8 @@ def _probe_entity_profile_build() -> bool:
                   )
                   {upstream_sql}
                 LIMIT 1
-                """
+                """,
+                (domain_keys,),
             )
             return bool(cur.fetchone())
 
@@ -269,6 +272,77 @@ def _probe_chronological_events_catchup() -> bool:
     return int((stats or {}).get("missing_ce_total") or (stats or {}).get("total") or 0) > 0
 
 
+def _probe_story_continuation() -> bool:
+    from shared.database.connection import get_db_connection
+    from shared.domain_processing_mode import domain_runs_phase
+    from shared.domain_registry import pipeline_url_schema_pairs
+
+    schemas = [
+        sch
+        for dk, sch in pipeline_url_schema_pairs()
+        if domain_runs_phase(dk, "story_continuation")
+    ]
+    if not schemas:
+        return False
+    conn = get_db_connection()
+    if not conn:
+        return True
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '3s'")
+            # Any schema-scoped unlinked CE counts as work.
+            for schema in schemas:
+                cur.execute(
+                    f"""
+                    SELECT 1
+                    FROM public.chronological_events ce
+                    WHERE (ce.storyline_id IS NULL OR ce.storyline_id = '')
+                      AND ce.source_article_id IS NOT NULL
+                      AND EXISTS (
+                            SELECT 1 FROM {schema}.articles a
+                            WHERE a.id = ce.source_article_id
+                      )
+                    LIMIT 1
+                    """
+                )
+                if cur.fetchone() is not None:
+                    return True
+            return False
+    except Exception:
+        return True
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _probe_content_refinement_queue() -> bool:
+    from shared.database.connection import get_db_connection
+
+    conn = get_db_connection()
+    if not conn:
+        return True
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '3s'")
+            cur.execute(
+                """
+                SELECT 1 FROM intelligence.content_refinement_queue
+                WHERE status = 'pending'
+                LIMIT 1
+                """
+            )
+            return cur.fetchone() is not None
+    except Exception:
+        return True
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 _PROBES: dict[str, Callable[[], bool]] = {
     "claim_extraction": _probe_claim_extraction,
     "unified_intake_extraction": _probe_unified_intake_extraction,
@@ -281,6 +355,8 @@ _PROBES: dict[str, Callable[[], bool]] = {
     "editorial_narrative_pass": _probe_editorial_narrative,
     "editorial_reduction_pass": _probe_editorial_reduction,
     "chronological_events_catchup": _probe_chronological_events_catchup,
+    "story_continuation": _probe_story_continuation,
+    "content_refinement_queue": _probe_content_refinement_queue,
 }
 
 
@@ -325,6 +401,8 @@ def drain_result_had_work(result: object) -> bool:
         "batches",
         "saved_total",
         "changed_total",
+        "linked",
+        "checked",
     ):
         val = result.get(key)
         if isinstance(val, int) and val > 0:

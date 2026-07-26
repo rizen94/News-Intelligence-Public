@@ -344,15 +344,35 @@ class StoryContinuationService:
         try:
             if self.schema:
                 cursor.execute("SET search_path TO %s, public", (self.schema,))
-            cursor.execute(
-                """
-                SELECT id FROM chronological_events
-                WHERE storyline_id = '' OR storyline_id IS NULL
-                ORDER BY extraction_timestamp DESC
-                LIMIT %s
-            """,
-                (limit,),
-            )
+            # chronological_events is global — only take rows whose source article
+            # lives in this schema, otherwise we re-check the same events once
+            # per domain with the wrong story_entity_index.
+            if self.schema:
+                cursor.execute(
+                    f"""
+                    SELECT ce.id
+                    FROM public.chronological_events ce
+                    WHERE (ce.storyline_id = '' OR ce.storyline_id IS NULL)
+                      AND ce.source_article_id IS NOT NULL
+                      AND EXISTS (
+                            SELECT 1 FROM {self.schema}.articles a
+                            WHERE a.id = ce.source_article_id
+                      )
+                    ORDER BY ce.extraction_timestamp DESC NULLS LAST, ce.id DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT id FROM public.chronological_events
+                    WHERE storyline_id = '' OR storyline_id IS NULL
+                    ORDER BY extraction_timestamp DESC NULLS LAST, id DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
             rows = cursor.fetchall()
         except Exception as e:
             logger.warning(

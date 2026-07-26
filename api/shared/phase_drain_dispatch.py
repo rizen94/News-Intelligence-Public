@@ -25,6 +25,8 @@ DRAINABLE_PHASES: frozenset[str] = frozenset(
         "editorial_narrative_pass",
         "editorial_reduction_pass",
         "chronological_events_catchup",
+        "story_continuation",
+        "content_refinement_queue",
     }
 )
 
@@ -225,5 +227,61 @@ async def drain_phase(
             }
         limit = articles_per_domain if articles_per_domain is not None else 5
         return await asyncio.to_thread(run_catchup_batch_sync, limit=limit)
+
+    if name == "story_continuation":
+        from shared.domain_processing_mode import domain_runs_phase
+        from shared.domain_registry import pipeline_url_schema_pairs
+        from shared.database.connection import get_db_connection
+        from shared.services.llm_service import llm_service
+        from services.story_continuation_service import StoryContinuationService
+
+        cont_limit = articles_per_domain if articles_per_domain is not None else 30
+        try:
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            cont_limit, _meta = resolve_adaptive_batch("story_continuation", cont_limit)
+        except Exception:
+            pass
+        total = {"checked": 0, "linked": 0, "flagged": 0, "processed": 0}
+        schemas = [
+            sch
+            for dk, sch in pipeline_url_schema_pairs()
+            if domain_runs_phase(dk, "story_continuation")
+        ]
+        for schema in schemas:
+            conn = get_db_connection()
+            if not conn:
+                continue
+            try:
+                svc = StoryContinuationService(conn, llm=llm_service, schema=schema)
+                stats = await svc.process_recent_events(limit=cont_limit)
+                svc.update_lifecycle_states()
+                total["checked"] += int(stats.get("checked") or 0)
+                total["linked"] += int(stats.get("linked") or 0)
+                total["flagged"] += int(stats.get("flagged") or 0)
+            except Exception as e:
+                logger.warning("story_continuation drain schema=%s: %s", schema, e)
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        total["processed"] = total["linked"] + total["flagged"]
+        return total
+
+    if name == "content_refinement_queue":
+        from services.content_refinement_queue_service import (
+            auto_enqueue_comprehensive_rag_for_automation,
+            process_content_refinement_queue_batch,
+        )
+
+        # Do not mirror Widow's nightly-window skip here. That skip exists so
+        # AutomationManager defers to nightly_enrichment_context. When this phase
+        # is REMOTE_PHASE_WORKER_OWNED, the PopOS drain is the owner.
+        try:
+            auto_enqueue_comprehensive_rag_for_automation()
+        except Exception as e:
+            logger.debug("content_refinement auto-enqueue: %s", e)
+        return await process_content_refinement_queue_batch()
 
     raise ValueError(f"unsupported phase drain: {name}")

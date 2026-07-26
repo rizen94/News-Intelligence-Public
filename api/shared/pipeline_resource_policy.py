@@ -183,14 +183,15 @@ PHASE_POLICIES: dict[str, PhasePolicy] = {
         Host.POPOS_GPU, Tier.BULK, "gpu", "gpu_heavy", requires_llm=True, default_batch=20
     ),
     "event_deduplication": PhasePolicy(Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy"),
-    "story_continuation": PhasePolicy(Host.WIDOW_DB, Tier.BULK, "cpu", "db_heavy"),
+    "story_continuation": PhasePolicy(
+        Host.POPOS_GPU, Tier.BULK, "gpu", "gpu_heavy", requires_llm=True, default_batch=30
+    ),
   # Tier 3 — intelligence (bulk structure, defer heavy narrative)
     "entity_profile_build": PhasePolicy(
-        # Widow local 8B: PopOS GPU frequently preempts profile batches (503 interactive),
-        # which collapses throughput on the largest backlog phase.
-        Host.WIDOW_CPU,
+        # PopOS local Ollama (OLLAMA_PRIORITY=low) when remote-owned; else Widow CPU.
+        Host.POPOS_GPU,
         Tier.BULK,
-        "cpu",
+        "gpu",
         "gpu_heavy",
         requires_llm=True,
         default_batch=50,

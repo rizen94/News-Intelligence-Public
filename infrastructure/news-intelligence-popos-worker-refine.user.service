@@ -1,7 +1,7 @@
-# Split PopOS worker — storyline continuation + v11 editorial modal drains (local RTX 5090 Ollama).
+# Split PopOS worker — entity profiles + content refinement queue (local RTX 5090, low priority).
 
 [Unit]
-Description=News Intelligence PopOS worker (story_continuation + editorial Research/Narrative/Reduction)
+Description=News Intelligence PopOS worker (entity_profile_build + content_refinement_queue)
 After=network-online.target
 Wants=network-online.target
 PartOf=news-intelligence-popos-workers.target
@@ -16,20 +16,17 @@ Environment=OLLAMA_DUAL_HOST_ROUTING_ENABLED=false
 Environment=AUTOMATION_DUAL_LANE=false
 Environment=BULK_DUAL_LANE_CATCHUP=false
 Environment=OLLAMA_PRIORITY=low
-Environment=EDITORIAL_RESEARCH_ENABLED=true
-Environment=EDITORIAL_NARRATIVE_ENABLED=true
-Environment=EDITORIAL_REDUCTION_ENABLED=true
 EnvironmentFile=-/home/pete/ni-popos-worker/.env
 EnvironmentFile=-/home/pete/ni-popos-worker/.env.popos_worker
 ExecStartPre=/bin/mkdir -p /home/pete/ni-popos-worker/logs
-ExecStart=/home/pete/ni-popos-worker/.venv/bin/python /home/pete/ni-popos-worker/scripts/run_popos_phase_worker.py --worker-id editorial --phases story_continuation,editorial_research_pass,editorial_narrative_pass,editorial_reduction_pass --idle-sleep 20 --budget-seconds 900
+ExecStart=/home/pete/ni-popos-worker/.venv/bin/python /home/pete/ni-popos-worker/scripts/run_popos_phase_worker.py --worker-id refine --phases entity_profile_build,content_refinement_queue --idle-sleep 30 --budget-seconds 900
 Restart=always
 RestartSec=15
 TimeoutStartSec=120
 MemoryMax=12G
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=ni-popos-worker-editorial
+SyslogIdentifier=ni-popos-worker-refine
 
 [Install]
 WantedBy=default.target news-intelligence-popos-workers.target

@@ -33,6 +33,9 @@ POPOS_WORKER_EXPAND_PHASES: tuple[str, ...] = (
     "editorial_narrative_pass",
     "editorial_reduction_pass",
     "chronological_events_catchup",
+    "story_continuation",
+    "entity_profile_build",
+    "content_refinement_queue",
 )
 
 # Allowlist for run_popos_phase_worker — MUST be ⊆ DRAINABLE_PHASES (phase_drain_dispatch).
@@ -51,6 +54,8 @@ POPOS_WORKER_SUPPORTED_PHASES: frozenset[str] = frozenset(
         "editorial_narrative_pass",
         "editorial_reduction_pass",
         "chronological_events_catchup",
+        "story_continuation",
+        "content_refinement_queue",
     }
 )
 

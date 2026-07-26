@@ -98,6 +98,7 @@ install_user_unit "$ROOT/infrastructure/news-intelligence-popos-worker-uie.user.
 install_user_unit "$ROOT/infrastructure/news-intelligence-popos-worker-claim-topic.user.service"
 install_user_unit "$ROOT/infrastructure/news-intelligence-popos-worker-assembly.user.service"
 install_user_unit "$ROOT/infrastructure/news-intelligence-popos-worker-editorial.user.service"
+install_user_unit "$ROOT/infrastructure/news-intelligence-popos-worker-refine.user.service"
 cp "$ROOT/infrastructure/news-intelligence-popos-workers.target" \
   "${USER_UNIT_DIR}/news-intelligence-popos-workers.target"
 
@@ -111,6 +112,7 @@ systemctl --user enable --now \
   news-intelligence-popos-worker-claim-topic \
   news-intelligence-popos-worker-assembly \
   news-intelligence-popos-worker-editorial \
+  news-intelligence-popos-worker-refine \
   news-intelligence-popos-workers.target
 
 sleep 3
@@ -119,7 +121,8 @@ for u in \
   news-intelligence-popos-worker-uie \
   news-intelligence-popos-worker-claim-topic \
   news-intelligence-popos-worker-assembly \
-  news-intelligence-popos-worker-editorial
+  news-intelligence-popos-worker-editorial \
+  news-intelligence-popos-worker-refine
  do
   echo -n "$u: "
   systemctl --user is-active "$u" || true
@@ -129,5 +132,6 @@ systemctl --user status \
   news-intelligence-popos-worker-claim-topic \
   news-intelligence-popos-worker-assembly \
   news-intelligence-popos-worker-editorial \
-  --no-pager -l 2>/dev/null | head -55
+  news-intelligence-popos-worker-refine \
+  --no-pager -l 2>/dev/null | head -65
 echo "Done. Link=$LINK — journals: journalctl --user -u news-intelligence-popos-worker-editorial -f"

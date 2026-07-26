@@ -85,18 +85,19 @@ worker logs `skip … no eligible work`, they agree.
 | `editorial_research_pass` | v11 Research modal (local Ollama) |
 | `editorial_narrative_pass` | v11 Narrative modal |
 | `editorial_reduction_pass` | v11 Reduction modal |
-| `content_enrichment` / `entity_profile_build` / `spine_sql_tail` | Optional drains (not default-owned) |
+| `content_enrichment` / `spine_sql_tail` | Optional drains (not default-owned) |
 
 ## Split workers (default — recommended)
 
-Four parallel user units so assembly (long/RAM-heavy) and editorial LLM do not block UIE:
+Five parallel user units so assembly (long/RAM-heavy), editorial LLM, and refine (profiles / ~70B queue) do not block UIE:
 
 | Unit | Phases |
 |------|--------|
 | `…-uie` | `unified_intake_extraction`, `chronological_events_catchup` |
 | `…-claim-topic` | `claim_extraction`, `topic_clustering` |
 | `…-assembly` | `storyline_assembly` |
-| `…-editorial` | `editorial_research_pass`, `editorial_narrative_pass`, `editorial_reduction_pass` |
+| `…-editorial` | `story_continuation`, `editorial_research_pass`, `editorial_narrative_pass`, `editorial_reduction_pass` |
+| `…-refine` | `entity_profile_build`, `content_refinement_queue` |
 
 Widow must list the same owned set in `REMOTE_PHASE_WORKER_OWNED_PHASES` (see `configs/env.widow_thin_orchestrator.example`).
 
@@ -106,7 +107,8 @@ Widow must list the same owned set in `REMOTE_PHASE_WORKER_OWNED_PHASES` (see `c
 systemctl --user status news-intelligence-popos-worker-uie \
   news-intelligence-popos-worker-claim-topic \
   news-intelligence-popos-worker-assembly \
-  news-intelligence-popos-worker-editorial --no-pager
+  news-intelligence-popos-worker-editorial \
+  news-intelligence-popos-worker-refine --no-pager
 ```
 
 CLI override (beats `.env.popos_worker` `WORKER_PHASES`):
@@ -119,7 +121,7 @@ python scripts/run_popos_phase_worker.py --worker-id uie --phases unified_intake
 
 ```bash
 REMOTE_PHASE_WORKER_ENABLED=true
-REMOTE_PHASE_WORKER_OWNED_PHASES=unified_intake_extraction,claim_extraction,topic_clustering,storyline_assembly,editorial_research_pass,editorial_narrative_pass,editorial_reduction_pass,chronological_events_catchup
+REMOTE_PHASE_WORKER_OWNED_PHASES=unified_intake_extraction,claim_extraction,topic_clustering,storyline_assembly,editorial_research_pass,editorial_narrative_pass,editorial_reduction_pass,chronological_events_catchup,story_continuation,entity_profile_build,content_refinement_queue
 AUTOMATION_MAX_CONCURRENT_TASKS=2
 AUTOMATION_BLOCK_PHASES=document_processing
 AUTOMATION_RSS_PAUSE_MB=1800
