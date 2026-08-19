@@ -5140,9 +5140,35 @@ class AutomationManager:
         return
 
     async def _execute_narrative_thread_build(self, task: Task):
-        from shared.retired_phase_dispatch import dispatch_retired_automation_phase
+        """Build narrative threads from EEL-backed canonical episodes."""
+        import asyncio
 
-        await dispatch_retired_automation_phase(self, "narrative_thread_build", task)
+        from services.narrative_thread_service import build_narrative_threads_from_eel
+        from shared.domain_registry import get_pipeline_active_domain_keys
+
+        try:
+            limit = max(10, min(500, env_int("NARRATIVE_THREAD_EEL_LIMIT", 200)))
+            loop = asyncio.get_event_loop()
+            total_built = 0
+            for domain in get_pipeline_active_domain_keys():
+                result = await loop.run_in_executor(
+                    self._executor,
+                    build_narrative_threads_from_eel,
+                    domain,
+                    limit,
+                )
+                total_built += int(result.get("built") or 0)
+                if result.get("errors"):
+                    logger.debug(
+                        "narrative_thread_build %s errors=%s",
+                        domain,
+                        result["errors"][:3],
+                    )
+            task.metadata["items_processed"] = total_built
+            if total_built:
+                logger.info("narrative_thread_build: %s threads built/updated", total_built)
+        except Exception as e:
+            logger.warning("narrative_thread_build failed: %s", e)
 
     async def _execute_digest_generation(self, task: Task):
         """Fully retired — no digest batch synthesizer."""

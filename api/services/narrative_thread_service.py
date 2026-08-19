@@ -115,6 +115,179 @@ def ensure_narrative_thread(domain_key: str, storyline_id: int) -> dict[str, Any
             pass
 
 
+def _eel_article_ids_for_episode(cur, schema: str, domain_key: str, storyline_id: int) -> list[int]:
+    cur.execute(
+        """
+        SELECT DISTINCT ce.source_article_id
+        FROM intelligence.event_episode_links eel
+        JOIN public.chronological_events ce ON ce.id = eel.event_id
+        WHERE eel.domain_key = %s
+          AND eel.episode_id = %s
+          AND eel.inference_stage <> 'quarantined'
+          AND ce.source_article_id IS NOT NULL
+        ORDER BY ce.source_article_id
+        """,
+        (domain_key, int(storyline_id)),
+    )
+    return [int(r[0]) for r in cur.fetchall() if r[0] is not None]
+
+
+def _eel_event_summary(cur, domain_key: str, storyline_id: int, limit: int = 12) -> str:
+    cur.execute(
+        """
+        SELECT ce.title, ce.actual_event_date
+        FROM intelligence.event_episode_links eel
+        JOIN public.chronological_events ce ON ce.id = eel.event_id
+        WHERE eel.domain_key = %s
+          AND eel.episode_id = %s
+          AND eel.inference_stage <> 'quarantined'
+        ORDER BY ce.actual_event_date DESC NULLS LAST, ce.id DESC
+        LIMIT %s
+        """,
+        (domain_key, int(storyline_id), int(limit)),
+    )
+    lines = []
+    for title, dt in cur.fetchall() or []:
+        label = (title or "Event").strip()
+        if dt:
+            label = f"{dt.isoformat()[:10]}: {label}"
+        lines.append(label)
+    return "\n".join(lines)
+
+
+def ensure_narrative_thread_from_eel(domain_key: str, storyline_id: int) -> dict[str, Any]:
+    """Build/update narrative_thread from EEL-backed episode (not storyline_articles bag)."""
+    if not is_valid_domain_key(domain_key):
+        return {"success": False, "error": f"Unknown domain_key: {domain_key}"}
+    schema = resolve_domain_schema(domain_key)
+    conn = get_db_connection()
+    if not conn:
+        return {"success": False, "error": "Database unavailable"}
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT title, analysis_summary
+                FROM {schema}.storylines
+                WHERE id = %s AND merged_into_id IS NULL
+                """,
+                (int(storyline_id),),
+            )
+            srow = cur.fetchone()
+            if not srow:
+                return {"success": False, "error": f"Episode {storyline_id} not found"}
+            title, analysis = srow
+            article_ids = _eel_article_ids_for_episode(cur, schema, domain_key, storyline_id)
+            event_block = _eel_event_summary(cur, domain_key, storyline_id)
+            summary_parts = [(analysis or title or "").strip()]
+            if event_block:
+                summary_parts.append("Recent developments:\n" + event_block)
+            summary = "\n\n".join(p for p in summary_parts if p)[:8000]
+
+            cur.execute(
+                """
+                SELECT id FROM intelligence.narrative_threads
+                WHERE domain_key = %s AND storyline_id = %s
+                """,
+                (domain_key, int(storyline_id)),
+            )
+            existing = cur.fetchone()
+            if existing:
+                cur.execute(
+                    """
+                    UPDATE intelligence.narrative_threads
+                    SET summary = %s, linked_article_ids = %s
+                    WHERE id = %s
+                    """,
+                    (summary, article_ids, existing[0]),
+                )
+                conn.commit()
+                return {"success": True, "thread_id": existing[0], "created": False}
+
+            cur.execute(
+                """
+                INSERT INTO intelligence.narrative_threads
+                    (domain_key, storyline_id, summary, linked_article_ids)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id
+                """,
+                (domain_key, int(storyline_id), summary, article_ids),
+            )
+            thread_id = cur.fetchone()[0]
+        conn.commit()
+        return {"success": True, "thread_id": thread_id, "created": True}
+    except Exception as e:
+        logger.exception("ensure_narrative_thread_from_eel: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return {"success": False, "error": str(e)}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def build_narrative_threads_from_eel(domain_key: str, limit: int = 200) -> dict[str, Any]:
+    """Build narrative threads for canonical episodes with EEL membership."""
+    if not is_valid_domain_key(domain_key):
+        return {"success": False, "built": 0, "errors": [f"Unknown domain_key: {domain_key}"]}
+    schema = resolve_domain_schema(domain_key)
+    conn = get_db_connection()
+    if not conn:
+        return {"success": False, "built": 0, "errors": ["Database unavailable"]}
+
+    built = 0
+    errors: list[str] = []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT s.id
+                FROM {schema}.storylines s
+                WHERE s.merged_into_id IS NULL
+                  AND COALESCE(s.story_kind, '') <> 'container_index'
+                  AND (
+                    s.signature_locked_at IS NOT NULL
+                    OR (
+                      SELECT COUNT(DISTINCT eel.event_id)
+                      FROM intelligence.event_episode_links eel
+                      WHERE eel.episode_id = s.id
+                        AND eel.domain_key = %s
+                        AND eel.inference_stage <> 'quarantined'
+                    ) >= 2
+                  )
+                ORDER BY (
+                  SELECT COUNT(DISTINCT eel.event_id)
+                  FROM intelligence.event_episode_links eel
+                  WHERE eel.episode_id = s.id
+                    AND eel.domain_key = %s
+                    AND eel.inference_stage <> 'quarantined'
+                ) DESC NULLS LAST
+                LIMIT %s
+                """,
+                (domain_key, domain_key, int(limit)),
+            )
+            episode_ids = [int(r[0]) for r in cur.fetchall() or []]
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    for sid in episode_ids:
+        result = ensure_narrative_thread_from_eel(domain_key, sid)
+        if result.get("success"):
+            built += 1
+        else:
+            errors.append(f"episode {sid}: {result.get('error', 'unknown')}")
+
+    return {"success": len(errors) == 0, "built": built, "errors": errors, "domain": domain_key}
+
+
 def build_threads_for_domain(domain_key: str, limit: int = 50) -> dict[str, Any]:
     """
     Create or update narrative_threads for recent storylines in the domain.

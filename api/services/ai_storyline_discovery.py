@@ -1410,6 +1410,30 @@ Reply with ONLY a JSON object:
         conn = self.get_db_connection()
         try:
             schema = _schema_from_domain_key(domain)
+            try:
+                from services.episode_merge_service import merge_if_duplicate_before_create
+
+                existing_id = merge_if_duplicate_before_create(
+                    conn,
+                    domain_key=domain,
+                    proposed_title=cluster.suggested_title or "",
+                    article_ids=positive_ids,
+                )
+                if existing_id:
+                    conn.commit()
+                    logger.info(
+                        "[%s] episode_merge: discovery redirected %r -> episode %s",
+                        domain,
+                        (cluster.suggested_title or "")[:60],
+                        existing_id,
+                    )
+                    return int(existing_id)
+            except Exception as e:
+                logger.debug("[%s] episode_merge before save: %s", domain, e)
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
             meta = json.dumps(
                 {
                     "source": "storyline_discovery",

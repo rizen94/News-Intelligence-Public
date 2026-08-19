@@ -416,6 +416,99 @@ class StoryContinuationService:
                 title[:60],
             )
             return None
+
+        try:
+            from services.episode_merge_service import merge_if_duplicate_before_create
+
+            existing_id = merge_if_duplicate_before_create(
+                self.conn,
+                domain_key=dk,
+                proposed_title=title,
+                event_id=int(event["id"]),
+                article_id=int(event["source_article_id"])
+                if event.get("source_article_id") is not None
+                else None,
+            )
+        except Exception as e:
+            logger.debug("continuation episode merge resolve: %s", e)
+            existing_id = None
+
+        if existing_id:
+            cursor = self.conn.cursor()
+            try:
+                insert_event_episode_link(
+                    cursor,
+                    event_id=int(event["id"]),
+                    domain_key=dk,
+                    episode_id=int(existing_id),
+                    link_type="continuation",
+                    matched_anchors=identity[:8],
+                    inference_stage="established",
+                    blend_rank=0.88,
+                    added_by="story_continuation_merge_redirect",
+                    metadata={"gate_reason": "merge_redirect", "founding_event_id": int(event["id"])},
+                )
+                cursor.execute(
+                    """
+                    UPDATE public.chronological_events
+                    SET storyline_id = %s::text
+                    WHERE id = %s
+                    """,
+                    (str(int(existing_id)), int(event["id"])),
+                )
+                aid = event.get("source_article_id")
+                if aid is not None:
+                    from shared.membership_store import insert_derived_bag_row
+
+                    insert_derived_bag_row(
+                        cursor,
+                        schema=schema,
+                        storyline_id=int(existing_id),
+                        article_id=int(aid),
+                        relevance_score=0.88,
+                        added_by="story_continuation",
+                        metadata={"derived_from": "merge_redirect"},
+                    )
+                cursor.execute(
+                    f"""
+                    UPDATE {schema}.storylines
+                    SET updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (int(existing_id),),
+                )
+                self.conn.commit()
+                logger.info(
+                    "continuation redirected event=%s -> existing episode=%s (merge)",
+                    event["id"],
+                    existing_id,
+                )
+                return {
+                    "storyline_id": int(existing_id),
+                    "title": title,
+                    "auto_linked": True,
+                    "confidence": 0.88,
+                    "blend_score": 0.88,
+                    "founded": False,
+                    "merge_redirect": True,
+                    "matched_entities": identity[:8],
+                    "reasoning": "mode_b:merge_redirect",
+                }
+            except Exception as e:
+                logger.warning(
+                    "continuation merge redirect failed event=%s episode=%s: %s",
+                    event.get("id"),
+                    existing_id,
+                    e,
+                )
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
+                return None
+            finally:
+                cursor.close()
+
         cursor = self.conn.cursor()
         try:
             import json as _json

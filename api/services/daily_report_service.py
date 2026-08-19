@@ -180,13 +180,26 @@ def assemble_daily(
                 ep_ids = [m["episode_id"] for m in moved]
                 cur.execute(
                     f"""
-                    SELECT ns.id, ns.title, p.metadata->>'storyline_id' AS sid
+                    SELECT ns.id, ns.title,
+                           COALESCE(
+                             NULLIF(p.metadata->>'storyline_id', ''),
+                             NULLIF(p.metadata->>'source_storyline_id', ''),
+                             NULLIF(split_part(p.metadata->>'legacy_seed', ':', 3), '')
+                           ) AS sid
                     FROM intelligence.news_stories ns
                     JOIN intelligence.editorial_packages p ON p.id = ns.package_id
                     WHERE ns.status = 'published'
                       AND %s = ANY(ns.domain_keys)
-                      AND COALESCE(p.metadata->>'storyline_id', '') ~ '^[0-9]+$'
-                      AND (p.metadata->>'storyline_id')::bigint = ANY(%s)
+                      AND COALESCE(
+                            NULLIF(p.metadata->>'storyline_id', ''),
+                            NULLIF(p.metadata->>'source_storyline_id', ''),
+                            NULLIF(split_part(p.metadata->>'legacy_seed', ':', 3), '')
+                          ) ~ '^[0-9]+$'
+                      AND COALESCE(
+                            NULLIF(p.metadata->>'storyline_id', ''),
+                            NULLIF(p.metadata->>'source_storyline_id', ''),
+                            NULLIF(split_part(p.metadata->>'legacy_seed', ':', 3), '')
+                          )::bigint = ANY(%s)
                     """,
                     (domain_key, ep_ids),
                 )

@@ -41,6 +41,7 @@ def backfill_domain(
     apply: bool,
     limit_episodes: int,
     max_articles_per_episode: int,
+    bag_orphans_only: bool = False,
 ) -> dict:
     schema = resolve_domain_schema(domain_key)
     stats = {
@@ -50,20 +51,40 @@ def backfill_domain(
         "linked": 0,
         "rejected": 0,
         "skipped_no_events": 0,
+        "bag_orphans_only": bag_orphans_only,
     }
     with get_db_connection_context() as conn:
+        orphan_filter = ""
+        if bag_orphans_only:
+            orphan_filter = f"""
+                  AND EXISTS (
+                    SELECT 1 FROM {schema}.storyline_articles sa
+                    WHERE sa.storyline_id = s.id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM intelligence.event_episode_links eel
+                    WHERE eel.episode_id = s.id
+                      AND eel.domain_key = %s
+                      AND eel.inference_stage <> 'quarantined'
+                  )
+            """
+        sig_filter = "" if bag_orphans_only else "AND s.signature_locked_at IS NOT NULL"
         with conn.cursor() as cur:
+            params: list = [domain_key] if bag_orphans_only else []
+            params.append(int(limit_episodes))
             cur.execute(
                 f"""
                 SELECT s.id
                 FROM {schema}.storylines s
-                WHERE s.signature_locked_at IS NOT NULL
-                  AND COALESCE(s.story_kind, '') <> 'container_index'
+                WHERE COALESCE(s.story_kind, '') <> 'container_index'
                   AND COALESCE(s.is_mega_storyline, FALSE) = FALSE
-                ORDER BY s.id DESC
+                  AND s.merged_into_id IS NULL
+                  {sig_filter}
+                  {orphan_filter}
+                ORDER BY s.updated_at DESC NULLS LAST
                 LIMIT %s
                 """,
-                (int(limit_episodes),),
+                tuple(params),
             )
             episode_ids = [int(r[0]) for r in (cur.fetchall() or [])]
 
@@ -162,6 +183,11 @@ def main() -> int:
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--limit-episodes", type=int, default=200)
     p.add_argument("--max-articles-per-episode", type=int, default=80)
+    p.add_argument(
+        "--bag-orphans-only",
+        action="store_true",
+        help="Only episodes with storyline_articles but zero EEL links",
+    )
     args = p.parse_args()
     apply = bool(args.apply) and not args.dry_run
     domains = (
@@ -178,6 +204,7 @@ def main() -> int:
             apply=apply,
             limit_episodes=args.limit_episodes,
             max_articles_per_episode=args.max_articles_per_episode,
+            bag_orphans_only=bool(args.bag_orphans_only),
         )
         out.append(st)
         logger.info("stats %s", st)

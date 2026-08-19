@@ -2350,6 +2350,7 @@ def ensure_package_from_storyline(
                 actor=actor,
                 metadata={
                     "legacy_seed": seed,
+                    "storyline_id": sid,
                     "source_storyline_id": sid,
                     "source_domain_key": dk,
                     "seeded_by": "storyline_bridge",

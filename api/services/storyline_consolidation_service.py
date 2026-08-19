@@ -792,9 +792,38 @@ class StorylineConsolidationService:
             with conn.cursor() as cur:
                 from shared.assembly_link_funnel import storyline_articles_write_allowed
 
+                try:
+                    from services.episode_merge_service import (
+                        episode_merge_enabled,
+                        merge_episodes_eel_aware,
+                    )
+                except Exception:
+                    episode_merge_enabled = lambda: False  # type: ignore[misc, assignment]
+                    merge_episodes_eel_aware = None  # type: ignore[misc, assignment]
+
+                if episode_merge_enabled() and merge_episodes_eel_aware is not None:
+                    result = merge_episodes_eel_aware(
+                        conn,
+                        domain_key=domain,
+                        primary_id=int(primary.id),
+                        secondary_id=int(secondary.id),
+                        reason="consolidation",
+                    )
+                    if result.get("success"):
+                        conn.commit()
+                        logger.info(
+                            "EEL merge %s <- %s (sim: %.0f%%, eel_moved=%s)",
+                            primary.id,
+                            secondary.id,
+                            similarity["overall"] * 100,
+                            result.get("eel_moved", 0),
+                        )
+                        return primary.id
+                    conn.rollback()
+
                 if not storyline_articles_write_allowed():
                     logger.info(
-                        "Skipping SA merge move %s <- %s (episode mode, dual-write off)",
+                        "Skipping merge %s <- %s (episode mode, EEL merge unavailable)",
                         primary.id,
                         secondary.id,
                     )

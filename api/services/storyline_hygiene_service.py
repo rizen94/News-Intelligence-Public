@@ -335,6 +335,24 @@ def run_storyline_hygiene_for_domain(
             result = get_consolidation_service().merge_storylines(
                 domain, p_info, s_info, {"overall": float(sim)}
             )
+            if not result:
+                try:
+                    from shared.database.connection import get_db_connection_context
+                    from services.episode_merge_service import merge_episodes_eel_aware
+
+                    with get_db_connection_context() as conn:
+                        eel_result = merge_episodes_eel_aware(
+                            conn,
+                            domain_key=domain,
+                            primary_id=primary[0],
+                            secondary_id=secondary[0],
+                            reason="storyline_hygiene",
+                        )
+                        if eel_result.get("success"):
+                            conn.commit()
+                            result = primary[0]
+                except Exception as e:
+                    logger.debug("hygiene EEL merge fallback: %s", e)
             if result:
                 out["merged"] += 1
                 prune_dissimilar_parts(domain, primary[0], dry_run=False)
@@ -355,6 +373,26 @@ def run_storyline_hygiene_for_domain(
                 secondary[0],
                 e,
             )
+
+    # Title-duplicate episode repair (EEL-aware)
+    try:
+        from services.episode_merge_service import (
+            episode_merge_enabled,
+            scan_and_merge_duplicate_episodes,
+        )
+        from shared.database.connection import get_db_connection_context
+
+        if not dry_run and episode_merge_enabled():
+            with get_db_connection_context() as conn:
+                dup_scan = scan_and_merge_duplicate_episodes(
+                    conn, domain_key=domain, limit=20, dry_run=False
+                )
+                if dup_scan.get("merged"):
+                    conn.commit()
+                    out["merged"] += int(dup_scan["merged"])
+                    out["episode_dup_repair"] = dup_scan
+    except Exception as e:
+        logger.debug("hygiene episode dup scan: %s", e)
 
     return out
 
