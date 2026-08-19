@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "api"))
 from shared.database.connection import get_db_connection_context  # noqa: E402
 from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema  # noqa: E402
 from shared.episode_attach_gate import parse_anchor_signature, signature_match  # noqa: E402
+from shared.episode_title_match import episode_title_similarity  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("bridge_tracked_events")
@@ -70,27 +71,42 @@ def bridge_domain(domain_key: str, *, apply: bool, limit: int) -> dict:
                 continue
 
             best_ep: int | None = None
-            best_score = 0
+            best_score = 0.0
+            te_name = ""
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT event_name FROM intelligence.tracked_events WHERE id = %s",
+                    (int(te_id),),
+                )
+                row_name = cur.fetchone()
+                te_name = (row_name[0] if row_name else "") or ""
+
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
-                    SELECT id, anchor_signature
+                    SELECT id, title, anchor_signature
                     FROM {schema}.storylines
                     WHERE merged_into_id IS NULL
                       AND COALESCE(story_kind, '') <> 'container_index'
-                      AND anchor_signature IS NOT NULL
                       AND status NOT IN ('archived', 'concluded')
                     ORDER BY updated_at DESC NULLS LAST
-                    LIMIT 150
+                    LIMIT 200
                     """
                 )
-                for sid, raw_sig in cur.fetchall() or []:
+                for sid, title, raw_sig in cur.fetchall() or []:
+                    title_sim = episode_title_similarity(te_name, title or "") if te_name else 0.0
+                    if title_sim >= 0.72 and title_sim > best_score:
+                        best_score = title_sim
+                        best_ep = int(sid)
+                        continue
+                    if not raw_sig:
+                        continue
                     sig = parse_anchor_signature(raw_sig)
                     ok, matched, _reason = signature_match(
                         sig, event_anchors, min_supporting=2, min_identity=2
                     )
                     if ok and len(matched) > best_score:
-                        best_score = len(matched)
+                        best_score = float(len(matched))
                         best_ep = int(sid)
 
             if not best_ep:

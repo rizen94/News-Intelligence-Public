@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "api"))
 from shared.database.connection import get_db_connection_context  # noqa: E402
 from shared.domain_registry import (  # noqa: E402
     get_pipeline_active_domain_keys,
+    resolve_domain_schema,
 )
 from shared.episode_attach_gate import insert_event_episode_link  # noqa: E402
 from services.episode_merge_service import resolve_existing_episode  # noqa: E402
@@ -56,23 +57,11 @@ def link_clusters(
         "clusters_resolved": 0,
         "clusters_skipped": 0,
     }
-    domain_filter = ""
-    params: list = [limit_clusters]
-    if domain_key:
-        domain_filter = """
-          AND EXISTS (
-            SELECT 1 FROM public.chronological_events ce2
-            JOIN public.articles a ON a.id = ce2.source_article_id
-            WHERE ce2.event_cluster_id = ce.event_cluster_id
-              AND a.domain_key = %s
-          )
-        """
-        params = [domain_key, limit_clusters]
 
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                f"""
+                """
                 SELECT ce.event_cluster_id,
                        MIN(ce.id) AS root_id,
                        array_agg(ce.id ORDER BY ce.id) AS member_ids
@@ -83,13 +72,12 @@ def link_clusters(
                     WHERE eel.event_id = ce.id
                       AND eel.inference_stage <> 'quarantined'
                   )
-                  {domain_filter}
                 GROUP BY ce.event_cluster_id
                 HAVING COUNT(*) >= 1
                 ORDER BY COUNT(*) DESC
                 LIMIT %s
                 """,
-                tuple(params),
+                (int(limit_clusters),),
             )
             clusters = cur.fetchall() or []
 
@@ -100,25 +88,63 @@ def link_clusters(
                 stats["clusters_skipped"] += 1
                 continue
 
-            dk = domain_key or _domain_for_event(conn, int(root_id))
-            if not dk:
-                stats["clusters_skipped"] += 1
-                continue
+            episode_id: int | None = None
+            dk: str | None = domain_key
 
-            episode_id = resolve_existing_episode(
-                conn,
-                domain_key=dk,
-                event_id=int(root_id),
-                article_id=None,
-            )
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT eel.episode_id, eel.domain_key
+                    FROM intelligence.event_episode_links eel
+                    WHERE eel.event_id = ANY(%s)
+                      AND eel.inference_stage <> 'quarantined'
+                    ORDER BY eel.updated_at DESC NULLS LAST
+                    LIMIT 1
+                    """,
+                    (members,),
+                )
+                linked = cur.fetchone()
+                if linked:
+                    episode_id, dk = int(linked[0]), str(linked[1])
+
+            if not episode_id:
+                dk = dk or _domain_for_event(conn, int(root_id))
+                if not dk:
+                    stats["clusters_skipped"] += 1
+                    continue
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT title FROM public.chronological_events WHERE id = %s",
+                        (int(root_id),),
+                    )
+                    erow = cur.fetchone()
+                    event_title = (erow[0] if erow else "") or ""
+                episode_id = resolve_existing_episode(
+                    conn,
+                    domain_key=dk,
+                    event_id=int(root_id),
+                    article_id=None,
+                    title_hint=event_title,
+                )
+                if not episode_id and event_title:
+                    from services.episode_merge_service import find_episodes_by_title
+
+                    schema = resolve_domain_schema(dk)
+                    title_matches = find_episodes_by_title(
+                        conn, schema=schema, title=event_title
+                    )
+                    if title_matches:
+                        from services.episode_merge_service import pick_canonical_episode
+
+                        episode_id = pick_canonical_episode(
+                            conn, schema=schema, episode_ids=title_matches
+                        )
+
             if not episode_id:
                 stats["clusters_skipped"] += 1
                 continue
 
             stats["clusters_resolved"] += 1
-            from shared.domain_registry import resolve_domain_schema
-
-            schema = resolve_domain_schema(dk)
             linked_this = 0
             with conn.cursor() as cur:
                 for eid in members:
@@ -169,16 +195,16 @@ def main() -> int:
     args = ap.parse_args()
     apply = bool(args.apply) and not args.dry_run
     if args.all:
-        out = []
-        for dk in get_pipeline_active_domain_keys():
-            out.append(
+        print(
+            json.dumps(
                 link_clusters(
-                    domain_key=dk,
+                    domain_key=None,
                     apply=apply,
                     limit_clusters=args.limit_clusters,
-                )
+                ),
+                indent=2,
             )
-        print(json.dumps(out, indent=2))
+        )
     elif args.domain:
         print(
             json.dumps(

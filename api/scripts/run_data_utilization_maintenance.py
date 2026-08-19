@@ -83,26 +83,45 @@ def main() -> int:
 
     out["package_storyline_backfill"] = backfill_package_storyline_ids(apply=args.apply)
 
+    # Scripts that take --apply vs those that run on absence of --dry-run
+    def _repair_args() -> list[str]:
+        return ["--all"] if args.apply else ["--all", "--dry-run"]
+
+    def _promote_args() -> list[str]:
+        return ["--all"] if args.apply else ["--all", "--dry-run"]
+
+    def _seed_args() -> list[str]:
+        return ["--all", "--limit", "20"] if args.apply else ["--all", "--limit", "20", "--dry-run"]
+
     steps = []
     if not args.skip_repair:
-        steps.append(("repair_duplicate_episodes.py", ["--all", *apply_flag]))
+        steps.append(("repair_duplicate_episodes.py", _repair_args()))
     steps.extend(
         [
-            ("promote_eel_links.py", ["--all", *apply_flag]),
+            ("promote_eel_links.py", _promote_args()),
             (
                 "backfill_event_episode_links.py",
-                ["--all", *apply_flag, "--limit-episodes", "500", "--bag-orphans-only"],
+                (["--all", "--limit-episodes", "500", "--bag-orphans-only"]
+                 + (["--apply"] if args.apply else ["--dry-run"])),
             ),
         ]
     )
     if not args.skip_cluster:
         steps.append(
-            ("link_clustered_events_to_episodes.py", ["--all", *apply_flag, "--limit-clusters", "500"])
+            (
+                "link_clustered_events_to_episodes.py",
+                (["--all", "--limit-clusters", "500"]
+                 + (["--apply"] if args.apply else ["--dry-run"])),
+            )
         )
     steps.extend(
         [
-            ("bridge_tracked_events_to_episodes.py", ["--all", *apply_flag, "--limit", "500"]),
-            ("seed_watchlist_from_daily.py", ["--all", "--limit", "20", *apply_flag]),
+            (
+                "bridge_tracked_events_to_episodes.py",
+                (["--all", "--limit", "500"]
+                 + (["--apply"] if args.apply else ["--dry-run"])),
+            ),
+            ("seed_watchlist_from_daily.py", _seed_args()),
         ]
     )
 
@@ -111,7 +130,7 @@ def main() -> int:
     if args.apply and not args.skip_dossier:
         out["dossier_catchup"] = run_script(
             "run_major_backlog_catchup.py",
-            ["--phases", "entity_dossier_compile", "--max-rounds", "3"],
+            ["--phases", "entity_dossier_compile", "--loops", "3", "--force"],
         )
 
     print(json.dumps(out, indent=2))

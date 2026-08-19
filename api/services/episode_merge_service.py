@@ -511,7 +511,7 @@ def merge_episodes_eel_aware(
                 updated_at = NOW()
             WHERE id = %s
             """,
-            (f" [Merged episode {secondary_id}: {(stitle or '')[:80]}]", primary_id),
+            (primary_id, primary_id, f" [Merged episode {secondary_id}: {(stitle or '')[:80]}]", primary_id),
         )
 
         cur.execute(
