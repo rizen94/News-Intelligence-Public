@@ -56,6 +56,9 @@ def resolve_model_for_invocation(
     - Long synthesis (draft) → primary — finisher is STORYLINE_NARRATIVE_FINISH, not this kind.
     """
     if kind == InvocationKind.STORYLINE_NARRATIVE_FINISH:
+        # 32B tag is often not pulled; fall back to installed primary so jobs drain.
+        if env_bool("OLLAMA_NARRATIVE_FINISHER_FALLBACK_TO_PRIMARY", True):
+            return ModelType.LLAMA_8B
         return ModelType.LLAMA_70B
 
     if kind == InvocationKind.FINANCE_GENERATION_HIGH:
@@ -145,10 +148,11 @@ def num_predict_for_invocation(
             if bs < 1:
                 bs = 1
             try:
-                base = int(env_str("OLLAMA_EXTRACTION_NUM_PREDICT", "2048"))
+                base = int(env_str("OLLAMA_EXTRACTION_NUM_PREDICT", "4096"))
             except ValueError:
-                base = 2048
-            return max(base, 700 * bs)
+                base = 4096
+            # ~900 tokens/article for full entity+event+claims JSON; keep headroom.
+            return max(base, 900 * bs)
         try:
             return int(env_str("OLLAMA_EXTRACTION_NUM_PREDICT", "2048"))
         except ValueError:
@@ -172,12 +176,21 @@ def num_ctx_for_invocation(kind: InvocationKind | None) -> int | None:
 
     Widow GTX 1080 (8GB): keep extraction ctx modest so weights stay in VRAM.
     PopOS 5090 can raise ``OLLAMA_EXTRACTION_NUM_CTX`` independently.
+
+    Narrative finisher (``LLAMA_70B`` → often ``qwen2.5:32b-instruct``) must not
+    inherit the model default 32k: that KV spills layers to CPU and thrash-swaps.
     """
     if kind == InvocationKind.STRUCTURED_EXTRACTION:
         try:
             # Default 8192 — PopOS 5090 is the sole extraction host; batch-of-6
             # prompts (6×8k chars + schema) truncate under 2048 and trigger retries.
             return max(512, min(8192, int(env_str("OLLAMA_EXTRACTION_NUM_CTX", "8192"))))
+        except ValueError:
+            return 8192
+    if kind == InvocationKind.STORYLINE_NARRATIVE_FINISH:
+        try:
+            # Default 8192 keeps 32B weights mostly on a 32GB card; raise via env if needed.
+            return max(512, min(16384, int(env_str("OLLAMA_NARRATIVE_FINISHER_NUM_CTX", "8192"))))
         except ValueError:
             return 8192
     # Cap other Widow-local generations when explicitly configured.

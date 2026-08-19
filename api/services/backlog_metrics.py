@@ -313,6 +313,7 @@ RAW_PENDING_COUNT_KEYS = frozenset(
         "chronological_events_catchup",
         "editorial_research_pass",
         "editorial_narrative_pass",
+        "editorial_evidence_expand_pass",
         "editorial_reduction_pass",
         "claim_evidence_appraisal",
     }
@@ -417,6 +418,7 @@ def _get_raw_pending_counts() -> Dict[str, int]:
         _set("chronological_events_catchup", _count_chronological_events_catchup_pending)
         _set("editorial_research_pass", _count_editorial_research_pending)
         _set("editorial_narrative_pass", _count_editorial_narrative_pending)
+        _set("editorial_evidence_expand_pass", _count_editorial_evidence_expand_pending)
         _set("editorial_reduction_pass", _count_editorial_reduction_pending)
         nightly_base = (
             int(raw.get("content_enrichment", 0) or 0)
@@ -2256,7 +2258,13 @@ def _count_collision_sampling_pending() -> int:
 
 
 def _count_event_deduplication_pending() -> int:
-    """Unmerged chronological_events still eligible for coreference (capped probe)."""
+    """
+    Chronological events still needing a coreference pass (capped probe).
+
+    Soft-cluster roots already have ``event_cluster_id`` and must not inflate
+    Monitor backlog — only hard-merge members leave ``canonical_event_id`` null
+    while still being "done" for soft linking.
+    """
     conn = _get_conn()
     if not conn:
         return 0
@@ -2269,6 +2277,7 @@ def _count_event_deduplication_pending() -> int:
                 SELECT COUNT(*)::int FROM (
                     SELECT 1 FROM public.chronological_events
                     WHERE canonical_event_id IS NULL
+                      AND event_cluster_id IS NULL
                     LIMIT %s
                 ) t
                 """,
@@ -2290,23 +2299,32 @@ def _count_event_deduplication_pending() -> int:
 
 
 def _count_story_continuation_pending() -> int:
-    """Events not yet linked to a storyline (capped probe)."""
+    """Events still due for a continuation pass (capped probe).
+
+    Matches the idle probe / ``process_recent_events`` due predicate so Monitor
+    does not treat backoff-deferred unlinked events as actionable backlog.
+    """
     conn = _get_conn()
     if not conn:
         return 0
     cap = max(100, env_int("STORY_CONTINUATION_PENDING_PROBE_CAP", 5000))
     try:
+        from services.story_continuation_service import continuation_recheck_due_sql
+
+        due_sql, due_params = continuation_recheck_due_sql("ce")
         with conn.cursor() as cur:
             cur.execute("SET LOCAL statement_timeout = '5s'")
             cur.execute(
-                """
+                f"""
                 SELECT COUNT(*)::int FROM (
-                    SELECT 1 FROM public.chronological_events
-                    WHERE storyline_id IS NULL OR storyline_id = ''
+                    SELECT 1 FROM public.chronological_events ce
+                    WHERE (ce.storyline_id IS NULL OR ce.storyline_id = '')
+                      AND ce.canonical_event_id IS NULL
+                      AND {due_sql}
                     LIMIT %s
                 ) t
                 """,
-                (cap,),
+                (*due_params, cap),
             )
             return int(cur.fetchone()[0] or 0)
     except Exception as e:
@@ -2363,6 +2381,22 @@ def _count_editorial_narrative_pending() -> int:
         return len(list_narrative_due(limit=50))
     except Exception as e:
         logger.debug("backlog editorial_narrative_pass count: %s", e)
+        return 0
+
+
+def _count_editorial_evidence_expand_pending() -> int:
+    """Packages waiting on Narrative evidence-expand (capped probe)."""
+    try:
+        from services.editorial_package_evidence_expand_service import (
+            is_enabled,
+            list_evidence_expand_due,
+        )
+
+        if not is_enabled():
+            return 0
+        return len(list_evidence_expand_due(limit=50))
+    except Exception as e:
+        logger.debug("backlog editorial_evidence_expand_pass count: %s", e)
         return 0
 
 
@@ -2601,6 +2635,7 @@ SKIP_WHEN_EMPTY = frozenset({
     "chronological_events_catchup",
     "editorial_research_pass",
     "editorial_narrative_pass",
+    "editorial_evidence_expand_pass",
     "editorial_reduction_pass",
     "claim_evidence_appraisal",
 })

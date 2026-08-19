@@ -541,7 +541,7 @@ def _rss_feed_health_due(automation: Any) -> bool:
     if not sched.get("enabled"):
         return False
     last = sched.get("last_run")
-    interval = int(sched.get("interval") or 86400)
+    interval = int(sched.get("interval") or 604800)
     if last is None:
         return True
     return (datetime.now(timezone.utc) - last).total_seconds() >= interval

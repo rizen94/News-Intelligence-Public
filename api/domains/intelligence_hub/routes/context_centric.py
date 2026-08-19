@@ -1075,7 +1075,7 @@ _EVENT_COLS = """id, event_type, event_name, start_date, end_date, geographic_sc
                    key_participant_entity_ids, milestones, sub_event_ids, created_at, updated_at, domain_keys,
                    editorial_briefing, editorial_briefing_json, briefing_version, briefing_status,
                    global_narrative, narrative_lenses, global_narrative_version, global_narrative_updated_at, narrative_lenses_updated_at,
-                   anchors, particulars, arc_state"""
+                   anchors, particulars, arc_state, container_kind"""
 
 
 def _row_to_event(row: tuple) -> dict:
@@ -1122,6 +1122,8 @@ def _row_to_event(row: tuple) -> dict:
     if len(row) > 23:
         arc_state = row[23]
         out["arc_state"] = arc_state if isinstance(arc_state, (list, dict)) else (arc_state or {})
+    if len(row) > 24:
+        out["container_kind"] = row[24]
     return out
 
 

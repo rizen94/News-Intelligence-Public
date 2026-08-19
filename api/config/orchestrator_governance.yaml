@@ -40,18 +40,30 @@ signal_first:
   target_full_llm_ratio_min: 0.15
   target_full_llm_ratio_max: 0.35
 
-# RSS feed warn-then-auto silencing — see services/rss_feed_health_service.py
+# RSS feed weekly quality cull — see services/rss_feed_health_service.py
 rss_feed_health:
   enabled: true
+  policy: weekly_cull
   dry_run: false
+  # Drop the lowest avg-quality feed each week until every scored feed clears this bar
+  target_avg_quality: 0.60
+  review_window_days: 7
+  min_articles_for_score: 5
+  drops_per_review: 1
+  interval_seconds: 604800  # weekly
+  # Legacy / blocked_yield helpers (warn_silence policy only)
   min_quality: 0.55
   zero_yield_days: 14
   low_signal_days: 30
   low_signal_min_articles: 10
+  blocked_yield_days: 30
+  blocked_min_articles: 20
+  blocked_rate_threshold: 0.70
+  fulltext_rate_max: 0.05
   fetch_failure_consecutive: 5
   review_cycles: 3
   grace_days: 21
-
+  note: "weekly_cull: one lowest-quality drop per week until all scored feeds avg >= 0.60"
 # Phase E: per-phase retry + auto-silence — see services/phase_retry_silence_service.py
 phase_retry_policy:
   enabled: true
@@ -279,12 +291,10 @@ pipeline_conductor:
 collection_cycle:
   interval_seconds: 7200  # 2 hours (used when idle; when work exists, cooldown applies)
 
-rss_feed_health:
-  interval_seconds: 86400  # nightly; warn-then-auto silencing after collection
-  note: "AutomationManager rss_feed_health phase; dry-run until RSS_FEED_SILENCE_DRY_RUN=false"
-
 # Post-spine assembly — programmatic link graph + editorial room (June 2026)
-# Retired phases remain in code; scheduling suppressed via POST_SPINE_RETIRED_PHASES + AUTOMATION_DISABLED_SCHEDULES.
+# Hard-retired phases have no AutomationManager schedule entries
+# (see api/shared/retired_phase_registry.py). Env AUTOMATION_DISABLED_SCHEDULES
+# is for temporary operator disables of *live* phases only — not for retirement.
 post_spine_assembly:
   assembly_pipeline_mode: ordered  # shadow | ordered | legacy — env ASSEMBLY_PIPELINE_MODE
   editorial_room_loop_enabled: true

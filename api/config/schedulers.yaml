@@ -67,9 +67,9 @@ schedulers:
 
   rss_feed_health:
     owner: automation_manager
-    interval_seconds: 86400
+    interval_seconds: 604800
     enabled: true
-    note: Nightly feed yield review; warn-then-auto silencing (RSS_FEED_SILENCE_* env)
+    note: Weekly quality cull — drop lowest avg-quality feed until all scored feeds >= 0.60
 
   rolling_arc_refresh:
     owner: automation_manager

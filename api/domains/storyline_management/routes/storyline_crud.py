@@ -12,7 +12,10 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from shared.database.connection import get_db_connection
 from shared.domain_registry import DOMAIN_PATH_PATTERN, pipeline_url_schema_pairs, resolve_domain_schema
-from shared.storyline_article_counts import storyline_article_count_subquery
+from shared.storyline_article_counts import (
+    storyline_article_count_subquery,
+    storyline_last_article_at_subquery,
+)
 from shared.services.domain_aware_service import validate_domain
 
 from ..schemas.storyline_schemas import (
@@ -95,16 +98,20 @@ async def get_domain_storylines(
                 pages = math.ceil(total / page_size) if total > 0 else 0
 
                 # Get paginated results
-                ac_sub = storyline_article_count_subquery(schema)
+                ac_sub = storyline_article_count_subquery(schema, domain_key=domain)
+                laa_sub = storyline_last_article_at_subquery(schema, domain_key=domain)
+                from shared.episode_attach_gate import episode_container_assembly_enabled
+
+                episode_reads = episode_container_assembly_enabled()
                 query = f"""
                     SELECT s.id, s.title, s.description, s.created_at, s.updated_at,
                            s.status, {ac_sub} AS article_count, s.quality_score,
-                           (SELECT MAX(sa.added_at) FROM {schema}.storyline_articles sa
-                            WHERE sa.storyline_id = s.id) AS last_article_added_at,
-                           s.last_refinement, s.last_automation_run
+                           {laa_sub} AS last_article_added_at,
+                           s.last_refinement, s.last_automation_run,
+                           s.story_kind, s.episode_state
                     FROM {schema}.storylines s
                     {where_clause}
-                    ORDER BY (SELECT MAX(sa2.added_at) FROM {schema}.storyline_articles sa2 WHERE sa2.storyline_id = s.id) DESC NULLS LAST,
+                    ORDER BY {laa_sub} DESC NULLS LAST,
                              s.updated_at DESC NULLS LAST
                     LIMIT %s OFFSET %s
                 """
@@ -153,6 +160,8 @@ async def get_domain_storylines(
                     laa = row[8] if len(row) > 8 else None
                     last_refinement = row[9] if len(row) > 9 else None
                     last_automation_run = row[10] if len(row) > 10 else None
+                    story_kind = row[11] if len(row) > 11 else None
+                    episode_state = row[12] if len(row) > 12 else None
                     raw_title = row[1]
                     display_title = sanitize_storyline_title_for_display(
                         raw_title, fallback=f"Storyline #{row[0]}"
@@ -170,7 +179,10 @@ async def get_domain_storylines(
                             last_article_added_at=laa,
                             last_refinement=last_refinement,
                             last_automation_run=last_automation_run,
+                            story_kind=story_kind,
+                            episode_state=episode_state,
                             top_entities=top_entities_by_storyline.get(row[0], []),
+                            membership_source="eel" if episode_reads else "storyline_articles",
                         )
                     )
 
@@ -282,7 +294,7 @@ async def get_domain_storyline(
 
         try:
             with conn.cursor() as cur:
-                ac_sub = storyline_article_count_subquery(schema, "s")
+                ac_sub = storyline_article_count_subquery(schema, "s", domain_key=domain)
                 # Get storyline details (include key_entities, ml_processing_status)
                 cur.execute(
                     f"""
@@ -297,7 +309,9 @@ async def get_domain_storyline(
                            s.canonical_narrative, s.narrative_finisher_model, s.narrative_finisher_at,
                            s.narrative_finisher_meta,
                            s.timeline_narrative_chronological, s.timeline_narrative_briefing,
-                           s.timeline_narrative_chronological_at, s.timeline_narrative_briefing_at
+                           s.timeline_narrative_chronological_at, s.timeline_narrative_briefing_at,
+                           s.episode_state,
+                           COALESCE(s.metadata->>'attach_block_reason', '') AS attach_block_reason
                     FROM {schema}.storylines s
                     WHERE s.id = %s
                 """,
@@ -308,9 +322,33 @@ async def get_domain_storyline(
                 if not storyline:
                     raise HTTPException(status_code=404, detail="Storyline not found")
 
-                # Get articles in storyline
-                cur.execute(
-                    f"""
+                # Get articles: EEL SSOT when episode assembly on, else storyline_articles bag
+                from shared.episode_attach_gate import episode_container_assembly_enabled
+                from shared.episode_membership import (
+                    fetch_episode_articles,
+                    list_episode_source_coverage_sql,
+                )
+
+                membership_source = "storyline_articles"
+                episode_state_val = None
+                attach_block_reason = None
+                if episode_container_assembly_enabled():
+                    article_rows = fetch_episode_articles(
+                        cur,
+                        schema=schema,
+                        domain_key=domain,
+                        episode_id=int(storyline_id),
+                    )
+                    membership_source = "eel"
+                    # storyline tuple extended: episode_state at 28, attach_block_reason at 29
+                    if len(storyline) > 28:
+                        episode_state_val = storyline[28]
+                        attach_block_reason = (storyline[29] or "").strip() or None
+                    if not article_rows and not attach_block_reason:
+                        episode_state_val = episode_state_val or "forming"
+                else:
+                    cur.execute(
+                        f"""
                     SELECT a.id, a.title, a.url, a.source_domain, a.published_at, a.summary
                     FROM {schema}.articles a
                     JOIN {schema}.storyline_articles sa ON a.id = sa.article_id
@@ -318,10 +356,11 @@ async def get_domain_storyline(
                       AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
                     ORDER BY a.published_at DESC
                 """,
-                    (storyline_id,),
-                )
+                        (storyline_id,),
+                    )
+                    article_rows = cur.fetchall()
+                    membership_source = "storyline_articles"
 
-                article_rows = cur.fetchall()
                 articles = []
                 article_ids = []
                 for row in article_rows:
@@ -337,8 +376,16 @@ async def get_domain_storyline(
                         )
                     )
 
-                cur.execute(
-                    f"""
+                cov_rows: list = []
+                if episode_container_assembly_enabled() and article_ids:
+                    cur.execute(
+                        list_episode_source_coverage_sql(schema),
+                        (domain, storyline_id),
+                    )
+                    cov_rows = cur.fetchall()
+                elif article_ids:
+                    cur.execute(
+                        f"""
                     SELECT COALESCE(NULLIF(TRIM(a.source_domain), ''), '(unknown)') AS src,
                            COUNT(*)::int
                     FROM {schema}.articles a
@@ -348,11 +395,12 @@ async def get_domain_storyline(
                     GROUP BY 1
                     ORDER BY COUNT(*) DESC, src ASC
                 """,
-                    (storyline_id,),
-                )
+                        (storyline_id,),
+                    )
+                    cov_rows = cur.fetchall()
                 source_coverage = [
                     StorylineSourceCoverageRow(source_domain=r[0], article_count=r[1])
-                    for r in cur.fetchall()
+                    for r in cov_rows
                 ]
 
                 # Entities: article_entities + entity_canonical for this storyline's articles.
@@ -495,15 +543,25 @@ async def get_domain_storyline(
 
                 refinement_pending = list_pending_job_types(domain, storyline_id)
 
-                cur.execute(
-                    f"""
-                    SELECT MAX(sa.added_at) FROM {schema}.storyline_articles sa
-                    WHERE sa.storyline_id = %s
-                    """,
-                    (storyline_id,),
-                )
-                laa_row = cur.fetchone()
-                last_article_added_at = laa_row[0] if laa_row and laa_row[0] else None
+                from shared.episode_membership import episode_last_article_at
+
+                if episode_container_assembly_enabled():
+                    last_article_added_at = episode_last_article_at(
+                        cur,
+                        schema=schema,
+                        domain_key=domain,
+                        episode_id=int(storyline_id),
+                    )
+                else:
+                    cur.execute(
+                        f"""
+                        SELECT MAX(sa.added_at) FROM {schema}.storyline_articles sa
+                        WHERE sa.storyline_id = %s
+                        """,
+                        (storyline_id,),
+                    )
+                    laa_row = cur.fetchone()
+                    last_article_added_at = laa_row[0] if laa_row and laa_row[0] else None
 
                 raw_title = storyline[1]
                 display_title = sanitize_storyline_title_for_display(
@@ -546,6 +604,9 @@ async def get_domain_storyline(
                     else None,
                     timeline_narrative_briefing_at=storyline[27] if len(storyline) > 27 else None,
                     refinement_jobs_pending=refinement_pending,
+                    membership_source=membership_source,
+                    episode_state=episode_state_val,
+                    attach_block_reason=attach_block_reason,
                 )
 
         finally:

@@ -64,9 +64,17 @@ def _defer_dossier_profile_first_pass_threshold() -> int:
 
 
 def _assembly_phases_eligible() -> tuple[str, ...]:
+    """Assembly phases that have at least one research-mode domain (or fail-open)."""
+    from shared.domain_processing_mode import filter_domains_for_phase
+    from shared.domain_registry import get_pipeline_active_domain_keys
+
     phases: list[str] = []
+    active = list(get_pipeline_active_domain_keys())
     for p in POST_SPINE_PHASE_ORDER:
         if p == "editorial_room_loop" and not editorial_room_loop_enabled():
+            continue
+        # Skip research phases when no domain may run them (all-corpus fleet).
+        if not filter_domains_for_phase(active, p):
             continue
         phases.append(p)
     return tuple(phases)
@@ -157,13 +165,13 @@ def _assembly_phase_cycle_budget_seconds(phase: str) -> int:
     """
     p = (phase or "").strip().lower().replace("-", "_")
     defaults: dict[str, int] = {
-        "graph_connection_distillation": 60,
+        "graph_connection_distillation": 180,
         "event_tracking": 120,
         "story_continuation": 120,
         "storyline_assembly": 240,
         "storyline_automation": 180,
         "entity_organizer": 120,
-        "entity_profile_build": 600,
+        "entity_profile_build": 900,
         "editorial_room_loop": 90,
         "entity_dossier_compile": 600,
     }
@@ -274,7 +282,12 @@ async def _drain_graph_distillation(automation: Any | None) -> dict[str, Any]:
                 stats = await loop.run_in_executor(
                     None, process_graph_connection_proposals_batch, None
                 )
-            n = int((stats or {}).get("processed") or (stats or {}).get("distilled") or 0)
+            n = int(
+                (stats or {}).get("processed")
+                or (stats or {}).get("examined")
+                or (stats or {}).get("distilled")
+                or 0
+            )
         except Exception as e:
             logger.warning("assembly graph_distillation batch: %s", e)
             n = 0
@@ -428,10 +441,9 @@ async def _run_storyline_assembly(automation: Any | None) -> dict[str, Any]:
         task = type("Task", (), {"name": "storyline_assembly", "metadata": {}})()
         await automation._execute_storyline_assembly(task)
         return {"delegated": True}
-    if env_str("STORYLINE_ASSEMBLY_RUN_PROACTIVE", "false").lower() in ("0", "false", "no"):
-        return {"skipped": "proactive_disabled"}
     from services.storyline_assembly_service import run_storyline_assembly_all_domains
 
+    # run_storyline_assembly_all_domains already applies corpus/research filter.
     batch = await run_storyline_assembly_all_domains()
     return {"batch": batch}
 

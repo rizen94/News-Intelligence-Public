@@ -347,15 +347,16 @@ class EventDeduplicationService:
     # ------------------------------------------------------------------
 
     async def deduplicate_recent(self, limit: int = 50) -> dict[str, int]:
-        """Deduplicate / coreference events that have not yet been hard-merged."""
+        """Deduplicate / coreference events that have not yet been clustered."""
         cursor = self.conn.cursor()
         cursor.execute(
             """
             SELECT id FROM chronological_events
             WHERE canonical_event_id IS NULL
+              AND event_cluster_id IS NULL
             ORDER BY extraction_timestamp DESC
             LIMIT %s
-        """,
+            """,
             (limit,),
         )
         rows = cursor.fetchall()
@@ -368,11 +369,18 @@ class EventDeduplicationService:
             "soft_links": 0,
             "chains_collapsed": 0,
             "soft_pruned": 0,
+            "no_match": 0,
+            "singletons_marked": 0,
         }
         for (eid,) in rows:
             stats["checked"] += 1
             result = await self._coreference_event(eid)
             if not result:
+                stats["no_match"] += 1
+                # Unique event for now: claim a singleton cluster so it leaves the
+                # unclustered backlog. It remains a match *target* for later CE rows.
+                if self._mark_singleton_cluster(eid):
+                    stats["singletons_marked"] += 1
                 continue
             if result.get("hard"):
                 stats["merged"] += 1
@@ -380,11 +388,37 @@ class EventDeduplicationService:
             else:
                 stats["soft_links"] += 1
 
-        collapsed = self._collapse_coref_chains()
-        stats["chains_collapsed"] = collapsed
-        pruned = self._prune_weak_soft_links()
-        stats["soft_pruned"] = pruned
+        stats["chains_collapsed"] = self._collapse_coref_chains()
+        stats["soft_pruned"] = self._prune_weak_soft_links()
         return stats
+
+    def _mark_singleton_cluster(self, event_id: int) -> bool:
+        """Set event_cluster_id = id when no match was found (idempotent)."""
+        if not self._has_event_cluster_id():
+            return False
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(
+                """
+                UPDATE chronological_events
+                SET event_cluster_id = id
+                WHERE id = %s
+                  AND canonical_event_id IS NULL
+                  AND event_cluster_id IS NULL
+                """,
+                (event_id,),
+            )
+            self.conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            logger.debug("singleton cluster mark failed id=%s: %s", event_id, e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return False
+        finally:
+            cursor.close()
 
     # ------------------------------------------------------------------
     # Scoring tiers (extracted for tests / soft band)
@@ -515,36 +549,103 @@ class EventDeduplicationService:
         event_date: datetime | None,
         precision: str,
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-        """Return (hard_hit, soft_hit) for entity-temporal overlap."""
+        """Return (hard_hit, soft_hit) for entity-temporal overlap.
+
+        Mode A funnel: prefer durable-actor prefilter + hard LIMIT; never full-corpus scan.
+        Empty prefilter with no date window → singleton (no inventing peers).
+        """
         overlap_min = _dedup_entity_overlap_min()
         soft_overlap = max(1, overlap_min - 1)
         if len(entity_names) < soft_overlap:
             return None, None
 
+        from shared.assembly_link_funnel import (
+            article_durable_canonical_ids,
+            funnel_candidate_limit,
+            prefilter_same_event_candidates,
+        )
+        from shared.event_essence import event_essence_text
+
         window = self._precision_window(precision)
         cursor = self.conn.cursor()
         try:
-            if event_date and window:
+            cursor.execute(
+                """
+                SELECT source_article_id, title, event_type, location,
+                       actual_event_date, key_actors, description, outcome
+                FROM chronological_events WHERE id = %s
+                """,
+                (event_id,),
+            )
+            src = cursor.fetchone()
+            durable_cids: list[int] = []
+            essence_self = ""
+            if src:
+                art_id, title, etype, loc, ed, actors, desc, outcome = src
+                essence_self = event_essence_text(
+                    {
+                        "title": title,
+                        "event_type": etype,
+                        "location": loc,
+                        "actual_event_date": ed,
+                        "key_actors": actors,
+                        "description": desc,
+                        "outcome": outcome,
+                    }
+                )
+                if art_id is not None:
+                    try:
+                        from shared.domain_registry import (
+                            get_pipeline_active_domain_keys,
+                            resolve_domain_schema,
+                        )
+
+                        for dk in get_pipeline_active_domain_keys():
+                            sch = resolve_domain_schema(dk)
+                            durable_cids = article_durable_canonical_ids(
+                                self.conn, sch, int(art_id)
+                            )
+                            if durable_cids:
+                                break
+                    except Exception:
+                        durable_cids = []
+
+            peer_ids = prefilter_same_event_candidates(
+                self.conn,
+                event_id=int(event_id),
+                durable_canonical_ids=durable_cids,
+                event_date=event_date,
+                event_type=None,
+            )
+            k = funnel_candidate_limit(mode="same_event")
+
+            if peer_ids:
                 cursor.execute(
                     """
-                    SELECT id, key_actors, entities
+                    SELECT id, key_actors, entities, title, event_type, location,
+                           actual_event_date, description, outcome
+                    FROM chronological_events
+                    WHERE id = ANY(%s)
+                    LIMIT %s
+                    """,
+                    (peer_ids, k),
+                )
+            elif event_date and window:
+                cursor.execute(
+                    """
+                    SELECT id, key_actors, entities, title, event_type, location,
+                           actual_event_date, description, outcome
                     FROM chronological_events
                     WHERE id != %s
                       AND canonical_event_id IS NULL
                       AND actual_event_date BETWEEN %s AND %s
-                """,
-                    (event_id, event_date - window, event_date + window),
+                    ORDER BY id DESC
+                    LIMIT %s
+                    """,
+                    (event_id, event_date - window, event_date + window, k),
                 )
             else:
-                cursor.execute(
-                    """
-                    SELECT id, key_actors, entities
-                    FROM chronological_events
-                    WHERE id != %s
-                      AND canonical_event_id IS NULL
-                """,
-                    (event_id,),
-                )
+                return None, None
 
             best_hard: dict[str, Any] | None = None
             best_soft: dict[str, Any] | None = None
@@ -552,7 +653,17 @@ class EventDeduplicationService:
             best_soft_overlap = -1
 
             for row in cursor.fetchall():
-                cand_id, cand_actors_json, cand_entities_json = row
+                (
+                    cand_id,
+                    cand_actors_json,
+                    cand_entities_json,
+                    c_title,
+                    c_etype,
+                    c_loc,
+                    c_date,
+                    c_desc,
+                    c_outcome,
+                ) = row
                 cand_names = set()
                 for j in (cand_actors_json, cand_entities_json):
                     parsed = self._parse_json(j)
@@ -562,17 +673,39 @@ class EventDeduplicationService:
                             if name:
                                 cand_names.add(name.lower().strip())
                 overlap = len(set(entity_names) & cand_names)
+                ess_boost = 0.0
+                if essence_self:
+                    peer_ess = event_essence_text(
+                        {
+                            "title": c_title,
+                            "event_type": c_etype,
+                            "location": c_loc,
+                            "actual_event_date": c_date,
+                            "key_actors": cand_actors_json,
+                            "description": c_desc,
+                            "outcome": c_outcome,
+                        }
+                    )
+                    if peer_ess:
+                        a = set(essence_self.lower().split())
+                        b = set(peer_ess.lower().split())
+                        if a and b:
+                            ess_boost = len(a & b) / float(max(len(a | b), 1))
                 evidence = {
                     "tier": "entity_temporal",
                     "overlap": overlap,
                     "overlap_min": overlap_min,
+                    "link_mode": "same_event",
+                    "essence_jaccard": round(ess_boost, 4),
                 }
+                score = float(overlap) / float(max(len(entity_names), 1))
+                score = min(1.0, score + 0.15 * ess_boost)
                 if overlap >= overlap_min and overlap > best_hard_overlap:
                     best_hard_overlap = overlap
                     best_hard = {
                         "candidate_id": int(cand_id),
                         "match_tier": "entity_temporal",
-                        "score": float(overlap) / float(max(len(entity_names), 1)),
+                        "score": score,
                         "evidence": evidence,
                     }
                 elif (
@@ -586,7 +719,7 @@ class EventDeduplicationService:
                     best_soft = {
                         "candidate_id": int(cand_id),
                         "match_tier": "soft",
-                        "score": float(overlap) / float(max(len(entity_names), 1)),
+                        "score": score,
                         "evidence": evidence,
                     }
             return best_hard, best_soft

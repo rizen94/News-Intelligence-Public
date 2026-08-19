@@ -1,0 +1,51 @@
+# Generated from specs/neurodiversity.domain.json — do not edit by hand
+domain_key: neurodiversity
+schema_name: neurodiversity
+display_name: Neurodiversity (Autism / ADHD / AuDHD)
+is_active: true
+description: Literature corpus for autism spectrum, ADHD, and overlapping AuDHD research — intake and evidence appraisal only
+  (corpus processing mode; no storyline/chemistry band).
+display_order: 25
+processing_mode: corpus
+data_sources:
+  rss:
+    seed_feed_urls:
+    - feed_url: https://pubmed.ncbi.nlm.nih.gov/rss/create/saved_searches/?term=%22autism+spectrum+disorder%22%5BTitle%2FAbstract%5D+OR+%22Autism+Spectrum+Disorder%22%5BMeSH+Major+Topic%5D&limit=100
+      feed_name: PubMed — Autism Spectrum Disorder
+    - feed_url: https://pubmed.ncbi.nlm.nih.gov/rss/create/saved_searches/?term=%22attention+deficit+hyperactivity+disorder%22%5BTitle%2FAbstract%5D+OR+ADHD%5BTitle%2FAbstract%5D+OR+%22Attention+Deficit+Disorder+with+Hyperactivity%22%5BMeSH+Major+Topic%5D&limit=100
+      feed_name: PubMed — ADHD
+    - feed_url: https://pubmed.ncbi.nlm.nih.gov/rss/create/saved_searches/?term=%28autism%5BTitle%2FAbstract%5D+OR+autistic%5BTitle%2FAbstract%5D%29+AND+%28ADHD%5BTitle%2FAbstract%5D+OR+%22attention+deficit%22%5BTitle%2FAbstract%5D%29&limit=100
+      feed_name: PubMed — AuDHD / autism-ADHD comorbidity
+    - feed_url: https://pubmed.ncbi.nlm.nih.gov/rss/create/saved_searches/?term=neurodiversity%5BTitle%2FAbstract%5D+OR+neurodivergent%5BTitle%2FAbstract%5D&limit=50
+      feed_name: PubMed — neurodiversity / neurodivergent
+    - feed_url: https://connect.medrxiv.org/medrxiv_xml.php?subject=psychiatry_and_clinical_psychology
+      feed_name: medRxiv — psychiatry & clinical psychology preprints
+    - feed_url: https://connect.biorxiv.org/biorxiv_xml.php?subject=neuroscience
+      feed_name: bioRxiv — neuroscience preprints
+    - feed_url: https://molecularautism.biomedcentral.com/articles/most-recent/rss.xml
+      feed_name: Molecular Autism (BMC)
+    - feed_url: https://clinicaltrials.gov/api/rss?cond=Autism+Spectrum+Disorder&dateField=StudyFirstPostDate
+      feed_name: ClinicalTrials.gov — new autism studies
+    - feed_url: https://clinicaltrials.gov/api/rss?cond=ADHD&dateField=StudyFirstPostDate
+      feed_name: ClinicalTrials.gov — new ADHD studies
+    seed_feed_category: Research Literature
+focus_areas:
+- 'Autism spectrum disorder (ASD) research: diagnostics, phenotypes, mechanisms'
+- 'ADHD research: assessment, pharmacological and behavioral interventions'
+- AuDHD and autism-ADHD comorbidity, overlapping traits and differential diagnosis
+- Neurodevelopmental epidemiology and longitudinal cohort studies
+- 'Evidence grading: study design, peer review, replication, paper-owned support'
+- Clinical trial registry records (NCT) related to ASD/ADHD
+llm_prompt_guidance: 'Focus on peer-reviewed and registry literature for autism spectrum, ADHD, and AuDHD.
+
+  Distinguish study designs (meta-analysis, RCT, cohort, case report, preprint).
+
+  Quote evidence from the paper itself; never invent citations. Tag preliminary or
+
+  unsubstantiated claims clearly. Absence of replication is needs_follow_up, not false.
+
+  Avoid sensational clinical claims; prefer effect sizes, sample sizes, and limitations.'
+workload_assumptions:
+  expected_active_feeds: 12
+  rough_new_articles_per_day: 40
+  llm_heavy_phases_enabled: true

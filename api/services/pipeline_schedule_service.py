@@ -71,7 +71,6 @@ _DEFAULT_GPU_HEAVY_PHASES = frozenset(
         "metadata_enrichment",
         "entity_organizer",
         "story_continuation",
-        "claims_to_facts",
         "extracted_claims_dedupe",
         "claim_subject_gap_refresh",
         "event_deduplication",

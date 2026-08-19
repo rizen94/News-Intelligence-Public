@@ -128,7 +128,28 @@ def after_editorial_narrative(
     processed: int = 0,
     routed_to_reduction: int = 0,
 ) -> None:
-    """Wake Reduction only when Narrative actually routed packages there."""
+    """Wake evidence-expand (when enabled) then Reduction for Narrative routes."""
+    del processed
+    if int(routed_to_reduction or 0) <= 0:
+        return
+    try:
+        from services.editorial_package_evidence_expand_service import is_enabled as expand_on
+
+        if expand_on():
+            _safe_request(automation, "editorial_evidence_expand_pass")
+            return
+    except Exception:
+        pass
+    _safe_request(automation, "editorial_reduction_pass")
+
+
+def after_editorial_evidence_expand(
+    automation: Any,
+    *,
+    processed: int = 0,
+    routed_to_reduction: int = 0,
+) -> None:
+    """Wake Reduction after evidence-expand attaches/synthesizes."""
     del processed
     if int(routed_to_reduction or 0) <= 0:
         return

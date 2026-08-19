@@ -104,6 +104,7 @@ def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] |
         assembly_throughput: dict[str, Any] = {}
         vault_work_queue: dict[str, Any] = {}
         intake_catchup_latency: dict[str, Any] = {}
+        ce_write_watchdog: dict[str, Any] = {}
         try:
             from services.spine_throughput_metrics import (
                 get_spine_throughput_snapshot,
@@ -124,6 +125,12 @@ def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] |
             record_intake_catchup_latency_sample(intake_catchup_latency)
         except Exception as e:
             logger.warning("monitor_backlog_snapshot intake_catchup_latency failed: %s", e)
+        try:
+            from services.chronological_events_catchup_service import count_uie_without_chrono
+
+            ce_write_watchdog = count_uie_without_chrono()
+        except Exception as e:
+            logger.warning("monitor_backlog_snapshot ce_write_watchdog failed: %s", e)
         try:
             from services.assembly_throughput_metrics import get_assembly_throughput_snapshot
 
@@ -166,6 +173,7 @@ def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] |
             "feed_health_metrics": feed_health_metrics,
             "spine_throughput": spine_throughput,
             "intake_catchup_latency": intake_catchup_latency,
+            "ce_write_watchdog": ce_write_watchdog,
             "assembly_throughput": assembly_throughput,
             "vault_work_queue": vault_work_queue,
             "intake_first_pass_sum": sum(

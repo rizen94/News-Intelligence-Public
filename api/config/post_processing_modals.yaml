@@ -1,0 +1,48 @@
+# Post-processing modal allowlists (v11).
+# Domains are tags on content; work inside a modal searches the full allowlist.
+# Reduction and Editor use the union of Research ∪ Narrative.
+
+modals:
+  research:
+    label: Research
+    description: >
+      Package-scoped claim extract → facts → optional literature appraisal, then
+      LLM attach/link of claims/facts/papers/hypotheses; route to Reduction (both-zero
+      or max rounds → Editor). Package membership only — never deletes sources.
+    allowed_domains:
+      - medicine
+      - neurodiversity
+      - artificial-intelligence
+  narrative:
+    label: Narrative
+    description: >
+      Assemble events, places, and actors onto the package (LLM pass), then
+      evidence-expand (DB/Wiki/web → package_evidence_briefs), then route to
+      Reduction; when both Narrative and Reduction settle with zero changes,
+      escape to Editor
+    allowed_domains:
+      - politics
+      - finance
+      - legal
+  reduction:
+    label: Reduction
+    description: >
+      Uncouple unrelated/weak/geo-entity-mismatched members from this package
+      (sources kept), then route back to research/narrative; operator Clear/Block still available
+    allowed_domains:
+      - medicine
+      - neurodiversity
+      - artificial-intelligence
+      - politics
+      - finance
+      - legal
+  editor:
+    label: Editor
+    description: Longform news stories from editorial packages
+    allowed_domains:
+      - medicine
+      - neurodiversity
+      - artificial-intelligence
+      - politics
+      - finance
+      - legal

@@ -49,6 +49,37 @@ def build_edge_evidence(
     return out
 
 
+def persist_score_parts_outcome(
+    *,
+    domain_key: str | None,
+    score_parts: dict[str, Any] | None,
+    decision: str,
+    source: str = "other",
+    proposal_id: int | None = None,
+    endpoints: dict[str, Any] | None = None,
+) -> int | None:
+    """
+    Minimal persistence hook when callers already have score_parts
+    (desk accept/reject, membership, review agents).
+    """
+    if not score_parts:
+        return None
+    try:
+        from services.link_score_outcomes_service import record_link_score_outcome
+
+        return record_link_score_outcome(
+            domain_key=domain_key,
+            score_parts=score_parts,
+            decision=decision,
+            source=source,
+            proposal_id=proposal_id,
+            endpoints=endpoints,
+        )
+    except Exception:
+        return None
+
+
+
 def merge_edge_evidence(
     base: dict[str, Any] | None,
     *,
@@ -1075,7 +1106,24 @@ def insert_graph_connection_link_pair(
             pass
 
 
-def count_pending_graph_connection_proposals() -> int:
+def count_pending_graph_connection_proposals(
+    *,
+    actionable_only: bool = False,
+    domain_keys: list[str] | None = None,
+) -> int:
+    """Count pending proposals.
+
+    When ``actionable_only`` is True, exclude entity-``merge`` rows below the
+    auto-execute bar (``GRAPH_CONNECTION_ENTITY_MERGE_MIN``). The distillation
+    drain intentionally leaves those pending for editorial disambiguation
+    (``left_pending_editorial``), so counting them makes the backlog look
+    permanently flat once drainable rows are gone — which falsely trips the
+    phase stall detector into auto-silencing the drain (see
+    ``phase_retry_silence_service``). The backlog/scheduler should treat the
+    phase as idle in that state, not stalled.
+
+    ``domain_keys`` restricts to those domains (corpus/research gate).
+    """
     try:
         from shared.database.connection import get_db_connection
 
@@ -1084,12 +1132,39 @@ def count_pending_graph_connection_proposals() -> int:
             return 0
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT COUNT(*) FROM intelligence.graph_connection_proposals
-                    WHERE status = 'pending'
-                    """
-                )
+                domain_sql = ""
+                params: list[Any] = []
+                if domain_keys is not None:
+                    if not domain_keys:
+                        return 0
+                    domain_sql = " AND domain_key = ANY(%s)"
+                    params.append(list(domain_keys))
+                if actionable_only:
+                    entity_merge_min = float(
+                        env_str("GRAPH_CONNECTION_ENTITY_MERGE_MIN", "0.88") or 0.88
+                    )
+                    cur.execute(
+                        f"""
+                        SELECT COUNT(*) FROM intelligence.graph_connection_proposals
+                        WHERE status = 'pending'
+                          AND NOT (
+                                proposal_kind = 'merge'
+                                AND endpoints ? 'entity_ids'
+                                AND COALESCE(confidence, 0) < %s
+                          )
+                          {domain_sql}
+                        """,
+                        tuple([entity_merge_min, *params]),
+                    )
+                else:
+                    cur.execute(
+                        f"""
+                        SELECT COUNT(*) FROM intelligence.graph_connection_proposals
+                        WHERE status = 'pending'
+                          {domain_sql}
+                        """,
+                        tuple(params),
+                    )
                 return int(cur.fetchone()[0] or 0)
         finally:
             conn.close()

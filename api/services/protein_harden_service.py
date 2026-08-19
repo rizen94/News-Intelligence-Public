@@ -28,6 +28,7 @@ def protein_harden_enabled() -> bool:
 def run_protein_harden(*, limit: int | None = None) -> dict[str, Any]:
     """
     1) Promote high-confidence hypothesized → candidate (stimulus applied band).
+       Re-score with Phase-2 blend; quarantine if below auto_approve_combined * 0.7.
     2) For recently established / auto_applied storyline links, enqueue refinement.
     """
     if not protein_harden_enabled():
@@ -37,6 +38,7 @@ def run_protein_harden(*, limit: int | None = None) -> dict[str, Any]:
     stats: dict[str, Any] = {
         "promoted": 0,
         "refined": 0,
+        "quarantined": 0,
         "skipped": 0,
         "errors": 0,
     }
@@ -44,26 +46,94 @@ def run_protein_harden(*, limit: int | None = None) -> dict[str, Any]:
     if not conn:
         return {**stats, "error": "no_db"}
     try:
+        from services.domain_synthesis_config import get_domain_synthesis_config
+        from services.embedding_link_candidate_service import blend_link_score
+        from shared.connection_inference import INFERENCE_QUARANTINED
+
         with conn.cursor() as cur:
             cur.execute(
                 """
-                UPDATE intelligence.graph_connection_proposals
-                SET inference_stage = %s, updated_at = NOW()
-                WHERE id IN (
-                    SELECT id FROM intelligence.graph_connection_proposals
-                    WHERE status = 'pending'
-                      AND COALESCE(inference_stage, 'candidate') = %s
-                      AND COALESCE(confidence, 0) >= %s
-                    ORDER BY confidence DESC NULLS LAST, id DESC
-                    LIMIT %s
-                )
-                RETURNING id, domain_key
+                SELECT id, domain_key, confidence, evidence
+                FROM intelligence.graph_connection_proposals
+                WHERE status = 'pending'
+                  AND COALESCE(inference_stage, 'candidate') = %s
+                  AND COALESCE(confidence, 0) >= %s
+                ORDER BY confidence DESC NULLS LAST, id DESC
+                LIMIT %s
                 """,
-                (INFERENCE_CANDIDATE, INFERENCE_HYPOTHESIZED, promote_at, lim),
+                (INFERENCE_HYPOTHESIZED, promote_at * 0.85, lim * 2),
             )
-            promoted_rows = cur.fetchall()
+            candidates = cur.fetchall() or []
+
+        promote_ids: list[int] = []
+        quarantine_ids: list[int] = []
+        from shared.domain_processing_mode import domain_runs_phase
+
+        for row in candidates:
+            pid, dk, conf, evidence = row[0], row[1], float(row[2] or 0), row[3]
+            if dk and not domain_runs_phase(str(dk), "protein_harden"):
+                stats["skipped"] += 1
+                continue
+            try:
+                cfg = get_domain_synthesis_config(str(dk or "politics"))
+                floor = float(cfg.link_score_profile.auto_approve_combined) * 0.7
+                parts = {}
+                if isinstance(evidence, dict):
+                    parts = evidence.get("score_parts") or {}
+                elif isinstance(evidence, str):
+                    import json
+
+                    try:
+                        parts = (json.loads(evidence) or {}).get("score_parts") or {}
+                    except Exception:
+                        parts = {}
+                rescored = blend_link_score(
+                    semantic=float(parts.get("semantic") or conf),
+                    entity_jaccard=float(parts.get("entity") or 0.0),
+                    canonical_jaccard=float(parts.get("canonical") or 0.0),
+                    temporal_proximity=float(parts.get("temporal") or 1.0),
+                    domain_key=str(dk) if dk else None,
+                )
+                # Blend with stored confidence
+                final = 0.5 * conf + 0.5 * rescored
+                if final < floor:
+                    quarantine_ids.append(int(pid))
+                elif final >= promote_at:
+                    promote_ids.append(int(pid))
+                else:
+                    stats["skipped"] += 1
+            except Exception:
+                if conf >= promote_at:
+                    promote_ids.append(int(pid))
+
+        promote_ids = promote_ids[:lim]
+        with conn.cursor() as cur:
+            if promote_ids:
+                cur.execute(
+                    """
+                    UPDATE intelligence.graph_connection_proposals
+                    SET inference_stage = %s, updated_at = NOW()
+                    WHERE id = ANY(%s)
+                    RETURNING id
+                    """,
+                    (INFERENCE_CANDIDATE, promote_ids),
+                )
+                stats["promoted"] = len(cur.fetchall() or [])
+            if quarantine_ids:
+                try:
+                    cur.execute(
+                        """
+                        UPDATE intelligence.graph_connection_proposals
+                        SET inference_stage = %s, status = 'rejected', updated_at = NOW()
+                        WHERE id = ANY(%s)
+                        """,
+                        (INFERENCE_QUARANTINED, quarantine_ids),
+                    )
+                    stats["quarantined"] = cur.rowcount or 0
+                except Exception:
+                    # inference_stage may not allow quarantined on proposals — soft skip
+                    stats["quarantined"] = 0
         conn.commit()
-        stats["promoted"] = len(promoted_rows)
 
         with conn.cursor() as cur:
             cur.execute(
@@ -97,7 +167,10 @@ def run_protein_harden(*, limit: int | None = None) -> dict[str, Any]:
         for domain_key, storyline_id in link_rows:
             try:
                 from services.domain_synthesis_config import get_domain_synthesis_config
+                from shared.domain_processing_mode import domain_runs_phase
 
+                if not domain_runs_phase(str(domain_key), "protein_harden"):
+                    continue
                 cfg = get_domain_synthesis_config(str(domain_key))
                 # Event-narrative domains still get census RAG elsewhere; chemistry
                 # kinds harden only via stimulus.

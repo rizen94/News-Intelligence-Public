@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -23,6 +24,7 @@ DRAINABLE_PHASES: frozenset[str] = frozenset(
         "spine_sql_tail",
         "editorial_research_pass",
         "editorial_narrative_pass",
+        "editorial_evidence_expand_pass",
         "editorial_reduction_pass",
         "chronological_events_catchup",
         "story_continuation",
@@ -181,6 +183,26 @@ async def drain_phase(
             "changed_total": sum(int(r.get("changed") or 0) for r in results),
         }
 
+    if name == "editorial_evidence_expand_pass":
+        from config.runtime import env_int
+        from services.editorial_package_evidence_expand_service import (
+            is_enabled,
+            run_evidence_expand_batch,
+        )
+
+        if not is_enabled():
+            return {
+                "skipped": True,
+                "reason": "EDITORIAL_EVIDENCE_EXPAND_ENABLED=false",
+                "processed": 0,
+            }
+        batch = (
+            articles_per_domain
+            if articles_per_domain is not None
+            else env_int("EVIDENCE_EXPAND_BATCH_LIMIT", 3)
+        )
+        return await asyncio.to_thread(run_evidence_expand_batch, limit=batch)
+
     if name == "editorial_reduction_pass":
         from config.runtime import env_int
         from services.editorial_package_reduction_service import (
@@ -242,7 +264,14 @@ async def drain_phase(
             cont_limit, _meta = resolve_adaptive_batch("story_continuation", cont_limit)
         except Exception:
             pass
-        total = {"checked": 0, "linked": 0, "flagged": 0, "processed": 0}
+        total = {
+            "checked": 0,
+            "linked": 0,
+            "flagged": 0,
+            "backed_off": 0,
+            "inherited": 0,
+            "processed": 0,
+        }
         schemas = [
             sch
             for dk, sch in pipeline_url_schema_pairs()
@@ -259,6 +288,8 @@ async def drain_phase(
                 total["checked"] += int(stats.get("checked") or 0)
                 total["linked"] += int(stats.get("linked") or 0)
                 total["flagged"] += int(stats.get("flagged") or 0)
+                total["backed_off"] += int(stats.get("backed_off") or 0)
+                total["inherited"] += int(stats.get("inherited") or 0)
             except Exception as e:
                 logger.warning("story_continuation drain schema=%s: %s", schema, e)
             finally:
@@ -266,7 +297,7 @@ async def drain_phase(
                     conn.close()
                 except Exception:
                     pass
-        total["processed"] = total["linked"] + total["flagged"]
+        total["processed"] = total["linked"] + total["flagged"] + total["inherited"]
         return total
 
     if name == "content_refinement_queue":

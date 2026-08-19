@@ -227,3 +227,24 @@ def investigation_ftm_cache_stats() -> dict:
     from nri_core.services.integration import get_ftm_cache_dataset_counts
 
     return get_ftm_cache_dataset_counts()
+
+
+@investigation_router.get("/investigation/bridge_qa/audit")
+def investigation_bridge_qa_audit(
+    domain_key: str | None = Query(None),
+    qa_status: str | None = Query(
+        None,
+        description="Filter by QA status: suspect, mismatch, or omit for non-ok rows",
+    ),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    """List entity↔FtM bridge links with bridge QA status for Investigation Ops."""
+    from nri_core.services.integration import audit_bridge_qa
+
+    return audit_bridge_qa(
+        domain_key=domain_key,
+        qa_status=qa_status,
+        limit=limit,
+        offset=offset,
+    )

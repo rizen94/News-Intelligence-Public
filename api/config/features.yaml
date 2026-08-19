@@ -106,7 +106,7 @@ rss_feed_silencing:
   flags:
     env: RSS_FEED_SILENCE_ENABLED
     yaml: rss_feed_health.enabled
-  notes: Warn-then-auto-silence; dry_run via rss_feed_health.dry_run
+  notes: Weekly cull (policy=weekly_cull) drops lowest avg-quality feed until >= target_avg_quality; dry_run via rss_feed_health.dry_run
 
 claim_resolvability_gate:
   lifecycle: incorporated
@@ -424,6 +424,22 @@ editorial_packages:
     v11 Editorial Package artifact + news_stories with citation gate.
     Local default on; Widow apply only after cutover (migration 285+).
 
+knowledge_profiles:
+  lifecycle: staged
+  enabled: true
+  introduced_in: "11.0.0"
+  modules:
+    - api/services/knowledge_profile_service.py
+    - api/services/editorial_package_service.py
+    - api/services/editorial_package_research_service.py
+    - api/domains/intelligence_hub/routes/editorial_packages.py
+    - api/config/prompts/research/package_knowledge_profile.md
+  notes: >
+    Entity-keyed research product (is/is-not + cited report) for medicine,
+    neurodiversity, and artificial-intelligence. Seeded via
+    ensure_package_from_entity (legacy_seed entity:{domain}:{id}); auto-merged
+    after editorial_research_pass. Requires migration 294.
+
 editorial_reduction:
   lifecycle: staged
   enabled: true
@@ -476,6 +492,59 @@ editorial_research:
     literature appraisal, then LLM attach/link of claims/facts/papers/hypotheses.
     Changes → Reduction; Research zero + last Reduction zero → Editor; max rounds
     → Editor. Domains stay Research allowlist. Requires migration 290.
+
+editorial_compose:
+  lifecycle: staged
+  enabled: true
+  introduced_in: "11.0.0"
+  modules:
+    - api/services/editorial_package_compose_service.py
+    - api/config/prompts/editor/package_compose.md
+    - api/services/news_story_service.py
+    - api/domains/intelligence_hub/routes/editorial_packages.py
+  flags:
+    env: EDITORIAL_COMPOSE_ENABLED
+  notes: >
+    Editor compose: when a package reaches ready_for_editor (or draft is a thin
+    stub/source-list scaffold), generate a source-grounded news_stories draft with
+    inline [@m] citations from member excerpts. Publish runs mode=publish assembly
+    over linked sources into a detailed final report, then citation-gates.
+    Invoked from ensure_editor_scaffold, POST .../compose/run, and
+    POST .../stories/{id}/publish. Prefers package_evidence_briefs.brief_md when present.
+
+editorial_evidence_expand:
+  lifecycle: staged
+  enabled: true
+  introduced_in: "11.0.0"
+  phase_name: editorial_evidence_expand_pass
+  modules:
+    - api/services/editorial_package_evidence_expand_service.py
+    - api/services/package_evidence_brief_service.py
+    - api/config/prompts/narrative/package_evidence_expand.md
+    - api/domains/intelligence_hub/routes/editorial_packages.py
+  flags:
+    env: EDITORIAL_EVIDENCE_EXPAND_ENABLED
+  notes: >
+    Narrative evidence-expand: gap-driven retrieve (DB + embeddings + Wiki/spine +
+    optional NewsAPI/web URL pull) → attach theme-gated members → synthesize
+    package_evidence_briefs (cited educational profile) → vault note → Reduction.
+    Research stays literature-focused; Research parity writes the same brief table.
+    Requires migration 296.
+
+ni_prometheus_metrics:
+  lifecycle: staged
+  enabled: true
+  introduced_in: "11.0.0"
+  modules:
+    - api/services/ni_prometheus_metrics_service.py
+    - api/domains/system_monitoring/routes/system_monitoring.py
+  flags:
+    env: NI_PROMETHEUS_METRICS_ENABLED
+  notes: >
+    Homelab Grafana scrape GET /api/system_monitoring/prometheus — Monitor-parity
+    queue depths, UIE backlog, intake latency, curated table rows/size, content
+    growth, automation runs. Cached ~60s. Optional NI_PROMETHEUS_SCRAPE_TOKEN.
+    Scraped via news-intelligence-ag.duckdns.org (Widow API is 127.0.0.1:8000).
 
 chronological_events_catchup:
   lifecycle: staged
@@ -590,12 +659,29 @@ event_core_membership:
   flags:
     env: EVENT_CORE_MEMBERSHIP_ENABLED
   notes: >
-    Event-core membership: tracked_events as longer-lived follow objects; rare-anchor
-    founding before oversized absorb; typed intelligence.event_article_membership.
-    **Not** the event→storyline attach SSOT — that is `story_continuation`.
-    Enable with EVENT_CORE_MEMBERSHIP_ENABLED=true
-    (or FEATURE_OVERRIDE_EVENT_CORE_MEMBERSHIP=true). Requires migration 280.
-    Split hygiene: EVENT_CORE_SPLIT_APPLY / EVENT_CORE_SPLIT_UNLINK.
+    Legacy TE typed evidence (migration 280). Attach SSOT superseded by
+    episode_container_assembly (events→episodes via signature). TE/hubs are
+    containers that never own articles. Split hygiene still useful for migrate.
+
+episode_container_assembly:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  incorporated_in: "12.0.0"
+  modules:
+    - api/shared/episode_attach_gate.py
+    - api/services/story_continuation_service.py
+    - api/services/episode_lifecycle_service.py
+    - api/services/episode_container_timeline_service.py
+    - api/services/container_projection_service.py
+    - api/scripts/migrate_megas_to_containers.py
+  flags:
+    env: EPISODE_CONTAINER_ASSEMBLY_ENABLED
+  notes: >
+    Event→Episode→Container attach SSOT. Fixed anchor_signature; writes
+    intelligence.event_episode_links. Requires migration 295. Enable with
+    EPISODE_CONTAINER_ASSEMBLY_ENABLED=true (or FEATURE_OVERRIDE_EPISODE_CONTAINER_ASSEMBLY=true).
+    Automation bag absorb remains off (STORYLINE_AUTOMATION_AUTO_ATTACH default false).
 
 fulltext_pull_gate:
   lifecycle: incorporated
@@ -784,9 +870,10 @@ entity_position_versioned_facts:
 # Run: PYTHONPATH=api python api/scripts/run_public_data_collectors.py --source all
 
 courtlistener_collector:
-  lifecycle: under_developed
-  enabled: false
+  lifecycle: incorporated
+  enabled: true
   introduced_in: "10.1.0"
+  incorporated_in: "12.0.0"
   modules: [api/collectors/courtlistener_collector.py]
   flags:
     env: COURTLISTENER_COLLECTOR_ENABLED
@@ -795,9 +882,10 @@ courtlistener_collector:
     Requires COURTLISTENER_API_TOKEN.
 
 federal_register_collector:
-  lifecycle: under_developed
-  enabled: false
+  lifecycle: incorporated
+  enabled: true
   introduced_in: "10.1.0"
+  incorporated_in: "12.0.0"
   modules: [api/collectors/federal_register_collector.py]
   flags:
     env: FEDERAL_REGISTER_COLLECTOR_ENABLED
@@ -826,9 +914,10 @@ ma_newton_collector:
   notes: MA legislature API + Newton agenda stubs; graceful skip if unreachable.
 
 edgar_collector:
-  lifecycle: under_developed
-  enabled: false
+  lifecycle: incorporated
+  enabled: true
   introduced_in: "10.1.0"
+  incorporated_in: "12.0.0"
   modules: [api/collectors/edgar_collector.py]
   flags:
     env: EDGAR_COLLECTOR_ENABLED

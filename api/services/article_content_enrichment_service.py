@@ -4,7 +4,9 @@ Fetches full article text via trafilatura for articles with short or missing con
 After enrichment, triggers re-extraction (entities, topics, context update).
 Supports inline enrichment at RSS ingestion and batch backlog drain with attempt tracking.
 Rejects paywall/subscription pages so we don't store FT-style "Subscribe to unlock" text as body.
-Fallbacks: live -> browser (headless) -> Wayback -> archive.today. If all fail, article is removed (bad datapoint).
+Fallbacks: live -> browser (headless) -> Wayback -> archive.today.
+A fetch that cannot produce a full article (≥ fulltext_min_chars) is ``failed``;
+after 3 failed attempts the row is ``inaccessible``. Do not soft-delete on first miss.
 """
 
 import configparser
@@ -44,7 +46,15 @@ _ARCHIVETODAY_SLEEP = 1.5
 _FETCH_TIMEOUT = 10
 
 MAX_CONTENT_CHARS = 50_000
+# Historical skip-fetch floor; live skip uses fulltext_min_chars() (default 900).
 MIN_CONTENT_TO_ENRICH = 500
+# Drop intake pass markers when we replace a teaser with a real body so UIE re-runs.
+_CLEAR_INTAKE_PASS_MARKERS = (
+    "COALESCE(metadata, '{}'::jsonb)"
+    " #- '{pipeline,unified_intake_extraction}'"
+    " #- '{pipeline,entity_extraction}'"
+    " #- '{pipeline,event_extraction}'"
+)
 
 _topic_queue_cache: dict[str, bool] = {}
 
@@ -163,7 +173,59 @@ _PAYWALL_PHRASES = (
     "check whether you already have access",
     "paid annually",
     "delivered saturday plus complete digital",
+    # Bloomberg / WSJ / Economist subscribe chrome
+    "bloomberg.com/subscriptions",
+    "already a subscriber",
+    "sign in to continue reading",
+    "create a bloomberg account",
+    "subscribe to bloomberg",
+    "to continue reading this article",
+    "this article is for subscribers",
+    "wsj.com/subscribe",
+    "subscribe to wsj",
+    "subscriber content",
+    "economist.com/subscribe",
+    "subscribe to the economist",
 )
+
+# Known hard-paywall publishers: try archives even when global ENABLE_* is off.
+_KNOWN_PAYWALL_HOST_FRAGMENTS = (
+    "bloomberg.com",
+    "ft.com",
+    "wsj.com",
+    "economist.com",
+    "barrons.com",
+    "marketwatch.com",
+    "nytimes.com",
+    "washingtonpost.com",
+    "theathletic.com",
+    "businessinsider.com",
+)
+
+# Headline-only / paywall terminal demotion (never UIE-eligible).
+HEADLINE_ONLY_QUALITY_CAP = 0.20
+
+
+def is_known_paywall_host(url: str | None) -> bool:
+    """True when URL host matches a known hard-paywall publisher."""
+    if not url:
+        return False
+    try:
+        from urllib.parse import urlparse
+
+        host = (urlparse(url).netloc or "").lower()
+    except Exception:
+        host = (url or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return any(frag in host for frag in _KNOWN_PAYWALL_HOST_FRAGMENTS)
+
+
+def _archives_enabled_for_url(url: str | None) -> bool:
+    """Global archive flags, or auto-enable for known paywall hosts."""
+    if _ENABLE_WAYBACK or _ENABLE_ARCHIVETODAY:
+        return True
+    return is_known_paywall_host(url)
 
 # If text contains this many distinct paywall phrases, treat as paywall (don't save as enriched)
 _PAYWALL_PHRASE_THRESHOLD = 2
@@ -337,9 +399,11 @@ def _fetch_live_with_browser_ua(url: str) -> str:
         return ""
 
 
-def _fetch_via_wayback(url: str) -> str:
+def _fetch_via_wayback(url: str, *, force: bool = False) -> str:
     """Try to get article text from an Internet Archive (Wayback) snapshot. Returns empty on failure or paywall."""
-    if not _ENABLE_WAYBACK or not url or not url.strip():
+    if not force and not _ENABLE_WAYBACK:
+        return ""
+    if not url or not url.strip():
         return ""
     try:
         time.sleep(_WAYBACK_SLEEP)
@@ -393,9 +457,11 @@ def _fetch_via_browser(url: str) -> str:
         return ""
 
 
-def _fetch_via_archivetoday(url: str) -> str:
+def _fetch_via_archivetoday(url: str, *, force: bool = False) -> str:
     """Try to get article text from an archive.today (Memento) snapshot. Returns empty on failure or paywall."""
-    if not _ENABLE_ARCHIVETODAY or not url or not url.strip():
+    if not force and not _ENABLE_ARCHIVETODAY:
+        return ""
+    if not url or not url.strip():
         return ""
     try:
         time.sleep(_ARCHIVETODAY_SLEEP)
@@ -446,7 +512,8 @@ def enrich_articles_batch(
 ) -> int:
     """
     Drain enrichment backlog: select by enrichment_status/attempts, fetch with trafilatura (10s timeout),
-    update status and attempts; keep RSS content on failure; prune after 3 attempts.
+    update status and attempts; keep RSS content on failure; mark failed when fetch is
+    below the fulltext bar; ``inaccessible`` after 3 attempts.
     Returns count of enriched articles.
 
     Fair share: each active domain may fetch up to ceil(batch_size / n_domains) candidates per call
@@ -462,8 +529,7 @@ def enrich_articles_batch(
     from shared.domain_registry import pipeline_url_schema_pairs
 
     from shared.article_processing_gates import (
-        strict_enrichment_applies,
-        strict_enrichment_cutoff_utc,
+        body_is_fulltext,
     )
     from shared.pipeline_article_selection import sql_order_created_at
 
@@ -528,6 +594,19 @@ def enrich_articles_batch(
         for domain_key, schema_name in work_pairs:
             if remaining <= 0:
                 break
+            # Title-only triage for ClinicalTrials.gov etc. before spending fetch budget.
+            try:
+                from shared.fulltext_pull_gate import triage_thin_link_articles
+
+                triage_thin_link_articles(
+                    conn,
+                    domain_key=domain_key,
+                    schema_name=schema_name,
+                    limit=max(10, min(80, share * 2)),
+                )
+            except Exception as triage_e:
+                logger.debug("fulltext_pull triage %s: %s", domain_key, triage_e)
+
             scoped_ids = None
             if scoped_ids_by_schema:
                 scoped_ids = scoped_ids_by_schema.get(schema_name) or []
@@ -536,6 +615,12 @@ def enrich_articles_batch(
                 fetch_limit = len(scoped_ids)
             else:
                 fetch_limit = min(share, remaining)
+            # Historical short-enriched teasers stay parked until an operator
+            # reset (e.g. reset_teaser_enrichment_for_fulltext.py --in-storyline).
+            needs_fetch = """(
+                enrichment_status IS NULL
+                OR enrichment_status IN ('pending', 'failed')
+            )"""
             with conn.cursor() as cur:
                 if scoped_ids:
                     cur.execute(
@@ -543,7 +628,7 @@ def enrich_articles_batch(
                         SELECT id, url, content, created_at, enrichment_status
                         FROM {schema_name}.articles
                         WHERE id = ANY(%s)
-                          AND (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
+                          AND {needs_fetch}
                           AND COALESCE(enrichment_attempts, 0) < 3
                           AND url IS NOT NULL AND url != ''
                         ORDER BY COALESCE(enrichment_attempts, 0) ASC, created_at {_ca_ord}
@@ -555,7 +640,7 @@ def enrich_articles_batch(
                         f"""
                         SELECT id, url, content, created_at, enrichment_status
                         FROM {schema_name}.articles
-                        WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
+                        WHERE {needs_fetch}
                           AND COALESCE(enrichment_attempts, 0) < 3
                           AND url IS NOT NULL AND url != ''
                         ORDER BY COALESCE(enrichment_attempts, 0) ASC, created_at {_ca_ord}
@@ -571,13 +656,69 @@ def enrich_articles_batch(
                     break
                 if not url or not url.strip():
                     continue
-                # Strict-ingest long RSS: pending without a second trafilatura pass
+                # Thin-link pending that somehow skipped triage: decide pull vs defer now.
+                try:
+                    from shared.fulltext_pull_gate import (
+                        STATUS_PULL_DEFERRED,
+                        evaluate_fulltext_pull,
+                        is_thin_link_host,
+                    )
+
+                    if is_thin_link_host(url) and (
+                        row_status is None or (row_status or "").strip() in ("pending", "failed")
+                    ):
+                        # Need title for scoring — load lightly if gate applies.
+                        with conn.cursor() as tcur:
+                            tcur.execute(
+                                f"SELECT title, quality_score FROM {schema_name}.articles WHERE id = %s",
+                                (article_id,),
+                            )
+                            trow = tcur.fetchone()
+                        title = trow[0] if trow else ""
+                        q = float(trow[1]) if trow and trow[1] is not None else None
+                        verdict = evaluate_fulltext_pull(
+                            title=title,
+                            url=url,
+                            content=existing_content,
+                            domain_key=domain_key,
+                            schema=schema_name,
+                            quality_score=q,
+                        )
+                        if verdict.get("decision") == "defer":
+                            with conn.cursor() as ucur:
+                                ucur.execute(
+                                    f"""
+                                    UPDATE {schema_name}.articles
+                                    SET enrichment_status = %s,
+                                        metadata = COALESCE(metadata, '{{}}'::jsonb) || %s::jsonb,
+                                        updated_at = NOW()
+                                    WHERE id = %s
+                                    """,
+                                    (
+                                        STATUS_PULL_DEFERRED,
+                                        json.dumps(
+                                            {
+                                                "fulltext_pull": {
+                                                    "triaged": True,
+                                                    "decision": "defer",
+                                                    "reason": verdict.get("reason"),
+                                                }
+                                            }
+                                        ),
+                                        article_id,
+                                    ),
+                                )
+                            pending_commits += 1
+                            _flush_commit()
+                            continue
+                except Exception as gate_e:
+                    logger.debug("inline fulltext gate %s/%s: %s", domain_key, article_id, gate_e)
+
+                # Already have a full article body: promote to enriched, do not re-fetch.
                 if (
-                    strict_enrichment_cutoff_utc() is not None
-                    and strict_enrichment_applies(created_at)
-                    and existing_content
-                    and len((existing_content or "").strip()) >= MIN_CONTENT_TO_ENRICH
-                    and (row_status is None or (row_status or "").strip() == "pending")
+                    existing_content
+                    and body_is_fulltext(existing_content)
+                    and (row_status is None or (row_status or "").strip() in ("pending", "failed"))
                 ):
                     fast_rows = 0
                     with conn.cursor() as cur:
@@ -667,11 +808,20 @@ def enrich_articles_batch(
                 if remaining <= 0:
                     break
                 with conn.cursor() as cur:
-                    if text:
+                    from shared.fulltext_pull_gate import is_clinicaltrials_boilerplate
+
+                    usable = (
+                        bool(text)
+                        and not is_clinicaltrials_boilerplate(text)
+                        and body_is_fulltext(text)
+                    )
+                    if usable:
                         wc = compute_word_count(text)
                         cur.execute(
                             f"""UPDATE {schema_name}.articles SET content = %s, word_count = %s,
-                                enrichment_status = 'enriched', updated_at = NOW() WHERE id = %s""",
+                                enrichment_status = 'enriched',
+                                metadata = {_CLEAR_INTAKE_PASS_MARKERS},
+                                updated_at = NOW() WHERE id = %s""",
                             (text, wc, article_id),
                         )
                         cur.execute(
@@ -693,10 +843,50 @@ def enrich_articles_batch(
                                 article_id,
                                 ctx_e,
                             )
+                    elif body_is_fulltext(
+                        next((ec for aid, _u, ec, _st in to_fetch if aid == article_id), None)
+                    ):
+                        # Fetch missed but RSS/DB already has a full article — do not fail it.
+                        cur.execute(
+                            f"""UPDATE {schema_name}.articles
+                                SET enrichment_status = 'enriched', updated_at = NOW()
+                                WHERE id = %s""",
+                            (article_id,),
+                        )
+                        pending_commits += 1
+                        _flush_commit()
+                        enriched += 1
+                        remaining -= 1
                     else:
-                        # All paths failed: remove as bad datapoint (paywall/403/etc.)
-                        _remove_article(conn, schema_name, article_id)
-                        conn.commit()
+                        # Paywall, 403, chrome, or short scrape: keep teaser, fail + demote quality.
+                        fetch_url = next(
+                            (u for aid, u, _ec, _st in to_fetch if aid == article_id),
+                            "",
+                        )
+                        demote_meta = {
+                            "headline_only": True,
+                            "paywall_or_teaser": True,
+                            "paywall_host": is_known_paywall_host(fetch_url),
+                        }
+                        cur.execute(
+                            f"""UPDATE {schema_name}.articles
+                                SET enrichment_status = 'failed',
+                                    quality_score = LEAST(
+                                        COALESCE(quality_score, %s),
+                                        %s
+                                    ),
+                                    metadata = COALESCE(metadata, '{{}}'::jsonb) || %s::jsonb,
+                                    updated_at = NOW()
+                                WHERE id = %s""",
+                            (
+                                HEADLINE_ONLY_QUALITY_CAP,
+                                HEADLINE_ONLY_QUALITY_CAP,
+                                json.dumps(demote_meta),
+                                article_id,
+                            ),
+                        )
+                        pending_commits += 1
+                        _flush_commit()
                         removed += 1
                         remaining -= 1
 
@@ -705,7 +895,25 @@ def enrich_articles_batch(
         for _dk, sch in pairs:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"""UPDATE {sch}.articles SET enrichment_status = 'inaccessible' WHERE enrichment_status = 'failed' AND enrichment_attempts >= 3"""
+                    f"""UPDATE {sch}.articles
+                       SET enrichment_status = 'inaccessible',
+                           quality_score = LEAST(
+                               COALESCE(quality_score, %s),
+                               %s
+                           ),
+                           metadata = COALESCE(metadata, '{{}}'::jsonb) || %s::jsonb
+                       WHERE enrichment_status = 'failed'
+                         AND enrichment_attempts >= 3""",
+                    (
+                        HEADLINE_ONLY_QUALITY_CAP,
+                        HEADLINE_ONLY_QUALITY_CAP,
+                        json.dumps(
+                            {
+                                "headline_only": True,
+                                "paywall_or_teaser": True,
+                            }
+                        ),
+                    ),
                 )
             pending_commits += 1
         _flush_commit(force=True)
@@ -713,7 +921,7 @@ def enrich_articles_batch(
         handled = enriched + removed
         if enriched > 0 or removed > 0:
             logger.info(
-                "Content enrichment (v8): %s enriched, %s removed/inaccessible (parallel=%s)",
+                "Content enrichment (v8): %s enriched, %s failed/inaccessible (parallel=%s)",
                 enriched,
                 removed,
                 _enrichment_fetch_parallel(),
@@ -741,7 +949,27 @@ def enrich_articles_batch(
 
 def _fetch_full_text(url: str, config=None) -> str:
     """Fetch URL and extract main content. Tries: live -> browser (if enabled) -> Wayback (if enabled) -> archive.today (if enabled).
-    Returns empty string when all attempted paths fail or return paywall content."""
+    Returns empty string when all attempted paths fail or return paywall content.
+
+    ClinicalTrials.gov and other thin-link hosts use the registry API first — HTML/RSS
+    bodies are title junk / study-manager boilerplate.
+    """
+    try:
+        from shared.fulltext_pull_gate import is_clinicaltrials_boilerplate, is_thin_link_host
+
+        if is_thin_link_host(url):
+            from services.clinicaltrials_study_fetch import fetch_clinicaltrials_study_body
+
+            text, ok = fetch_clinicaltrials_study_body(url)
+            if ok and text and not is_clinicaltrials_boilerplate(text):
+                finalized = _finalize_extracted_text(text) or text.strip()
+                if finalized and len(finalized) >= 80:
+                    return finalized
+            # Do not fall through to trafilatura — it only captures CT.gov chrome.
+            return ""
+    except Exception as e:
+        logger.debug("thin-link registry fetch for %s: %s", (url or "")[:80], e)
+
     # 1. Live (trafilatura fetch_url + extract)
     try:
         import trafilatura
@@ -776,18 +1004,32 @@ def _fetch_full_text(url: str, config=None) -> str:
     if text:
         return text
 
+    force_archives = _archives_enabled_for_url(url)
+    # Known paywall hosts: try archives before spending on headless browser.
+    if is_known_paywall_host(url):
+        text = _finalize_extracted_text(_fetch_via_wayback(url, force=True))
+        if text:
+            return text
+        text = _finalize_extracted_text(_fetch_via_archivetoday(url, force=True))
+        if text:
+            return text
+
     # 2. Browser (headless)
     text = _finalize_extracted_text(_fetch_via_browser(url))
     if text:
         return text
 
     # 3. Wayback
-    text = _finalize_extracted_text(_fetch_via_wayback(url))
+    text = _finalize_extracted_text(
+        _fetch_via_wayback(url, force=force_archives or _ENABLE_WAYBACK)
+    )
     if text:
         return text
 
     # 4. archive.today
-    text = _finalize_extracted_text(_fetch_via_archivetoday(url))
+    text = _finalize_extracted_text(
+        _fetch_via_archivetoday(url, force=force_archives or _ENABLE_ARCHIVETODAY)
+    )
     if text:
         return text
 
@@ -843,7 +1085,9 @@ def fetch_full_content_for_article(domain_key: str, article_id: int) -> dict[str
                 }
             url, existing = row[0], (row[1] or "")
             existing_stripped = format_article_body_paragraphs(existing.strip())
-            if len(existing_stripped) >= 80:
+            from shared.article_processing_gates import body_is_fulltext
+
+            if body_is_fulltext(existing_stripped):
                 return {
                     "success": True,
                     "not_found": False,
@@ -870,11 +1114,22 @@ def fetch_full_content_for_article(domain_key: str, article_id: int) -> dict[str
                     "content": existing.strip() or None,
                 }
             text = text[:MAX_CONTENT_CHARS]
+            if not body_is_fulltext(text):
+                return {
+                    "success": False,
+                    "not_found": False,
+                    "message": (
+                        "Downloaded text is still a teaser or paywall chrome, not a full article."
+                    ),
+                    "content": existing.strip() or None,
+                }
             wc = compute_word_count(text)
             with conn.cursor() as cur:
                 cur.execute(
                     f"""UPDATE {schema_name}.articles SET content = %s, word_count = %s,
-                        enrichment_status = 'enriched', updated_at = NOW() WHERE id = %s""",
+                        enrichment_status = 'enriched',
+                        metadata = {_CLEAR_INTAKE_PASS_MARKERS},
+                        updated_at = NOW() WHERE id = %s""",
                     (text, wc, article_id),
                 )
                 cur.execute(

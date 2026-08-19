@@ -13,6 +13,8 @@ from typing import Final
 from config.runtime import env_str
 
 # Ordered stir sequence after intake preprocess is stable (Widow-local / DB-heavy first).
+# Chemistry kinds (evidence_thread / research_topic / matter_docket) use entity-first
+# collision priors — not chronological arc-chapter attach. See STORYLINE_CANONICAL_MODEL.
 POST_INTAKE_BEAKER_PHASES: Final[tuple[str, ...]] = (
     "graph_connection_distillation",
     "embedding_link_candidates",

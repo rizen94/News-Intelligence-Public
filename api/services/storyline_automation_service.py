@@ -49,21 +49,11 @@ def effective_auto_add_threshold(
     article_count: int,
     magnet_title: bool = False,
 ) -> float:
-    """
-    Silent auto-add floor: at least domain auto_approve_combined, then size-scaled.
+    """Suggestion floor only — size bumps retired (Event→Episode rebuild).
 
-    Closes the historic 0.60 min_relevance vs 0.75 auto_approve_combined leak.
-    Shell / LIVE UPDATES / Global Update magnets get an extra floor bump permanently.
+    Kept for callers that still score proposals; does not admit membership.
     """
-    floor = max(float(base_min_relevance or 0.0), float(auto_approve_combined or 0.0))
-    n = max(0, int(article_count or 0))
-    # +0.05 per 50 articles starting at 80 (100→+0.05, 150→+0.10, …)
-    if n >= 80:
-        steps = max(0, (n - 50) // 50)
-        floor = min(0.95, floor + 0.05 * steps)
-    if magnet_title:
-        floor = min(0.95, floor + 0.08)
-    return floor
+    return max(float(base_min_relevance or 0.0), float(auto_approve_combined or 0.0))
 
 
 def is_shell_title(title: str | None) -> bool:
@@ -891,31 +881,52 @@ class StorylineAutomationService(DomainAwareService):
                     except Exception:
                         pass
 
-                    # Permanent shell/magnet + large-storyline absorb gate
-                    # (rejects single-token ILIKE; shells need multi-entity + title-anchor).
-                    # Applies to suggestions as well so weak matches cannot flood SEI via auto paths.
+                    # Permanent shell/magnet absorb gate for suggestions / bag paths.
+                    # Locked auto_approve episodes append via signature — keep candidates.
+                    use_episode_append = False
+                    try:
+                        from shared.episode_attach_gate import episode_container_assembly_enabled
+
+                        if (
+                            episode_container_assembly_enabled()
+                            and (automation_mode or "") == "auto_approve"
+                        ):
+                            with conn.cursor() as _lc:
+                                _lc.execute(
+                                    f"""
+                                    SELECT signature_locked_at IS NOT NULL
+                                    FROM {self.schema}.storylines WHERE id = %s
+                                    """,
+                                    (int(storyline_id),),
+                                )
+                                _lr = _lc.fetchone()
+                                use_episode_append = bool(_lr and _lr[0])
+                    except Exception:
+                        use_episode_append = False
+
                     before_absorb = len(discovered_articles)
-                    discovered_articles = [
-                        a
-                        for a in discovered_articles
-                        if candidate_passes_absorb_gate(
-                            a,
-                            storyline_title=title or "",
-                            article_count=article_count_n,
-                            kitchen_sink=kitchen_sink,
-                        )
-                    ]
-                    if before_absorb and len(discovered_articles) < before_absorb:
-                        logger.info(
-                            "Storyline %s shell/magnet absorb gate: %s → %s candidates "
-                            "(shell=%s kitchen_sink=%s count=%s)",
-                            storyline_id,
-                            before_absorb,
-                            len(discovered_articles),
-                            is_shell_title(title),
-                            kitchen_sink,
-                            article_count_n,
-                        )
+                    if not use_episode_append:
+                        discovered_articles = [
+                            a
+                            for a in discovered_articles
+                            if candidate_passes_absorb_gate(
+                                a,
+                                storyline_title=title or "",
+                                article_count=article_count_n,
+                                kitchen_sink=kitchen_sink,
+                            )
+                        ]
+                        if before_absorb and len(discovered_articles) < before_absorb:
+                            logger.info(
+                                "Storyline %s shell/magnet absorb gate: %s → %s candidates "
+                                "(shell=%s kitchen_sink=%s count=%s)",
+                                storyline_id,
+                                before_absorb,
+                                len(discovered_articles),
+                                is_shell_title(title),
+                                kitchen_sink,
+                                article_count_n,
+                            )
 
                     effective_mode = automation_mode or "manual"
                     if force_suggest and effective_mode == "auto_approve":
@@ -926,17 +937,72 @@ class StorylineAutomationService(DomainAwareService):
                             storyline_id,
                             article_count_n,
                         )
+                    try:
+                        from shared.assembly_link_funnel import automation_auto_attach_enabled
+                        from shared.episode_attach_gate import episode_container_assembly_enabled
+
+                        # Bag absorb stays off. Episode assembly may still auto-append
+                        # to locked existing episodes via signature-gated admit.
+                        if (
+                            effective_mode == "auto_approve"
+                            and not automation_auto_attach_enabled()
+                            and not episode_container_assembly_enabled()
+                        ):
+                            effective_mode = "suggest_only"
+                            logger.info(
+                                "Storyline %s STORYLINE_AUTOMATION_AUTO_ATTACH=0 — "
+                                "suggestions only",
+                                storyline_id,
+                            )
+                    except Exception:
+                        pass
 
                     if effective_mode == "auto_approve":
-                        added_count = await self._auto_add_articles(
-                            conn,
-                            storyline_id,
-                            discovered_articles,
-                            settings,
-                            article_count=article_count_n,
-                            storyline_title=title or "",
-                            kitchen_sink=kitchen_sink,
-                        )
+                        try:
+                            from shared.episode_attach_gate import (
+                                episode_container_assembly_enabled,
+                            )
+
+                            if episode_container_assembly_enabled():
+                                added_count = await self._append_articles_to_episode(
+                                    conn,
+                                    storyline_id,
+                                    discovered_articles,
+                                    settings,
+                                    article_count=article_count_n,
+                                    storyline_title=title or "",
+                                    kitchen_sink=kitchen_sink,
+                                )
+                            else:
+                                added_count = await self._auto_add_articles(
+                                    conn,
+                                    storyline_id,
+                                    discovered_articles,
+                                    settings,
+                                    article_count=article_count_n,
+                                    storyline_title=title or "",
+                                    kitchen_sink=kitchen_sink,
+                                )
+                        except Exception as append_err:
+                            logger.warning(
+                                "Storyline %s episode append failed: %s — falling back to suggestions",
+                                storyline_id,
+                                append_err,
+                            )
+                            added_count = 0
+                            store_result = await self._store_suggestions(
+                                conn,
+                                storyline_id,
+                                discovered_articles,
+                                settings,
+                                search_query,
+                            )
+                            if isinstance(store_result, dict):
+                                suggestions_count = int(store_result.get("stored", 0))
+                                store_filter_stats = store_result.get("skip_reasons") or {}
+                            else:
+                                suggestions_count = int(store_result or 0)
+                                store_filter_stats = {}
                     else:
                         store_result = await self._store_suggestions(
                             conn, storyline_id, discovered_articles, settings, search_query
@@ -947,6 +1013,10 @@ class StorylineAutomationService(DomainAwareService):
                         else:
                             suggestions_count = int(store_result or 0)
                             store_filter_stats = {}
+
+                    # When episode append ran, still suggest leftovers that did not attach
+                    # only if auto_approve produced zero adds and mode wants visibility —
+                    # skip: append path already logged; avoid re-fanout.
 
                     try:
                         conn.rollback()
@@ -1859,6 +1929,26 @@ class StorylineAutomationService(DomainAwareService):
                         skip_reasons[reason or "rejected"] = skip_reasons.get(reason or "rejected", 0) + 1
                         continue
 
+                    art_id = article.get("id")
+                    if not art_id:
+                        skipped += 1
+                        skip_reasons["missing_id"] = skip_reasons.get("missing_id", 0) + 1
+                        continue
+
+                    # Already on this storyline — nothing to queue
+                    cur.execute(
+                        f"""
+                        SELECT 1 FROM {self.schema}.storyline_articles
+                        WHERE storyline_id = %s AND article_id = %s
+                        LIMIT 1
+                        """,
+                        (int(storyline_id), int(art_id)),
+                    )
+                    if cur.fetchone():
+                        skipped += 1
+                        skip_reasons["already_member"] = skip_reasons.get("already_member", 0) + 1
+                        continue
+
                     relevance = float(article.get("relevance_score", 0.6) or 0.6)
                     quality = float(article.get("quality_score", 0.5) or 0.5)
                     semantic = float(article.get("semantic_score", relevance) or relevance)
@@ -1870,6 +1960,53 @@ class StorylineAutomationService(DomainAwareService):
                     )
                     article["keyword_score"] = keyword
                     combined = float(article.get("combined_score") or self._final_score(article))
+
+                    # Cross-storyline fan-out: if this article is already pending on
+                    # another storyline with ≥ this score, skip (one best home).
+                    cur.execute(
+                        """
+                        SELECT storyline_id, combined_score
+                        FROM public.storyline_article_suggestions
+                        WHERE domain_key = %s
+                          AND article_id = %s
+                          AND status = 'pending'
+                          AND storyline_id <> %s
+                        ORDER BY combined_score DESC NULLS LAST
+                        LIMIT 1
+                        """,
+                        (self.domain, int(art_id), int(storyline_id)),
+                    )
+                    other = cur.fetchone()
+                    if other and float(other[1] or 0) >= combined:
+                        skipped += 1
+                        skip_reasons["pending_elsewhere"] = (
+                            skip_reasons.get("pending_elsewhere", 0) + 1
+                        )
+                        continue
+
+                    # Near-dupe title already pending on this storyline
+                    title = (article.get("title") or "").strip().lower()
+                    if len(title) >= 12:
+                        cur.execute(
+                            f"""
+                            SELECT 1
+                            FROM public.storyline_article_suggestions s
+                            JOIN {self.schema}.articles a ON a.id = s.article_id
+                            WHERE s.domain_key = %s
+                              AND s.storyline_id = %s
+                              AND s.status = 'pending'
+                              AND s.article_id <> %s
+                              AND lower(trim(a.title)) = %s
+                            LIMIT 1
+                            """,
+                            (self.domain, int(storyline_id), int(art_id), title),
+                        )
+                        if cur.fetchone():
+                            skipped += 1
+                            skip_reasons["near_dupe_title"] = (
+                                skip_reasons.get("near_dupe_title", 0) + 1
+                            )
+                            continue
 
                     matched_raw = (
                         article.get("matched_entities")
@@ -1911,7 +2048,7 @@ class StorylineAutomationService(DomainAwareService):
                             (
                                 self.domain,
                                 storyline_id,
-                                article.get("id"),
+                                int(art_id),
                                 round(relevance, 2),
                                 round(semantic, 2),
                                 round(keyword, 2),
@@ -1968,38 +2105,60 @@ class StorylineAutomationService(DomainAwareService):
 
     def _merge_article_entities_to_storyline(self, cur, storyline_id: int, article_id: int) -> None:
         """Merge article_entities into story_entity_index when article added to storyline."""
-        type_map = {
-            "person": "person",
-            "organization": "organization",
-            "subject": "other",
-            "recurring_event": "event",
-            "family": "family",
-        }
+        from shared.story_entity_index import map_entity_type_for_sei
+
         for sei_schema in [self.schema, "public"]:
             try:
                 cur.execute(
                     f"""
-                    SELECT entity_name, entity_type FROM {self.schema}.article_entities
+                    SELECT entity_name, entity_type, canonical_entity_id
+                    FROM {self.schema}.article_entities
                     WHERE article_id = %s AND entity_name IS NOT NULL
                 """,
                     (article_id,),
                 )
                 rows = cur.fetchall()
-                for name, ae_type in rows:
+                try:
+                    from shared.story_entity_index import resolve_entity_role_for_sei
+                except Exception:
+                    resolve_entity_role_for_sei = None  # type: ignore
+                for name, ae_type, cid in rows:
                     if not name or len(name.strip()) < 2:
                         continue
-                    sei_type = type_map.get(ae_type, "other")
+                    sei_type = map_entity_type_for_sei(ae_type)
+                    erole = None
+                    if resolve_entity_role_for_sei is not None:
+                        erole, _hk = resolve_entity_role_for_sei(
+                            domain_key=self.domain,
+                            entity_name=name,
+                            entity_type=ae_type,
+                        )
                     try:
                         cur.execute(
                             f"""
                             INSERT INTO {sei_schema}.story_entity_index
-                            (storyline_id, entity_name, entity_type, mention_count, last_seen_at)
-                            VALUES (%s, %s, %s, 1, NOW())
+                            (storyline_id, entity_name, entity_type, entity_role,
+                             mention_count, last_seen_at, canonical_entity_id)
+                            VALUES (%s, %s, %s, %s, 1, NOW(), %s)
                             ON CONFLICT (storyline_id, entity_name, entity_type) DO UPDATE SET
                                 mention_count = story_entity_index.mention_count + 1,
-                                last_seen_at = NOW()
+                                last_seen_at = NOW(),
+                                entity_role = COALESCE(
+                                    NULLIF(EXCLUDED.entity_role, ''),
+                                    {sei_schema}.story_entity_index.entity_role
+                                ),
+                                canonical_entity_id = COALESCE(
+                                    story_entity_index.canonical_entity_id,
+                                    EXCLUDED.canonical_entity_id
+                                )
                         """,
-                            (storyline_id, name.strip()[:255], sei_type),
+                            (
+                                storyline_id,
+                                name.strip()[:255],
+                                sei_type,
+                                erole,
+                                int(cid) if cid is not None else None,
+                            ),
                         )
                     except Exception as e:
                         logger.debug(f"story_entity_index merge skip: {e}")
@@ -2007,6 +2166,267 @@ class StorylineAutomationService(DomainAwareService):
             except Exception as e:
                 logger.debug(f"article_entities/story_entity_index merge: {e}")
                 continue
+
+    async def _append_articles_to_episode(
+        self,
+        conn,
+        storyline_id: int,
+        articles: list[dict[str, Any]],
+        settings: dict[str, Any],
+        *,
+        article_count: int = 0,
+        storyline_title: str = "",
+        kitchen_sink: bool = False,
+    ) -> int:
+        """
+        Append matching articles onto an existing locked episode (signature-gated).
+
+        Uses ``admit_article_to_episode_or_storyline`` so Mode B / event→episode is
+        the admit path — not bag absorb. Containers and unlocked bags are skipped.
+        """
+        from shared.episode_attach_gate import admit_article_to_episode_or_storyline
+
+        append_conn = get_db_connection()
+        if not append_conn:
+            logger.error("episode append: no database connection")
+            return 0
+
+        added = 0
+        try:
+            with append_conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT signature_locked_at IS NOT NULL,
+                           COALESCE(story_kind, ''),
+                           COALESCE(is_mega_storyline, FALSE),
+                           COALESCE(article_count, 0)
+                    FROM {self.schema}.storylines
+                    WHERE id = %s
+                    """,
+                    (int(storyline_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return 0
+                locked, skind, is_mega, live_count = (
+                    bool(row[0]),
+                    str(row[1] or ""),
+                    bool(row[2]),
+                    int(row[3] or 0),
+                )
+            if is_mega or skind == "container_index":
+                logger.info(
+                    "Storyline %s skip episode append — container/mega",
+                    storyline_id,
+                )
+                return 0
+            if not locked:
+                logger.info(
+                    "Storyline %s skip episode append — signature not locked "
+                    "(use suggestions until locked)",
+                    storyline_id,
+                )
+                return 0
+
+            # Locked episodes: kitchen_sink / soft shell flags must not block append —
+            # signature admit (and signature overlap fallback) is the real gate.
+            if is_shell_title(storyline_title) and len((storyline_title or "").split()) <= 3:
+                logger.info(
+                    "Storyline %s bare shell title — skip episode append",
+                    storyline_id,
+                )
+                return 0
+
+            min_score = float(self._auto_approve_threshold() or 0.75)
+            for article in articles:
+                art_id = article.get("id")
+                if not art_id:
+                    continue
+                combined = float(
+                    article.get("combined_score")
+                    or article.get("relevance_score")
+                    or 0.0
+                )
+                if combined < min_score:
+                    continue
+                # Prefer event→episode admit
+                ok, reason = admit_article_to_episode_or_storyline(
+                    append_conn,
+                    domain_key=self.domain,
+                    schema=self.schema,
+                    storyline_id=int(storyline_id),
+                    article_id=int(art_id),
+                    blend_score=combined,
+                    added_by="storyline_automation_episode_append",
+                )
+                if not ok:
+                    # Fallback: article entity/title overlaps locked identity signature
+                    if self._article_matches_locked_signature(
+                        append_conn, int(storyline_id), int(art_id), article
+                    ):
+                        ok, reason = self._insert_derived_membership(
+                            append_conn,
+                            int(storyline_id),
+                            int(art_id),
+                            combined,
+                            reason="signature_overlap_append",
+                        )
+                if ok:
+                    added += 1
+                    live_count += 1
+                    logger.info(
+                        "episode append storyline=%s article=%s (%s)",
+                        storyline_id,
+                        art_id,
+                        reason,
+                    )
+                else:
+                    logger.debug(
+                        "episode append skip storyline=%s article=%s: %s",
+                        storyline_id,
+                        art_id,
+                        reason,
+                    )
+
+            if added:
+                with append_conn.cursor() as cur:
+                    cur.execute(
+                        f"""
+                        UPDATE {self.schema}.storylines
+                        SET article_count = (
+                                SELECT COUNT(*) FROM {self.schema}.storyline_articles
+                                WHERE storyline_id = %s
+                            ),
+                            total_articles = (
+                                SELECT COUNT(*) FROM {self.schema}.storyline_articles
+                                WHERE storyline_id = %s
+                            ),
+                            updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (int(storyline_id), int(storyline_id), int(storyline_id)),
+                    )
+                append_conn.commit()
+            else:
+                append_conn.rollback()
+            return added
+        except Exception as e:
+            logger.error("Error episode-appending articles: %s", e)
+            try:
+                append_conn.rollback()
+            except Exception:
+                pass
+            return 0
+        finally:
+            try:
+                append_conn.close()
+            except Exception:
+                pass
+
+    def _article_matches_locked_signature(
+        self,
+        conn,
+        storyline_id: int,
+        article_id: int,
+        article: dict[str, Any] | None = None,
+    ) -> bool:
+        """True when article entities/title overlap locked episode identity (≥1 name/cid)."""
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT anchor_signature, signature_locked_at
+                    FROM {self.schema}.storylines WHERE id = %s
+                    """,
+                    (int(storyline_id),),
+                )
+                row = cur.fetchone()
+                if not row or not row[1] or not isinstance(row[0], dict):
+                    return False
+                ident = [
+                    str(x).strip().lower()
+                    for x in (row[0].get("identity") or [])
+                    if x and str(x).strip()
+                ]
+                if not ident:
+                    return False
+                name_idents = [t for t in ident if not t.startswith("cid:")]
+                cid_idents: list[int] = []
+                for t in ident:
+                    if t.startswith("cid:"):
+                        try:
+                            cid_idents.append(int(t.split(":", 1)[1]))
+                        except (TypeError, ValueError):
+                            pass
+                cur.execute(
+                    f"""
+                    SELECT lower(entity_name), canonical_entity_id
+                    FROM {self.schema}.article_entities
+                    WHERE article_id = %s
+                    """,
+                    (int(article_id),),
+                )
+                ae_names: set[str] = set()
+                ae_cids: set[int] = set()
+                for ename, cid in cur.fetchall() or []:
+                    if ename:
+                        ae_names.add(str(ename).strip().lower())
+                    if cid is not None:
+                        try:
+                            ae_cids.add(int(cid))
+                        except (TypeError, ValueError):
+                            pass
+                title = ""
+                if article:
+                    title = str(article.get("title") or "").lower()
+                if not title:
+                    cur.execute(
+                        f"SELECT lower(title) FROM {self.schema}.articles WHERE id = %s",
+                        (int(article_id),),
+                    )
+                    tr = cur.fetchone()
+                    title = str((tr or [""])[0] or "")
+                for n in name_idents:
+                    if len(n) < 4:
+                        continue
+                    if n in ae_names or (n in title):
+                        return True
+                    # partial: "john healey" vs entity "healey"
+                    if any(n in ae or ae in n for ae in ae_names if len(ae) >= 4):
+                        return True
+                if cid_idents and ae_cids.intersection(cid_idents):
+                    return True
+        except Exception as e:
+            logger.debug("signature overlap check: %s", e)
+        return False
+
+    def _insert_derived_membership(
+        self,
+        conn,
+        storyline_id: int,
+        article_id: int,
+        blend: float,
+        *,
+        reason: str,
+    ) -> tuple[bool, str]:
+        from shared.membership_store import insert_derived_bag_row
+
+        try:
+            with conn.cursor() as cur:
+                inserted = insert_derived_bag_row(
+                    cur,
+                    schema=self.schema,
+                    storyline_id=int(storyline_id),
+                    article_id=int(article_id),
+                    relevance_score=float(blend or 0.0),
+                    added_by="storyline_automation_episode_append",
+                    metadata={"derived_from": reason},
+                )
+                if inserted:
+                    return True, reason
+                return False, "already_member"
+        except Exception:
+            return False, "insert_failed"
 
     async def _auto_add_articles(
         self,
@@ -2019,7 +2439,39 @@ class StorylineAutomationService(DomainAwareService):
         storyline_title: str = "",
         kitchen_sink: bool = False,
     ) -> int:
-        """Auto-add articles that meet threshold criteria (auto_approve_combined floor + size scale)."""
+        """Legacy silent bag attach — retired. Returns 0; use suggestions/context only.
+
+        Event→Episode rebuild: articles never auto-INSERT into storyline_articles.
+        Re-enable only with STORYLINE_AUTOMATION_AUTO_ATTACH=1 (not recommended).
+        Prefer ``_append_articles_to_episode`` when episode assembly is on.
+        """
+        try:
+            from shared.assembly_link_funnel import (
+                automation_auto_attach_enabled,
+                storyline_articles_write_allowed,
+            )
+
+            if not automation_auto_attach_enabled():
+                logger.info(
+                    "Storyline %s skip _auto_add_articles — bag absorb off "
+                    "(suggestions/context only; episode links via continuation)",
+                    storyline_id,
+                )
+                return 0
+            if not storyline_articles_write_allowed():
+                logger.info(
+                    "Storyline %s skip _auto_add_articles — storyline_articles write blocked "
+                    "(episode mode without dual-write)",
+                    storyline_id,
+                )
+                return 0
+        except Exception:
+            logger.info(
+                "Storyline %s skip _auto_add_articles — absorb kill-switch unavailable",
+                storyline_id,
+            )
+            return 0
+
         try:
             try:
                 from services.storyline_membership_ops_lock import (
@@ -2068,21 +2520,16 @@ class StorylineAutomationService(DomainAwareService):
                 return 0
 
             added_count = 0
-            base_min = float(settings.get("min_relevance_score", 0.6) or 0.6)
-            min_score = effective_auto_add_threshold(
-                base_min_relevance=base_min,
-                auto_approve_combined=self._auto_approve_threshold(),
-                article_count=int(article_count or 0),
-                magnet_title=is_shell_title(storyline_title) or kitchen_sink,
-            )
+            # Score collapse: use auto_approve_combined as suggestion floor only —
+            # no size-bump effective_auto_add_threshold, no relevance×quality proxy.
+            min_score = float(self._auto_approve_threshold() or 0.75)
 
             with conn.cursor() as cur:
                 for article in articles:
                     relevance = float(article.get("relevance_score", 0.6) or 0.6)
-                    quality = float(article.get("quality_score", 0.5) or 0.5)
                     combined = article.get("combined_score")
                     if combined is None:
-                        combined = relevance * 0.7 + quality * 0.3
+                        combined = float(relevance)
                     if float(combined) < min_score:
                         continue
                     if not candidate_passes_absorb_gate(
@@ -2094,91 +2541,102 @@ class StorylineAutomationService(DomainAwareService):
                         continue
                     if self._subject_specificity_blocks_attach(cur, storyline_id, article):
                         continue
-                    # Event-core: rare anchors must found/own a TE — never silent mega absorb
+                    art_id = article.get("id")
+                    # Mode B funnel: membership_store admit (hub-exclude + blend floor + cap)
                     try:
-                        from services.event_core_membership_service import (
-                            event_core_membership_enabled,
-                            found_and_attach_rare_anchors,
-                            should_block_mega_absorb,
-                        )
+                        from shared.membership_store import MembershipIntent, admit as membership_admit
 
-                        if event_core_membership_enabled():
-                            block, reason, _anchors = should_block_mega_absorb(
-                                cur,
-                                domain_key=self.domain,
-                                storyline_id=int(storyline_id),
-                                article=article,
+                        # Event-core: rare anchors must found/own a TE — never silent mega absorb
+                        try:
+                            from services.event_core_membership_service import (
+                                event_core_membership_enabled,
+                                found_and_attach_rare_anchors,
+                                should_block_mega_absorb,
                             )
-                            if block:
-                                found_and_attach_rare_anchors(
+
+                            if event_core_membership_enabled():
+                                block, ec_reason, _anchors = should_block_mega_absorb(
                                     cur,
                                     domain_key=self.domain,
-                                    article=article,
-                                    storyline_id=None,
-                                )
-                                logger.info(
-                                    "Event-core blocked mega absorb storyline=%s article=%s (%s)",
-                                    storyline_id,
-                                    article.get("id"),
-                                    reason,
-                                )
-                                continue
-                            # Same-TE absorb: keep typed membership + facet projection
-                            try:
-                                found_and_attach_rare_anchors(
-                                    cur,
-                                    domain_key=self.domain,
-                                    article=article,
                                     storyline_id=int(storyline_id),
+                                    article=article,
                                 )
-                            except Exception:
-                                pass
-                    except Exception as _ec_err:
-                        logger.debug("event-core absorb gate: %s", _ec_err)
-                    try:
-                        cur.execute(
-                            f"""
-                                INSERT INTO {self.schema}.storyline_articles
-                                (storyline_id, article_id, added_at, relevance_score)
-                                VALUES (%s, %s, %s, %s)
-                                ON CONFLICT (storyline_id, article_id) DO NOTHING
-                            """,
-                            (storyline_id, article.get("id"), datetime.now(), relevance),
-                        )
-
-                        if cur.rowcount > 0:
-                            added_count += 1
-                            try:
-                                from services.event_core_membership_service import (
-                                    sei_widen_allowed_on_silent_attach,
-                                )
-
-                                allow_sei = sei_widen_allowed_on_silent_attach()
-                            except Exception:
-                                allow_sei = True
-                            if allow_sei:
-                                self._merge_article_entities_to_storyline(
-                                    cur, storyline_id, article.get("id")
-                                )
-
-                            if added_count % 10 == 0:
+                                if block:
+                                    found_and_attach_rare_anchors(
+                                        cur,
+                                        domain_key=self.domain,
+                                        article=article,
+                                        storyline_id=None,
+                                    )
+                                    logger.info(
+                                        "Event-core blocked mega absorb storyline=%s article=%s (%s)",
+                                        storyline_id,
+                                        art_id,
+                                        ec_reason,
+                                    )
+                                    continue
                                 try:
-                                    from config.runtime import env_bool
-
-                                    inline_cons = env_bool(
-                                        "STORYLINE_AUTOMATION_INLINE_CONSOLIDATION",
-                                        False,
+                                    found_and_attach_rare_anchors(
+                                        cur,
+                                        domain_key=self.domain,
+                                        article=article,
+                                        storyline_id=int(storyline_id),
                                     )
-                                    if inline_cons:
-                                        from services.storyline_consolidation_service import (
-                                            consolidation_task,
-                                        )
+                                except Exception:
+                                    pass
+                        except Exception as _ec_err:
+                            logger.debug("event-core absorb gate: %s", _ec_err)
 
-                                        consolidation_task()
-                                except Exception as consolidation_error:
-                                    logger.warning(
-                                        "Error running consolidation: %s", consolidation_error
+                        ok, gate_reason = membership_admit(
+                            conn,
+                            domain_key=self.domain,
+                            schema=self.schema,
+                            episode_id=int(storyline_id),
+                            article_id=int(art_id),
+                            intent=MembershipIntent.AUTOMATION,
+                            blend_score=float(relevance or 0.0),
+                            added_by="storyline_automation",
+                        )
+                        if not ok:
+                            logger.info(
+                                "auto_attach_blocked storyline=%s article=%s (%s)",
+                                storyline_id,
+                                art_id,
+                                gate_reason,
+                            )
+                            continue
+                        added_count += 1
+                        try:
+                            from services.event_core_membership_service import (
+                                sei_widen_allowed_on_silent_attach,
+                            )
+
+                            allow_sei = sei_widen_allowed_on_silent_attach()
+                        except Exception:
+                            allow_sei = True
+                        if allow_sei:
+                            self._merge_article_entities_to_storyline(
+                                cur, storyline_id, article.get("id")
+                            )
+
+                        if added_count % 10 == 0:
+                            try:
+                                from config.runtime import env_bool
+
+                                inline_cons = env_bool(
+                                    "STORYLINE_AUTOMATION_INLINE_CONSOLIDATION",
+                                    False,
+                                )
+                                if inline_cons:
+                                    from services.storyline_consolidation_service import (
+                                        consolidation_task,
                                     )
+
+                                    consolidation_task()
+                            except Exception as consolidation_error:
+                                logger.warning(
+                                    "Error running consolidation: %s", consolidation_error
+                                )
                     except Exception as e:
                         logger.warning(f"Error adding article {article.get('id')}: {e}")
                         continue

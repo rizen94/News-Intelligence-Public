@@ -1,8 +1,8 @@
 """
 Nightly off-hours pipeline (America/New_York by default).
 
-**Unified window** ``[NIGHTLY_PIPELINE_START_HOUR, NIGHTLY_PIPELINE_END_HOUR)`` — default **00:00–07:00** local
-(see ``pipeline_schedule_service``; ``PIPELINE_NIGHTLY_*`` aliases the same hours):
+**Unified window** ``[NIGHTLY_PIPELINE_START_HOUR, NIGHTLY_PIPELINE_END_HOUR)`` — default **01:00–06:00** local
+(see ``pipeline_schedule_service`` heavy band; ``PIPELINE_HEAVY_*`` / ``PIPELINE_NIGHTLY_*`` aliases):
 
 1. **Once per local calendar day** while the window is active: optional kickoff ``collect_rss_feeds`` (see
    ``NIGHTLY_PIPELINE_KICKOFF_RSS``; respects ``AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE``).
@@ -203,7 +203,7 @@ def nightly_pipeline_window_info() -> dict[str, Any]:
 
 
 def in_nightly_pipeline_window_est() -> bool:
-    """Unified nightly catch-up window [start, end) local time (default 00:00–07:00)."""
+    """Unified nightly catch-up window [start, end) local time (default 01:00–06:00 heavy band)."""
     global _logged_nightly_all_day
     if not nightly_unified_pipeline_enabled():
         return False

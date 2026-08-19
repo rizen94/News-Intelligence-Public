@@ -287,23 +287,30 @@ def _probe_story_continuation() -> bool:
     conn = get_db_connection()
     if not conn:
         return True
+    from services.story_continuation_service import continuation_recheck_due_sql
+
+    due_sql, due_params = continuation_recheck_due_sql("ce")
     try:
         with conn.cursor() as cur:
             cur.execute("SET LOCAL statement_timeout = '3s'")
-            # Any schema-scoped unlinked CE counts as work.
+            # Any schema-scoped unlinked CE that is off recheck backoff counts as work;
+            # mirrors process_recent_events, else the probe reports work every cycle.
             for schema in schemas:
                 cur.execute(
                     f"""
                     SELECT 1
                     FROM public.chronological_events ce
                     WHERE (ce.storyline_id IS NULL OR ce.storyline_id = '')
+                      AND ce.canonical_event_id IS NULL
                       AND ce.source_article_id IS NOT NULL
+                      AND {due_sql}
                       AND EXISTS (
                             SELECT 1 FROM {schema}.articles a
                             WHERE a.id = ce.source_article_id
                       )
                     LIMIT 1
-                    """
+                    """,
+                    due_params,
                 )
                 if cur.fetchone() is not None:
                     return True

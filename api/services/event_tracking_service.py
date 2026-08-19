@@ -892,9 +892,12 @@ async def run_event_tracking_batch(limit: int = 300) -> int:
     """
     batch_size = 30  # small enough for 8B model to return valid JSON
     created_total = 0
+    from shared.domain_processing_mode import filter_domains_for_phase
     from shared.domain_registry import get_pipeline_active_domain_keys
 
-    for domain in get_pipeline_active_domain_keys():
+    for domain in filter_domains_for_phase(
+        get_pipeline_active_domain_keys(), "event_tracking"
+    ):
         for offset in range(0, limit, batch_size):
             result = await discover_events_from_contexts(domain_key=domain, limit=batch_size)
             created_total += result.get("events_created", 0)

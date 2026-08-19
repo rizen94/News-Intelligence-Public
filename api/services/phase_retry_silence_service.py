@@ -108,6 +108,7 @@ def silence_phase(
     health_status: str | None = None,
     failing_streak: int = 0,
     detail: dict[str, Any] | None = None,
+    backlog_at_silence: int | None = None,
 ) -> None:
     import json
 
@@ -120,8 +121,9 @@ def silence_phase(
                     """
                     INSERT INTO public.phase_silence_state (
                         phase_name, silenced_at, reason, health_status,
-                        failing_streak, auto_silenced, cleared_at, detail
-                    ) VALUES (%s, NOW(), %s, %s, %s, TRUE, NULL, %s::jsonb)
+                        failing_streak, auto_silenced, cleared_at, detail,
+                        silenced_at_backlog
+                    ) VALUES (%s, NOW(), %s, %s, %s, TRUE, NULL, %s::jsonb, %s)
                     ON CONFLICT (phase_name) DO UPDATE SET
                         silenced_at = NOW(),
                         reason = EXCLUDED.reason,
@@ -129,7 +131,8 @@ def silence_phase(
                         failing_streak = EXCLUDED.failing_streak,
                         auto_silenced = TRUE,
                         cleared_at = NULL,
-                        detail = EXCLUDED.detail
+                        detail = EXCLUDED.detail,
+                        silenced_at_backlog = EXCLUDED.silenced_at_backlog
                     """,
                     (
                         phase_name,
@@ -137,6 +140,7 @@ def silence_phase(
                         health_status,
                         int(failing_streak),
                         json.dumps(detail or {}),
+                        None if backlog_at_silence is None else int(backlog_at_silence),
                     ),
                 )
             conn.commit()
@@ -185,15 +189,157 @@ def clear_phase_silence(phase_name: str) -> None:
         logger.debug("clear_phase_silence %s: %s", phase_name, e)
 
 
-def apply_auto_silence_from_health(phase_health: dict[str, Any]) -> list[str]:
+def _active_auto_silences_with_backlog() -> dict[str, int | None]:
+    """Active auto-silences → queue depth captured when each was silenced."""
+    out: dict[str, int | None] = {}
+    try:
+        from shared.database.connection import get_ui_db_connection_context
+
+        with get_ui_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT phase_name, silenced_at_backlog
+                    FROM public.phase_silence_state
+                    WHERE cleared_at IS NULL AND auto_silenced = TRUE
+                    """
+                )
+                for row in cur.fetchall() or []:
+                    if isinstance(row, dict):
+                        name, backlog = row.get("phase_name"), row.get("silenced_at_backlog")
+                    else:
+                        name, backlog = row[0], row[1]
+                    if name:
+                        out[str(name)] = None if backlog is None else int(backlog)
+    except Exception as e:
+        logger.debug("_active_auto_silences_with_backlog: %s", e)
+    return out
+
+
+def reset_failing_streak(phase_name: str) -> None:
+    """Drop the consecutive-failure counter so a retried phase starts from zero."""
+    import json
+
+    try:
+        from shared.database.connection import get_db_connection_context
+
+        with get_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT value FROM public.automation_state WHERE key = %s",
+                    ("phase_failing_streaks",),
+                )
+                row = cur.fetchone()
+                if not row or not row[0]:
+                    return
+                raw = row[0]
+                data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                if phase_name not in data:
+                    return
+                data.pop(phase_name, None)
+                cur.execute(
+                    """
+                    UPDATE public.automation_state
+                    SET value = %s::jsonb, updated_at = NOW()
+                    WHERE key = %s
+                    """,
+                    (json.dumps(data), "phase_failing_streaks"),
+                )
+            conn.commit()
+    except Exception as e:
+        logger.debug("reset_failing_streak %s: %s", phase_name, e)
+
+
+def _record_lift(phase_name: str, reason: str) -> None:
+    try:
+        from shared.database.connection import get_db_connection_context
+
+        with get_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE public.phase_silence_state
+                    SET cleared_at = NOW(),
+                        lift_count = COALESCE(lift_count, 0) + 1,
+                        last_lifted_at = NOW(),
+                        last_lift_reason = %s
+                    WHERE phase_name = %s AND cleared_at IS NULL
+                    """,
+                    (reason[:100], phase_name),
+                )
+            conn.commit()
+    except Exception as e:
+        logger.debug("_record_lift %s: %s", phase_name, e)
+
+
+def lift_auto_silences(
+    *,
+    reason: str,
+    pending: dict[str, Any] | None = None,
+    phases: Any = None,
+    force: bool = False,
+    min_new_work: int = 1,
+) -> list[str]:
+    """
+    Lift auto-silences so silence behaves as a backoff, not a retirement.
+
+    A silenced phase is retried when either:
+      * ``force`` — an intake trigger (new RSS batch) justifies giving every
+        silenced phase another chance, or
+      * its queue depth grew by ``min_new_work`` past the depth captured when it
+        was silenced, i.e. genuinely new work arrived.
+
+    A phase that is still broken re-earns its silence through the normal
+    failing-streak threshold, so nothing stays muted on stale evidence.
+    Operator (non-auto) silences are never lifted here.
+
+    Returns the phase names whose silence was lifted.
+    """
+    if not phase_retry_policy_enabled():
+        return []
+    active = _active_auto_silences_with_backlog()
+    if not active:
+        return []
+    if phases is not None:
+        want = {str(p).strip() for p in phases}
+        active = {k: v for k, v in active.items() if k in want}
+    depths = pending or {}
+    lifted: list[str] = []
+    for phase, silenced_backlog in active.items():
+        if force:
+            trigger = reason
+        else:
+            try:
+                current = int(depths.get(phase, 0) or 0)
+            except (TypeError, ValueError):
+                current = 0
+            baseline = 0 if silenced_backlog is None else int(silenced_backlog)
+            if current < baseline + max(1, int(min_new_work)):
+                continue
+            trigger = f"{reason}:{baseline}->{current}"
+        _record_lift(phase, trigger)
+        reset_failing_streak(phase)
+        lifted.append(phase)
+        logger.info("phase_silence_lift:%s reason=%s", phase, trigger[:120])
+    return lifted
+
+
+def apply_auto_silence_from_health(
+    phase_health: dict[str, Any],
+    pending: dict[str, Any] | None = None,
+) -> list[str]:
     """
     Persist silence when a phase is failing/stalled for N consecutive controller assessments.
+
+    ``pending`` (per-phase queue depths) is captured alongside the silence so
+    ``lift_auto_silences`` can later tell that new work arrived.
     Returns newly silenced phase names.
     """
     if not phase_retry_policy_enabled():
         return []
     newly: list[str] = []
     dry_run = bool(_policy_cfg().get("dry_run", False))
+    depths = pending or {}
     for phase, health in (phase_health or {}).items():
         status = getattr(health, "status", None) or (
             health.get("status") if isinstance(health, dict) else None
@@ -214,12 +360,17 @@ def apply_auto_silence_from_health(phase_health: dict[str, Any]) -> list[str]:
         if dry_run:
             logger.info("phase_auto_silence dry_run:%s %s", phase, reason[:120])
             continue
+        try:
+            backlog_at_silence = int(depths.get(phase, 0) or 0)
+        except (TypeError, ValueError):
+            backlog_at_silence = 0
         silence_phase(
             phase,
             reason=reason,
             health_status=str(status),
             failing_streak=streak,
             detail={"detail": detail},
+            backlog_at_silence=backlog_at_silence,
         )
         newly.append(phase)
     return newly

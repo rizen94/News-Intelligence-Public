@@ -313,3 +313,224 @@ def generate_signals_from_recent_events(*, days: int = 14, limit: int = 15) -> d
     except Exception as e:
         logger.warning("generate_signals_from_recent_events: %s", e)
     return {"impacts": created_impacts, "signals": created_signals}
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 C10 — Stooq CSV outcome writeback
+# ---------------------------------------------------------------------------
+
+def fetch_stooq_daily_csv(ticker: str, *, max_rows: int = 40) -> list[dict[str, Any]]:
+    """
+    Fetch recent daily OHLCV from Stooq CSV endpoint.
+
+    URL pattern: https://stooq.com/q/d/l/?s={ticker}.us&i=d
+    Returns list of {date, open, high, low, close, volume} newest last.
+    """
+    from urllib.request import Request, urlopen
+    from urllib.error import URLError, HTTPError
+    import csv
+    import io
+
+    sym = (ticker or "").strip().lower()
+    if not sym:
+        return []
+    # Stooq US equities / ETFs use .us suffix; commodities often bare
+    candidates = [f"{sym}.us", sym]
+    for s in candidates:
+        url = f"https://stooq.com/q/d/l/?s={s}&i=d"
+        try:
+            req = Request(url, headers={"User-Agent": "NewsIntelligence/1.0"})
+            with urlopen(req, timeout=12) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+            if "Date" not in raw or len(raw) < 40:
+                continue
+            reader = csv.DictReader(io.StringIO(raw))
+            rows: list[dict[str, Any]] = []
+            for r in reader:
+                try:
+                    rows.append(
+                        {
+                            "date": r.get("Date"),
+                            "open": float(r["Open"]),
+                            "high": float(r["High"]),
+                            "low": float(r["Low"]),
+                            "close": float(r["Close"]),
+                            "volume": float(r.get("Volume") or 0),
+                        }
+                    )
+                except (KeyError, TypeError, ValueError):
+                    continue
+            if rows:
+                return rows[-max_rows:]
+        except (HTTPError, URLError, TimeoutError, OSError) as e:
+            logger.debug("stooq fetch %s: %s", s, e)
+            continue
+    return []
+
+
+def pct_move_over_days(rows: list[dict[str, Any]], *, lookback_days: int = 5) -> float | None:
+    """Percent close-to-close move over the last lookback trading rows."""
+    if not rows or len(rows) < 2:
+        return None
+    n = max(1, min(lookback_days, len(rows) - 1))
+    start = float(rows[-(n + 1)]["close"])
+    end = float(rows[-1]["close"])
+    if start == 0:
+        return None
+    return ((end - start) / start) * 100.0
+
+
+def score_signal_outcome(
+    signal_id: int,
+    *,
+    lookback_days: int = 5,
+) -> dict[str, Any]:
+    """
+    Fetch Stooq move for a signal's ticker and write actual_move_pct / outcome_score.
+    outcome_score in [-1, 1]: +1 if direction matched expected, -1 if opposite.
+    """
+    from shared.database.connection import get_db_connection_context
+    from psycopg2.extras import RealDictCursor
+
+    try:
+        with get_db_connection_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT id, ticker, expected_move_pct, confidence, metadata
+                    FROM intelligence.trading_signals WHERE id = %s
+                    """,
+                    (int(signal_id),),
+                )
+                sig = cur.fetchone()
+                if not sig:
+                    return {"ok": False, "error": "not_found"}
+                ticker = sig["ticker"]
+                rows = fetch_stooq_daily_csv(ticker)
+                actual = pct_move_over_days(rows, lookback_days=lookback_days)
+                if actual is None:
+                    return {"ok": False, "error": "no_price_data", "ticker": ticker}
+                expected = float(sig.get("expected_move_pct") or 0)
+                # Direction from expected sign, or metadata
+                direction = "up" if expected >= 0 else "down"
+                meta = sig.get("metadata") if isinstance(sig.get("metadata"), dict) else {}
+                if meta.get("direction") in ("up", "down"):
+                    direction = meta["direction"]
+                actual_dir = "up" if actual >= 0 else "down"
+                if direction == "unknown":
+                    outcome = 0.0
+                elif actual_dir == direction:
+                    outcome = min(1.0, abs(actual) / max(0.1, abs(expected) or 1.0))
+                else:
+                    outcome = -min(1.0, abs(actual) / max(0.1, abs(expected) or 1.0))
+                cur.execute(
+                    """
+                    UPDATE intelligence.trading_signals
+                    SET actual_move_pct = %s,
+                        outcome_score = %s,
+                        outcome_scored_at = NOW(),
+                        outcome_source = 'stooq',
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (actual, outcome, int(signal_id)),
+                )
+            conn.commit()
+            return {
+                "ok": True,
+                "signal_id": int(signal_id),
+                "ticker": ticker,
+                "actual_move_pct": actual,
+                "outcome_score": outcome,
+                "direction": direction,
+            }
+    except Exception as e:
+        # Pre-migration columns may be missing — store in metadata
+        if "actual_move_pct" in str(e) or "outcome_score" in str(e):
+            return _score_signal_outcome_metadata(signal_id, lookback_days=lookback_days)
+        logger.warning("score_signal_outcome: %s", e)
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def _score_signal_outcome_metadata(signal_id: int, *, lookback_days: int = 5) -> dict[str, Any]:
+    import json
+    from shared.database.connection import get_db_connection_context
+    from psycopg2.extras import RealDictCursor
+
+    try:
+        with get_db_connection_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT id, ticker, expected_move_pct, metadata FROM intelligence.trading_signals WHERE id = %s",
+                    (int(signal_id),),
+                )
+                sig = cur.fetchone()
+                if not sig:
+                    return {"ok": False, "error": "not_found"}
+                rows = fetch_stooq_daily_csv(sig["ticker"])
+                actual = pct_move_over_days(rows, lookback_days=lookback_days)
+                if actual is None:
+                    return {"ok": False, "error": "no_price_data"}
+                meta = dict(sig.get("metadata") or {})
+                meta["actual_move_pct"] = actual
+                meta["outcome_source"] = "stooq"
+                cur.execute(
+                    """
+                    UPDATE intelligence.trading_signals
+                    SET metadata = %s::jsonb, updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (json.dumps(meta), int(signal_id)),
+                )
+            conn.commit()
+            return {"ok": True, "signal_id": int(signal_id), "actual_move_pct": actual, "legacy_meta": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def score_pending_signal_outcomes(*, limit: int = 25, lookback_days: int = 5) -> dict[str, Any]:
+    """Batch score approved/pending signals missing outcome writeback."""
+    from shared.database.connection import get_ui_db_connection_context
+
+    scored = 0
+    errors = 0
+    try:
+        with get_ui_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id FROM intelligence.trading_signals
+                    WHERE outcome_scored_at IS NULL
+                      AND review_status IN ('pending', 'approved')
+                    ORDER BY created_at ASC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                ids = [int(r[0]) for r in (cur.fetchall() or [])]
+    except Exception:
+        # Column may not exist yet
+        try:
+            with get_ui_db_connection_context() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT id FROM intelligence.trading_signals
+                        WHERE COALESCE(metadata->>'actual_move_pct', '') = ''
+                        ORDER BY created_at ASC
+                        LIMIT %s
+                        """,
+                        (limit,),
+                    )
+                    ids = [int(r[0]) for r in (cur.fetchall() or [])]
+        except Exception as e:
+            return {"scored": 0, "error": str(e)[:200]}
+
+    for sid in ids:
+        res = score_signal_outcome(sid, lookback_days=lookback_days)
+        if res.get("ok"):
+            scored += 1
+        else:
+            errors += 1
+    return {"scored": scored, "errors": errors, "checked": len(ids)}
+

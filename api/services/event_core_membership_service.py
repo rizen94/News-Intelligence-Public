@@ -458,9 +458,19 @@ def _ensure_facet_projection_storyline(
 ) -> tuple[int, bool]:
     """
     Idempotent Stories facet for a TE+domain: reuse storyline tagged with this
-    TE in metadata, else mint one and attach member articles.
-    Returns (storyline_id, created).
+    TE in metadata, else mint one.
+
+    Under episode_container_assembly, mint as container_index with **no** article
+    membership (containers never own articles).
     """
+    episode_mode = False
+    try:
+        from shared.episode_attach_gate import episode_container_assembly_enabled
+
+        episode_mode = bool(episode_container_assembly_enabled())
+    except Exception:
+        pass
+
     cur.execute(
         f"""
         SELECT id FROM {schema}.storylines
@@ -485,6 +495,7 @@ def _ensure_facet_projection_storyline(
                 "source": "event_core_facet_projection",
                 "event_core_te_id": tracked_event_id,
                 "domain_key": domain_key,
+                "as_container": episode_mode,
             }
         )
         cur.execute(
@@ -492,32 +503,42 @@ def _ensure_facet_projection_storyline(
             INSERT INTO {schema}.storylines
             (storyline_uuid, title, description, status, processing_status,
              ml_processing_status, article_count, total_articles, metadata,
-             created_at, updated_at)
+             created_at, updated_at, story_kind, is_mega_storyline)
             VALUES (
                 gen_random_uuid(), %s, %s, 'active', 'pending', 'pending',
-                0, 0, %s::jsonb, NOW(), NOW()
+                0, 0, %s::jsonb, NOW(), NOW(),
+                %s, %s
             )
             RETURNING id
             """,
-            (title, description, meta),
+            (
+                title,
+                description,
+                meta,
+                "container_index" if episode_mode else None,
+                bool(episode_mode),
+            ),
         )
         sid = int(cur.fetchone()[0])
         created = True
 
     attached = 0
-    for aid in article_ids:
-        cur.execute(
-            f"""
-            INSERT INTO {schema}.storyline_articles
-            (storyline_id, article_id, relevance_score, relationship_type,
-             added_by, created_at, updated_at)
-            VALUES (%s, %s, 0.95, 'core', 'event_core_facet', NOW(), NOW())
-            ON CONFLICT (storyline_id, article_id) DO NOTHING
-            """,
-            (sid, int(aid)),
-        )
-        if cur.rowcount > 0:
-            attached += 1
+    if not episode_mode:
+        from shared.membership_store import MembershipIntent, admit as membership_admit
+
+        for aid in article_ids:
+            ok, _reason = membership_admit(
+                cur.connection,
+                domain_key=domain_key,
+                schema=schema,
+                episode_id=int(sid),
+                article_id=int(aid),
+                intent=MembershipIntent.AUTOMATION,
+                blend_score=0.95,
+                added_by="event_core_facet",
+            )
+            if ok:
+                attached += 1
     if attached or created:
         cur.execute(
             f"""

@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from shared.database.connection import get_db_connection_context
+from shared.domain_processing_mode import filter_domains_for_phase
 from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 from config.runtime import env_bool, env_str
 
@@ -86,6 +87,59 @@ def _assembly_flat_cooldown_max_seconds() -> int:
         )
     except (TypeError, ValueError):
         return 21600
+
+
+def _assembly_multi_window_discovery_enabled() -> bool:
+    return env_bool("STORYLINE_ASSEMBLY_MULTI_WINDOW_DISCOVERY", True)
+
+
+def assembly_discovery_windows(
+    *,
+    lookback_hours: int,
+    article_cap: int,
+) -> list[dict[str, Any]]:
+    """
+    Short high-sim windows first (more distinct thin episodes), then the
+    domain lookback pass at default clustering thresholds.
+    """
+    cap = max(100, int(article_cap))
+    lookback = max(1, int(lookback_hours))
+    windows: list[dict[str, Any]] = []
+    if _assembly_multi_window_discovery_enabled():
+        windows.extend(
+            [
+                {
+                    "hours": 12,
+                    "min_similarity": 0.78,
+                    "article_limit": min(250, cap),
+                    "min_cluster_size": 2,
+                },
+                {
+                    "hours": 24,
+                    "min_similarity": 0.75,
+                    "article_limit": min(350, cap),
+                    "min_cluster_size": 2,
+                },
+            ]
+        )
+    windows.append(
+        {
+            "hours": lookback,
+            "min_similarity": None,
+            "article_limit": cap,
+            "min_cluster_size": None,
+        }
+    )
+    # Drop duplicate hour windows (keep first / tighter sim)
+    seen_hours: set[int] = set()
+    out: list[dict[str, Any]] = []
+    for w in windows:
+        h = int(w["hours"])
+        if h in seen_hours:
+            continue
+        seen_hours.add(h)
+        out.append(w)
+    return out
 
 
 def _assembly_discovery_interval_seconds() -> int:
@@ -360,7 +414,9 @@ def storyline_assembly_rows_per_run() -> int:
     except Exception:
         pass
     total = 0
-    for dk in get_pipeline_active_domain_keys():
+    for dk in filter_domains_for_phase(
+        get_pipeline_active_domain_keys(), "storyline_assembly"
+    ):
         n = count_auto_approve_automation_storylines(dk)
         total += min(per_domain, n) if n > 0 else 0
     # Discovery can still link unlinked articles even with zero auto_approve storylines.
@@ -408,7 +464,13 @@ def domain_has_actionable_assembly_work(domain_key: str) -> bool:
 
 def domains_needing_assembly() -> list[str]:
     """Pipeline domains with actionable assembly work (idle-gate / drain SSOT)."""
-    return [dk for dk in get_pipeline_active_domain_keys() if domain_has_actionable_assembly_work(dk)]
+    return [
+        dk
+        for dk in filter_domains_for_phase(
+            get_pipeline_active_domain_keys(), "storyline_assembly"
+        )
+        if domain_has_actionable_assembly_work(dk)
+    ]
 
 
 def count_assembly_actionable_pending() -> int:
@@ -549,26 +611,62 @@ async def run_storyline_assembly_for_domain(
     if run_discovery_effective:
         try:
             loop = asyncio.get_event_loop()
-            discovery = await loop.run_in_executor(
-                None,
-                lambda: get_discovery_service().discover_storylines(
-                    domain=domain_key,
-                    hours=effective_discovery_hours,
-                    save_to_db=True,
-                    article_limit=assembly_article_cap,
-                ),
+            windows = assembly_discovery_windows(
+                lookback_hours=int(effective_discovery_hours),
+                article_cap=int(assembly_article_cap),
             )
-            summary = discovery.get("summary") or {}
+            agg = {
+                "clusters_found": 0,
+                "saved_storylines": 0,
+                "articles_analyzed": 0,
+                "merged_into_existing": 0,
+                "narrative_merged": 0,
+                "coherence_rejected": 0,
+                "articles_attached": 0,
+                "windows": [],
+            }
+            for win in windows:
+                discovery = await loop.run_in_executor(
+                    None,
+                    lambda w=win: get_discovery_service().discover_storylines(
+                        domain=domain_key,
+                        hours=int(w["hours"]),
+                        save_to_db=True,
+                        article_limit=int(w["article_limit"]),
+                        min_similarity=w.get("min_similarity"),
+                        min_cluster_size=w.get("min_cluster_size"),
+                    ),
+                )
+                summary = discovery.get("summary") or {}
+                saved_n = len(discovery.get("saved_storylines") or [])
+                agg["clusters_found"] += int(summary.get("clusters_found") or 0)
+                agg["saved_storylines"] += saved_n
+                agg["articles_analyzed"] = max(
+                    agg["articles_analyzed"], int(summary.get("articles_analyzed") or 0)
+                )
+                agg["merged_into_existing"] += int(summary.get("merged_into_existing") or 0)
+                agg["narrative_merged"] += int(summary.get("narrative_merged") or 0)
+                agg["coherence_rejected"] += int(summary.get("coherence_rejected") or 0)
+                agg["articles_attached"] += int(summary.get("articles_attached") or 0)
+                agg["windows"].append(
+                    {
+                        "hours": win["hours"],
+                        "min_similarity": win.get("min_similarity"),
+                        "clusters_found": summary.get("clusters_found", 0),
+                        "saved_storylines": saved_n,
+                    }
+                )
             steps["storyline_discovery"] = {
-                "clusters_found": summary.get("clusters_found", 0),
-                "saved_storylines": len(discovery.get("saved_storylines") or []),
-                "articles_analyzed": summary.get("articles_analyzed", 0),
-                "time_window": summary.get("time_window"),
-                "hours_analyzed": summary.get("hours_analyzed"),
-                "merged_into_existing": int(summary.get("merged_into_existing") or 0),
-                "narrative_merged": int(summary.get("narrative_merged") or 0),
-                "coherence_rejected": int(summary.get("coherence_rejected") or 0),
-                "articles_attached": int(summary.get("articles_attached") or 0),
+                "clusters_found": agg["clusters_found"],
+                "saved_storylines": agg["saved_storylines"],
+                "articles_analyzed": agg["articles_analyzed"],
+                "time_window": f"multi:{','.join(str(w['hours']) for w in windows)}h",
+                "hours_analyzed": effective_discovery_hours,
+                "merged_into_existing": agg["merged_into_existing"],
+                "narrative_merged": agg["narrative_merged"],
+                "coherence_rejected": agg["coherence_rejected"],
+                "articles_attached": agg["articles_attached"],
+                "windows": agg["windows"],
             }
             _mark_discovery_ran(domain_key)
         except Exception as e:
@@ -781,11 +879,15 @@ async def run_storyline_assembly_all_domains(**kwargs: Any) -> dict[str, Any]:
         parallel = 1
     force_all = bool(kwargs.pop("force_all_domains", False) or kwargs.get("force"))
     if force_all:
-        domains = list(get_pipeline_active_domain_keys())
+        domains = filter_domains_for_phase(
+            get_pipeline_active_domain_keys(), "storyline_assembly"
+        )
     else:
         domains = domains_needing_assembly()
         if not domains and env_bool("STORYLINE_ASSEMBLY_RUN_ALL_WHEN_EMPTY_NEEDING", False):
-            domains = list(get_pipeline_active_domain_keys())
+            domains = filter_domains_for_phase(
+                get_pipeline_active_domain_keys(), "storyline_assembly"
+            )
         # Prefer largest unlinked piles first so catch-up burns medicine/AI before small domains.
         if domains:
             domains = sorted(

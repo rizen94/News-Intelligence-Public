@@ -877,6 +877,7 @@ def cleanup_sei_after_unlinks(
     # Entity names mentioned on dropped articles (best-effort; table may vary)
     dropped_names: set[str] = set()
     try:
+        cur.execute("SAVEPOINT cleanup_sei_ae")
         cur.execute(
             f"""
             SELECT DISTINCT lower(trim(entity_name))
@@ -890,8 +891,13 @@ def cleanup_sei_after_unlinks(
         for (name,) in cur.fetchall() or []:
             if name:
                 dropped_names.add(str(name).strip().lower())
+        cur.execute("RELEASE SAVEPOINT cleanup_sei_ae")
     except Exception as e:
         logger.debug("cleanup_sei article_entities load: %s", e)
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT cleanup_sei_ae")
+        except Exception:
+            pass
         return stats
 
     if not dropped_names:
@@ -901,6 +907,7 @@ def cleanup_sei_after_unlinks(
 
     # Delete SEI entities with zero remaining member mentions
     try:
+        cur.execute("SAVEPOINT cleanup_sei_del")
         cur.execute(
             f"""
             DELETE FROM {schema}.story_entity_index sei
@@ -918,8 +925,14 @@ def cleanup_sei_after_unlinks(
             (storyline_id, list(dropped_names), storyline_id),
         )
         stats["sei_deleted"] = int(cur.rowcount or 0)
+        cur.execute("RELEASE SAVEPOINT cleanup_sei_del")
     except Exception as e:
         logger.debug("cleanup_sei delete: %s", e)
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT cleanup_sei_del")
+        except Exception:
+            pass
+        return stats
 
     # Demote core flag on remaining SEI that came from dropped set and miss title anchors
     try:
@@ -1568,6 +1581,7 @@ def prune_dissimilar_parts(
 
                 # --- Chronological events ---
                 try:
+                    cur.execute("SAVEPOINT core_prune_events")
                     cur.execute(
                         """
                         SELECT id, COALESCE(title, ''), COALESCE(location, ''),
@@ -1580,8 +1594,16 @@ def prune_dissimilar_parts(
                         (str(storyline_id), f"{schema}:{storyline_id}"),
                     )
                     event_rows = cur.fetchall() or []
+                    cur.execute("RELEASE SAVEPOINT core_prune_events")
                 except Exception as e:
                     logger.debug("core_prune events load: %s", e)
+                    try:
+                        cur.execute("ROLLBACK TO SAVEPOINT core_prune_events")
+                    except Exception:
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass
                     event_rows = []
 
                 for ev_id, ev_title, location, entities_json, actors_json in event_rows:
@@ -1604,10 +1626,11 @@ def prune_dissimilar_parts(
                         continue
                     if eaction == "detach" and ehigh and auto_apply:
                         try:
+                            cur.execute("SAVEPOINT core_prune_detach")
                             cur.execute(
                                 """
                                 UPDATE public.chronological_events
-                                SET storyline_id = NULL, updated_at = NOW()
+                                SET storyline_id = '', updated_at = NOW()
                                 WHERE id = %s
                                 """,
                                 (int(ev_id),),
@@ -1624,8 +1647,13 @@ def prune_dissimilar_parts(
                                     status="applied",
                                     metadata={"chronological_event_id": int(ev_id)},
                                 )
+                            cur.execute("RELEASE SAVEPOINT core_prune_detach")
                         except Exception as e:
                             logger.debug("detach chronological_event: %s", e)
+                            try:
+                                cur.execute("ROLLBACK TO SAVEPOINT core_prune_detach")
+                            except Exception:
+                                pass
                             stats["errors"] += 1
                     else:
                         _enqueue_membership_action(

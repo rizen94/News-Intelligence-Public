@@ -509,9 +509,12 @@ def count_storylines_needing_membership_review(
     """Count megas matching ``_pick_storylines`` eligibility (automation drain SSOT)."""
     if not membership_review_enabled():
         return 0
+    from shared.domain_processing_mode import filter_domains_for_phase
     from shared.domain_registry import get_pipeline_active_domain_keys
 
-    domains = [domain_key] if domain_key else list(get_pipeline_active_domain_keys())
+    domains = [domain_key] if domain_key else filter_domains_for_phase(
+        get_pipeline_active_domain_keys(), "storyline_membership_review"
+    )
     min_arts = _min_article_count_for_review()
     total = 0
     conn = get_db_connection()
@@ -1228,8 +1231,11 @@ def run_storyline_membership_review_all_domains(
         "skipped_chemistry_kind": 0,
     }
     from services.domain_synthesis_config import get_domain_synthesis_config
+    from shared.domain_processing_mode import filter_domains_for_phase
 
-    for dk in get_pipeline_active_domain_keys():
+    for dk in filter_domains_for_phase(
+        get_pipeline_active_domain_keys(), "storyline_membership_review"
+    ):
         cfg = get_domain_synthesis_config(dk)
         # Chemistry kinds normally use soft membership — but oversize evidence
         # threads (kitchen-sink megas) must still be pruned.

@@ -410,7 +410,6 @@ def compute_processing_progress_response(
     elif pending_metrics_source not in ("none", "live", "snapshot"):
         pending_metrics_source = "none"
     measured_batch_rows: list[tuple[Any, Any]] = []
-    _build_started = time.monotonic()
     try:
         conn = get_db_connection()
     except Exception as e:
@@ -857,41 +856,11 @@ def compute_processing_progress_response(
             and bsize > 0
             and runs_24h == 0
         )
-        from shared.pipeline_queue_vocabulary import add_queue_depth_aliases
+        from shared.pipeline_queue_vocabulary import add_queue_depth_aliases, apply_monitor_queue_kind
 
         row = add_queue_depth_aliases(row)
+        row = apply_monitor_queue_kind(row, name)
         phase_dashboard.append(row)
-        if name in ("unified_intake_extraction", "claim_extraction", "entity_extraction") or pend >= 500:
-            try:
-                from shared.monitor_pulse_debug import monitor_pulse_debug
-
-                in_memory_runs = None
-                try:
-                    from services.automation_manager import get_automation_manager
-
-                    st = get_automation_manager().get_status() or {}
-                    in_memory_runs = (st.get("runs_last_60m_by_phase") or {}).get(name)
-                except Exception:
-                    pass
-                monitor_pulse_debug(
-                    "processing_progress.py:phase_dashboard_row",
-                    "pulse_metrics_computed",
-                    {
-                        "phase": name,
-                        "runs_1h_sql": row.get("runs_1h"),
-                        "runs_24h": row.get("runs_24h"),
-                        "runs_last_60m_in_memory": in_memory_runs,
-                        "pending_records": pend,
-                        "estimated_batch_per_run": bsize,
-                        "estimated_batch_per_run_source": row.get("estimated_batch_per_run_source"),
-                        "batches_to_drain": row.get("batches_to_drain"),
-                        "pending_metrics_source": pending_metrics_source,
-                        "pending_metrics_as_of_utc": pending_metrics_as_of_utc,
-                    },
-                    hypothesis_id="H2-H5",
-                )
-            except Exception:
-                pass
 
     from shared.pipeline_queue_vocabulary import REPORTING_DEFINITIONS as QUEUE_VOCAB_DEFINITIONS
 
@@ -941,7 +910,8 @@ def compute_processing_progress_response(
         "batches_to_drain": (
             "Runs needed to clear the current queue: ceil(pending_records ÷ estimated_batch_per_run) "
             "when estimated_batch_per_run > 0; 0 if no pending; null if estimated_batch_per_run is 0 "
-            "(no row-batch model for that phase). Values > 1 mean more than one run is needed to drain. "
+            "or unavailable (no row-batch model / awaiting_decision_yield for storyline_review_agent). "
+            "Values > 1 mean more than one run is needed to drain. "
             "Alias: estimated_phase_runs."
         ),
         "scheduling_status": (
@@ -1043,24 +1013,6 @@ def compute_processing_progress_response(
                 unified_intake_breakdown = dict(get_unified_intake_breakdown())
             except Exception as e:
                 logger.debug("processing_progress unified_intake_breakdown: %s", e)
-
-    try:
-        from shared.monitor_pulse_debug import monitor_pulse_debug
-
-        monitor_pulse_debug(
-            "processing_progress.py:compute_processing_progress_response",
-            "processing_progress_built",
-            {
-                "elapsed_ms": int((time.monotonic() - _build_started) * 1000),
-                "include_dimension_throughput": include_dimension_throughput,
-                "pending_metrics_source": pending_metrics_source,
-                "phase_count": len(phase_dashboard),
-            },
-            hypothesis_id="H-slow-page",
-            run_id="post-fix",
-        )
-    except Exception:
-        pass
 
     return {
         "success": True,

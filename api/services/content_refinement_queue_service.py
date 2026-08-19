@@ -52,6 +52,41 @@ VALID_JOB_TYPES = frozenset(
     }
 )
 
+
+def _ensure_core_prune_before_synthesis(domain_key: str, storyline_id: int) -> dict[str, Any]:
+    """
+    Pre-synthesis gate: if a mega still has dissimilar outliers, prune first so
+    finisher/RAG do not trust the full polluted member set.
+    """
+    try:
+        from services.storyline_core_prune_service import (
+            prune_dissimilar_parts,
+            should_gate_synthesis,
+        )
+
+        gated, info = should_gate_synthesis(domain_key, storyline_id)
+        if not gated:
+            return {"gated": False, "info": info}
+        logger.info(
+            "content_refinement pre-synthesis prune domain=%s storyline=%s outliers=%s",
+            domain_key,
+            storyline_id,
+            (info or {}).get("outliers"),
+        )
+        # Outer finisher/RAG holds membership freeze; nested prune must not clear it.
+        prune_stats = prune_dissimilar_parts(
+            domain_key, storyline_id, dry_run=False, manage_freeze=False
+        )
+        return {"gated": True, "info": info, "prune": prune_stats}
+    except Exception as e:
+        logger.warning(
+            "core prune pre-synthesis gate failed domain=%s storyline=%s: %s",
+            domain_key,
+            storyline_id,
+            e,
+        )
+        return {"gated": False, "error": str(e)[:200]}
+
 # ~70B narrative finisher + headline refiner share one GPU-friendly cap per batch
 _HEAVY_70B_JOB_TYPES = frozenset({JOB_NARRATIVE_FINISHER, JOB_HEADLINE_REFINER})
 _MAX_FINISHER_PER_CYCLE = int(
@@ -683,12 +718,20 @@ async def _run_comprehensive_rag(domain_key: str, storyline_id: int) -> None:
         load_rag_analysis_inputs_for_queue,
         process_storyline_rag_analysis,
     )
+    from shared.domain_registry import domain_key_to_schema
+    from services.storyline_membership_ops_lock import membership_ops_freeze
 
-    loaded = load_rag_analysis_inputs_for_queue(domain_key, storyline_id)
-    if not loaded:
-        raise RuntimeError("storyline_not_found_or_no_articles")
-    storyline_tuple, articles = loaded
-    await process_storyline_rag_analysis(domain_key, storyline_id, storyline_tuple, articles)
+    schema = domain_key_to_schema(domain_key)
+    with membership_ops_freeze(schema, storyline_id, "comprehensive_rag"):
+        _ensure_core_prune_before_synthesis(domain_key, storyline_id)
+
+        loaded = load_rag_analysis_inputs_for_queue(domain_key, storyline_id)
+        if not loaded:
+            raise RuntimeError("storyline_not_found_or_no_articles")
+        storyline_tuple, articles = loaded
+        await process_storyline_rag_analysis(
+            domain_key, storyline_id, storyline_tuple, articles
+        )
 
 
 async def _run_narrative_finisher(domain_key: str, storyline_id: int) -> None:
@@ -697,16 +740,26 @@ async def _run_narrative_finisher(domain_key: str, storyline_id: int) -> None:
         run_narrative_finish_from_db,
     )
     from services.storyline_rag_context_service import ensure_storyline_rag_context
+    from shared.domain_registry import domain_key_to_schema
+    from services.storyline_membership_ops_lock import membership_ops_freeze
 
-    try:
-        await ensure_storyline_rag_context(domain_key, storyline_id, timeout_seconds=45.0)
-    except Exception:
-        pass
+    schema = domain_key_to_schema(domain_key)
+    with membership_ops_freeze(schema, storyline_id, "narrative_finisher"):
+        _ensure_core_prune_before_synthesis(domain_key, storyline_id)
 
-    result = await run_narrative_finish_from_db(domain_key, storyline_id, parse_json=True)
-    if not result.get("success"):
-        raise RuntimeError(result.get("error", "finisher_failed"))
-    persist_narrative_finish_to_db(domain_key, storyline_id, result)
+        try:
+            await ensure_storyline_rag_context(
+                domain_key, storyline_id, timeout_seconds=45.0
+            )
+        except Exception:
+            pass
+
+        result = await run_narrative_finish_from_db(
+            domain_key, storyline_id, parse_json=True
+        )
+        if not result.get("success"):
+            raise RuntimeError(result.get("error", "finisher_failed"))
+        persist_narrative_finish_to_db(domain_key, storyline_id, result)
 
 
 async def _run_headline_refiner(domain_key: str, storyline_id: int) -> None:
@@ -719,12 +772,18 @@ async def _run_headline_refiner(domain_key: str, storyline_id: int) -> None:
         raise RuntimeError("no_db_connection")
     draft_title = ""
     draft_desc = ""
-    evidence_lines: list[str] = []
+    evidence_summary = ""
+    prefer_regen = False
+    kitchen_sink_flag: bool | None = None
+    member_rows: list[dict] = []
     try:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT title, COALESCE(description, '')
+                SELECT title, COALESCE(description, ''),
+                       COALESCE(canonical_narrative, COALESCE(analysis_summary, '')),
+                       COALESCE(narrative_finisher_meta, '{{}}'::jsonb),
+                       COALESCE(quality_metrics, '{{}}'::jsonb)
                 FROM {schema}.storylines
                 WHERE id = %s
                 """,
@@ -735,9 +794,31 @@ async def _run_headline_refiner(domain_key: str, storyline_id: int) -> None:
                 raise RuntimeError("storyline_not_found")
             draft_title = row[0] or ""
             draft_desc = row[1] or ""
+            evidence_summary = row[2] or ""
+            try:
+                import json as _json
+
+                meta = _json.loads(row[3]) if isinstance(row[3], str) else row[3]
+                if isinstance(meta, dict):
+                    prefer_regen = bool(meta.get("prefer_regenerate_from_keepers"))
+                    prune_meta = meta.get("core_prune")
+                    if isinstance(prune_meta, dict):
+                        if prune_meta.get("prefer_regenerate_from_keepers"):
+                            prefer_regen = True
+                        if prune_meta.get("kitchen_sink"):
+                            kitchen_sink_flag = True
+                qm = _json.loads(row[4]) if isinstance(row[4], str) else row[4]
+                if isinstance(qm, dict):
+                    if qm.get("prefer_regenerate_from_keepers"):
+                        prefer_regen = True
+                    if qm.get("kitchen_sink"):
+                        kitchen_sink_flag = True
+            except Exception:
+                pass
             cur.execute(
                 f"""
-                SELECT a.title, COALESCE(a.summary, '') AS summary
+                SELECT a.id, a.title, COALESCE(a.summary, '') AS summary,
+                       COALESCE(sa.relationship_type, '')
                 FROM {schema}.articles a
                 JOIN {schema}.storyline_articles sa ON sa.article_id = a.id
                 WHERE sa.storyline_id = %s
@@ -748,13 +829,61 @@ async def _run_headline_refiner(domain_key: str, storyline_id: int) -> None:
                 (storyline_id,),
             )
             for r in cur.fetchall() or []:
-                bt = (r[0] or "").strip()
-                sm = (r[1] or "").strip()
-                line = f"{bt[:400]} — {sm[:400]}".strip(" —")
-                if line:
-                    evidence_lines.append(line)
+                member_rows.append(
+                    {
+                        "id": r[0],
+                        "title": (r[1] or "").strip(),
+                        "summary": (r[2] or "").strip(),
+                        "relationship_type": (r[3] or "").strip().lower(),
+                        "entities": set(),
+                    }
+                )
+            aids = [int(m["id"]) for m in member_rows if m.get("id")]
+            if aids:
+                try:
+                    cur.execute(
+                        f"""
+                        SELECT ae.article_id, LOWER(ec.canonical_name)
+                        FROM {schema}.article_entities ae
+                        JOIN {schema}.entity_canonical ec ON ec.id = ae.canonical_entity_id
+                        WHERE ae.article_id = ANY(%s)
+                          AND ec.canonical_name IS NOT NULL
+                        LIMIT 1000
+                        """,
+                        (aids,),
+                    )
+                    by_id = {int(m["id"]): m for m in member_rows}
+                    for aid, name in cur.fetchall():
+                        row_m = by_id.get(int(aid))
+                        if row_m and name:
+                            row_m["entities"].add(str(name).strip().lower())
+                except Exception:
+                    pass
     finally:
         conn.close()
+
+    try:
+        from services.storyline_core_prune_service import (
+            filter_articles_for_keeper_evidence,
+        )
+
+        member_rows = filter_articles_for_keeper_evidence(
+            storyline_title=draft_title,
+            storyline_summary=evidence_summary,
+            articles=member_rows,
+            prefer_regenerate_from_keepers=prefer_regen,
+            kitchen_sink=kitchen_sink_flag,
+        )
+    except Exception:
+        pass
+
+    evidence_lines: list[str] = []
+    for m in member_rows:
+        bt = (m.get("title") or "").strip()
+        sm = (m.get("summary") or "").strip()
+        line = f"{bt[:400]} — {sm[:400]}".strip(" —")
+        if line:
+            evidence_lines.append(line)
 
     if not evidence_lines:
         raise RuntimeError("no_articles_for_headline_evidence")
@@ -917,6 +1046,7 @@ async def process_content_refinement_queue_batch(
         "pending_before": 0,
         "pending_after": 0,
         "reclaimed_stale": reclaimed,
+        "batch_limit": int(cap_jobs),
     }
     finisher_run = 0
     to_process: list[tuple[Any, ...]] = []

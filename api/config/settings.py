@@ -51,7 +51,7 @@ RAM_SAFETY_MARGIN_GB = 8.0
 OLLAMA_MODEL_PRIMARY = os.environ.get("OLLAMA_MODEL_PRIMARY", "llama3.1:8b")
 OLLAMA_MODEL_SECONDARY = os.environ.get("OLLAMA_MODEL_SECONDARY", "mistral-nemo:12b")
 OLLAMA_MODEL_PHI = os.environ.get("OLLAMA_MODEL_PHI", "phi3.5:latest")
-OLLAMA_MODEL_EXTRACTION = os.environ.get("OLLAMA_MODEL_EXTRACTION", "qwen2.5:7b")
+OLLAMA_MODEL_EXTRACTION = os.environ.get("OLLAMA_MODEL_EXTRACTION", "qwen3.6:latest")
 
 MODELS = {
     "embedding": os.environ.get("OLLAMA_MODEL_EMBEDDING", "nomic-embed-text"),
@@ -283,6 +283,30 @@ def event_tracking_min_content_len() -> int:
     return max(0, min(5000, n))
 
 
+def event_tracking_min_articles_per_event() -> int:
+    """
+    Minimum distinct contexts required to create a tracked event.
+    Raised default (4) reduces phantom one-off / weakly related groupings.
+    """
+    try:
+        n = int(os.environ.get("EVENT_TRACKING_MIN_ARTICLES_PER_EVENT", "4"))
+    except ValueError:
+        n = 4
+    return max(2, min(50, n))
+
+
+def event_tracking_storyline_min_entity_overlap() -> int:
+    """
+    Minimum distinct canonical entities shared with a storyline before linking.
+    Overlap of 1 previously attached Fed/Treasury noise to unrelated mega-storylines.
+    """
+    try:
+        n = int(os.environ.get("EVENT_TRACKING_STORYLINE_MIN_ENTITY_OVERLAP", "3"))
+    except ValueError:
+        n = 3
+    return max(1, min(50, n))
+
+
 def topic_clustering_graduation_confidence() -> float:
     """
     Average article-topic confidence at/above which an article is considered clustered.
@@ -297,9 +321,12 @@ def topic_clustering_graduation_confidence() -> float:
 
 def topic_clustering_backlog_uses_pass_marker() -> bool:
     """
-    When true (default), Monitor/automation ``pending`` for topic_clustering counts only articles
-    that have never completed a successful clustering pass (``metadata.pipeline.topic_clustering.last_pass_at``).
-    Legacy behavior (count low-confidence re-refinement as backlog) when false.
+    When true (default), Monitor/automation ``queue_depth`` for topic_clustering counts only
+    articles that have never completed a clustering pass (``last_pass_at`` empty) — same
+    first-pass-only predicate as ``TopicClusteringService.select_pending_article_ids`` /
+    PopOS idle gate. Retry/failed rows appear in ``retry_depth`` via phase_work_queue_metrics,
+    not in ``queue_depth``.
+    Legacy low-confidence re-refinement backlog when false (and iterative refinement on).
     """
     return os.environ.get("TOPIC_CLUSTERING_BACKLOG_USE_PASS_MARKER", "true").lower() in (
         "1",
@@ -326,7 +353,23 @@ def topic_clustering_batch_size() -> int:
         n = int(os.environ.get("TOPIC_CLUSTERING_BATCH_SIZE", "20"))
     except ValueError:
         n = 20
-    return max(5, min(200, n))
+    # No artificial ceiling — adaptive bounds + host headroom own the limit.
+    default = max(5, n)
+    try:
+        from shared.adaptive_batch_policy import get_persisted_adaptive_batch, resolve_adaptive_batch
+
+        # Prefer live tune when adaptive is on; otherwise last persisted value for Monitor/ETA callers.
+        from shared.adaptive_batch_policy import adaptive_batch_enabled
+
+        if adaptive_batch_enabled():
+            tuned, _meta = resolve_adaptive_batch("topic_clustering", default)
+            return max(5, int(tuned))
+        adaptive = get_persisted_adaptive_batch("topic_clustering")
+        if adaptive is not None:
+            return max(5, int(adaptive))
+    except Exception:
+        pass
+    return default
 
 
 def topic_clustering_concurrency() -> int:
@@ -385,6 +428,23 @@ def fast_ner_max_chars() -> int:
         return 24000
 
 
+def unified_intake_max_article_chars() -> int:
+    """
+    Per-article body budget in the unified intake LLM prompt.
+
+    Default matches FAST_NER_MAX_CHARS (24000) so entity/event extraction sees
+    the same long-form body as the NER pre-pass. Override:
+    UNIFIED_INTAKE_MAX_ARTICLE_CHARS.
+    """
+    raw = os.environ.get("UNIFIED_INTAKE_MAX_ARTICLE_CHARS", "").strip()
+    if raw:
+        try:
+            return max(4000, min(100_000, int(raw)))
+        except ValueError:
+            pass
+    return fast_ner_max_chars()
+
+
 def fast_ner_gliner_labels() -> list[str]:
     raw = os.environ.get(
         "FAST_NER_GLINER_LABELS",
@@ -394,7 +454,9 @@ def fast_ner_gliner_labels() -> list[str]:
 
 
 def context_chunking_enabled() -> bool:
-    return os.environ.get("CONTEXT_CHUNKING_ENABLED", "true").lower() in ("1", "true", "yes")
+    # Off by default: one context per article with full body (articles/contexts
+    # already use unbounded text). Opt in with CONTEXT_CHUNKING_ENABLED=true.
+    return os.environ.get("CONTEXT_CHUNKING_ENABLED", "false").lower() in ("1", "true", "yes")
 
 
 def context_chunk_min_chars() -> int:

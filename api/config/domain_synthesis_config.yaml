@@ -12,10 +12,13 @@ defaults:
   # Chemistry model: domain protein shape + attach-score blend (see DomainSynthesisConfig).
   story_kind: event_narrative
   link_score_profile:
-    relevance_weight: 0.55
+    relevance_weight: 0.40
     semantic_weight: 0.15
     keyword_weight: 0.10
-    quality_weight: 0.20
+    quality_weight: 0.10
+    temporal_weight: 0.10
+    canonical_entity_weight: 0.15
+    temporal_half_life_days: 14
     auto_approve_combined: 0.75
     aggressive_membership: true
     allow_storyline_merge: true
@@ -86,13 +89,69 @@ domains:
   politics: &politics_v1
     story_kind: event_narrative
     link_score_profile:
-      relevance_weight: 0.55
+      relevance_weight: 0.40
       semantic_weight: 0.15
       keyword_weight: 0.10
-      quality_weight: 0.20
+      quality_weight: 0.10
+      temporal_weight: 0.12
+      canonical_entity_weight: 0.13
+      temporal_half_life_days: 14
       auto_approve_combined: 0.75
       aggressive_membership: true
       allow_storyline_merge: true
+    hub_facets:
+      - key: white_house
+        role: who
+        names: ["White House", "the White House", "Executive Office of the President"]
+      - key: congress
+        role: who
+        names: ["Congress", "U.S. Congress", "US Congress", "Senate", "U.S. Senate", "House of Representatives", "House"]
+      - key: republican_party
+        role: who
+        names: ["Republican Party", "GOP", "Republicans"]
+      - key: democratic_party
+        role: who
+        names: ["Democratic Party", "Democrats", "DNC"]
+      - key: united_nations
+        role: who
+        names: ["United Nations", "UN", "U.N."]
+      - key: nato
+        role: who
+        names: ["NATO", "North Atlantic Treaty Organization"]
+      - key: supreme_court
+        role: what
+        names: ["Supreme Court", "SCOTUS", "Supreme Court of the United States", "U.S. Supreme Court"]
+      - key: doj
+        role: who
+        names: ["Department of Justice", "DOJ", "Justice Department", "U.S. Department of Justice"]
+      # Magnet politicians — genre glue, not story identity (same rule as institutions)
+      - key: donald_trump
+        role: who
+        names: ["Donald Trump", "Trump", "President Trump", "Donald J. Trump"]
+      - key: joe_biden
+        role: who
+        names: ["Joe Biden", "Biden", "President Biden", "Joseph Biden"]
+      - key: benjamin_netanyahu
+        role: who
+        names: ["Benjamin Netanyahu", "Netanyahu", "Bibi Netanyahu"]
+      - key: vladimir_putin
+        role: who
+        names: ["Vladimir Putin", "Putin"]
+      - key: xi_jinping
+        role: who
+        names: ["Xi Jinping", "Xi"]
+      - key: keir_starmer
+        role: who
+        names: ["Keir Starmer", "Starmer"]
+      - key: andy_burnham
+        role: who
+        names: ["Andy Burnham", "Burnham"]
+      - key: volodymyr_zelenskyy
+        role: who
+        names: ["Volodymyr Zelenskyy", "Zelenskyy", "Zelensky", "Volodymyr Zelensky"]
+      - key: lindsey_graham
+        role: who
+        names: ["Lindsey Graham", "Senator Graham"]
     focus_areas:
       - campaigns and elections
       - regimes and leadership changes
@@ -185,17 +244,59 @@ domains:
         merge_similarity_threshold: 0.68
         parent_similarity_threshold: 0.52
         min_articles_for_mega: 12
+      narrative:
+        # Foodborne / public-health outbreaks often arrive via politics RSS (e.g. Guardian US)
+        outbreak_keywords:
+          - cyclospora
+          - cyclosporiasis
+          - foodborne
+          - food poisoning
+          - lettuce recall
+          - produce recall
+          - outbreak
+          - epidemic
+          - cdc
+          - fda recall
+        allow_promote_pair_on_outbreak: true
 
   finance: &finance_v1
     story_kind: market_regulatory_arc
     link_score_profile:
-      relevance_weight: 0.50
+      relevance_weight: 0.38
       semantic_weight: 0.15
       keyword_weight: 0.10
-      quality_weight: 0.25
+      quality_weight: 0.12
+      temporal_weight: 0.10
+      canonical_entity_weight: 0.15
+      temporal_half_life_days: 21
       auto_approve_combined: 0.75
       aggressive_membership: true
       allow_storyline_merge: true
+    hub_facets:
+      - key: federal_reserve
+        role: who
+        names: ["Federal Reserve", "Fed", "the Fed", "Federal Reserve System", "Federal Reserve Board"]
+      - key: ecb
+        role: who
+        names: ["European Central Bank", "ECB"]
+      - key: treasury
+        role: who
+        names: ["Treasury", "U.S. Treasury", "Department of the Treasury", "Treasury Department"]
+      - key: sec
+        role: who
+        names: ["Securities and Exchange Commission", "SEC", "U.S. SEC"]
+      - key: nyse
+        role: what
+        names: ["New York Stock Exchange", "NYSE"]
+      - key: nasdaq
+        role: what
+        names: ["Nasdaq", "NASDAQ"]
+      - key: jerome_powell
+        role: who
+        names: ["Jerome Powell", "Powell", "Jay Powell", "Fed Chair Powell"]
+      - key: janet_yellen
+        role: who
+        names: ["Janet Yellen", "Yellen", "Treasury Secretary Yellen"]
     focus_areas:
       - commodities and price movements driven by events
       - supply chains and disruptions
@@ -284,13 +385,39 @@ domains:
   legal:
     story_kind: matter_docket
     link_score_profile:
-      relevance_weight: 0.40
-      semantic_weight: 0.20
-      keyword_weight: 0.15
-      quality_weight: 0.25
+      relevance_weight: 0.30
+      semantic_weight: 0.18
+      keyword_weight: 0.12
+      quality_weight: 0.15
+      temporal_weight: 0.08
+      canonical_entity_weight: 0.17
+      temporal_half_life_days: 30
       auto_approve_combined: 0.78
       aggressive_membership: false
       allow_storyline_merge: false
+      max_member_articles: 48
+    hub_facets:
+      - key: scotus
+        role: what
+        names: ["Supreme Court", "SCOTUS", "Supreme Court of the United States", "U.S. Supreme Court", "US Supreme Court"]
+      - key: doj
+        role: who
+        names: ["Department of Justice", "DOJ", "Justice Department", "U.S. Department of Justice"]
+      - key: congress
+        role: who
+        names: ["Congress", "U.S. Congress", "US Congress", "Senate", "House of Representatives"]
+      - key: federal_reserve
+        role: who
+        names: ["Federal Reserve", "Fed", "the Fed", "Federal Reserve Board"]
+      - key: ftc
+        role: who
+        names: ["Federal Trade Commission", "FTC"]
+      - key: federal_courts
+        role: what
+        names: ["District Court", "Court of Appeals", "Ninth Circuit", "D.C. Circuit", "Federal Circuit"]
+      - key: court
+        role: what
+        names: ["Court", "the Court"]
     focus_areas:
       - Newton and Greater Boston local ordinances, municipal law, and city/county proceedings
       - Massachusetts state legislation, regulations, and appellate decisions when reported in news
@@ -394,13 +521,34 @@ domains:
   medicine:
     story_kind: evidence_thread
     link_score_profile:
-      relevance_weight: 0.35
-      semantic_weight: 0.30
-      keyword_weight: 0.15
-      quality_weight: 0.20
-      auto_approve_combined: 0.80
+      relevance_weight: 0.28
+      semantic_weight: 0.25
+      keyword_weight: 0.12
+      quality_weight: 0.12
+      temporal_weight: 0.08
+      canonical_entity_weight: 0.15
+      temporal_half_life_days: 30
+      auto_approve_combined: 0.88
       aggressive_membership: false
       allow_storyline_merge: false
+      # Evidence threads are paper/claim ledgers — not mega news bags
+      max_member_articles: 48
+    hub_facets:
+      - key: fda
+        role: who
+        names: ["FDA", "Food and Drug Administration", "U.S. Food and Drug Administration"]
+      - key: cdc
+        role: who
+        names: ["CDC", "Centers for Disease Control", "Centers for Disease Control and Prevention"]
+      - key: nih
+        role: who
+        names: ["NIH", "National Institutes of Health"]
+      - key: who
+        role: who
+        names: ["WHO", "World Health Organization"]
+      - key: ema
+        role: who
+        names: ["EMA", "European Medicines Agency"]
     focus_areas:
       - randomized trials, effect sizes, and pre-specified endpoints
       - regulatory decisions (FDA, EMA) and label changes grounded in evidence
@@ -451,10 +599,10 @@ domains:
         default_mode: auto_approve
         unlinked_article_threshold: 25
         automation_batch_per_assembly: 40
-        # Looser attach for stubborn unlinked residual
-        min_relevance_score: 0.50
-        min_semantic_score: 0.48
-        min_quality_tier: 4
+        # Tight attach — evidence threads must not absorb generic medicine RSS
+        min_relevance_score: 0.72
+        min_semantic_score: 0.62
+        min_quality_tier: 3
       narrative:
         outbreak_keywords:
           - hantavirus
@@ -510,13 +658,33 @@ domains:
   artificial-intelligence:
     story_kind: research_topic
     link_score_profile:
-      relevance_weight: 0.30
-      semantic_weight: 0.35
-      keyword_weight: 0.20
-      quality_weight: 0.15
+      relevance_weight: 0.25
+      semantic_weight: 0.30
+      keyword_weight: 0.18
+      quality_weight: 0.12
+      temporal_weight: 0.05
+      canonical_entity_weight: 0.10
+      temporal_half_life_days: 30
       auto_approve_combined: 0.82
       aggressive_membership: false
       allow_storyline_merge: false
+      max_member_articles: 48
+    hub_facets:
+      - key: openai
+        role: who
+        names: ["OpenAI"]
+      - key: google_deepmind
+        role: who
+        names: ["Google DeepMind", "DeepMind", "Google AI"]
+      - key: anthropic
+        role: who
+        names: ["Anthropic"]
+      - key: meta_ai
+        role: who
+        names: ["Meta AI", "Meta", "Facebook AI"]
+      - key: microsoft
+        role: who
+        names: ["Microsoft", "Microsoft AI"]
     focus_areas:
       - reproducible benchmarks, evaluations, and failure modes
       - Research publications and verifiable deployments (what was demonstrated)
@@ -597,4 +765,50 @@ domains:
         min_relevance_score: 0.52
         min_semantic_score: 0.50
         min_quality_tier: 4
+
+  # Corpus-mode domain: storyline/chemistry drains are skipped via processing_mode.
+  # Profile retained so a future promotion to research_mode has a sensible default.
+  neurodiversity:
+    story_kind: research_topic
+    link_score_profile:
+      relevance_weight: 0.28
+      semantic_weight: 0.28
+      keyword_weight: 0.14
+      quality_weight: 0.12
+      temporal_weight: 0.06
+      canonical_entity_weight: 0.12
+      temporal_half_life_days: 45
+      auto_approve_combined: 0.90
+      aggressive_membership: false
+      allow_storyline_merge: false
+      max_member_articles: 32
+    hub_facets:
+      - key: nih
+        role: who
+        names: ["NIH", "National Institutes of Health"]
+      - key: cdc
+        role: who
+        names: ["CDC", "Centers for Disease Control and Prevention"]
+      - key: autism_speaks
+        role: who
+        names: ["Autism Speaks"]
+    focus_areas:
+      - autism spectrum disorder (ASD) peer-reviewed literature
+      - ADHD assessment and intervention evidence
+      - AuDHD / autism-ADHD comorbidity findings
+      - study design, peer review, and replication status
+    event_type_priorities:
+      - research_publication
+      - report_release
+      - regulatory_approval
+    entity_type_weights:
+      organization: 0.9
+      person: 0.7
+      technology: 0.4
+      location: 0.3
+    llm_context: >
+      You are analyzing neurodiversity research literature (autism, ADHD, AuDHD).
+      Prefer peer-reviewed designs and registry records. Quote paper-owned evidence;
+      never invent citations. Absence of replication is needs_follow_up, not false.
+      Abstract-only sources cannot support the strongest evidence grades.
 

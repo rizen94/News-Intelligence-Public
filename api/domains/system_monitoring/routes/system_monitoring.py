@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 MONITOR_EXCLUDED_AUTOMATION_PHASES = frozenset({"nightly_enrichment_context"})
 MONITOR_STALE_ACTIVITY_GRACE_SECONDS = 180.0
 MONITOR_RECENT_ACTIVITY_DB_HOURS = 24
-MONITOR_RECENT_ACTIVITY_DB_LIMIT = 20
+MONITOR_RECENT_ACTIVITY_DB_LIMIT = 50
 MONITOR_RECENT_ACTIVITY_EXCLUDED = frozenset({"health_check"})
 
 # Import filtering functions from RSS collector
@@ -179,23 +179,43 @@ def get_registry_domains() -> dict[str, Any]:
     """
     Active domains from shared.domain_registry (built-ins + active YAML).
     Used by the web SPA for nav, domain validation, and API path detection.
+    Includes processing_mode and post-processing modals allowlist membership (v11).
     """
     from shared.domain_registry import get_domain_entries
+    from shared.post_processing_modals import list_modals, modals_for_domain
 
     rows: list[dict[str, Any]] = []
     for e in get_domain_entries():
         if not e.get("is_active", True):
             continue
+        dk = e["domain_key"]
         rows.append(
             {
-                "domain_key": e["domain_key"],
+                "domain_key": dk,
                 "schema_name": str(e["schema_name"]),
-                "display_name": e.get("display_name") or e["domain_key"],
+                "display_name": e.get("display_name") or dk,
                 "display_order": int(e.get("display_order", 99) or 99),
+                "processing_mode": e.get("processing_mode") or "research",
+                "modals": modals_for_domain(dk),
             }
         )
     rows.sort(key=lambda x: (x["display_order"], x["domain_key"]))
-    return {"success": True, "data": {"domains": rows}}
+    return {
+        "success": True,
+        "data": {
+            "domains": rows,
+            "modals": list_modals(),
+        },
+    }
+
+
+@router.get("/post_processing_modals")
+@cached_response_sync(ttl=60)
+def get_post_processing_modals() -> dict[str, Any]:
+    """v11 modal catalog SSOT (research|narrative|reduction|editor allowlists)."""
+    from shared.post_processing_modals import list_modals
+
+    return {"success": True, "data": {"modals": list_modals()}}
 
 
 def _probe_db_health_fast() -> str:
@@ -544,15 +564,37 @@ def _recent_activity_semantic_key(item: dict[str, Any]) -> str | None:
         return None
 
 
+def _activity_completed_at_dt(item: dict[str, Any]) -> datetime | None:
+    raw = item.get("completed_at") or item.get("finished_at")
+    if not raw:
+        return None
+    try:
+        s = str(raw).strip()
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
 def _merge_recent_activity_lists(
     memory_recent: list[dict[str, Any]],
     db_recent: list[dict[str, Any]],
     *,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
+    """
+    Merge memory + DB recent activity, preferring *newest completed_at*.
+
+    Memory-first ordering used to bury live automation_run_history behind stale
+    in-process completions after long-lived API workers (Monitor looked ~1 day idle).
+    """
     seen_ids: set[str] = set()
     seen_semantic: set[str] = set()
-    merged: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
     for item in list(memory_recent) + list(db_recent):
         if not isinstance(item, dict):
             continue
@@ -569,10 +611,14 @@ def _merge_recent_activity_lists(
         seen_ids.add(key)
         if semantic:
             seen_semantic.add(semantic)
-        merged.append(item)
-        if len(merged) >= limit:
-            break
-    return merged
+        candidates.append(item)
+
+    def _sort_key(row: dict[str, Any]) -> float:
+        dt = _activity_completed_at_dt(row)
+        return dt.timestamp() if dt else 0.0
+
+    candidates.sort(key=_sort_key, reverse=True)
+    return candidates[:limit]
 
 
 def _finalize_monitoring_activities_recent(activities: dict[str, Any]) -> dict[str, Any]:
@@ -580,14 +626,23 @@ def _finalize_monitoring_activities_recent(activities: dict[str, Any]) -> dict[s
     if not isinstance(memory_recent, list):
         memory_recent = []
     excluded = MONITOR_RECENT_ACTIVITY_EXCLUDED | MONITOR_EXCLUDED_AUTOMATION_PHASES
-    memory_recent = [
-        item
-        for item in memory_recent
-        if isinstance(item, dict)
-        and str(item.get("task_name") or item.get("phase") or "") not in excluded
-    ]
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=MONITOR_RECENT_ACTIVITY_DB_HOURS)
+    filtered_memory: list[dict[str, Any]] = []
+    for item in memory_recent:
+        if not isinstance(item, dict):
+            continue
+        phase = str(item.get("task_name") or item.get("phase") or "")
+        if phase in excluded:
+            continue
+        completed = _activity_completed_at_dt(item)
+        # Drop stale in-memory completions so DB/heartbeat SSOT can surface
+        if completed is not None and completed < cutoff:
+            continue
+        filtered_memory.append(item)
     db_recent = _cached_recent_activities_from_run_history()
-    merged_recent = _merge_recent_activity_lists(memory_recent, db_recent, limit=50)
+    merged_recent = _merge_recent_activity_lists(
+        filtered_memory, db_recent, limit=50
+    )
     return {**activities, "recent": merged_recent}
 
 
@@ -2122,10 +2177,39 @@ async def get_system_metrics(
 
         finally:
             conn.close()
-
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error fetching metrics: {e}")
+        logger.error(f"Error getting system metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/prometheus")
+async def get_prometheus_metrics(request: Request, force: bool = Query(False)):
+    """Prometheus text exposition for Homelab Grafana (Monitor-parity + DB inventory)."""
+    from fastapi.responses import PlainTextResponse
+    from services.ni_prometheus_metrics_service import (
+        build_prometheus_metrics,
+        is_enabled,
+        scrape_token,
+    )
+
+    if not is_enabled():
+        raise HTTPException(status_code=404, detail="NI Prometheus metrics disabled")
+    expected = scrape_token()
+    if expected:
+        got = (request.headers.get("X-NI-Scrape-Token") or "").strip()
+        if got != expected:
+            raise HTTPException(status_code=401, detail="Invalid scrape token")
+    try:
+        body = await asyncio.to_thread(build_prometheus_metrics, force=bool(force))
+    except Exception as e:
+        logger.exception("prometheus metrics failed")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    return PlainTextResponse(
+        content=body,
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 @router.post("/metrics/collect")
@@ -2925,7 +3009,10 @@ async def process_metric_collection():
 @cached_response_sync(ttl=90)
 def get_pipeline_status():
     """
-    Pipeline trace summary + per-silo article counts for Monitor.
+    Live pipeline work snapshot for Monitor.
+
+    SSOT for "work done" is ``automation_run_history`` + phase heartbeats — not the
+    legacy ``pipeline_traces`` table (orchestration traces stopped updating mid-2026).
 
     **Must stay a sync ``def`` route** (not ``async def``): this handler uses blocking
     psycopg2. An async route would run that work on the event loop and freeze the API
@@ -2950,7 +3037,12 @@ def get_pipeline_status():
                 "recent_articles": 0,
                 "errors": 0,
                 "recent_traces": [],
+                "recent_runs": [],
                 "latest_trace_id": None,
+                "last_activity_at": None,
+                "runs_last_1h": 0,
+                "runs_last_24h": 0,
+                "activity_source": "automation_run_history",
             },
             "timestamp": datetime.now().isoformat(),
         }
@@ -2967,84 +3059,106 @@ def get_pipeline_status():
                     cur.execute("SET LOCAL statement_timeout = '15s'")
                 except Exception:
                     pass
-                # Get pipeline trace statistics (using correct column names)
-                # Table has: success (boolean), error_stage (varchar), not status/stage
-                cur.execute("""
+
+                excluded = sorted(
+                    MONITOR_RECENT_ACTIVITY_EXCLUDED | MONITOR_EXCLUDED_AUTOMATION_PHASES
+                )
+
+                # 24h run history (work done SSOT)
+                cur.execute(
+                    """
                     SELECT
-                        COUNT(*) as total_traces,
-                        COUNT(CASE WHEN success = true THEN 1 END) as successful_traces,
-                        COUNT(CASE WHEN success = false THEN 1 END) as error_traces,
-                        COUNT(CASE WHEN COALESCE(end_time, start_time) >= NOW() - INTERVAL '1 hour' THEN 1 END) as recent_traces,
-                        COUNT(CASE WHEN success IS NULL AND end_time IS NULL THEN 1 END) as active_traces
-                    FROM pipeline_traces
-                """)
+                        COUNT(*) FILTER (
+                            WHERE finished_at >= NOW() - INTERVAL '24 hours'
+                        ) AS runs_24h,
+                        COUNT(*) FILTER (
+                            WHERE finished_at >= NOW() - INTERVAL '1 hour'
+                        ) AS runs_1h,
+                        COUNT(*) FILTER (
+                            WHERE finished_at >= NOW() - INTERVAL '24 hours'
+                              AND success IS TRUE
+                        ) AS ok_24h,
+                        COUNT(*) FILTER (
+                            WHERE finished_at >= NOW() - INTERVAL '24 hours'
+                              AND success IS FALSE
+                        ) AS err_24h,
+                        MAX(finished_at) AS last_finished
+                    FROM automation_run_history
+                    WHERE NOT (phase_name = ANY(%s))
+                    """,
+                    (excluded,),
+                )
+                rh = cur.fetchone() or (0, 0, 0, 0, None)
+                runs_24h = int(rh[0] or 0)
+                runs_1h = int(rh[1] or 0)
+                ok_24h = int(rh[2] or 0)
+                err_24h = int(rh[3] or 0)
+                last_finished = rh[4]
+                success_rate = (
+                    round(100.0 * ok_24h / runs_24h, 1) if runs_24h > 0 else 0.0
+                )
 
-                trace_stats = cur.fetchone()
-                total_traces = trace_stats[0] if trace_stats[0] else 0
-                successful_traces = trace_stats[1] if trace_stats[1] else 0
-                error_traces = trace_stats[2] if trace_stats[2] else 0
-                recent_traces = trace_stats[3] if trace_stats[3] else 0
-                truly_active_traces = trace_stats[4] if trace_stats[4] else 0
-
-                # Calculate success rate
-                success_rate = (successful_traces / total_traces * 100) if total_traces > 0 else 0.0
-
-                # Get the most recent orchestration run
-                cur.execute("""
-                    SELECT DISTINCT trace_id
-                    FROM pipeline_traces
-                    WHERE trace_id LIKE 'pipeline_%'
-                    ORDER BY trace_id DESC
-                    LIMIT 1
-                """)
-                latest_trace = cur.fetchone()
-                latest_trace_id = latest_trace[0] if latest_trace else None
-
-                # Get stage progress for latest orchestration
-                # Note: pipeline_traces table doesn't have stage/status columns
-                # It has error_stage and success (boolean)
-                stage_progress = {}
-                current_stage = None
-
-                # Get recent pipeline traces (using actual column names)
-                cur.execute("""
-                    SELECT id, trace_id, error_stage, success,
-                           COALESCE(end_time, start_time) as ts,
-                           performance_metrics
-                    FROM pipeline_traces
-                    ORDER BY COALESCE(end_time, start_time) DESC
-                    LIMIT 10
-                """)
-
-                recent_traces_data = []
-                for row in cur.fetchall():
-                    trace_id = row[1]
-                    error_stage = row[2]
-                    success = row[3]
-                    ts = row[4]
-                    row[5]
-
-                    # Determine status from success boolean
-                    if success is None:
-                        status = "running"
-                    elif success:
-                        status = "completed"
-                    else:
-                        status = "error"
-
-                    recent_traces_data.append(
+                cur.execute(
+                    """
+                    SELECT id, phase_name, finished_at, success, error_message,
+                           started_at
+                    FROM automation_run_history
+                    WHERE finished_at >= NOW() - INTERVAL '24 hours'
+                      AND NOT (phase_name = ANY(%s))
+                    ORDER BY finished_at DESC
+                    LIMIT 15
+                    """,
+                    (excluded,),
+                )
+                recent_runs: list[dict[str, Any]] = []
+                for row in cur.fetchall() or []:
+                    run_id, phase_name, finished_at, success, error_message, started_at = row
+                    status = (
+                        "running"
+                        if success is None
+                        else ("completed" if success else "error")
+                    )
+                    recent_runs.append(
                         {
-                            "id": str(row[0]),
-                            "trace_id": trace_id,
-                            "stage": error_stage or "unknown",
+                            "id": str(run_id),
+                            "trace_id": f"run:{phase_name}:{run_id}",
+                            "phase_name": phase_name,
+                            "stage": phase_name,
                             "status": status,
-                            "created_at": ts.isoformat() if ts else None,
-                            "error_message": None,  # No error_message column
+                            "created_at": (
+                                finished_at.isoformat() if finished_at else None
+                            ),
+                            "started_at": (
+                                started_at.isoformat() if started_at else None
+                            ),
+                            "completed_at": (
+                                finished_at.isoformat() if finished_at else None
+                            ),
+                            "error_message": (error_message or None),
                             "success": success,
+                            "source": "automation_run_history",
                         }
                     )
 
-                # Sum article stats across pipeline silos (includes template silos when in pipeline)
+                # Active work from heartbeats (PopOS / Widow drains in flight)
+                active_phases = 0
+                try:
+                    cur.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM public.pipeline_phase_heartbeats
+                        WHERE last_run_at >= NOW() - INTERVAL '10 minutes'
+                          AND (
+                                COALESCE(detail->>'status', '') = 'running'
+                             OR phase_name LIKE '\\_\\_popos_worker\\_\\_%%' ESCAPE '\\'
+                          )
+                        """
+                    )
+                    active_phases = int((cur.fetchone() or (0,))[0] or 0)
+                except Exception:
+                    active_phases = 0
+
+                # Article inventory (still useful context)
                 _schemas = get_pipeline_schema_names_active() or get_schema_names_active() or (
                     "politics",
                     "finance",
@@ -3067,46 +3181,52 @@ def get_pipeline_status():
                         {_sum_recent} as recent_articles
                     """
                 )
-
                 processing_stats = cur.fetchone()
-                articles_processed = processing_stats[0] if processing_stats[0] else 0
-                articles_analyzed = processing_stats[1] if processing_stats[1] else 0
-                recent_articles = processing_stats[2] if processing_stats[2] else 0
+                articles_processed = processing_stats[0] if processing_stats and processing_stats[0] else 0
+                articles_analyzed = processing_stats[1] if processing_stats and processing_stats[1] else 0
+                recent_articles = processing_stats[2] if processing_stats and processing_stats[2] else 0
 
-                # Calculate overall pipeline progress
-                overall_progress = 0
-                if stage_progress:
-                    stage_count = len(stage_progress)
-                    total_progress = sum(s.get("progress", 0) for s in stage_progress.values())
-                    overall_progress = int(total_progress / stage_count) if stage_count > 0 else 0
-
-                # Determine pipeline status
-                if total_traces == 0:
-                    pipeline_status = "idle"  # No traces yet
-                elif truly_active_traces > 0:
+                if active_phases > 0 or runs_1h > 0:
                     pipeline_status = "running"
-                elif error_traces > 0 and error_traces > successful_traces:
+                elif err_24h > ok_24h and runs_24h > 0:
                     pipeline_status = "error"
-                else:
+                elif runs_24h > 0:
                     pipeline_status = "healthy"
+                else:
+                    pipeline_status = "idle"
+
+                last_activity_at = (
+                    last_finished.isoformat() if last_finished else None
+                )
+                current_stage = (
+                    recent_runs[0].get("phase_name") if recent_runs else None
+                )
 
                 payload = {
                     "success": True,
                     "data": {
                         "pipeline_status": pipeline_status,
-                        "overall_progress": overall_progress,
+                        "overall_progress": 0,
                         "current_stage": current_stage,
-                        "stage_progress": stage_progress,
-                        "active_traces": truly_active_traces,
-                        "recent_traces_count": recent_traces,
-                        "total_traces": total_traces,
-                        "success_rate": round(success_rate, 1),
+                        "stage_progress": {},
+                        # Legacy field names kept for Monitor chips; values from run history
+                        "active_traces": active_phases,
+                        "recent_traces_count": runs_1h,
+                        "total_traces": runs_24h,
+                        "success_rate": success_rate,
                         "articles_processed": articles_processed,
                         "articles_analyzed": articles_analyzed,
                         "recent_articles": recent_articles,
-                        "errors": error_traces,
-                        "recent_traces": recent_traces_data,
-                        "latest_trace_id": latest_trace_id,
+                        "errors": err_24h,
+                        "recent_traces": recent_runs,
+                        "recent_runs": recent_runs,
+                        "latest_trace_id": (
+                            recent_runs[0]["trace_id"] if recent_runs else None
+                        ),
+                        "last_activity_at": last_activity_at,
+                        "runs_last_1h": runs_1h,
+                        "runs_last_24h": runs_24h,
+                        "activity_source": "automation_run_history",
                     },
                     "timestamp": datetime.now().isoformat(),
                 }

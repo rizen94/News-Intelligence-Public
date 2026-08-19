@@ -22,7 +22,6 @@ except ImportError as _uie_imp_err:
     )
 
 try:
-    from shared.article_processing_gates import sql_ml_ready_and_content_bounds
     from shared.bulk_catchup_llm_routing import (
         assign_extraction_lane,
         create_lane_semaphores,
@@ -46,6 +45,7 @@ try:
     from shared.unified_intake_backlog import (
         backfill_unified_pass_from_legacy_batch,
         sql_actionable_unified_intake,
+        sql_unified_intake_base_eligible,
         unified_intake_legacy_aware_backlog_enabled,
     )
     from shared.services.llm_service import pop_llm_execution_lane, push_llm_execution_lane
@@ -121,7 +121,6 @@ async def run_unified_intake_extraction_batch_drain(
         from shared.article_signal_gate import defer_signal_light_phase_batch
 
         defer_signal_light_phase_batch("topic_clustering", per_domain_limit=per_domain * 2)
-    ml_ready = sql_ml_ready_and_content_bounds("a")
     value_priority = unified_intake_value_priority_order_enabled()
     order = (
         sql_order_unified_intake_value_priority("a")
@@ -183,21 +182,8 @@ async def run_unified_intake_extraction_batch_drain(
             where_sql = sql_actionable_unified_intake(schema_name, "a")
         else:
             where_sql = f"""
-                COALESCE(
-                    (a.metadata #>> '{{pipeline_skip,unified_intake_extraction_skip}}')::boolean,
-                    false
-                ) = false
-                  AND a.content IS NOT NULL
-                  AND LENGTH(a.content) > 100
-                  AND ({ml_ready})
-                  AND (
-                      LENGTH(a.content) >= 500
-                      OR a.created_at < NOW() - INTERVAL '2 hours'
-                      OR COALESCE(a.enrichment_status, '') IN (
-                          'enriched', 'failed', 'inaccessible'
-                      )
-                  )
-                  {pass_clause}
+                ({sql_unified_intake_base_eligible("a")})
+                {pass_clause}
             """
         limit_sql = "" if article_ids else f" LIMIT {per_domain}"
         from shared.database.connection import get_db_connection_context

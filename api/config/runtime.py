@@ -11,6 +11,23 @@ import os
 from functools import lru_cache
 from typing import Any
 
+# Structural protection: development mode must never target Widow production.
+# Import-time check runs whenever ENVIRONMENT=development|dev|local.
+try:
+    from shared.dev_guard import DevGuardError, enforce_dev_guard_from_environ
+
+    enforce_dev_guard_from_environ()
+except ImportError:  # pragma: no cover — early bootstrap / circular during install
+    pass
+except Exception as _dev_guard_exc:  # noqa: BLE001 — re-raise guard failures only
+    try:
+        from shared.dev_guard import DevGuardError as _DG
+    except ImportError:
+        raise _dev_guard_exc from None
+    if isinstance(_dev_guard_exc, _DG):
+        raise
+    raise
+
 
 def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()

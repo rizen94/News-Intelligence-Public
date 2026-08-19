@@ -1380,6 +1380,25 @@ def _apply_research(
         except Exception as e:
             logger.warning("research update_package failed: %s", e)
 
+    if counts["links_added"] == 0:
+        try:
+            from services.editorial_package_service import seed_heuristic_editor_links
+
+            seeded = int(
+                (
+                    seed_heuristic_editor_links(
+                        package_id, actor="research_heuristic"
+                    )
+                    or {}
+                ).get("seeded")
+                or 0
+            )
+            if seeded:
+                counts["links_added"] += seeded
+                counts["links_seeded_heuristic"] = seeded
+        except Exception as e:
+            logger.warning("research heuristic link seed failed: %s", e)
+
     return counts
 
 
@@ -1391,14 +1410,14 @@ def resolve_research_route(
     max_r: int | None = None,
 ) -> str:
     """
-    Return route target: 'reduction' | 'editor' | 'stay'.
+    Return route target: 'reduction' | 'editor' | 'closed_thin' | 'stay'.
 
     Escape: both Research and Reduction consecutive zero-change → editor.
-    Max rounds → editor. Changes → reduction. Zero without prior Reduction → reduction.
+    Max rounds → closed_thin (v12). Changes → reduction. Zero without prior Reduction → reduction.
     """
     max_r = max_r if max_r is not None else max_rounds()
     if round_n >= max_r:
-        return "editor"
+        return "closed_thin"
     if changed > 0:
         return "reduction"
     red_rounds = int(meta.get("reduction_rounds") or 0)
@@ -1443,24 +1462,27 @@ async def run_research_pass(
     meta = _as_dict(pkg.get("metadata"))
     prior_rounds = int(meta.get("research_rounds") or 0)
     if prior_rounds >= max_rounds() and not force and not dry_run:
-        mark_ready_for_editor(
+        from services.editorial_package_service import close_package_thin
+
+        close_package_thin(
             package_id,
-            from_modal="research",
             actor="research_llm",
-            rationale=f"research max rounds ({max_rounds()}) — escape to editor",
+            rationale=f"research max rounds ({max_rounds()}) — closed_thin",
+            reason="max_rounds",
+            from_modal="research",
         )
         _append_summary_decision(
             package_id,
             action="converged",
-            rationale="max_rounds escape to editor",
-            metadata={"round": prior_rounds, "escape": "max_rounds"},
+            rationale="max_rounds escape → closed_thin",
+            metadata={"round": prior_rounds, "escape": "max_rounds", "status": "closed_thin"},
         )
         return {
             "ok": True,
             "package_id": package_id,
             "skipped": False,
             "converged": True,
-            "route_target": "editor",
+            "route_target": "closed_thin",
             "changed": 0,
             "reason": "max_rounds_reached",
         }
@@ -1480,10 +1502,91 @@ async def run_research_pass(
     if validated.get("insufficient_evidence") and not validated.get("attach") and not validated.get(
         "role_updates"
     ):
-        # Still count a round so thin packages escape to Editor at max_rounds
-        # instead of cycling forever with research_rounds stuck at 0.
+        # Prefer seeding a hypothesized graph from existing members over burning
+        # empty research rounds, then escaping to a blank Editor.
         round_n = prior_rounds + (0 if dry_run else 1)
         if not dry_run:
+            seeded = 0
+            try:
+                from services.editorial_package_service import seed_heuristic_editor_links
+
+                seeded = int(
+                    (
+                        seed_heuristic_editor_links(
+                            package_id, actor="research_heuristic"
+                        )
+                        or {}
+                    ).get("seeded")
+                    or 0
+                )
+            except Exception as e:
+                logger.warning(
+                    "research insufficient heuristic seed failed package_id=%s: %s",
+                    package_id,
+                    e,
+                )
+
+            if seeded > 0:
+                _merge_package_metadata(
+                    package_id,
+                    {
+                        "research_rounds": round_n,
+                        "last_research_change_count": seeded,
+                        "last_research_insufficient": True,
+                        "last_research_heuristic_links": seeded,
+                        "last_research_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+                _append_summary_decision(
+                    package_id,
+                    action="research_pass",
+                    rationale=(
+                        "insufficient_evidence — seeded heuristic links; routing to reduction"
+                    ),
+                    metadata={
+                        "gaps": validated.get("gaps"),
+                        "rejected": validated.get("rejected"),
+                        "used_fallback": used_fallback,
+                        "spine": spine.get("stats"),
+                        "research_rounds": round_n,
+                        "heuristic_links_seeded": seeded,
+                        "route_target": "reduction",
+                    },
+                    model=model,
+                )
+                routed = None
+                try:
+                    routed = request_rework(
+                        package_id,
+                        target_modal="reduction",
+                        note=(
+                            f"post-research heuristic links round {round_n} "
+                            f"(seeded={seeded})"
+                        ),
+                        actor="research_llm",
+                        source_modal="research",
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "research→reduction after heuristic seed failed: %s", e
+                    )
+                    routed = {"error": str(e)}
+                return {
+                    "ok": True,
+                    "package_id": package_id,
+                    "insufficient_evidence": True,
+                    "gaps": validated.get("gaps"),
+                    "route_target": "reduction",
+                    "changed": seeded,
+                    "heuristic_links_seeded": seeded,
+                    "research_rounds": round_n,
+                    "used_fallback": used_fallback,
+                    "model": model,
+                    "prompt_version": PROMPT_VERSION,
+                    "spine": spine.get("stats"),
+                    "routed": routed,
+                }
+
             _merge_package_metadata(
                 package_id,
                 {
@@ -1507,27 +1610,30 @@ async def run_research_pass(
                 model=model,
             )
             if round_n >= max_rounds():
-                mark_ready_for_editor(
+                from services.editorial_package_service import close_package_thin
+
+                close_package_thin(
                     package_id,
-                    from_modal="research",
                     actor="research_llm",
                     rationale=(
                         f"research max rounds ({max_rounds()}) after "
-                        "insufficient_evidence — escape to editor"
+                        "insufficient_evidence — closed_thin"
                     ),
+                    reason="max_rounds",
+                    from_modal="research",
                 )
                 _append_summary_decision(
                     package_id,
                     action="converged",
-                    rationale="max_rounds escape to editor (insufficient_evidence)",
-                    metadata={"round": round_n, "escape": "max_rounds"},
+                    rationale="max_rounds escape → closed_thin (insufficient_evidence)",
+                    metadata={"round": round_n, "escape": "max_rounds", "status": "closed_thin"},
                 )
                 return {
                     "ok": True,
                     "package_id": package_id,
                     "insufficient_evidence": True,
                     "gaps": validated.get("gaps"),
-                    "route_target": "editor",
+                    "route_target": "closed_thin",
                     "changed": 0,
                     "converged": True,
                     "reason": "max_rounds_reached",
@@ -1602,17 +1708,44 @@ async def run_research_pass(
             model=model,
         )
 
-        if route_target == "editor":
+        if route_target == "closed_thin":
+            from services.editorial_package_service import close_package_thin
+
             _append_summary_decision(
                 package_id,
                 action="converged",
-                rationale="research↔reduction escape — both zero-change or max rounds",
+                rationale="max rounds — closed_thin",
+                metadata={
+                    "round": round_n,
+                    "changed": changed,
+                    "escape": "max_rounds",
+                    "status": "closed_thin",
+                },
+                model=model,
+            )
+            try:
+                routed = close_package_thin(
+                    package_id,
+                    actor="research_llm",
+                    rationale="max rounds → closed_thin",
+                    reason="max_rounds",
+                    from_modal="research",
+                )
+            except Exception as e:
+                logger.warning("research closed_thin failed: %s", e)
+                routed = {"error": str(e)}
+        elif route_target == "editor":
+            _append_summary_decision(
+                package_id,
+                action="converged",
+                rationale="research↔reduction escape — both zero-change",
                 metadata={
                     "round": round_n,
                     "changed": changed,
                     "last_reduction_removed_count": meta.get(
                         "last_reduction_removed_count"
                     ),
+                    "escape": "both_zero",
                 },
                 model=model,
             )
@@ -1639,6 +1772,51 @@ async def run_research_pass(
                 logger.warning("research→reduction route failed: %s", e)
                 routed = {"error": str(e)}
 
+    # Entity-seeded research packages → standing knowledge_profile (no Reduction/Editor gate).
+    knowledge_merge: dict[str, Any] | None = None
+    if not apply_dry and not dry_run:
+        try:
+            from services.knowledge_profile_service import (
+                auto_merge_from_package,
+                parse_entity_legacy_seed,
+            )
+
+            seed = str(meta.get("legacy_seed") or "")
+            if parse_entity_legacy_seed(seed):
+                knowledge_merge = auto_merge_from_package(
+                    package_id,
+                    actor="research_llm",
+                    publish=True,
+                    regenerate=True,
+                )
+        except Exception as e:
+            logger.warning(
+                "knowledge profile auto-merge failed package=%s: %s",
+                package_id,
+                e,
+            )
+            knowledge_merge = {"skipped": True, "reason": "error", "error": str(e)}
+
+    # Shared package evidence brief (parity with Narrative expand product).
+    evidence_brief_merge: dict[str, Any] | None = None
+    if not apply_dry and not dry_run:
+        try:
+            from services.editorial_package_evidence_expand_service import (
+                merge_research_findings_into_brief,
+            )
+
+            evidence_brief_merge = merge_research_findings_into_brief(
+                package_id,
+                actor="research_llm",
+            )
+        except Exception as e:
+            logger.warning(
+                "package evidence brief research parity failed package=%s: %s",
+                package_id,
+                e,
+            )
+            evidence_brief_merge = {"skipped": True, "reason": "error", "error": str(e)}
+
     return {
         "ok": True,
         "package_id": package_id,
@@ -1656,6 +1834,8 @@ async def run_research_pass(
         "gaps": validated.get("gaps"),
         "spine": spine.get("stats"),
         "candidate_count": len(payload.get("candidates") or []),
+        "knowledge_merge": knowledge_merge,
+        "evidence_brief_merge": evidence_brief_merge,
     }
 
 
@@ -1690,11 +1870,10 @@ def list_research_due(*, limit: int = 10) -> list[int]:
                 SELECT id
                 FROM intelligence.editorial_packages
                 WHERE status = 'in_research'
-                  AND COALESCE((metadata->>'research_rounds')::int, 0) < %s
                 ORDER BY updated_at ASC, id ASC
                 LIMIT %s
                 """,
-                (max_rounds(), lim),
+                (lim,),
             )
             return [int(r[0]) for r in cur.fetchall()]
 

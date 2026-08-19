@@ -23,6 +23,7 @@ from shared.services.llm_service import LLMService, ModelType
 logger = logging.getLogger(__name__)
 
 DOSSIER_PROMPT = """You are a senior investigative journalist writing a dossier on a developing story.
+Prioritize facts and provenance over polish. Do not invent dates, quotes, actors, or causal claims.
 
 INVESTIGATION: {event_name}
 Type: {event_type}
@@ -35,29 +36,29 @@ CHRONICLE SUMMARIES (analyst summaries for each update):
 SUPPORTING CONTEXTS (evidence from sources; each has a title and excerpt):
 {context_block}
 
-Write a journalism-style investigation report in markdown with these sections:
+Write a journalism-style investigation report in markdown with these sections (in this order):
 
-## Executive Summary
-2-4 sentences: what this story is, current status, and why it matters.
+## What We Know
+Bullet points of established facts supported by the evidence. Each bullet should be checkable against the contexts/chronicles above. Prefer short sentences.
+
+## What's Uncertain
+Open questions, conflicting reports, or gaps in the evidence. Explicitly flag when sources may be conflating distinct theaters (e.g. Red Sea / Houthi vs Strait of Hormuz).
+
+## Sources
+List the sources/outlets that appear in the contexts (if evident from titles or metadata). Note corroboration when multiple sources agree.
 
 ## Timeline of Developments
-Chronological list of key developments with dates. Use the chronicle summaries and context excerpts. Note when multiple sources corroborate.
+Chronological list of key developments with dates drawn only from the chronicle summaries and context excerpts. Note when multiple sources corroborate. Omit undated speculation.
 
 ## Key Entities & Roles
 Who or what is central to this story (people, organisations, places). One line each.
 
-## Sources
-List the sources/outlets that appear in the contexts (if evident from titles or metadata).
-
-## What We Know
-Bullet points of established facts supported by the evidence.
-
-## What's Uncertain
-Open questions, conflicting reports, or gaps in the evidence.
+## Executive Summary
+2-4 sentences only after the evidence sections: what this story is, current status, and why it matters — grounded in What We Know.
 
 {CROSS_DOMAIN_BLOCK}
 
-Use a neutral, factual tone. Prefer short sentences. Do not invent facts beyond what the evidence suggests."""
+Use a neutral, factual tone. Prefer short sentences. Do not invent facts beyond what the evidence suggests. If evidence is thin, say so in What's Uncertain rather than filling gaps with fluent prose."""
 
 CROSS_DOMAIN_SECTION = """
 CROSS-DOMAIN LINKS (related tracked_events from correlation graph — use only as background; primary evidence is above):

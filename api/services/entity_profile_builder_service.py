@@ -544,7 +544,7 @@ async def build_profile_sections(entity_profile_id: int) -> ProfileBuildResult:
 
 def sql_entity_profile_upstream_cleared_exists() -> str:
     """SQL EXISTS fragment: profile has a mention tied to upstream-cleared article + context."""
-    from shared.domain_registry import pipeline_url_schema_pairs
+    from shared.pipeline_domain_sql import pipeline_url_schema_pairs_for_phase
     from shared.pipeline_pass_marker import sql_article_pass_cleared, sql_context_pass_cleared
 
     ctx_cleared = sql_context_pass_cleared("claim_extraction", "c")
@@ -559,7 +559,9 @@ def sql_entity_profile_upstream_cleared_exists() -> str:
         )
     except Exception:
         entity_phase = "entity_extraction"
-    for domain_key, schema_name in pipeline_url_schema_pairs():
+    for domain_key, schema_name in pipeline_url_schema_pairs_for_phase(
+        "entity_profile_build"
+    ):
         art_cleared = sql_article_pass_cleared(entity_phase, "a")
         dk = domain_key.replace("'", "''")
         branches.append(
@@ -620,7 +622,9 @@ def get_entity_profile_ids_to_build(limit: int = 20) -> list[int]:
     conn = get_db_connection()
     if not conn:
         return []
-    domain_sql, domain_keys = pipeline_domain_any_sql("ep.domain_key")
+    domain_sql, domain_keys = pipeline_domain_any_sql(
+        "ep.domain_key", phase="entity_profile_build"
+    )
     if not domain_keys:
         return []
     upstream_sql = ""

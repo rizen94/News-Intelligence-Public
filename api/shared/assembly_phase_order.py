@@ -1,5 +1,5 @@
 """
-Post-spine assembly phase order — programmatic graph → editorial room loop.
+Post-spine assembly phase order — programmatic graph → editorial rails (v12).
 
 Used by assembly conductor and automation suppression when ASSEMBLY_PIPELINE_MODE=ordered.
 """
@@ -12,6 +12,7 @@ from config.runtime import env_str
 # entity_organizer (T1 ambiguous enqueue) before distillation so pending stays
 # for editorial T2 instead of being drained in a prior tick with an empty feed.
 # Event rail: CE restore → coref → continuation before storyline assembly / editorial.
+# v12: evidence expand before reduction; storyline_automation + room_loop retired.
 POST_SPINE_PHASE_ORDER: tuple[str, ...] = (
     "entity_organizer",
     "graph_connection_distillation",
@@ -21,11 +22,10 @@ POST_SPINE_PHASE_ORDER: tuple[str, ...] = (
     "event_deduplication",
     "story_continuation",
     "storyline_assembly",
-    "storyline_automation",
     "editorial_research_pass",
     "editorial_narrative_pass",
+    "editorial_evidence_expand_pass",
     "editorial_reduction_pass",
-    "editorial_room_loop",
     "entity_dossier_compile",
 )
 
@@ -52,6 +52,9 @@ POST_SPINE_RETIRED_PHASES: frozenset[str] = frozenset(
         "event_coherence_review",
         "timeline_generation",
         "entity_position_tracker",
+        # v12 cutover — bag absorb + room loop out of ordered schedule
+        "storyline_automation",
+        "editorial_room_loop",
     }
 )
 
@@ -84,9 +87,10 @@ def assembly_pipeline_shadow_active() -> bool:
 
 
 def editorial_room_loop_enabled() -> bool:
-    if env_str("EDITORIAL_ROOM_LOOP_ENABLED", "true").lower() in ("0", "false", "no"):
-        return False
-    return True
+    """v12 default off — room loop retired from POST_SPINE."""
+    if env_str("EDITORIAL_ROOM_LOOP_ENABLED", "false").lower() in ("1", "true", "yes", "on"):
+        return True
+    return False
 
 
 def _norm_phase(phase_name: str) -> str:

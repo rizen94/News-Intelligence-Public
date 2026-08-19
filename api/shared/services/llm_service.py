@@ -63,6 +63,25 @@ def ollama_priority_headers() -> dict[str, str]:
     return {"X-Ollama-Priority": "low"}
 
 
+def _ollama_generate_text(result: dict[str, Any] | None) -> str:
+    """
+    Extract text from an Ollama /api/generate JSON body.
+
+    Qwen3-family tags often put structured output in ``thinking`` and leave
+    ``response`` empty unless ``think: false`` is set — prefer response, then
+    fall back to thinking so extraction does not see an empty string.
+    """
+    if not isinstance(result, dict):
+        return ""
+    text = (result.get("response") or "").strip()
+    if text:
+        return text
+    thinking = (result.get("thinking") or "").strip()
+    if thinking:
+        return thinking
+    return ""
+
+
 logger = logging.getLogger(__name__)
 
 # Global cap. Burst (48h catch-up): 6; revert to 5 after
@@ -447,7 +466,7 @@ class LLMService:
                         response.text[:500],
                     )
                     return ""
-                return (response.json().get("response", "") or "").strip()
+                return _ollama_generate_text(response.json())
         except Exception as e:
             logger.error("generate sync call failed to %s: %s", cb_key, e)
             return ""
@@ -818,6 +837,8 @@ Storyline context:
             }
             if kind == InvocationKind.STRUCTURED_EXTRACTION:
                 payload["format"] = "json"
+                # Qwen3 defaults to thinking-mode; JSON then lands in ``thinking``.
+                payload["think"] = False
             response = await client.post(
                 f"{base_url}/api/generate",
                 json=payload,
@@ -827,7 +848,7 @@ Storyline context:
             if response.status_code == 200:
                 result = response.json()
                 await cb._record_success()
-                return result.get("response", "")
+                return _ollama_generate_text(result)
             else:
                 await cb._record_failure()
                 raise Exception(f"{cb_key} API error: {response.status_code} - {response.text}")

@@ -454,6 +454,17 @@ def assess_storyline_pair_merge_coherence(
     if len(shared) < min_shared:
         return False, "insufficient_shared_entities"
 
+    # Hub facets alone must not authorize merge (SCOTUS/Fed/White House magnets)
+    try:
+        from services.domain_synthesis_config import get_domain_synthesis_config
+
+        cfg = get_domain_synthesis_config(domain)
+        non_hub_shared = {e for e in shared if not cfg.is_hub_entity_name(e)}
+        if not non_hub_shared:
+            return False, "hub_only_shared_entities"
+    except Exception:
+        pass
+
     # Finance: bare earnings pairs without shared actors already fail above;
     # also block when both titles are generic filing vocabulary only.
     dk = (domain or "").lower().replace("_", "-")
@@ -625,6 +636,14 @@ def assess_kitchen_sink_risk(
     lower = t.lower()
     if " amid " in lower and (" and " in lower or "," in lower):
         return True, "title_amid_join"
+    # Local/incident lead joined to national politics (e.g. fish pile "as SCOTUS …")
+    if re.search(
+        r"\bas\s+(scotus|supreme\s+court|politics|political)\b",
+        lower,
+    ):
+        return True, "title_as_politics_join"
+    if " take center stage" in lower or " takes center stage" in lower:
+        return True, "title_center_stage_join"
     if not articles:
         return False, "ok"
     entity_counts = extract_cluster_specific_entities(articles)

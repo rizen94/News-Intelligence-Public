@@ -606,6 +606,7 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "claim_evidence_appraisal": 600,  # LLM paper appraisal; CLAIM_EVIDENCE_APPRAISAL_ENABLED
     "editorial_reduction_pass": 600,  # LLM package prune; EDITORIAL_REDUCTION_ENABLED
     "editorial_narrative_pass": 600,  # LLM package assembly; EDITORIAL_NARRATIVE_ENABLED
+    "editorial_evidence_expand_pass": 600,  # DB/Wiki/web → brief; EDITORIAL_EVIDENCE_EXPAND_ENABLED
     "editorial_research_pass": 600,  # LLM research assembly; EDITORIAL_RESEARCH_ENABLED
     "chronological_events_catchup": 600,  # CE restore; CHRONOLOGICAL_EVENTS_CATCHUP_ENABLED
     "claim_subject_gap_refresh": 120,  # catalog upsert per active domain (DB-bound)
@@ -789,7 +790,7 @@ class AutomationManager:
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["content_enrichment"],
             },
             "rss_feed_health": {
-                "interval": 86400,  # nightly feed yield review + warn-then-auto silencing
+                "interval": 604800,  # weekly quality cull (lowest failing feed)
                 "last_run": None,
                 "enabled": True,
                 "priority": TaskPriority.LOW,
@@ -875,7 +876,11 @@ class AutomationManager:
                 "enabled": True,
                 "priority": TaskPriority.NORMAL,
                 "phase": 3,
-                "depends_on": ["editorial_narrative_pass", "editorial_research_pass"],
+                "depends_on": [
+                    "editorial_narrative_pass",
+                    "editorial_evidence_expand_pass",
+                    "editorial_research_pass",
+                ],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
                     "editorial_reduction_pass"
                 ],
@@ -891,6 +896,18 @@ class AutomationManager:
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
                     "editorial_narrative_pass"
                 ],
+            },
+            # v11 Narrative evidence-expand: DB/Wiki/web → package_evidence_briefs → Reduction
+            "editorial_evidence_expand_pass": {
+                "interval": 1800,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 3,
+                "depends_on": ["editorial_narrative_pass"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS.get(
+                    "editorial_evidence_expand_pass", 600
+                ),
             },
             # v11 Research modality: drain in_research packages (spine + assemble → Reduction/Editor)
             "editorial_research_pass": {
@@ -2862,6 +2879,8 @@ class AutomationManager:
                 await self._execute_editorial_reduction_pass(task)
             elif task.name == "editorial_narrative_pass":
                 await self._execute_editorial_narrative_pass(task)
+            elif task.name == "editorial_evidence_expand_pass":
+                await self._execute_editorial_evidence_expand_pass(task)
             elif task.name == "editorial_research_pass":
                 await self._execute_editorial_research_pass(task)
             elif task.name == "claim_subject_gap_refresh":
@@ -4049,6 +4068,41 @@ class AutomationManager:
         except Exception as e:
             logger.warning("editorial_narrative_pass failed: %s", e)
 
+    async def _execute_editorial_evidence_expand_pass(self, task: Task):
+        """v11 Narrative evidence-expand: multi-source retrieve → brief → Reduction."""
+        from services.editorial_package_evidence_expand_service import (
+            is_enabled,
+            run_evidence_expand_batch,
+        )
+
+        if not is_enabled():
+            logger.debug(
+                "editorial_evidence_expand_pass skipped "
+                "(EDITORIAL_EVIDENCE_EXPAND_ENABLED off)"
+            )
+            return
+        try:
+            limit = 3
+            if isinstance(task.metadata, dict) and task.metadata.get("batch_limit"):
+                limit = int(task.metadata["batch_limit"])
+            stats = await asyncio.to_thread(run_evidence_expand_batch, limit=limit)
+            if stats and int(stats.get("processed") or 0) > 0:
+                logger.info("editorial_evidence_expand_pass: %s", stats)
+            try:
+                from shared.pipeline_handoffs import after_editorial_evidence_expand
+
+                after_editorial_evidence_expand(
+                    self,
+                    processed=int((stats or {}).get("processed") or 0),
+                    routed_to_reduction=int(
+                        (stats or {}).get("routed_to_reduction") or 0
+                    ),
+                )
+            except Exception as e:
+                logger.debug("editorial_evidence_expand handoff: %s", e)
+        except Exception as e:
+            logger.warning("editorial_evidence_expand_pass failed: %s", e)
+
     async def _execute_editorial_research_pass(self, task: Task):
         """v11 Research: spine + assemble in_research packages then route to Reduction/Editor."""
         from services.editorial_package_research_service import (
@@ -5151,7 +5205,7 @@ class AutomationManager:
             logger.warning("pending_db_flush failed: %s", e)
 
     async def _execute_rss_feed_health(self, task: Task):
-        """Nightly RSS feed yield review — warn-then-auto silencing."""
+        """Weekly RSS feed quality cull (or legacy warn/silence if policy=warn_silence)."""
         from services.rss_feed_health_service import run_feed_health_cycle
 
         loop = asyncio.get_event_loop()
@@ -6617,16 +6671,19 @@ class AutomationManager:
                             "soft_links",
                             "chains_collapsed",
                             "soft_pruned",
+                            "no_match",
+                            "singletons_marked",
                         )
                     }
                 logger.info(
                     "v5 event deduplication completed: "
                     "checked=%s, merged=%s, hard_merges=%s, soft_links=%s, "
-                    "chains_collapsed=%s, soft_pruned=%s (batch=%s)",
+                    "singletons=%s, chains_collapsed=%s, soft_pruned=%s (batch=%s)",
                     stats.get("checked", 0),
                     stats.get("merged", 0),
                     stats.get("hard_merges", 0),
                     stats.get("soft_links", 0),
+                    stats.get("singletons_marked", 0),
                     stats.get("chains_collapsed", 0),
                     stats.get("soft_pruned", 0),
                     dedupe_limit,

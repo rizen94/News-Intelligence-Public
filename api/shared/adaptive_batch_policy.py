@@ -6,9 +6,10 @@ import json
 import logging
 from typing import Any
 
-from config.runtime import env_bool, env_str
+from config.runtime import env_bool, env_float, env_int, env_str
 from shared.catchup_host_metrics import (
     TRACK_BUILD,
+    TRACK_CHEMISTRY_LOCAL,
     TRACK_DOSSIER_FAST,
     TRACK_ENRICH,
     TRACK_GPU,
@@ -20,7 +21,7 @@ from shared.catchup_host_metrics import (
     tune_batch_size,
     tune_batch_track,
 )
-from shared.pipeline_article_selection import pipeline_backfill_mode_enabled
+from shared.phase_spec import overlay_adaptive_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -30,172 +31,359 @@ _PHASE_BOUNDS: dict[str, dict[str, Any]] = {
     # --- GPU / PopOS LLM drains ---
     "unified_intake_extraction": {
         "track": TRACK_GPU,
-        "min": 40,
-        "max": 120,
-        "step": 10,
+        "min": 80,
+        "max": None,
+        "step": 40,
     },
     "claim_extraction": {
         "track": TRACK_GPU,
-        "min": 32,
-        "max": 128,
-        "step": 16,
+        "min": 64,
+        "max": None,
+        "step": 32,
     },
     "topic_clustering": {
         "track": TRACK_GPU,
-        "min": 10,
-        "max": 40,
-        "step": 5,
+        "min": 80,
+        "max": None,
+        "step": 40,
     },
     "storyline_assembly": {
         "track": TRACK_GPU,
-        "min": 10,
-        "max": 40,
-        "step": 5,
+        "min": 40,
+        "max": None,
+        "step": 20,
     },
     "storyline_automation": {
         "track": TRACK_GPU,
-        "min": 5,
-        "max": 25,
-        "step": 5,
+        "min": 25,
+        "max": None,
+        "step": 15,
     },
     "storyline_review_agent": {
         "track": TRACK_GPU,
-        "min": 20,
+        "min": 40,
         "max": None,  # headroom / yield gate only — no arbitrary ceiling
-        "step": 10,
+        "step": 20,
         "yield_gate": True,
     },
     "fact_verification": {
         "track": TRACK_GPU,
-        "min": 10,
-        "max": 40,
-        "step": 5,
+        "min": 40,
+        "max": None,
+        "step": 20,
     },
     "content_refinement_queue": {
         "track": TRACK_GPU,
-        "min": 2,
-        "max": 8,
-        "step": 1,
+        "min": 8,
+        "max": None,
+        "step": 4,
     },
     "ml_processing": {
         "track": TRACK_GPU,
-        "min": 25,
-        "max": 100,
+        "min": 50,
+        "max": None,
         "step": 25,
     },
     "sentiment_analysis": {
         "track": TRACK_GPU,
-        "min": 50,
-        "max": 150,
-        "step": 25,
+        "min": 100,
+        "max": None,
+        "step": 50,
     },
     "entity_extraction": {
         "track": TRACK_GPU,
-        "min": 20,
-        "max": 80,
-        "step": 10,
+        "min": 40,
+        "max": None,
+        "step": 20,
     },
     "event_extraction": {
         "track": TRACK_GPU,
-        "min": 10,
-        "max": 60,
-        "step": 10,
+        "min": 40,
+        "max": None,
+        "step": 20,
     },
     # --- Widow local LLM (8B) ---
     "entity_profile_build": {
         "track": TRACK_BUILD,
-        "min": 25,
-        "max": 150,
-        "step": 10,
+        "min": 50,
+        "max": None,
+        "step": 25,
     },
     # --- Widow fetch / enrich ---
     "content_enrichment": {
         "track": TRACK_ENRICH,
-        "min": 60,
-        "max": 120,
-        "step": 10,
+        "min": 100,
+        "max": None,
+        "step": 40,
     },
     "document_processing": {
         "track": TRACK_ENRICH,
-        "min": 3,
-        "max": 15,
-        "step": 3,
+        "min": 15,
+        "max": None,
+        "step": 5,
     },
     "entity_enrichment": {
         "track": TRACK_ENRICH,
-        "min": 10,
-        "max": 40,
-        "step": 5,
+        "min": 40,
+        "max": None,
+        "step": 20,
     },
     "rag_enhancement": {
         "track": TRACK_ENRICH,
-        "min": 3,
-        "max": 10,
-        "step": 1,
+        "min": 20,
+        "max": None,
+        "step": 10,
     },
     # --- Widow DB / CPU local ---
     "entity_dossier_compile": {
         "track": TRACK_DOSSIER_FAST,
-        "min": 20,
-        "max": 100,
-        "step": 10,
+        "min": 80,
+        "max": None,
+        "step": 40,
     },
     "event_tracking": {
         "track": TRACK_LOCAL,
-        "min": 25,
-        "max": 300,
-        "step": 25,
+        "min": 100,
+        "max": None,
+        "step": 50,
     },
     "graph_connection_distillation": {
         "track": TRACK_LOCAL,
-        "min": 25,
-        "max": 200,
-        "step": 25,
+        "min": 100,
+        "max": None,
+        "step": 50,
+    },
+    "graph_link_drift_review": {
+        "track": TRACK_LOCAL,
+        "min": 80,
+        "max": None,
+        "step": 40,
     },
     "context_sync": {
         "track": TRACK_LOCAL,
-        "min": 50,
-        "max": 200,
-        "step": 25,
+        "min": 100,
+        "max": None,
+        "step": 50,
     },
     "claims_to_facts": {
         "track": TRACK_LOCAL,
-        "min": 2000,
-        "max": 15000,
-        "step": 1000,
+        "min": 500,
+        "max": None,
+        "step": 250,
     },
     "embeddings_worker": {
         "track": TRACK_LOCAL,
-        "min": 25,
-        "max": 100,
-        "step": 25,
+        "min": 100,
+        "max": None,
+        "step": 50,
     },
     "spine_sql_tail": {
         "track": TRACK_LOCAL,
-        "min": 50,
-        "max": 500,
-        "step": 50,
+        "min": 200,
+        "max": None,
+        "step": 100,
     },
     "quality_scoring": {
         "track": TRACK_LOCAL,
-        "min": 25,
-        "max": 100,
+        "min": 50,
+        "max": None,
         "step": 25,
     },
     "metadata_enrichment": {
         "track": TRACK_LOCAL,
-        "min": 5,
-        "max": 30,
-        "step": 5,
+        "min": 25,
+        "max": None,
+        "step": 10,
     },
     # Mega-thread membership audit (per-domain storyline limit)
     "storyline_membership_review": {
         "track": TRACK_LOCAL,
-        "min": 8,
-        "max": 48,
-        "step": 8,
+        "min": 100,
+        "max": None,
+        "step": 50,
+    },
+    "storyline_hygiene": {
+        "track": TRACK_LOCAL,
+        "min": 40,
+        "max": None,
+        "step": 20,
+    },
+    # --- Chemistry beaker (DB-light sampling; phase_spec overlay is SSOT) ---
+    "embedding_link_candidates": {
+        "track": TRACK_CHEMISTRY_LOCAL,
+        "min": 40,
+        "max": None,
+        "step": 20,
+    },
+    "collision_sampling": {
+        "track": TRACK_CHEMISTRY_LOCAL,
+        "min": 64,
+        "max": None,
+        "step": 32,
+    },
+    "stimulus_rag": {
+        "track": TRACK_ENRICH,
+        "min": 40,
+        "max": None,
+        "step": 20,
+    },
+    "protein_harden": {
+        "track": TRACK_LOCAL,
+        "min": 80,
+        "max": None,
+        "step": 40,
+    },
+    # --- Other active drains ---
+    "mention_resolution": {
+        "track": TRACK_LOCAL,
+        "min": 200,
+        "max": None,
+        "step": 100,
+    },
+    "legislative_references": {
+        "track": TRACK_ENRICH,
+        "min": 20,
+        "max": None,
+        "step": 10,
+    },
+    "entity_organizer": {
+        "track": TRACK_LOCAL,
+        "min": 200,
+        "max": None,
+        "step": 100,
+    },
+    "event_deduplication": {
+        "track": TRACK_LOCAL,
+        "min": 100,
+        "max": 500,
+        "step": 50,
+    },
+    "story_continuation": {
+        "track": TRACK_LOCAL,
+        "min": 40,
+        "max": 200,
+        "step": 20,
     },
 }
+
+# High-churn phases: PhaseSpec overlays adaptive min/max/step (spec wins).
+_PHASE_BOUNDS = overlay_adaptive_bounds(_PHASE_BOUNDS)
+
+# Additional batchable phases from Monitor BATCH_SIZE_PER_TASK that lack explicit bounds above.
+# Tracks are inferred; min/max/step derived from the Monitor batch default.
+_EXTRA_BATCH_DEFAULTS: dict[str, int] = {
+    "investigation_report_refresh": 8,
+    "entity_profile_sync": 500,
+    "story_enhancement": 50,
+    "storyline_synthesis": 16,
+    "storyline_processing": 24,
+    "timeline_generation": 36,
+    "storyline_discovery": 50,
+    "proactive_detection": 1000,
+    "pending_db_flush": 200,
+    "content_enrichment": 80,  # already bounded; harmless if re-seed skipped
+    "event_tracking": 100,
+    "claim_extraction": 64,
+}
+
+_GPU_INFER = frozenset(
+    {
+        "unified_intake_extraction",
+        "claim_extraction",
+        "topic_clustering",
+        "storyline_assembly",
+        "storyline_automation",
+        "storyline_review_agent",
+        "fact_verification",
+        "content_refinement_queue",
+        "ml_processing",
+        "sentiment_analysis",
+        "entity_extraction",
+        "event_extraction",
+        "storyline_synthesis",
+        "storyline_discovery",
+        "investigation_report_refresh",
+    }
+)
+_ENRICH_INFER = frozenset(
+    {
+        "content_enrichment",
+        "document_processing",
+        "entity_enrichment",
+        "rag_enhancement",
+        "legislative_references",
+        "stimulus_rag",
+        "story_enhancement",
+        "timeline_generation",
+    }
+)
+_BUILD_INFER = frozenset({"entity_profile_build"})
+_DOSSIER_INFER = frozenset({"entity_dossier_compile"})
+
+
+def _infer_track(phase_key: str) -> str:
+    if phase_key in _GPU_INFER:
+        return TRACK_GPU
+    if phase_key in _ENRICH_INFER:
+        return TRACK_ENRICH
+    if phase_key in _BUILD_INFER:
+        return TRACK_BUILD
+    if phase_key in _DOSSIER_INFER:
+        return TRACK_DOSSIER_FAST
+    return TRACK_LOCAL
+
+
+def synthesize_phase_bounds(phase_key: str, default: int) -> dict[str, Any]:
+    """Derive min/max/step around a phase default so any batchable phase can auto-tune."""
+    d = max(1, int(default))
+    if d >= 200:
+        step = max(25, d // 10)
+    elif d >= 50:
+        step = max(10, d // 10)
+    elif d >= 20:
+        step = max(5, d // 5)
+    elif d >= 8:
+        step = max(2, d // 4)
+    else:
+        step = 1
+    mn = max(1, d - 2 * step)
+    # No artificial ceiling — headroom / yield-gate balance batch size.
+    return {
+        "track": _infer_track(phase_key),
+        "min": mn,
+        "max": None,
+        "step": step,
+    }
+
+
+def _seed_extra_phase_bounds() -> None:
+    for name, default in _EXTRA_BATCH_DEFAULTS.items():
+        if name in _PHASE_BOUNDS:
+            continue
+        _PHASE_BOUNDS[name] = synthesize_phase_bounds(name, default)
+
+
+_seed_extra_phase_bounds()
+
+
+def ensure_phase_bounds(phase_key: str, default: int) -> dict[str, Any]:
+    """Return bounds for ``phase_key``, synthesizing + caching when unregistered."""
+    key = (phase_key or "").strip().lower().replace("-", "_")
+    existing = _PHASE_BOUNDS.get(key)
+    if existing is not None:
+        return existing
+    base = max(1, int(default or 10))
+    try:
+        from services.backlog_metrics import BATCH_SIZE_PER_TASK
+
+        mon = BATCH_SIZE_PER_TASK.get(key)
+        if mon is not None and int(mon) > 0:
+            base = int(mon)
+    except Exception:
+        pass
+    bounds = synthesize_phase_bounds(key, base)
+    _PHASE_BOUNDS[key] = bounds
+    return bounds
 
 
 # Phases whose adaptive batch is per-domain (Monitor multiplies by active domain count).
@@ -217,13 +405,18 @@ _PER_DOMAIN_BATCH_PHASES = frozenset(
         "rag_enhancement",
         "metadata_enrichment",
         "storyline_membership_review",
+        "storyline_hygiene",
+        "embedding_link_candidates",
+        "legislative_references",
+        "story_continuation",
     }
 )
 
 
 def is_adaptive_batch_phase(phase: str) -> bool:
+    """True for any non-empty phase name (bounds are explicit or synthesized on resolve)."""
     key = (phase or "").strip().lower().replace("-", "_")
-    return key in _PHASE_BOUNDS
+    return bool(key)
 
 
 def is_per_domain_adaptive_batch(phase: str) -> bool:
@@ -246,10 +439,16 @@ def resolve_phase_batch_limit(
 
 
 def adaptive_batch_enabled() -> bool:
+    """
+    Headroom auto-tune for automation batch sizes.
+
+    Default **on**. Set ``AUTOMATION_ADAPTIVE_BATCH_ENABLED=false`` to freeze at
+    env/defaults (persisted batch still returned when present).
+    """
     raw = env_str("AUTOMATION_ADAPTIVE_BATCH_ENABLED", "").strip()
     if raw:
-        return env_bool("AUTOMATION_ADAPTIVE_BATCH_ENABLED", False)
-    return pipeline_backfill_mode_enabled()
+        return env_bool("AUTOMATION_ADAPTIVE_BATCH_ENABLED", True)
+    return True
 
 
 def _tuning_config(bounds: dict[str, Any]) -> dict[str, int | float | None]:
@@ -264,12 +463,12 @@ def _tuning_config(bounds: dict[str, Any]) -> dict[str, int | float | None]:
         "build_batch_max": batch_max,
         "enrich_batch_max": batch_max,
         "dossier_fast_batch_min": batch_min,
-        "increase_headroom": float(env_str("ADAPTIVE_BATCH_INCREASE_HEADROOM", "0.50")),
-        "decrease_headroom": float(env_str("ADAPTIVE_BATCH_DECREASE_HEADROOM", "0.25")),
-        "memory_pressure_pct": float(env_str("ADAPTIVE_BATCH_MEMORY_PRESSURE_PCT", "88")),
-        "memory_critical_pct": float(env_str("ADAPTIVE_BATCH_MEMORY_CRITICAL_PCT", "94")),
-        "gpu_temp_decrease_c": int(env_str("ADAPTIVE_BATCH_GPU_TEMP_DECREASE_C", "82")),
-        "gpu_temp_increase_max_c": int(env_str("ADAPTIVE_BATCH_GPU_TEMP_INCREASE_MAX_C", "78")),
+        "increase_headroom": env_float("ADAPTIVE_BATCH_INCREASE_HEADROOM", 0.35),
+        "decrease_headroom": env_float("ADAPTIVE_BATCH_DECREASE_HEADROOM", 0.25),
+        "memory_pressure_pct": env_float("ADAPTIVE_BATCH_MEMORY_PRESSURE_PCT", 88.0),
+        "memory_critical_pct": env_float("ADAPTIVE_BATCH_MEMORY_CRITICAL_PCT", 94.0),
+        "gpu_temp_decrease_c": env_int("ADAPTIVE_BATCH_GPU_TEMP_DECREASE_C", 82),
+        "gpu_temp_increase_max_c": env_int("ADAPTIVE_BATCH_GPU_TEMP_INCREASE_MAX_C", 78),
     }
 
 
@@ -281,7 +480,7 @@ def _clamp_batch(value: int, *, batch_min: int, batch_max: int | None) -> int:
 
 
 def ensure_routing_context() -> None:
-    dual = env_str("OLLAMA_DUAL_HOST_ROUTING_ENABLED", "").lower() in ("1", "true", "yes")
+    dual = env_bool("OLLAMA_DUAL_HOST_ROUTING_ENABLED", False)
     gpu_url = env_str("OLLAMA_GPU_HOST", env_str("OLLAMA_POP_OS_HOST", "")).strip()
     cpu_url = env_str("OLLAMA_CPU_HOST", env_str("OLLAMA_HOST", "http://localhost:11434")).strip()
     set_routing_context(
@@ -411,24 +610,12 @@ def record_adaptive_batch_yield(
 
 
 def _yield_gate_thresholds() -> dict[str, float | int]:
-    def _f(name: str, default: float) -> float:
-        try:
-            return float(env_str(name, str(default)) or default)
-        except (TypeError, ValueError):
-            return default
-
-    def _i(name: str, default: int) -> int:
-        try:
-            return max(1, int(env_str(name, str(default)) or default))
-        except (TypeError, ValueError):
-            return default
-
     return {
-        "min_attempted": _i("ADAPTIVE_BATCH_YIELD_MIN_ATTEMPTED", 40),
-        "min_decision_rate": _f("ADAPTIVE_BATCH_YIELD_MIN_DECISION_RATE", 0.10),
-        "max_skip_rate": _f("ADAPTIVE_BATCH_YIELD_MAX_SKIP_RATE", 0.80),
-        "severe_decision_rate": _f("ADAPTIVE_BATCH_YIELD_SEVERE_DECISION_RATE", 0.05),
-        "severe_skip_rate": _f("ADAPTIVE_BATCH_YIELD_SEVERE_SKIP_RATE", 0.90),
+        "min_attempted": max(1, env_int("ADAPTIVE_BATCH_YIELD_MIN_ATTEMPTED", 40)),
+        "min_decision_rate": env_float("ADAPTIVE_BATCH_YIELD_MIN_DECISION_RATE", 0.10),
+        "max_skip_rate": env_float("ADAPTIVE_BATCH_YIELD_MAX_SKIP_RATE", 0.80),
+        "severe_decision_rate": env_float("ADAPTIVE_BATCH_YIELD_SEVERE_DECISION_RATE", 0.05),
+        "severe_skip_rate": env_float("ADAPTIVE_BATCH_YIELD_SEVERE_SKIP_RATE", 0.90),
     }
 
 
@@ -563,6 +750,76 @@ def apply_adaptive_batch_yield_gate(phase: str) -> tuple[int, dict[str, Any]]:
     return int(new_batch), meta
 
 
+def _pending_for_phase(phase_key: str) -> int | None:
+    """Best-effort queue depth for catch-up boost (never raises)."""
+    try:
+        from services.backlog_metrics import get_all_pending_counts
+
+        pending = get_all_pending_counts() or {}
+        return max(0, int(pending.get(phase_key, 0) or 0))
+    except Exception:
+        return None
+
+
+def _apply_catchup_boost(
+    phase_key: str,
+    bounds: dict[str, Any],
+    *,
+    current: int,
+    new_batch: int,
+    action: str,
+    meta: dict[str, Any],
+) -> tuple[int, str, dict[str, Any]]:
+    """
+    When backlog dwarfs the current batch, ramp hard so drains can catch up.
+
+    No hard ceiling — host headroom will pull back on later resolves if needed.
+
+    Severe backlog may still lift off ``hold_floor`` (tempered); ``decrease`` under
+    active pressure is left alone so hot hosts can shed load.
+    """
+    if action == "decrease":
+        return new_batch, action, meta
+    pending = _pending_for_phase(phase_key)
+    if pending is None or pending <= 0:
+        return new_batch, action, meta
+
+    step = max(1, int(bounds.get("step") or 1))
+    batch = max(int(new_batch), int(current), int(bounds["min"]))
+    track = str(bounds.get("track") or "")
+    # Severe backlog: jump toward clearing in far fewer runs.
+    if pending >= max(200, batch * 20):
+        # Aim to clear in ~200 runs, but never more than 8× current in one resolve.
+        eta_target = max(batch, (pending + 199) // 200)
+        jump = max(batch * 2, batch + step * 8, eta_target)
+        jump = min(jump, max(batch * 8, batch + step * 16))
+        if track == TRACK_GPU:
+            jump = min(jump, max(batch * 4, batch + step * 12))
+        # hold_floor = low headroom: only a modest lift so we do not sit at min forever.
+        if action == "hold_floor":
+            jump = min(jump, max(batch * 2, batch + step * 4, int(bounds["min"]) * 2))
+        if jump > new_batch:
+            meta = {
+                **meta,
+                "catchup_boost": True,
+                "pending": pending,
+                "reason": f"{meta.get('reason') or 'headroom_ok'},catchup_boost",
+            }
+            return int(jump), "increase_catchup", meta
+    if pending >= max(50, batch * 8) and action in ("increase", "hold"):
+        jump = max(new_batch + step * 3, batch + step * 3)
+        jump = min(jump, max(batch * 4, batch + step * 8))
+        if jump > new_batch:
+            meta = {
+                **meta,
+                "catchup_boost": True,
+                "pending": pending,
+                "reason": f"{meta.get('reason') or 'headroom_ok'},catchup_boost",
+            }
+            return int(jump), "increase_catchup", meta
+    return new_batch, action, meta
+
+
 def resolve_adaptive_batch(
     phase: str,
     default: int,
@@ -572,12 +829,17 @@ def resolve_adaptive_batch(
     """
     Return tuned batch size for ``phase`` and tuning metadata.
 
-    When adaptive batching is disabled, returns ``default`` unchanged.
+    Unknown phases get synthesized bounds from ``default`` / Monitor
+    ``BATCH_SIZE_PER_TASK`` so every batchable drain can auto-tune.
+    When adaptive batching is disabled, returns clamped default/persisted size.
+
+    Batch sizing uses host CPU/RAM (and GPU for GPU tracks) only — **never**
+    worker DB pool utilization. Pool capacity is owned by worker/exec limits and
+    ``DB_POOL_WORKER_MAX``. Large backlogs get an extra catch-up boost when
+    host headroom allows.
     """
     phase_key = (phase or "").strip().lower().replace("-", "_")
-    bounds = _PHASE_BOUNDS.get(phase_key)
-    if bounds is None:
-        return default, {"phase": phase, "adaptive": False}
+    bounds = ensure_phase_bounds(phase_key, default)
 
     current = _load_persisted_batch(phase) or default
     current = _clamp_batch(
@@ -592,7 +854,14 @@ def resolve_adaptive_batch(
     cfg = _tuning_config(bounds)
     track = str(bounds["track"])
 
-    if track in (TRACK_BUILD, TRACK_GPU, TRACK_ENRICH, TRACK_LOCAL, TRACK_DOSSIER_FAST):
+    if track in (
+        TRACK_BUILD,
+        TRACK_GPU,
+        TRACK_ENRICH,
+        TRACK_LOCAL,
+        TRACK_CHEMISTRY_LOCAL,
+        TRACK_DOSSIER_FAST,
+    ):
         if phase_key in ("entity_dossier_compile", "entity_profile_build", "event_extraction"):
             new_batch, action, meta = tune_batch_size(
                 phase_key, current, snap, auto_tune=True, tuning_config=cfg
@@ -617,6 +886,15 @@ def resolve_adaptive_batch(
         meta=meta,
     )
 
+    new_batch, action, meta = _apply_catchup_boost(
+        phase_key,
+        bounds,
+        current=current,
+        new_batch=int(new_batch),
+        action=action,
+        meta=meta,
+    )
+
     new_batch = _clamp_batch(
         int(new_batch), batch_min=int(bounds["min"]), batch_max=bounds.get("max")
     )
@@ -624,8 +902,19 @@ def resolve_adaptive_batch(
     meta["action"] = action
     meta["batch_before"] = current
     meta["batch_after"] = new_batch
+    meta["bounds"] = {
+        "min": bounds.get("min"),
+        "max": bounds.get("max"),
+        "step": bounds.get("step"),
+        "track": bounds.get("track"),
+    }
     _persist_batch(phase, new_batch, meta)
     return new_batch, meta
+
+
+def list_adaptive_batch_phases() -> list[str]:
+    """Registered phase keys (explicit + seeded extras)."""
+    return sorted(_PHASE_BOUNDS.keys())
 
 
 def get_persisted_adaptive_batch(phase: str) -> int | None:

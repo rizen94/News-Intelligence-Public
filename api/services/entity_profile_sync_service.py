@@ -19,9 +19,16 @@ def _mention_backfill_limit() -> int:
     """Contexts per domain to refresh per round (link_context_to_article_entities)."""
     try:
         # Keep small: hot-path sync must finish; large limits re-scanned the same rows for ~60s/round.
-        return max(50, min(2000, int(env_str("ENTITY_PROFILE_SYNC_MENTION_BACKFILL_LIMIT", "500"))))
+        base = max(50, min(2000, int(env_str("ENTITY_PROFILE_SYNC_MENTION_BACKFILL_LIMIT", "500"))))
     except ValueError:
-        return 500
+        base = 500
+    try:
+        from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+        tuned, _meta = resolve_adaptive_batch("entity_profile_sync", base)
+        return max(50, min(2000, int(tuned)))
+    except Exception:
+        return base
 
 
 def _mention_backfill_rounds() -> int:

@@ -1,4 +1,9 @@
-"""Phase A: typed causal edges (Postgres SSOT) + optional Neo4j projection hooks."""
+"""Phase A: typed causal edges (Postgres SSOT) + optional Neo4j projection hooks.
+
+Mode C (assembly link modes): consequences are **proposals / typed edges only**.
+Never use this module to silently insert storyline_articles or scan the full
+corpus for “related” membership. Callers must pass explicit cause/effect ids.
+"""
 
 from __future__ import annotations
 
@@ -209,6 +214,207 @@ def project_edges_to_neo4j(limit: int = 500) -> dict[str, Any]:
         logger.warning("neo4j causal projection failed: %s", ex)
         return {"synced": synced, "error": str(ex)}
     return {"synced": synced, "skipped": False}
+
+
+def has_causal_edge_between(
+    kind_a: str,
+    id_a: int,
+    kind_b: str,
+    id_b: int,
+    *,
+    domain_key: str | None = None,
+) -> bool:
+    """True when an active causal edge exists in either direction between the pair."""
+    if kind_a not in _ALLOWED_KINDS or kind_b not in _ALLOWED_KINDS:
+        return False
+    try:
+        from shared.database.connection import get_ui_db_connection_context
+
+        clauses = [
+            "status = 'active'",
+            "( (cause_kind = %s AND cause_id = %s AND effect_kind = %s AND effect_id = %s)",
+            "   OR (cause_kind = %s AND cause_id = %s AND effect_kind = %s AND effect_id = %s) )",
+        ]
+        params: list[Any] = [
+            kind_a,
+            int(id_a),
+            kind_b,
+            int(id_b),
+            kind_b,
+            int(id_b),
+            kind_a,
+            int(id_a),
+        ]
+        if domain_key:
+            clauses.append("domain_key = %s")
+            params.append(domain_key)
+        sql = f"""
+            SELECT 1 FROM intelligence.causal_edges
+            WHERE {' AND '.join(clauses)}
+            LIMIT 1
+        """
+        with get_ui_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                return cur.fetchone() is not None
+    except Exception as e:
+        logger.debug("has_causal_edge_between: %s", e)
+        return False
+
+
+# Claim-text predicates that suggest a directed causal relation.
+_CAUSAL_PREDICATE_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("caused", "causes"),
+    ("cause", "causes"),
+    ("led to", "leads_to"),
+    ("leads to", "leads_to"),
+    ("resulted in", "results_in"),
+    ("results in", "results_in"),
+    ("triggered", "triggers"),
+    ("contributed to", "contributes_to"),
+    ("sparked", "sparks"),
+)
+
+
+def _normalize_claim_text(s: str) -> str:
+    return " ".join((s or "").strip().lower().split())
+
+
+def extract_causal_predicates_from_claim(
+    subject: str,
+    predicate: str,
+    obj: str,
+) -> dict[str, Any] | None:
+    """
+    If predicate text matches a causal cue, return a candidate edge skeleton.
+
+    Does not write to DB — callers batch-upsert via ``harvest_causal_edges_from_claims``.
+    """
+    pred = _normalize_claim_text(predicate)
+    if not pred or not (subject or "").strip() or not (obj or "").strip():
+        return None
+    for needle, relation in _CAUSAL_PREDICATE_PATTERNS:
+        if needle in pred or pred == needle:
+            return {
+                "cause_text": (subject or "").strip(),
+                "effect_text": (obj or "").strip(),
+                "relation": relation,
+                "predicate": predicate,
+                "matched_cue": needle,
+            }
+    return None
+
+
+def harvest_causal_edges_from_claims(
+    *,
+    domain_key: str | None = None,
+    limit: int = 50,
+    min_confidence: float = 0.55,
+    source: str = "claim_predicate_harvest",
+) -> dict[str, int]:
+    """
+    Batch: scan recent extracted_claims for causal cue predicates.
+
+    When subject/object resolve to distinct entity ids in the domain silo,
+    upsert a speculative entity→entity causal edge. Otherwise count as matched
+    but skip write (candidates stay in stats / logs via reasoning-ready shape).
+    """
+    stats = {"scanned": 0, "matched": 0, "written": 0, "skipped": 0}
+    try:
+        from shared.database.connection import get_db_connection_context
+        from shared.domain_registry import resolve_domain_schema
+        from psycopg2.extras import RealDictCursor
+
+        clauses = ["ec.confidence >= %s"]
+        params: list[Any] = [float(min_confidence)]
+        if domain_key:
+            clauses.append("c.domain_key = %s")
+            params.append(domain_key)
+        params.append(max(1, min(int(limit), 500)))
+        sql = f"""
+            SELECT ec.id, ec.context_id, ec.subject_text, ec.predicate_text,
+                   ec.object_text, ec.confidence, c.domain_key
+            FROM intelligence.extracted_claims ec
+            JOIN intelligence.contexts c ON c.id = ec.context_id
+            WHERE {' AND '.join(clauses)}
+            ORDER BY ec.created_at DESC NULLS LAST, ec.id DESC
+            LIMIT %s
+        """
+
+        def _resolve_entity_id(cur, schema: str, name: str) -> int | None:
+            if not name or not schema:
+                return None
+            cur.execute(
+                f"""
+                SELECT id FROM {schema}.entity_canonical
+                WHERE lower(canonical_name) = lower(%s)
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (name,),
+            )
+            row = cur.fetchone()
+            return int(row[0]) if row else None
+
+        with get_db_connection_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(sql, params)
+                rows = list(cur.fetchall() or [])
+            for row in rows:
+                stats["scanned"] += 1
+                cand = extract_causal_predicates_from_claim(
+                    row.get("subject_text") or "",
+                    row.get("predicate_text") or "",
+                    row.get("object_text") or "",
+                )
+                if not cand:
+                    continue
+                stats["matched"] += 1
+                dk = row.get("domain_key") or domain_key
+                if not dk:
+                    stats["skipped"] += 1
+                    continue
+                try:
+                    schema = resolve_domain_schema(str(dk))
+                except Exception:
+                    stats["skipped"] += 1
+                    continue
+                with conn.cursor() as cur:
+                    cause_id = _resolve_entity_id(cur, schema, cand["cause_text"])
+                    effect_id = _resolve_entity_id(cur, schema, cand["effect_text"])
+                if not cause_id or not effect_id or cause_id == effect_id:
+                    stats["skipped"] += 1
+                    continue
+                ctx_id = row.get("context_id")
+                eid = upsert_causal_edge(
+                    cause_kind="entity",
+                    cause_id=int(cause_id),
+                    effect_kind="entity",
+                    effect_id=int(effect_id),
+                    relation=cand["relation"],
+                    confidence=min(0.55, float(row.get("confidence") or 0.5)),
+                    evidence_grade="speculative",
+                    evidence_context_ids=[int(ctx_id)] if ctx_id is not None else [],
+                    reasoning_steps=[
+                        {
+                            "step": "claim_predicate_harvest",
+                            "claim_id": row.get("id"),
+                            "cause_text": cand["cause_text"],
+                            "effect_text": cand["effect_text"],
+                            "matched_cue": cand["matched_cue"],
+                        }
+                    ],
+                    domain_key=str(dk),
+                    source=source,
+                )
+                if eid:
+                    stats["written"] += 1
+                else:
+                    stats["skipped"] += 1
+            conn.commit()
+    except Exception as e:
+        logger.warning("harvest_causal_edges_from_claims: %s", e)
+    return stats
 
 
 def seed_edges_from_correlations(*, days: int = 30, min_strength: float = 0.6, limit: int = 25) -> int:

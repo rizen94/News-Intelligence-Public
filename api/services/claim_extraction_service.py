@@ -1467,9 +1467,107 @@ def _claims_to_facts_chunk_size() -> int:
         return 50
 
 
+def _build_versioned_fact_sources(
+    cur,
+    *,
+    claim_ids: list[int],
+    context_ids: list[int],
+) -> list[dict[str, Any]]:
+    """
+    Populate versioned_facts.sources so a fact resolves to article URL + retrieval
+    without a four-table join. Best-effort: returns [] when bridges are missing.
+    """
+    sources: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    ctx_ids = sorted({int(c) for c in context_ids if c is not None})
+    if not ctx_ids:
+        # Fall back: look up context_id from claims
+        if claim_ids:
+            cur.execute(
+                """
+                SELECT DISTINCT context_id
+                FROM intelligence.extracted_claims
+                WHERE id = ANY(%s) AND context_id IS NOT NULL
+                """,
+                (list(claim_ids),),
+            )
+            ctx_ids = [int(r[0]) for r in cur.fetchall() if r and r[0] is not None]
+    if not ctx_ids:
+        # Minimal anchor: claim ids only
+        for cid in claim_ids[:8]:
+            sources.append({"claim_id": int(cid), "source_type": "extracted_claim"})
+        return sources
+
+    cur.execute(
+        """
+        SELECT atc.context_id, atc.domain_key, atc.article_id,
+               c.metadata->>'url' AS context_url,
+               c.ingestion_date
+        FROM intelligence.article_to_context atc
+        LEFT JOIN intelligence.contexts c ON c.id = atc.context_id
+        WHERE atc.context_id = ANY(%s)
+        ORDER BY atc.context_id
+        LIMIT 32
+        """,
+        (ctx_ids,),
+    )
+    rows = cur.fetchall() or []
+    rep_claim = int(claim_ids[0]) if claim_ids else None
+    for row in rows:
+        context_id, domain_key, article_id, context_url, ingestion_date = row
+        url = context_url
+        # Prefer live article URL when schema is known
+        if domain_key and article_id is not None:
+            try:
+                schema = resolve_domain_schema(str(domain_key))
+            except Exception:
+                schema = None
+            if schema:
+                try:
+                    cur.execute(
+                        f"""
+                        SELECT url, COALESCE(ingestion_date, created_at)
+                        FROM {schema}.articles
+                        WHERE id = %s
+                        """,
+                        (int(article_id),),
+                    )
+                    art = cur.fetchone()
+                    if art:
+                        url = art[0] or url
+                        if art[1] is not None:
+                            ingestion_date = art[1]
+                except Exception:
+                    pass
+        key = (domain_key, article_id, url)
+        if key in seen:
+            continue
+        seen.add(key)
+        entry: dict[str, Any] = {
+            "claim_id": rep_claim,
+            "context_id": int(context_id) if context_id is not None else None,
+            "domain_key": domain_key,
+            "article_id": int(article_id) if article_id is not None else None,
+            "url": url,
+            "retrieved_at": (
+                ingestion_date.isoformat()
+                if hasattr(ingestion_date, "isoformat")
+                else (str(ingestion_date) if ingestion_date else None)
+            ),
+            "source_type": "article",
+        }
+        sources.append(entry)
+    if not sources and claim_ids:
+        for cid in claim_ids[:8]:
+            sources.append({"claim_id": int(cid), "source_type": "extracted_claim"})
+    return sources
+
+
 def _promote_claims_to_versioned_facts_one_tx(
     min_confidence: float,
     limit: int,
+    *,
+    claim_ids: list[int] | None = None,
 ) -> dict[str, int]:
     """Single short transaction — avoids holding DB locks across long entity-resolution loops."""
     empty = {
@@ -1483,6 +1581,15 @@ def _promote_claims_to_versioned_facts_one_tx(
         "merged_claims_collapsed": 0,
     }
     stats = dict(empty)
+    id_filter = ""
+    params: list[Any] = [min_confidence]
+    if claim_ids:
+        uniq = [int(x) for x in claim_ids if x is not None]
+        if not uniq:
+            return dict(empty)
+        id_filter = " AND ec.id = ANY(%s)"
+        params.append(uniq)
+    params.append(limit)
     with get_db_connection_context() as conn:
         if not conn:
             return dict(empty)
@@ -1499,6 +1606,7 @@ def _promote_claims_to_versioned_facts_one_tx(
                     FROM intelligence.extracted_claims ec
                     WHERE ec.confidence >= %s
                     """
+                    + id_filter
                     + claims_to_facts_versioned_fact_absent_sql()
                     + CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL
                     + claim_promotion_deferred_exclude_sql()
@@ -1514,7 +1622,7 @@ def _promote_claims_to_versioned_facts_one_tx(
                     INNER JOIN claim ON claim.id = ec.id
                     ORDER BY ec.confidence DESC, ec.id ASC
                     """,
-                    (min_confidence, limit),
+                    tuple(params),
                 )
                 claims = cur.fetchall()
                 stats["candidates"] = len(claims)
@@ -1572,6 +1680,9 @@ def _promote_claims_to_versioned_facts_one_tx(
                     if not group:
                         grouped[key] = {
                             "claim_ids": [int(claim_id)],
+                            "context_ids": (
+                                [int(context_id)] if context_id is not None else []
+                            ),
                             "entity_profile_id": int(entity_profile_id),
                             "fact_type": fact_type,
                             "subject": subject or "",
@@ -1583,6 +1694,10 @@ def _promote_claims_to_versioned_facts_one_tx(
                         }
                     else:
                         group["claim_ids"].append(int(claim_id))
+                        if context_id is not None:
+                            cids = group.setdefault("context_ids", [])
+                            if isinstance(cids, list):
+                                cids.append(int(context_id))
                         group["confidence"] = max(
                             float(group.get("confidence") or 0.0),
                             float(confidence or 0.0),
@@ -1605,15 +1720,20 @@ def _promote_claims_to_versioned_facts_one_tx(
                         "source_claim_ids": [str(cid) for cid in claim_ids],
                         "merged_count": len(claim_ids),
                     }
+                    sources_payload = _build_versioned_fact_sources(
+                        cur,
+                        claim_ids=claim_ids,
+                        context_ids=list(group.get("context_ids") or []),
+                    )
                     try:
                         cur.execute(
                             """
                             INSERT INTO intelligence.versioned_facts
                                 (entity_profile_id, fact_type, fact_text, confidence,
                                  valid_from, valid_to, extraction_method, metadata,
-                                 event_date, ingestion_date)
+                                 sources, event_date, ingestion_date)
                             VALUES (%s, %s, %s, %s, %s, %s, 'claim_extraction', %s,
-                                    COALESCE(%s, NOW()), NOW())
+                                    %s::jsonb, COALESCE(%s, NOW()), NOW())
                             """,
                             (
                                 int(group["entity_profile_id"]),
@@ -1623,6 +1743,7 @@ def _promote_claims_to_versioned_facts_one_tx(
                                 group.get("valid_from"),
                                 group.get("valid_to"),
                                 json.dumps(metadata),
+                                json.dumps(sources_payload),
                                 group.get("valid_from"),
                             ),
                         )
@@ -1675,6 +1796,8 @@ def _promote_claims_to_versioned_facts_one_tx(
 def promote_claims_to_versioned_facts(
     min_confidence: float | None = None,
     limit: int | None = None,
+    *,
+    claim_ids: list[int] | None = None,
 ) -> dict[str, int]:
     """
     Promote high-confidence extracted_claims to intelligence.versioned_facts.
@@ -1696,11 +1819,28 @@ def promote_claims_to_versioned_facts(
     ``min_confidence`` / ``limit`` default from ``CLAIMS_TO_FACTS_MIN_CONFIDENCE`` /
     ``CLAIMS_TO_FACTS_BATCH_LIMIT`` (and claim_pipeline_max_fetch when limit <= 0).
 
+    Optional ``claim_ids`` scopes promotion to those extracted_claims rows (package Research pass).
+
     Returns counts: ``promoted``, ``candidates``, ``unresolved_subject``, ``insert_failed``,
     plus batch-local merge telemetry.
     """
     if min_confidence is None:
         min_confidence = get_claims_to_facts_min_confidence()
+    if claim_ids is not None:
+        claim_ids = [int(x) for x in claim_ids if x is not None]
+        if not claim_ids:
+            return {
+                "promoted": 0,
+                "candidates": 0,
+                "unresolved_subject": 0,
+                "deferred_unresolved": 0,
+                "insert_failed": 0,
+                "generic_subject_skipped": 0,
+                "merged_groups": 0,
+                "merged_claims_collapsed": 0,
+            }
+        if limit is None:
+            limit = max(len(claim_ids), 1)
     if limit is None:
         limit = get_claims_to_facts_batch_limit()
     empty = {
@@ -1718,7 +1858,9 @@ def promote_claims_to_versioned_facts(
     remaining = max(0, int(limit))
     while remaining > 0:
         batch = min(chunk_size, remaining)
-        part = _promote_claims_to_versioned_facts_one_tx(float(min_confidence), batch)
+        part = _promote_claims_to_versioned_facts_one_tx(
+            float(min_confidence), batch, claim_ids=claim_ids
+        )
         for key in stats:
             stats[key] += int(part.get(key) or 0)
         remaining -= batch
