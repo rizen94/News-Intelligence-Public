@@ -1,8 +1,10 @@
 # Storyline canonical object model
 
-> **Mental model (one sentence):** Articles and other atoms form **domain-kind proteins** (`story_kind`) via many loose **connection proposals**; stimuli (score, review, selective RAG) harden survivors into durable edges and storylines — not every domain is a political narrative cluster.
+> **Operator mental model (binding):** Timeline events → related-event chains → storylines → editorial packages. Prefer [ASSEMBLY_MODEL.md](ASSEMBLY_MODEL.md) for plain language. Chemistry / beaker / protein / atom / megathread wording below is **legacy**; map it via the retired-metaphors glossary in that doc. Code symbols may still use old names until a rename pass.
 
-This document is the authoritative reference for Phase 2 simplification (June 2026) and the chemistry-style connection model (July 2026). See also [PIPELINE_AND_AUTOMATION.md](PIPELINE_AND_AUTOMATION.md), [GRAPH_EDGE_PROVENANCE.md](GRAPH_EDGE_PROVENANCE.md), and [VAULT_AUTOMATION_LOOP.md](VAULT_AUTOMATION_LOOP.md).
+> **Historical one-liner (July 2026):** Articles and timeline events form domain-kind storylines (`story_kind`) via connection proposals that strengthen with evidence — not every domain is a political narrative cluster.
+
+This document remains the object-role / table reference for Phase 2 simplification (June 2026). Prefer [ASSEMBLY_MODEL.md](ASSEMBLY_MODEL.md) for assembly intent. See also [PIPELINE_AND_AUTOMATION.md](PIPELINE_AND_AUTOMATION.md), [GRAPH_EDGE_PROVENANCE.md](GRAPH_EDGE_PROVENANCE.md), and [VAULT_AUTOMATION_LOOP.md](VAULT_AUTOMATION_LOOP.md).
 
 ---
 
@@ -10,15 +12,15 @@ This document is the authoritative reference for Phase 2 simplification (June 20
 
 | Object | Canonical role | Scope | User-facing home |
 |--------|----------------|-------|------------------|
-| `{domain}.storylines` | **Domain-kind protein** — shape set by `story_kind` (event narrative, research topic, docket, …) | Per-domain silo | **Stories** shell |
-| `intelligence.tracked_events` | **Investigative thread anchor** — multi-context real-world event | Cross-domain (`domain_keys[]`) | **Investigate** shell |
+| `{domain}.storylines` | **Domain storyline** — shape set by `story_kind` (event narrative, research topic, docket, …) | Per-domain silo | **Stories** shell |
+| `intelligence.tracked_events` | **Tracked event** — longer-lived follow object across sources/domains | Cross-domain (`domain_keys[]`) | **Investigate** shell |
 | `{domain}.topic_clusters` | **Pipeline staging cluster** — pre-storyline grouping | Per-domain | **Topics** (Corpus/Signals) |
-| `public.chronological_events` | **Timeline atom** — per-article extracted event row | Global; domain via article | **Events** (subordinate to tracked_event) |
+| `public.chronological_events` | **Timeline event** — dated extracted event on the main timeline | Global; domain via article | **Events** (reconciles with tracked_event) |
 | `intelligence.narrative_threads` | **Derived prose lens** — mirror/synthesis from storylines | Global | **Investigate → Narrative Threads** |
 | `public.emerging_storylines` | **Staging queue** for proactive promote | Global | Internal / Monitor only |
-| `intelligence.graph_connection_proposals` | **Loose bonds** — hypothesized/candidate collisions | Global | Monitor / Connections |
-| `intelligence.graph_connection_links` | **Solid edges** — established proteins | Global | Graph / Connections |
-| `intelligence.rag_evidence_pull_queue` | **RAG stimulus tickets** — pull fuller source when a bond needs evidence | Global | Monitor (`stimulus_rag`) |
+| `intelligence.graph_connection_proposals` | **Provisional / promising links** — matching support (`inference_stage`) | Global | Monitor / Connections |
+| `intelligence.graph_connection_links` | **Established links** — durable graph edges | Global | Graph / Connections |
+| `intelligence.rag_evidence_pull_queue` | **Evidence-pull tickets** — fuller source when a link needs text (legacy phase `stimulus_rag`) | Global | Monitor |
 
 ---
 
@@ -62,9 +64,9 @@ Bare “spine” is forbidden in operator UI unless prefixed.
 
 ### Connection inference stages
 
-`hypothesized` → `candidate` → `established` | `quarantined` on proposals (and links when materialized). Phases: `collision_sampling`, `stimulus_rag`, `protein_harden`.
+DB enum `hypothesized` → `candidate` → `established` | `quarantined` on proposals (and links when materialized). Operator language: provisional → promising → established / quarantined (see [ASSEMBLY_MODEL.md](ASSEMBLY_MODEL.md)). Legacy phases: `collision_sampling`, `stimulus_rag`, `protein_harden` — matching support only; do not expand as a chemistry product.
 
-Timescales: hours = intake spine + assembly proteins; hours–days = beaker bonds; weeks–decades = arc chronicles (linear only) or research/docket ledgers (chemistry kinds).
+Timescales: hours = intake + matching/assembly → storylines; hours–days = link confidence strengthening; weeks–decades = arc chronicles (linear only) or research/docket ledgers.
 
 ---
 

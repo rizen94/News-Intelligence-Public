@@ -39,9 +39,9 @@ Headless iterative linking — same mount as OWUI + `obsidian-news-vault` MCP:
 
 | Path | Purpose |
 |------|---------|
-| `00_Inbox/work-queue.md` | Cursors incl. `last_connection_loop_at` |
+| `00_Inbox/work-queue.md` | Cursors incl. `last_connection_loop_at`, `last_investigation_loop_at` |
 | `25_Connections/` | LLM-drafted connection notes (Postgres IDs in frontmatter) |
-| `20_Investigations/` | Investigation threads (vault-first; promote via tracking promotion) |
+| `20_Investigations/` | Investigation threads (vault-first; **promote only via OWUI desk write-back**) |
 
 Widow runs `editorial_room_loop_service` inside `assembly_conductor` (step 7). Prompts: `api/config/prompts/editorial_room/`.
 
@@ -49,9 +49,20 @@ Widow runs `editorial_room_loop_service` inside `assembly_conductor` (step 7). P
 EDITORIAL_ROOM_LOOP_ENABLED=true
 EDITORIAL_ROOM_LOOP_MAX_ROUNDS=5
 EDITORIAL_ROOM_PROPOSAL_MIN_CONFIDENCE=0.65
+EDITORIAL_ROOM_INVESTIGATION_ROUND_ENABLED=false   # draft_investigation → 20_Investigations/
+EDITORIAL_ROOM_EDITOR_LENS_ENABLED=false           # tag needs_review / quarantine_candidate only
+DESK_AGENT_WRITEBACK_ENABLED=false                 # OWUI promote into storylines / tracked_events
 ASSEMBLY_PIPELINE_MODE=ordered
 ```
 
+**Detective → editor boundary**
+
+| Role | Writer | Target |
+|------|--------|--------|
+| Detective / journalist | Headless editorial room + OWUI vault MCP | `25_Connections/`, `20_Investigations/` notes, graph proposals |
+| Editor | OWUI HTTP tools only (`DESK_AGENT_WRITEBACK_ENABLED`) | `storylines.editorial_document` / `canonical_narrative`, `tracked_events` narratives, proposal accept/reject |
+
+Headless loops **never** write long-form editorial prose into Postgres. Promote: set vault frontmatter `status: ready_to_promote` (or `editor_approved=true`) then `POST /api/desk/promote_investigation`.
 ---
 
 ## Environment (Widow)

@@ -33,6 +33,9 @@ __pycache__/
 .env
 .env.local
 .env.production
+.env.popos_worker
+.env.dev
+.env.*.local
 configs/ddns.env
 config/.secrets
 api/config/.secrets
@@ -127,3 +130,17 @@ docs/_local_expanded/
 
 # Repomix generated exports (config files are tracked)
 repomix-output.*
+api.xml
+
+# Cursor agent plans (local only)
+.cursor/plans/
+
+# Scratch / one-off verification at repo root
+final_verification.py
+verify_usd_tracker_files.py
+test_usd_tracker_components.py
+scripts/_tmp_*
+scripts/watcher.sh.fixed
+
+# Editor backup artifacts
+*.bak.*

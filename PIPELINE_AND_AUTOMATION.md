@@ -389,21 +389,11 @@ Below: **Task** = scheduler key in `schedules`. **Backlog key** = name in `pipel
 | `event_extraction` | 300s | `entity_extraction` | `_execute_event_extraction_v5` | Legacy path only (`LEGACY_INTAKE_EXTRACTION_ENABLED`) | Domain + global event tables |
 | `chronological_events_catchup` | 1800s | `unified_intake_extraction` | `_execute_chronological_events_catchup` | UIE-complete articles missing CE rows | Restored `chronological_events` |
 | `event_deduplication` | 600s | `unified_intake_extraction`, `chronological_events_catchup` | `_execute_event_deduplication_v5` | Unmerged / soft-link CE candidates | Coreference merges + `event_coreference_links` |
-| `story_continuation` | 600s | `event_deduplication` | `_execute_story_continuation_v5` | Unlinked CE due for a match attempt (see recheck backoff below) | Event→storyline attach + package seed |
+| `story_continuation` | 600s | `event_deduplication` | `_execute_story_continuation_v5` | Events + storylines | Event→storyline attach + package seed |
 | `timeline_generation` | 300s | `rag_enhancement` | `_execute_timeline_generation` | Storylines / events for chronological_events | `chronological_events` |
 | `entity_enrichment` | 1800s | `entity_profile_sync` | `_execute_entity_enrichment` | Profile IDs to enrich (e.g. Wikipedia) | `entity_profiles` external fields |
 | `story_enhancement` | 300s | — | `_execute_story_enhancement` | Story update queues | Story enhancement records |
 | `content_refinement_queue` | 120s | — | `_execute_content_refinement_queue` | `intelligence.content_refinement_queue` | Deep storyline narratives / finisher jobs |
-
-**Story continuation recheck backoff.** Most unlinked `public.chronological_events` rows have
-no viable storyline, and re-scanning the newest rows every cycle re-verified the same events
-indefinitely (overnight: ~87k checks for ~360 links). Each attempt that does not auto-link
-now bumps `continuation_attempts` and `continuation_checked_at` (migration 293), and both
-the drain and the idle probe only consider events whose backoff has elapsed:
-`CONTINUATION_RECHECK_BASE_HOURS` (default 2) doubled per attempt up to
-`CONTINUATION_RECHECK_MAX_DOUBLINGS` (default 6 → ~5 days max). Never-checked events sort
-first, so fresh extractions are always matched before old rechecks. A drain reports
-`backed_off` alongside `checked` / `linked` / `flagged`.
 
 ### Phase 10–12 — Editorial, Digests, Watchlist
 

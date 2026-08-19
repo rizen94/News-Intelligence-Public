@@ -37,16 +37,21 @@ Canonical map of **who reads what**, known **conflicts**, and **defunct** knobs 
 | `AUTOMATION_DISABLED_SCHEDULES` | — | Comma-separated phase disable list | |
 | `PIPELINE_BACKFILL_MODE` | false | Pause RSS/docs during catch-up | |
 
-### Time windows (hard gates — override everything)
+### Time windows (hard gates — desk schedule)
 
 | Env | Effect |
 |-----|--------|
-| `PIPELINE_SCHEDULE_TZ` / `NIGHTLY_PIPELINE_TZ` | Local TZ |
-| `PIPELINE_NIGHTLY_*` / `NIGHTLY_PIPELINE_*` | 00:00–07:00 nightly heavy |
-| `PIPELINE_DAYTIME_*` | Mon–Fri 07:00–16:00 |
-| `PIPELINE_QUIET_ALLOWED_PHASES` | Only these run in quiet (weekends/evenings) |
-| `NIGHTLY_PIPELINE_EXCLUSIVE` | **Default on** — daytime blocks most phases; only nightly drain |
+| `PIPELINE_SCHEDULE_TZ` / `NIGHTLY_PIPELINE_TZ` | Local TZ (default America/New_York) |
+| `PIPELINE_HEAVY_*` / `PIPELINE_NIGHTLY_*` / `NIGHTLY_PIPELINE_*` | **heavy** 01:00–06:00 — PopOS GPU max + nightly unified drain |
+| `PIPELINE_MORNING_*` | **morning_ingest** 06:00–10:00 — RSS + GPU spine finish |
+| `PIPELINE_DESK_*` | **desk_light** 10:00–01:00 — Widow full; PopOS GPU deferred |
+| `PIPELINE_GPU_HEAVY_PHASES` | Phases blocked in desk_light (Ollama / PopOS) |
+| `PIPELINE_DESK_GPU_ESCAPE_PHASES` | Subset re-admitted at moderate backlog |
+| `PIPELINE_QUIET_HOURS_DISABLED` | true → allow GPU phases all day |
+| `NIGHTLY_PIPELINE_EXCLUSIVE` | **Default on** during heavy — interval phases defer to unified drain |
 | `NIGHTLY_UNIFIED_PIPELINE_ENABLED` | false → no unified nightly window |
+
+**Desk vs Widow:** Desk hours are not idle. Widow may run RSS, HTTP enrich, context_sync, and other non-GPU work continuously. Only PopOS GPU / Ollama-heavy phases are deferred so the 5090 stays free for interactive use.
 
 ---
 
@@ -91,11 +96,30 @@ Dossier defer: `ASSEMBLY_DEFER_DOSSIER_PROFILE_FIRST_PASS` (default 8000) uses p
 
 | Env | Default | Purpose |
 |-----|---------|---------|
-| `AUTOMATION_ADAPTIVE_BATCH_ENABLED` | true when `PIPELINE_BACKFILL_MODE=true` | Headroom-based batch tuning |
+| `AUTOMATION_ADAPTIVE_BATCH_ENABLED` | **true** (set `false` to freeze) | Headroom-based batch tuning for all batchable phases |
 | `ADAPTIVE_BATCH_INCREASE_HEADROOM` | 0.50 | Raise batch when headroom ≥ this |
 | `ADAPTIVE_BATCH_DECREASE_HEADROOM` | 0.25 | Lower batch when headroom < this |
 
-Persists last tuned batch per phase in `public.automation_state` (`adaptive_batch:{phase}`). Wired into spine enrichment, unified intake, and assembly drain phases.
+Persists last tuned batch per phase in `public.automation_state` (`adaptive_batch:{phase}`).
+
+**Coverage:** Explicit `_PHASE_BOUNDS` (GPU/enrich/local drains) plus PhaseSpec overlays, plus
+auto-seeded extras from Monitor defaults (`entity_profile_sync`, `story_enhancement`,
+`timeline_generation`, `storyline_discovery`, `pending_db_flush`, …). Any other phase that
+calls `resolve_adaptive_batch(phase, default)` gets **synthesized** min/max/step around that
+default on first resolve.
+
+**Named phases with explicit or seeded bounds:** see `list_adaptive_batch_phases()`.
+
+Yield-gate env (storyline_review_agent): `ADAPTIVE_BATCH_YIELD_MIN_ATTEMPTED`,
+`ADAPTIVE_BATCH_YIELD_MIN_DECISION_RATE`, `ADAPTIVE_BATCH_YIELD_MAX_SKIP_RATE`,
+`ADAPTIVE_BATCH_YIELD_SEVERE_*`. LLM chunk scales with outer batch via
+`STORYLINE_REVIEW_LLM_ITEMS` / `STORYLINE_REVIEW_LLM_ITEMS_MAX`.
+
+Wired into AutomationManager drain paths, spine/assembly conductors, and central getters
+(`topic_clustering_batch_size`, claim/claims_to_facts limits, embeddings, RAG, refinement).
+Monitor reads persisted sizes via `backlog_metrics._per_run_batch_size`.
+
+Ops/health, one-shot reports, and non-batch schedules stay non-batched by design (no row drain).
 
 ---
 
