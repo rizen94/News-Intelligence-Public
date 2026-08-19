@@ -53,6 +53,7 @@ import {
   Tab,
   Menu,
   MenuItem,
+  ListSubheader,
 } from '@mui/material';
 import {
   Timeline,
@@ -63,13 +64,12 @@ import {
   TimelineDot,
   TimelineOppositeContent,
 } from '@mui/lab';
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 
 import apiService from '../../services/apiService';
 import { contextCentricApi } from '../../services/api/contextCentric';
 import StorylineManagementDialog from '../../components/StorylineManagementDialog';
-import StorylineAutomationDialog from '../../components/StorylineAutomationDialog';
 import ArticleSuggestionsDialog from '../../components/ArticleSuggestionsDialog';
 import EntityCard from '../../components/EntityCard/EntityCard';
 import ProvenancePanel, {
@@ -82,9 +82,16 @@ import { Link as RouterLink } from 'react-router-dom';
 import { useDomainNavigation } from '../../hooks/useDomainNavigation';
 import { useDomainRoute } from '../../hooks/useDomainRoute';
 import { getDefaultDomainKey } from '../../utils/domainHelper';
+import { statusLabel } from '../../utils/statusLabel';
 import { usePublicDemoMode } from '../../contexts/PublicDemoContext';
 import type { StorylineDetail as StorylineDetailType } from '../../types';
 import { displayStorylineTitle } from '../../utils/sanitizeDisplayText';
+import type { ModalKey } from '@/services/api/editorial';
+import {
+  defaultModalForDomain,
+  ensurePackageForStoryline,
+  modalPackagePath,
+} from '@/components/Editorial/storylinePackageBridge';
 
 function pickStorylineAnalysisDisplay(storyline: StorylineDetailType | null) {
   if (!storyline) return null;
@@ -104,12 +111,12 @@ const StorylineDetail = () => {
   const effectiveDomain = domain || getDefaultDomainKey();
   const [storyKindLabel, setStoryKindLabel] = useState<string | null>(null);
   const [storyline, setStoryline] = useState(null);
+  const [membershipSource, setMembershipSource] = useState<string | null>(null);
   const [articles, setArticles] = useState([]);
   const [timelineData, setTimelineData] = useState(null); // { events, gaps, milestones, time_span, event_count, source_count }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showEditDialog, setShowEditDialog] = useState(false);
-  const [showAutomationDialog, setShowAutomationDialog] = useState(false);
   const [showSuggestionsDialog, setShowSuggestionsDialog] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [headlineRefining, setHeadlineRefining] = useState(false);
@@ -148,6 +155,7 @@ const StorylineDetail = () => {
   >('narrative');
   const [detailTab, setDetailTab] = useState(0);
   const [opsMenuAnchor, setOpsMenuAnchor] = useState<null | HTMLElement>(null);
+  const [editorialBridgeLoading, setEditorialBridgeLoading] = useState(false);
   const [processingStatus, setProcessingStatus] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStartTime, setProcessingStartTime] = useState(null);
@@ -465,6 +473,14 @@ const StorylineDetail = () => {
       if (!mountedRef.current) return;
       setError(null);
       setStoryline(storylineData);
+      const ms =
+        (storylineData as { membership_source?: string })?.membership_source ||
+        (sr as { membership_source?: string }).membership_source ||
+        (
+          (sr.data || {}) as { membership_source?: string }
+        ).membership_source ||
+        null;
+      setMembershipSource(ms ? String(ms) : null);
       setArticles(articlesData);
 
       // Set timeline data from parallel fetch (events, gaps, milestones, time_span)
@@ -635,6 +651,39 @@ const StorylineDetail = () => {
       setWatchLoading(false);
     }
   };
+
+  /** Ensure editorial_package for this storyline, then open the modal workspace. */
+  const openEditorialModal = useCallback(
+    async (modal: ModalKey, opts?: { refreshMembers?: boolean }) => {
+      if (!id || !effectiveDomain) return;
+      setEditorialBridgeLoading(true);
+      setError(null);
+      setOpsMenuAnchor(null);
+      try {
+        const pkg = await ensurePackageForStoryline({
+          domainKey: effectiveDomain,
+          storylineId: id,
+          targetModal: modal,
+          refreshMembers: opts?.refreshMembers,
+        });
+        const path = modalPackagePath(effectiveDomain, modal, pkg.id);
+        setProcessingStatus(
+          pkg.created
+            ? `Created editorial package #${pkg.id} — opening ${modal}…`
+            : `Opening ${modal} with package #${pkg.id}…`
+        );
+        navigate(path);
+      } catch (err) {
+        setError(
+          (err as Error)?.message ||
+            'Failed to open editorial package for this storyline'
+        );
+      } finally {
+        setEditorialBridgeLoading(false);
+      }
+    },
+    [id, effectiveDomain, navigate]
+  );
 
   const handleRefineHeadline = async () => {
     try {
@@ -984,11 +1033,17 @@ const StorylineDetail = () => {
     <>
     <PageShell
       title={heroTitle}
-      subtitle={`${storyline?.article_count ?? articles?.length ?? 0} articles · ${storyKindLabel || 'story cluster'}`}
+      subtitle={`${storyline?.article_count ?? articles?.length ?? 0} articles · ${storyKindLabel || 'episode'}${
+        membershipSource === 'eel'
+          ? ''
+          : membershipSource === 'storyline_articles'
+            ? ' · membership via legacy bag'
+            : ''
+      }`}
       breadcrumbs={[
         { label: 'Home', to: `/${effectiveDomain}` },
         { label: effectiveDomain, to: `/${effectiveDomain}` },
-        { label: 'Storylines', to: `/${effectiveDomain}/storylines` },
+        { label: 'Episodes', to: `/${effectiveDomain}/storylines` },
         {
           label:
             heroTitle.length > 42 ? `${heroTitle.slice(0, 39).trimEnd()}…` : heroTitle,
@@ -1021,6 +1076,18 @@ const StorylineDetail = () => {
         </Alert>
       )}
 
+      {(storyline as { episode_state?: string })?.episode_state === 'forming' ||
+      (membershipSource === 'eel' &&
+        (articles?.length ?? 0) === 0 &&
+        (storyline?.article_count ?? 0) === 0) ? (
+        <Alert severity='info' sx={{ mb: 2 }}>
+          Waiting for events.
+          {(storyline as { attach_block_reason?: string })?.attach_block_reason
+            ? ` Last attach: ${(storyline as { attach_block_reason?: string }).attach_block_reason}.`
+            : ' Articles appear here once events link to this episode.'}
+        </Alert>
+      ) : null}
+
       {/* Summary banner */}
       <Card variant='outlined' sx={{ mb: 2 }}>
         <CardContent>
@@ -1037,7 +1104,7 @@ const StorylineDetail = () => {
             <Box sx={{ flex: 1, minWidth: 240 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1, flexWrap: 'wrap' }}>
                 <Chip
-                  label={storyline.status?.toUpperCase() || 'UNKNOWN'}
+                  label={statusLabel(storyline.status) || 'Unknown'}
                   color={getStatusColor(storyline.status)}
                   size='small'
                 />
@@ -1080,15 +1147,32 @@ const StorylineDetail = () => {
                   />
                 )}
                 {storyline.sentiment_score != null && (
-                  <Chip
-                    size='small'
-                    variant='outlined'
-                    label={`Sentiment ${Number(storyline.sentiment_score).toFixed(2)}`}
-                  />
+                  <Tooltip title='Legacy ternary mood score — not frame / tone-precedence (v12 G3)'>
+                    <Chip
+                      size='small'
+                      variant='outlined'
+                      color='default'
+                      label={`Mood ${Number(storyline.sentiment_score).toFixed(2)}`}
+                    />
+                  </Tooltip>
                 )}
               </Box>
             </Box>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 180 }}>
+              {!demoReadonly ? (
+                <Button
+                  variant='contained'
+                  color='primary'
+                  disabled={editorialBridgeLoading || !id}
+                  onClick={() =>
+                    openEditorialModal(defaultModalForDomain(effectiveDomain))
+                  }
+                >
+                  {editorialBridgeLoading
+                    ? 'Opening package…'
+                    : `Open in ${defaultModalForDomain(effectiveDomain) === 'research' ? 'Research' : 'Narrative'}`}
+                </Button>
+              ) : null}
               {!demoReadonly ? (
                 <Button
                   startIcon={
@@ -1098,7 +1182,7 @@ const StorylineDetail = () => {
                       <SynthesisIcon />
                     )
                   }
-                  variant='contained'
+                  variant='outlined'
                   color='secondary'
                   onClick={() => {
                     if (synthesis?.has_synthesis) {
@@ -1112,20 +1196,20 @@ const StorylineDetail = () => {
                   {synthesisLoading
                     ? 'Generating…'
                     : synthesis?.has_synthesis
-                      ? 'Read narrative'
-                      : 'Generate narrative'}
+                      ? 'Legacy synthesized view'
+                      : 'Legacy generate narrative'}
                 </Button>
               ) : (
                 synthesis?.has_synthesis && (
                   <Button
                     startIcon={<SynthesisIcon />}
-                    variant='contained'
+                    variant='outlined'
                     color='secondary'
                     onClick={() =>
                       navigateToDomain(`/storylines/${id}/synthesized`)
                     }
                   >
-                    Read narrative
+                    Legacy synthesized view
                   </Button>
                 )
               )}
@@ -1150,6 +1234,7 @@ const StorylineDetail = () => {
                     size='small'
                     variant='text'
                     onClick={e => setOpsMenuAnchor(e.currentTarget)}
+                    disabled={editorialBridgeLoading}
                   >
                     More actions
                   </Button>
@@ -1159,14 +1244,97 @@ const StorylineDetail = () => {
                     onClose={() => setOpsMenuAnchor(null)}
                   >
                     {!demoReadonly && (
+                      <ListSubheader disableSticky>
+                        Editorial modals
+                      </ListSubheader>
+                    )}
+                    {!demoReadonly && (
+                      <MenuItem
+                        onClick={() => openEditorialModal('research')}
+                        disabled={editorialBridgeLoading}
+                      >
+                        Send to Research
+                      </MenuItem>
+                    )}
+                    {!demoReadonly && (
+                      <MenuItem
+                        onClick={() => openEditorialModal('narrative')}
+                        disabled={editorialBridgeLoading}
+                      >
+                        Send to Narrative
+                      </MenuItem>
+                    )}
+                    {!demoReadonly && (
+                      <MenuItem
+                        onClick={() => openEditorialModal('reduction')}
+                        disabled={editorialBridgeLoading}
+                      >
+                        Send to Reduction
+                      </MenuItem>
+                    )}
+                    {!demoReadonly && (
+                      <MenuItem
+                        onClick={() => openEditorialModal('editor')}
+                        disabled={editorialBridgeLoading}
+                      >
+                        Open in Editor (package)
+                      </MenuItem>
+                    )}
+                    {!demoReadonly && (
+                      <MenuItem
+                        onClick={() =>
+                          openEditorialModal(
+                            defaultModalForDomain(effectiveDomain),
+                            { refreshMembers: true }
+                          )
+                        }
+                        disabled={editorialBridgeLoading}
+                      >
+                        Refresh package members
+                      </MenuItem>
+                    )}
+
+                    {!demoReadonly && (
+                      <ListSubheader disableSticky>
+                        Episode membership
+                      </ListSubheader>
+                    )}
+                    {!demoReadonly && (
                       <MenuItem
                         onClick={() => {
                           setOpsMenuAnchor(null);
                           setShowEditDialog(true);
                         }}
                       >
-                        Edit storyline
+                        Edit episode
                       </MenuItem>
+                    )}
+                    {!demoReadonly && (
+                      <MenuItem
+                        onClick={() => {
+                          setOpsMenuAnchor(null);
+                          setShowSuggestionsDialog(true);
+                        }}
+                      >
+                        Find related articles
+                      </MenuItem>
+                    )}
+                    {!demoReadonly && (
+                      <MenuItem
+                        onClick={() => {
+                          setOpsMenuAnchor(null);
+                          handleToggleWatch();
+                        }}
+                        disabled={watchLoading}
+                      >
+                        {isWatched ? 'Stop watching' : 'Watch'}
+                      </MenuItem>
+                    )}
+
+                    {!demoReadonly && (
+                      <ListSubheader disableSticky>
+                        Analysis jobs
+                      </ListSubheader>
                     )}
                     {!demoReadonly && (
                       <MenuItem
@@ -1190,37 +1358,6 @@ const StorylineDetail = () => {
                         Refine headline
                       </MenuItem>
                     )}
-                    {!demoReadonly && (
-                      <MenuItem
-                        onClick={() => {
-                          setOpsMenuAnchor(null);
-                          setShowAutomationDialog(true);
-                        }}
-                      >
-                        Automation settings
-                      </MenuItem>
-                    )}
-                    {!demoReadonly && (
-                      <MenuItem
-                        onClick={() => {
-                          setOpsMenuAnchor(null);
-                          setShowSuggestionsDialog(true);
-                        }}
-                      >
-                        Find articles
-                      </MenuItem>
-                    )}
-                    {!demoReadonly && (
-                      <MenuItem
-                        onClick={() => {
-                          setOpsMenuAnchor(null);
-                          handleToggleWatch();
-                        }}
-                        disabled={watchLoading}
-                      >
-                        {isWatched ? 'Stop watching' : 'Watch'}
-                      </MenuItem>
-                    )}
                     {synthesis?.has_synthesis && !demoReadonly && (
                       <MenuItem
                         onClick={() => {
@@ -1229,7 +1366,7 @@ const StorylineDetail = () => {
                         }}
                         disabled={synthesisLoading}
                       >
-                        Regenerate narrative
+                        Regenerate synthesis (legacy)
                       </MenuItem>
                     )}
                     <MenuItem
@@ -1238,7 +1375,7 @@ const StorylineDetail = () => {
                         navigateToDomain(`/storylines/${id}/synthesized`);
                       }}
                     >
-                      Open synthesized page
+                      Open synthesized page (legacy)
                     </MenuItem>
                   </Menu>
                 </>
@@ -1324,7 +1461,7 @@ const StorylineDetail = () => {
                     {(eventReconciliation.chronological_events?.length ?? 0) > 0 && (
                       <Typography variant='body2' color='text.secondary'>
                         {eventReconciliation.chronological_events?.length} chronological
-                        timeline atoms linked to this storyline.
+                        Events linked to this episode.
                       </Typography>
                     )}
                   </Paper>
@@ -1920,12 +2057,14 @@ const StorylineDetail = () => {
                     />
                   )}
                   {timelineData?.source_count > 1 && (
-                    <Chip
-                      label={`${timelineData.source_count} sources`}
-                      size='small'
-                      variant='outlined'
-                      color='secondary'
-                    />
+                    <Tooltip title='Raw cite count — not independence-corrected (v12 C4). Do not read as corroboration.'>
+                      <Chip
+                        label={`${timelineData.source_count} sources`}
+                        size='small'
+                        variant='outlined'
+                        color='default'
+                      />
+                    </Tooltip>
                   )}
                   {timelineData?.milestones?.length > 0 && (
                     <Chip
@@ -2031,12 +2170,14 @@ const StorylineDetail = () => {
                                 />
                               )}
                               {evt.source_count > 1 && (
-                                <Chip
-                                  label={`${evt.source_count} sources`}
-                                  size='small'
-                                  color='info'
-                                  variant='outlined'
-                                />
+                                <Tooltip title='Raw cite count — not independence-corrected (v12 C4). Do not read as corroboration.'>
+                                  <Chip
+                                    label={`${evt.source_count} sources`}
+                                    size='small'
+                                    color='default'
+                                    variant='outlined'
+                                  />
+                                </Tooltip>
                               )}
                               {evt.is_ongoing && (
                                 <Chip
@@ -2133,7 +2274,7 @@ const StorylineDetail = () => {
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <Article color='primary' />
                   <Typography variant='h6'>
-                    Articles in this Storyline ({articles.length})
+                    Articles in this episode ({articles.length})
                   </Typography>
                 </Box>
                 {!demoReadonly && (
@@ -2253,7 +2394,7 @@ const StorylineDetail = () => {
                 </Typography>
                 <ProvenancePanel
                   title='Provenance & pipeline'
-                  subtitle='Storyline record, status, and links for audits'
+                  subtitle='Episode record, status, and links for audits'
                   rows={storylineProvenanceRows(storyline, effectiveDomain, id)}
                 />
                 <StorylineAuditCard
@@ -2474,17 +2615,6 @@ const StorylineDetail = () => {
         storyline={storyline}
         domain={effectiveDomain}
         onStorylineUpdated={handleStorylineUpdated}
-      />
-
-      {/* Automation Settings Dialog */}
-      <StorylineAutomationDialog
-        open={showAutomationDialog}
-        onClose={() => setShowAutomationDialog(false)}
-        storylineId={id}
-        onSettingsUpdated={() => {
-          loadStoryline({ background: true });
-          setShowAutomationDialog(false);
-        }}
       />
 
       {/* Article Suggestions Dialog */}

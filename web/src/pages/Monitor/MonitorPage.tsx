@@ -94,8 +94,22 @@ function isMonitorVisiblePhase(p: {
   monitor_queue_kind?: string;
 }): boolean {
   if (p.scheduling_status === 'retired') return false;
-  // Hide rotating pools (e.g. storyline_automation) from the primary catch-up table.
-  // Missing kind = drainable (backward compatible with older API payloads).
+  const name = String(p.phase_name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, '_');
+  // v12 retired phases — hide even if API still emits them without scheduling_status
+  const RETIRED_NAMES = new Set([
+    'storyline_automation',
+    'editorial_room_loop',
+    'storyline_discovery',
+    'proactive_detection',
+    'editorial_briefing_generation',
+    'editorial_document_generation',
+    'daily_briefing_synthesis',
+    'digest_generation',
+  ]);
+  if (RETIRED_NAMES.has(name)) return false;
   const kind = p.monitor_queue_kind ?? 'drainable';
   return kind === 'drainable';
 }
@@ -289,18 +303,18 @@ type QueueAuditPhase = {
 
 /** UI-only labels for Monitor phase keys (API/DB keys unchanged). */
 const MONITOR_PHASE_DISPLAY_LABELS: Record<string, string> = {
-  // Chemistry SSOT — mirror api/shared/monitor_run_vocabulary.py CHEMISTRY_PHASE_DISPLAY_LABELS
-  collision_sampling: 'Collision sampling (loose bonds)',
+  collision_sampling: 'Collision sampling',
   stimulus_rag: 'Stimulus RAG (evidence pull)',
-  protein_harden: 'Protein harden (establish edges)',
+  protein_harden: 'Edge establish (retired label)',
   embedding_link_candidates: 'Embedding link candidates',
   graph_connection_distillation: 'Graph connection distillation',
-  // claim-topic pair
   topic_clustering: 'claim-topic · topic_clustering',
   claim_extraction: 'claim-topic · claim_extraction',
-  // remote worker aliases
   unified_intake_extraction: 'uie · unified_intake_extraction',
-  storyline_assembly: 'assembly · storyline_assembly',
+  storyline_assembly: 'assembly · episode assembly',
+  storyline_automation: 'retired · storyline_automation',
+  editorial_room_loop: 'retired · editorial_room_loop',
+  storyline_discovery: 'retired · storyline_discovery',
 };
 
 /** Queue-audit labels; prefer MONITOR_PHASE_DISPLAY_LABELS via formatMonitorPhaseLabel. */
@@ -1064,7 +1078,7 @@ export default function MonitorPage() {
               <Chip
                 key={id}
                 icon={<PushPinIcon />}
-                label={`Storyline ${id}`}
+                label={`Episode ${id}`}
                 component={RouterLink}
                 to={`/${navDomain}/storylines/${id}`}
                 onDelete={e => {
@@ -2093,15 +2107,26 @@ export default function MonitorPage() {
                   />
                   {typeof pipelineData?.success_rate === 'number' && (
                     <Typography variant='body2' color='text.secondary'>
-                      Success rate: {pipelineData.success_rate}%
+                      Success (24h): {pipelineData.success_rate}%
                     </Typography>
                   )}
                 </Box>
                 <Typography variant='caption' color='text.secondary'>
-                  Articles processed:{' '}
+                  Articles (all silos):{' '}
                   {String(pipelineData?.articles_processed ?? '—')} · Analyzed:{' '}
-                  {String(pipelineData?.articles_analyzed ?? '—')} · Recent (1h):{' '}
+                  {String(pipelineData?.articles_analyzed ?? '—')} · New (1h):{' '}
                   {String(pipelineData?.recent_articles ?? '—')}
+                </Typography>
+                <Typography variant='caption' color='text.secondary' display='block'>
+                  Phase runs: {String(pipelineData?.runs_last_1h ?? pipelineData?.recent_traces_count ?? '—')}{' '}
+                  in last hour · {String(pipelineData?.runs_last_24h ?? pipelineData?.total_traces ?? '—')}{' '}
+                  in 24h
+                  {pipelineData?.last_activity_at
+                    ? ` · Last activity ${timeAgo(String(pipelineData.last_activity_at))}`
+                    : ''}
+                  {pipelineData?.activity_source
+                    ? ` · source: ${String(pipelineData.activity_source)}`
+                    : ''}
                 </Typography>
                 {pipeline?.success === false && pipeline.error && (
                   <Typography variant='caption' color='error' display='block'>
@@ -2111,7 +2136,7 @@ export default function MonitorPage() {
                 {pipelineData?.active_traces != null &&
                   Number(pipelineData.active_traces) > 0 && (
                     <Typography variant='caption' color='info.main'>
-                      Active traces: {String(pipelineData.active_traces)}
+                      Active phase heartbeats: {String(pipelineData.active_traces)}
                     </Typography>
                   )}
               </Box>

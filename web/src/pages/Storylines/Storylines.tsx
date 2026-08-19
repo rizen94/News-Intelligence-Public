@@ -177,63 +177,6 @@ interface Stats {
   highPriority: number;
 }
 
-function DiscoverStorylinesButton({
-  domain,
-  onDone,
-}: {
-  domain: string;
-  onDone: () => void;
-}) {
-  const [discovering, setDiscovering] = useState(false);
-  const { showSuccess, showError, showInfo } = useNotification();
-
-  const handleDiscover = async () => {
-    setDiscovering(true);
-    try {
-      const result = await apiService.discoverStorylines({ save: true }, domain);
-      if (
-        result?.success &&
-        (result?.saved_storylines?.length || result?.summary?.storylines_saved)
-      ) {
-        const count =
-          result?.saved_storylines?.length ??
-          result?.summary?.storylines_saved ??
-          0;
-        showSuccess(`Discovery complete: ${count} new storyline(s) created.`);
-        onDone();
-      } else if (result?.success && result?.summary?.clusters_found === 0) {
-        showInfo(
-          'No article clusters found. Add more articles or try again later.'
-        );
-      } else if (result?.error) {
-        showError(result.error);
-      } else {
-        showSuccess('Discovery finished. Refreshing list.');
-        onDone();
-      }
-    } catch (e) {
-      showError(getUserFriendlyError(e as Error));
-    } finally {
-      setDiscovering(false);
-    }
-  };
-
-  return (
-    <Button
-      variant='contained'
-      startIcon={
-        discovering ? <CircularProgress size={18} /> : <AutoAwesomeIcon />
-      }
-      onClick={handleDiscover}
-      disabled={discovering}
-    >
-      {discovering
-        ? 'Discovering… (full backlog, may take a while)'
-        : 'Discover storylines now'}
-    </Button>
-  );
-}
-
 const Storylines: React.FC = () => {
   const navigate = useNavigate();
   const { navigateToDomain } = useDomainNavigation();
@@ -704,7 +647,10 @@ const Storylines: React.FC = () => {
           <Box display='flex' alignItems='center' gap={1}>
             <Article fontSize='small' color='action' />
             <Typography variant='caption' color='text.secondary'>
-              {storyline.article_count || 0} articles
+              {storyline.article_count || 0}{' '}
+              {storyline.membership_source === 'eel'
+                ? 'members (EEL)'
+                : 'members (legacy)'}
               {(storyline.total_events ?? 0) > 0 &&
                 ` · ${storyline.total_events} events`}
             </Typography>
@@ -752,7 +698,7 @@ const Storylines: React.FC = () => {
           Share
         </Button>
         <Box sx={{ flexGrow: 1 }} />
-        <Tooltip title='Edit Storyline'>
+        <Tooltip title='Edit episode'>
           <IconButton
             size='small'
             onClick={() => handleEditStoryline(storyline)}
@@ -845,7 +791,10 @@ const Storylines: React.FC = () => {
                 <Box display='flex' alignItems='center' gap={0.5}>
                   <Article fontSize='small' />
                   <Typography variant='caption'>
-                    {storyline.article_count || 0} articles
+                    {storyline.article_count || 0}{' '}
+              {storyline.membership_source === 'eel'
+                ? 'members'
+                : 'members (legacy)'}
                   </Typography>
                 </Box>
                 <Typography variant='caption'>
@@ -899,20 +848,20 @@ const Storylines: React.FC = () => {
 
   return (
     <PageShell
-      title={storyKindLabel === 'Research thread' ? 'Research threads' : 'Storylines'}
+      title={storyKindLabel === 'Research thread' ? 'Research threads' : 'Episodes'}
       subtitle={
         storyKindKey === 'research_topic'
-          ? 'Problem / method / claim clusters — loose connections harden via evidence'
+          ? 'Problem / method / claim clusters — events attach via episode signature'
           : storyKindKey === 'evidence_thread'
             ? 'Condition / intervention / finding lineages'
             : storyKindKey === 'matter_docket'
               ? 'Case / bill / agency matters'
-              : 'Domain story clusters — articles linked over time'
+              : 'Bounded arcs (episodes) — events attach via fixed signature; bag absorb off'
       }
       breadcrumbs={[
         { label: 'Home', to: `/${domain}` },
         { label: formatDomainLabel(domain) || domain, to: `/${domain}` },
-        { label: storyKindLabel || 'Storylines' },
+        { label: storyKindLabel || 'Episodes' },
       ]}
       actions={
         <Box display='flex' gap={2} alignItems='center' flexWrap='wrap'>
@@ -932,9 +881,9 @@ const Storylines: React.FC = () => {
             startIcon={<AddIcon />}
             onClick={handleCreateStoryline}
           >
-            Create Storyline
+            Create episode
           </Button>
-          <Tooltip title='Refresh Storylines'>
+          <Tooltip title='Refresh episodes'>
             <span>
               <IconButton onClick={handleRefresh} disabled={loading}>
                 <Refresh />
@@ -969,7 +918,7 @@ const Storylines: React.FC = () => {
                 {stats.total}
               </Typography>
               <Typography variant='body2' color='text.secondary'>
-                Total Storylines
+                Total episodes
               </Typography>
             </CardContent>
           </Card>
@@ -1169,7 +1118,7 @@ const Storylines: React.FC = () => {
           <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
             {searchQuery || filterStatus || filterCategory || filterPriority
               ? 'Try adjusting your search criteria or filters'
-              : 'Storylines are per domain. Get storylines in three ways:'}
+              : 'Episodes are per domain. Create one, then attach via the episode gate:'}
           </Typography>
           {!searchQuery &&
             !filterStatus &&
@@ -1187,24 +1136,22 @@ const Storylines: React.FC = () => {
                   }}
                 >
                   <li>
-                    <strong>Discover now</strong> — AI clusters articles from the
-                    full backlog (newest-first, capped) into storylines. Can take
-                    much longer than a quick weekly scan; Ollama must stay up.
+                    <strong>Create one</strong> — Add an episode, then attach
+                    events via the episode gate (suggestions / continuation).
+                    Automated bag absorb and discovery are retired in v12.
                   </li>
                   <li>
-                    <strong>Create one</strong> — Go to{' '}
-                    <strong>Story Management</strong> and add a storyline, then
-                    add articles or enable automation.
-                  </li>
-                  <li>
-                    <strong>Auto-discovery</strong> — Scheduled job uses the same
-                    full-backlog window per domain (not a 7-day slice).
+                    <strong>Editorial</strong> — Packages flow Research →
+                    Narrative → Reduction → Editor; thin packages are closed.
                   </li>
                 </Box>
-                <DiscoverStorylinesButton
-                  domain={domain}
-                  onDone={loadStorylines}
-                />
+                <Button
+                  variant='contained'
+                  startIcon={<AddIcon />}
+                  onClick={handleCreateStoryline}
+                >
+                  Create episode
+                </Button>
               </>
             )}
         </Paper>
@@ -1242,7 +1189,7 @@ const Storylines: React.FC = () => {
           {/* Results Summary */}
           <Box mt={2}>
             <Typography variant='body2' color='text.secondary'>
-              Showing {storylines.length} of {totalStorylines} storylines
+              Showing {storylines.length} of {totalStorylines} episodes
             </Typography>
           </Box>
         </>

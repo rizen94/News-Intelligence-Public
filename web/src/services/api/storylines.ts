@@ -253,6 +253,8 @@ export const storylinesApi = {
       save?: boolean;
       minSimilarity?: number;
       minArticles?: number;
+      /** Full historical backlog — use async kickoff (sync exceeds proxy/client timeouts). */
+      async?: boolean;
     } = {},
     domain?: string
   ) {
@@ -265,15 +267,35 @@ export const storylinesApi = {
         queryParams.min_similarity = params.minSimilarity;
       if (params.minArticles != null)
         queryParams.min_cluster_size = params.minArticles;
+
+      if (params.async) {
+        const response = await getApi().post(
+          `/api/${domainKey}/storylines/discover_async`,
+          {},
+          { params: queryParams, timeout: 30000 }
+        );
+        return { ...response.data, async: true };
+      }
+
+      // Bounded windows can still take 1–2 min (embeddings + cluster).
+      // Keep under nginx proxy_read_timeout (120s) for general /api.
       const response = await getApi().post(
         `/api/${domainKey}/storylines/discover`,
         {},
-        { params: queryParams }
+        { params: queryParams, timeout: 110000 }
       );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to discover storylines', error as Error);
-      return { success: false, error: (error as any).message };
+      const msg = (error as any)?.message || String(error);
+      const timedOut =
+        /timeout/i.test(msg) || (error as any)?.code === 'ECONNABORTED';
+      return {
+        success: false,
+        error: timedOut
+          ? 'Discovery timed out. Use a shorter time window, or enable Full backlog (runs in the background).'
+          : msg,
+      };
     }
   },
 

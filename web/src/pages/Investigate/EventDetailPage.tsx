@@ -679,7 +679,7 @@ export default function EventDetailPage() {
             <Card variant='outlined'>
               <CardHeader
                 title='Event-core evidence'
-                subheader='Typed membership + domain facet storylines (quality-type megathread)'
+                subheader='Container index + episode facets (containers never own articles)'
                 titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
               />
               <CardContent sx={{ pt: 0 }}>
@@ -747,13 +747,13 @@ export default function EventDetailPage() {
             <Card variant='outlined'>
               <CardHeader
                 title='Event reconciliation'
-                subheader='Tracked event ↔ timeline atoms ↔ storylines'
+                subheader='Topic ↔ events ↔ episodes'
                 titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
               />
               <CardContent sx={{ pt: 0 }}>
                 {(reconciliation.storyline_refs?.length ?? 0) > 0 && (
                   <Typography variant='body2' sx={{ mb: 1 }}>
-                    Linked storylines:{' '}
+                    Linked episodes:{' '}
                     {reconciliation.storyline_refs?.map(r => (
                       <Chip
                         key={`${r.domain}-${r.storyline_id}`}
@@ -780,7 +780,7 @@ export default function EventDetailPage() {
                   </List>
                 ) : (
                   <Typography variant='body2' color='text.secondary'>
-                    No related chronological timeline atoms in reconciliation window.
+                    No related events in this window.
                   </Typography>
                 )}
                 {reconciliation.confidence && (
@@ -910,7 +910,7 @@ export default function EventDetailPage() {
                                 (d.context_id != null
                                   ? `Context #${d.context_id}`
                                   : d.storyline_id != null
-                                    ? `Storyline #${d.storyline_id}`
+                                    ? `Episode #${d.storyline_id}`
                                     : 'Related item');
                               const devDomain = d.domain_key || domain;
                               const href =

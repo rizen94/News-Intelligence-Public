@@ -53,7 +53,7 @@ export default function RollingArcsPage() {
   return (
     <PageShell
       title='Rolling 12‑month arcs'
-      subtitle='Mid-horizon coherence across the last year of storylines and timeline atoms'
+      subtitle='Mid-horizon coherence across the last year of episodes and events'
       breadcrumbs={[{ label: 'Arcs' }, { label: 'Rolling' }]}
       actions={
         <Button variant='outlined' onClick={refresh} disabled={refreshing}>

@@ -399,6 +399,20 @@ export const intelligenceApi = {
     }
   },
 
+      /** Daily report — moved episodes, published stories, quiet watch. */
+  async getDaily(domain?: string, date?: string) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(`/api/${domainKey}/daily`, {
+        params: date ? { date } : {},
+      });
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to get daily report', error as Error);
+      return { success: false, error: (error as Error).message };
+    }
+  },
+
   /** Report assembly: lead storylines (5W1H + key_actors), investigations, recent events, daily brief. */
   async getReport(domain?: string, leadLimit: number = 10) {
     try {
