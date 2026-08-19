@@ -64,6 +64,8 @@ def _ensure_worker_env() -> None:
     os.environ.setdefault("OLLAMA_DUAL_HOST_ROUTING_ENABLED", "false")
     os.environ.setdefault("AUTOMATION_DUAL_LANE", "false")
     os.environ.setdefault("BULK_DUAL_LANE_CATCHUP", "false")
+    os.environ.setdefault("OLLAMA_MODEL_EXTRACTION", "qwen3.6:latest")
+    os.environ.setdefault("OLLAMA_USE_QWEN_FOR_EXTRACTION", "true")
 
 
 def _db_unreachable_error_text(err: str) -> bool:
@@ -366,6 +368,20 @@ def main() -> int:
     _ensure_worker_env()
     if args.phases.strip():
         os.environ["WORKER_PHASES"] = args.phases.strip()
+
+    # Remap missing extraction tags (e.g. qwen2.5:7b → installed qwen3.6:latest).
+    try:
+        from shared.ollama_extraction_model_resolver import (
+            resolve_extraction_models_at_startup,
+        )
+
+        resolved = resolve_extraction_models_at_startup()
+        logger.info(
+            "extraction model resolve: %s",
+            resolved.get("resolved_model") or resolved,
+        )
+    except Exception as exc:
+        logger.warning("extraction model resolve failed (continuing): %s", exc)
 
     from shared.phase_idle_gate import PhaseIdleBackoff, idle_gate_enabled
     from shared.remote_phase_worker import is_remote_phase_worker_process, worker_phases

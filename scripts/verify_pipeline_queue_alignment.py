@@ -31,6 +31,43 @@ def _static_regressions() -> list[str]:
         if "spine_work_queues_enabled" in body and "return q" in body:
             errors.append(f"{fn_name} must not prefer spine queue over eligibility SQL")
 
+    # v11: corpus domains must never contribute research-phase backlog
+    dpm = API / "shared" / "domain_processing_mode.py"
+    if not dpm.is_file():
+        errors.append("missing shared/domain_processing_mode.py")
+    else:
+        dpm_text = dpm.read_text(encoding="utf-8")
+        for needle in (
+            "CORPUS_PHASES",
+            "RESEARCH_PHASES",
+            "def domain_runs_phase",
+            "def filter_domains_for_phase",
+        ):
+            if needle not in dpm_text:
+                errors.append(f"domain_processing_mode missing {needle}")
+        # Research phases that must be gated
+        for phase in (
+            "storyline_assembly",
+            "collision_sampling",
+            "protein_harden",
+            "editorial_room_loop",
+            "embedding_link_candidates",
+        ):
+            if f'"{phase}"' not in dpm_text and f"'{phase}'" not in dpm_text:
+                errors.append(f"RESEARCH_PHASES should include {phase}")
+
+    if "_count_claim_evidence_appraisal_pending" not in text:
+        errors.append("backlog_metrics missing _count_claim_evidence_appraisal_pending")
+    if "claim_evidence_appraisal" not in text:
+        errors.append("backlog_metrics must register claim_evidence_appraisal queue_depth")
+
+    # Static assertion helper used by unit tests / docs: corpus → zero research depth
+    corpus_gate = API / "shared" / "pipeline_domain_sql.py"
+    if corpus_gate.is_file():
+        cg = corpus_gate.read_text(encoding="utf-8")
+        if "pipeline_domain_keys_for_phase" not in cg and "domain_runs_phase" not in cg:
+            errors.append("pipeline_domain_sql should expose phase-aware domain helpers")
+
     for rel in (
         "services/spine_pipeline_conductor.py",
         "services/assembly_conductor_service.py",

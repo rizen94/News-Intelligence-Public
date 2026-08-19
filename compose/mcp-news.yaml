@@ -1,0 +1,45 @@
+version: '3.8'
+name: news-intel-mcp
+
+services:
+  obsidian-news-vault-mcp:
+    image: obsidian-news-vault-mcp:latest
+    container_name: widow-obsidian-news-vault-mcp
+    build:
+      context: /opt/news-intelligence
+      dockerfile: scripts/mcp_servers/Dockerfile.obsidian-vault
+    ports:
+      - "8001:8000"
+    environment:
+      OBSIDIAN_VAULT_PATH: /mnt/news-intelligence-vault
+      OBSIDIAN_MCP_ENABLED: "true"
+      OBSIDIAN_WRITE_ENABLED: "true"
+    volumes:
+      - /mnt/news-intelligence-vault:/mnt/news-intelligence-vault:ro
+    restart: unless-stopped
+    networks:
+      - news-intel-net
+
+  postgres-mcp:
+    image: crystaldba/postgres-mcp:latest
+    container_name: widow-postgres-mcp
+    ports:
+      - "8002:8000"
+    environment:
+      DATABASE_URI: "postgresql://newsapp:v4xB--yiRtQ5b1eact_l5K7jnq6mVPtw@172.18.0.1:5432/news_intel"
+    command:
+      - postgres-mcp
+      - --transport
+      - sse
+      - --sse-host
+      - "0.0.0.0"
+      - --sse-port
+      - "8000"
+    restart: unless-stopped
+    networks:
+      - news-intel-net
+
+networks:
+  news-intel-net:
+    external: true
+    name: news-intel-net

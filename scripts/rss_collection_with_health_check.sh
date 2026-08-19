@@ -4,13 +4,13 @@
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG_DIR="$HOME/logs/news_intelligence"
-API_URL="http://localhost:8000/api/system_monitoring/health"
+API_URL="http://localhost:8000/health"
 [ -f "\${PROJECT_DIR}/.env" ] && set -a && source "\${PROJECT_DIR}/.env" && set +a
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting RSS collection health check..." >> "$LOG_DIR/rss_collection.log"
 
 # Check if API server is running
-if ! curl -s -f --max-time 5 "$API_URL" > /dev/null 2>&1; then
+if ! curl -s -f --max-time 5 "http://localhost:8000/health" > /dev/null 2>&1; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ API server is not running or not healthy. Skipping RSS collection." >> "$LOG_DIR/rss_collection.log"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] API health check failed. Please ensure API server is running." >> "$LOG_DIR/rss_collection.log"
     exit 1

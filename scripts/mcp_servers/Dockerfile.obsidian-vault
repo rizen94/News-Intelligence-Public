@@ -1,0 +1,11 @@
+FROM python:3.12-slim
+
+WORKDIR /opt/obsidian-vault-mcp
+
+COPY scripts/mcp_servers/server.py /opt/obsidian-vault-mcp/src/server.py
+
+RUN pip install --no-cache-dir "mcp==1.12.4" fastapi uvicorn pydantic python-dotenv starlette sse-starlette
+
+EXPOSE 8000
+
+CMD ["python3", "-u", "/opt/obsidian-vault-mcp/src/server.py", "--transport", "sse", "--host", "0.0.0.0", "--port", "8000"]

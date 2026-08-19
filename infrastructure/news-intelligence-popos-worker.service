@@ -1,0 +1,40 @@
+# News Intelligence — PopOS phase worker.
+# Paths MUST be space-free. Installer links checkout → /opt/ni-popos-worker.
+#
+#   sudo ln -sfn "/home/pete/Documents/projects/News Intelligence" /opt/ni-popos-worker
+#   sudo cp infrastructure/news-intelligence-popos-worker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now news-intelligence-popos-worker
+#
+# Or: ./scripts/install_popos_phase_worker.sh
+
+[Unit]
+Description=News Intelligence PopOS phase worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pete
+Group=pete
+WorkingDirectory=/opt/ni-popos-worker
+Environment=PYTHONPATH=/opt/ni-popos-worker/api
+Environment=WORKER_EXECUTION_HOST=popos
+Environment=WORKER_PHASES=unified_intake_extraction
+Environment=OLLAMA_HOST=http://127.0.0.1:11434
+Environment=OLLAMA_DUAL_HOST_ROUTING_ENABLED=false
+Environment=AUTOMATION_DUAL_LANE=false
+Environment=BULK_DUAL_LANE_CATCHUP=false
+EnvironmentFile=-/opt/ni-popos-worker/.env
+EnvironmentFile=-/opt/ni-popos-worker/.env.popos_worker
+ExecStartPre=/bin/mkdir -p /opt/ni-popos-worker/logs
+ExecStart=/opt/ni-popos-worker/.venv/bin/python /opt/ni-popos-worker/scripts/run_popos_phase_worker.py
+Restart=always
+RestartSec=15
+TimeoutStartSec=120
+MemoryMax=24G
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=news-intelligence-popos-worker
+
+[Install]
+WantedBy=multi-user.target
