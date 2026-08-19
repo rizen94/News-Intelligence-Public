@@ -24,27 +24,10 @@ from shared.domain_registry import (  # noqa: E402
 from shared.episode_attach_gate import insert_event_episode_link  # noqa: E402
 from services.episode_merge_service import resolve_existing_episode  # noqa: E402
 from services.story_continuation_service import StoryContinuationService  # noqa: E402
+from shared.chronological_event_domain import resolve_chronological_event_domain_key  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("link_clustered_events")
-
-
-def _domain_for_event(conn, event_id: int) -> str | None:
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT a.domain_key
-            FROM public.chronological_events ce
-            JOIN public.articles a ON a.id = ce.source_article_id
-            WHERE ce.id = %s
-            LIMIT 1
-            """,
-            (int(event_id),),
-        )
-        row = cur.fetchone()
-        if row and row[0]:
-            return str(row[0])
-    return None
 
 
 def link_clusters(
@@ -112,7 +95,7 @@ def link_clusters(
                     episode_id, dk = int(linked[0]), str(linked[1])
 
             if not episode_id:
-                dk = dk or _domain_for_event(conn, int(root_id))
+                dk = dk or resolve_chronological_event_domain_key(conn, int(root_id))
                 if not dk:
                     stats["clusters_skipped"] += 1
                     continue
