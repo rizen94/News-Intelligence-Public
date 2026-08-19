@@ -52,7 +52,7 @@ def bridge_domain(domain_key: str, *, apply: bool, limit: int) -> dict:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, anchors, key_participant_entity_ids, domain_keys
+                SELECT id, event_name, anchors, key_participant_entity_ids, domain_keys
                 FROM intelligence.tracked_events
                 WHERE storyline_id IS NULL
                   AND %s = ANY(domain_keys)
@@ -63,24 +63,16 @@ def bridge_domain(domain_key: str, *, apply: bool, limit: int) -> dict:
             )
             rows = cur.fetchall() or []
 
-        for te_id, anchors_raw, participant_ids, domain_keys in rows:
+        for te_id, event_name, anchors_raw, participant_ids, domain_keys in rows:
             stats["scanned"] += 1
             event_anchors = _anchors_from_te(anchors_raw, participant_ids)
-            if not (event_anchors.get("identity") or event_anchors.get("supporting")):
+            te_name = (event_name or "").strip()
+            if not (event_anchors.get("identity") or event_anchors.get("supporting")) and len(te_name) < 12:
                 stats["skipped"] += 1
                 continue
 
             best_ep: int | None = None
             best_score = 0.0
-            te_name = ""
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT event_name FROM intelligence.tracked_events WHERE id = %s",
-                    (int(te_id),),
-                )
-                row_name = cur.fetchone()
-                te_name = (row_name[0] if row_name else "") or ""
-
             with conn.cursor() as cur:
                 cur.execute(
                     f"""

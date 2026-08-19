@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import sys
@@ -22,6 +23,7 @@ from shared.domain_registry import (  # noqa: E402
 )
 from shared.episode_attach_gate import insert_event_episode_link  # noqa: E402
 from services.episode_merge_service import resolve_existing_episode  # noqa: E402
+from services.story_continuation_service import StoryContinuationService  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("link_clustered_events")
@@ -50,12 +52,14 @@ def link_clusters(
     domain_key: str | None,
     apply: bool,
     limit_clusters: int,
+    allow_founding: bool = False,
 ) -> dict:
     stats = {
         "clusters_seen": 0,
         "events_linked": 0,
         "clusters_resolved": 0,
         "clusters_skipped": 0,
+        "clusters_founded": 0,
     }
 
     with get_db_connection_context() as conn:
@@ -140,6 +144,18 @@ def link_clusters(
                             conn, schema=schema, episode_ids=title_matches
                         )
 
+            if not episode_id and allow_founding and dk and apply:
+                schema = resolve_domain_schema(dk)
+                svc = StoryContinuationService(conn, schema=schema)
+
+                async def _found():
+                    return await svc.match_event_to_storyline(int(root_id))
+
+                founded = asyncio.run(_found())
+                if founded and founded.get("storyline_id"):
+                    episode_id = int(founded["storyline_id"])
+                    stats["clusters_founded"] += 1
+
             if not episode_id:
                 stats["clusters_skipped"] += 1
                 continue
@@ -192,6 +208,11 @@ def main() -> int:
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--limit-clusters", type=int, default=500)
+    ap.add_argument(
+        "--allow-founding",
+        action="store_true",
+        help="Found episode via continuation when cluster has no existing match",
+    )
     args = ap.parse_args()
     apply = bool(args.apply) and not args.dry_run
     if args.all:
@@ -201,6 +222,7 @@ def main() -> int:
                     domain_key=None,
                     apply=apply,
                     limit_clusters=args.limit_clusters,
+                    allow_founding=bool(args.allow_founding),
                 ),
                 indent=2,
             )
@@ -212,6 +234,7 @@ def main() -> int:
                     domain_key=args.domain,
                     apply=apply,
                     limit_clusters=args.limit_clusters,
+                    allow_founding=bool(args.allow_founding),
                 ),
                 indent=2,
             )
@@ -223,6 +246,7 @@ def main() -> int:
                     domain_key=None,
                     apply=apply,
                     limit_clusters=args.limit_clusters,
+                    allow_founding=bool(args.allow_founding),
                 ),
                 indent=2,
             )
