@@ -323,6 +323,7 @@ DEFAULT_AUTOMATION_PER_PHASE_CONCURRENT_CAP_PHASES = frozenset(
         "event_deduplication",
         "watchlist_alerts",
         "story_continuation",
+        "episode_assembly_maintenance",
         "ml_processing",
         "research_topic_refinement",
         "narrative_thread_build",
@@ -589,6 +590,7 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "event_extraction": 300,
     "event_deduplication": 120,
     "story_continuation": 300,
+    "episode_assembly_maintenance": 600,
     "timeline_generation": 300,
     "cache_cleanup": 60,
     "digest_generation": 180,
@@ -1307,6 +1309,18 @@ class AutomationManager:
                 "phase": 9,
                 "depends_on": ["event_deduplication"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["story_continuation"],
+            },
+            # PHASE 9c2: Orphan event→episode assembly (backfill + cluster link + TE bridge)
+            "episode_assembly_maintenance": {
+                "interval": 1800,  # 30 minutes — drains orphan clusters / unlinked CE
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 9,
+                "depends_on": ["story_continuation"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
+                    "episode_assembly_maintenance"
+                ],
             },
             # PHASE 9d: Timeline Generation (continuous until empty)
             "timeline_generation": {
@@ -2985,6 +2999,8 @@ class AutomationManager:
                 await self._execute_chronological_events_catchup(task)
             elif task.name == "story_continuation":
                 await self._execute_story_continuation_v5(task)
+            elif task.name == "episode_assembly_maintenance":
+                await self._execute_episode_assembly_maintenance(task)
             elif task.name == "watchlist_alerts":
                 await self._execute_watchlist_alerts_v5(task)
             elif task.name == "story_enhancement":
@@ -3196,6 +3212,7 @@ class AutomationManager:
             "storyline_membership_review",
             "storyline_hygiene",
             "story_continuation",
+            "episode_assembly_maintenance",
             "chronological_events_catchup",
         }
     )
@@ -3395,6 +3412,8 @@ class AutomationManager:
             return "Event extraction"
         if name == "story_continuation":
             return "Story continuation"
+        if name == "episode_assembly_maintenance":
+            return "Episode assembly maintenance (orphan backfill + clusters)"
         if name == "watchlist_alerts":
             return "Generating watchlist alerts"
         if name == "data_cleanup":
@@ -6842,6 +6861,62 @@ class AutomationManager:
                 )
             except Exception as hb_err:
                 logger.debug("story_continuation heartbeat: %s", hb_err)
+        finally:
+            conn.close()
+
+    async def _execute_episode_assembly_maintenance(self, task: Task):
+        """Drain orphan CE→episode links: backfill, cluster batch-link, TE bridge, EEL promote."""
+        from services.episode_assembly_maintenance_service import (
+            is_enabled,
+            run_episode_assembly_maintenance,
+        )
+        from services.pipeline_phase_heartbeat_service import record_phase_heartbeat
+
+        if not is_enabled():
+            logger.debug("episode_assembly_maintenance disabled (EPISODE_ASSEMBLY_MAINTENANCE_ENABLED)")
+            return
+
+        conn = await self._get_db_connection()
+        if not conn:
+            logger.warning("episode_assembly_maintenance: no DB connection")
+            return
+        try:
+            result = await run_episode_assembly_maintenance(conn, apply=True)
+            items = int(result.get("items_processed") or 0)
+            task.metadata = task.metadata or {}
+            task.metadata["items_processed"] = items
+            task.metadata["episode_assembly"] = result
+            await self._record_phase_batch_loop(
+                task,
+                loops_processed=1,
+                items_processed=items,
+                matched=int((result.get("continuation_backfill") or {}).get("matched") or 0),
+                founded=int((result.get("continuation_backfill") or {}).get("founded") or 0),
+                events_linked=int((result.get("cluster_link") or {}).get("events_linked") or 0),
+                te_bridged=int((result.get("te_bridge") or {}).get("bridged") or 0),
+            )
+            logger.info(
+                "episode_assembly_maintenance: items=%s matched=%s founded=%s cluster_linked=%s te=%s",
+                items,
+                (result.get("continuation_backfill") or {}).get("matched"),
+                (result.get("continuation_backfill") or {}).get("founded"),
+                (result.get("cluster_link") or {}).get("events_linked"),
+                (result.get("te_bridge") or {}).get("bridged"),
+            )
+            try:
+                record_phase_heartbeat(
+                    "episode_assembly_maintenance",
+                    scheduler_path="automation",
+                    success=True,
+                    items_processed=items,
+                    detail={"status": "complete", **{k: result.get(k) for k in (
+                        "continuation_backfill", "cluster_link", "te_bridge", "promote_eel"
+                    ) if result.get(k) is not None}},
+                )
+            except Exception as hb_err:
+                logger.debug("episode_assembly_maintenance heartbeat: %s", hb_err)
+        except Exception as e:
+            logger.warning("episode_assembly_maintenance failed: %s", e)
         finally:
             conn.close()
 

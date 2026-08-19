@@ -186,6 +186,14 @@ PHASE_POLICIES: dict[str, PhasePolicy] = {
     "story_continuation": PhasePolicy(
         Host.POPOS_GPU, Tier.BULK, "gpu", "gpu_heavy", requires_llm=True, default_batch=30
     ),
+    "episode_assembly_maintenance": PhasePolicy(
+        Host.WIDOW_DB,
+        Tier.BULK,
+        "cpu",
+        "db_heavy",
+        default_batch=200,
+        run_budget_seconds=900,
+    ),
   # Tier 3 — intelligence (bulk structure, defer heavy narrative)
     "entity_profile_build": PhasePolicy(
         # PopOS local Ollama (OLLAMA_PRIORITY=low) when remote-owned; else Widow CPU.
@@ -715,6 +723,7 @@ STRUCTURE_BAND_PHASES: frozenset[str] = frozenset(
         "chronological_events_catchup",
         "event_deduplication",
         "story_continuation",
+        "episode_assembly_maintenance",
         "editorial_research_pass",
         "editorial_narrative_pass",
         "editorial_reduction_pass",
@@ -751,6 +760,7 @@ _STRUCTURE_CATCHUP_PENDING_PHASES: frozenset[str] = frozenset(
         "chronological_events_catchup",
         "event_deduplication",
         "story_continuation",
+        "episode_assembly_maintenance",
         "editorial_research_pass",
         "editorial_narrative_pass",
         "editorial_reduction_pass",

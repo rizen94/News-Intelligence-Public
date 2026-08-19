@@ -213,6 +213,7 @@ BATCH_SIZE_PER_TASK: Dict[str, int] = {
     "entity_organizer": 100,
     "event_deduplication": 100,
     "story_continuation": 30,
+    "episode_assembly_maintenance": 500,
     "pending_db_flush": 200,  # rough lines replayed per successful flush (order-of-magnitude)
 }
 
@@ -310,6 +311,7 @@ RAW_PENDING_COUNT_KEYS = frozenset(
         "entity_organizer",
         "event_deduplication",
         "story_continuation",
+        "episode_assembly_maintenance",
         "chronological_events_catchup",
         "editorial_research_pass",
         "editorial_narrative_pass",
@@ -415,6 +417,7 @@ def _get_raw_pending_counts() -> Dict[str, int]:
         _set("entity_organizer", _count_entity_organizer_pending)
         _set("event_deduplication", _count_event_deduplication_pending)
         _set("story_continuation", _count_story_continuation_pending)
+        _set("episode_assembly_maintenance", _count_episode_assembly_maintenance_pending)
         _set("chronological_events_catchup", _count_chronological_events_catchup_pending)
         _set("editorial_research_pass", _count_editorial_research_pending)
         _set("editorial_narrative_pass", _count_editorial_narrative_pending)
@@ -2341,6 +2344,17 @@ def _count_story_continuation_pending() -> int:
             pass
 
 
+def _count_episode_assembly_maintenance_pending() -> int:
+    """Orphan event clusters still lacking any EEL (capped probe)."""
+    try:
+        from services.episode_assembly_maintenance_service import count_episode_assembly_pending
+
+        return count_episode_assembly_pending()
+    except Exception as e:
+        logger.debug("backlog episode_assembly_maintenance count: %s", e)
+        return 0
+
+
 def _count_chronological_events_catchup_pending() -> int:
     """UIE-complete articles missing chronological_events (CE restore backlog)."""
     try:
@@ -2632,6 +2646,7 @@ SKIP_WHEN_EMPTY = frozenset({
     "entity_organizer",
     "event_deduplication",
     "story_continuation",
+    "episode_assembly_maintenance",
     "chronological_events_catchup",
     "editorial_research_pass",
     "editorial_narrative_pass",
