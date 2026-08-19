@@ -8,11 +8,25 @@ from __future__ import annotations
 
 from collectors.public_event_upsert import PUBLIC_STORYLINE_PREFIX, public_storyline_id
 from shared.domain_registry import (
-    domain_key_to_schema,
     get_pipeline_active_domain_keys,
     is_valid_domain_key,
     resolve_domain_schema,
 )
+
+
+def _schema_has_table(conn, schema: str, table: str) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT EXISTS (
+              SELECT 1 FROM information_schema.tables
+              WHERE table_schema = %s AND table_name = %s
+            )
+            """,
+            (schema, table),
+        )
+        row = cur.fetchone()
+        return bool(row and row[0])
 
 
 def domain_from_storyline_id(storyline_id: str | None) -> str | None:
@@ -56,6 +70,8 @@ def resolve_chronological_event_domain_key(conn, event_id: int) -> str | None:
     if article_id:
         for dk in get_pipeline_active_domain_keys():
             schema = resolve_domain_schema(dk)
+            if not _schema_has_table(conn, schema, "articles"):
+                continue
             with conn.cursor() as cur:
                 cur.execute(
                     f"SELECT 1 FROM {schema}.articles WHERE id = %s LIMIT 1",
@@ -68,6 +84,8 @@ def resolve_chronological_event_domain_key(conn, event_id: int) -> str | None:
     if sl.isdigit():
         for dk in get_pipeline_active_domain_keys():
             schema = resolve_domain_schema(dk)
+            if not _schema_has_table(conn, schema, "storylines"):
+                continue
             with conn.cursor() as cur:
                 cur.execute(
                     f"SELECT 1 FROM {schema}.storylines WHERE id = %s LIMIT 1",
@@ -87,21 +105,32 @@ def resolve_chronological_event_domain_key(conn, event_id: int) -> str | None:
     return None
 
 
-def unlinked_event_domain_predicate(schema: str, domain_key: str) -> tuple[str, tuple]:
+def unlinked_event_domain_predicate(
+    conn, schema: str, domain_key: str
+) -> tuple[str, tuple]:
     """SQL fragment + params matching unlinked CE rows likely belonging to domain_key."""
     public_sl = public_storyline_id(domain_key)
-    sql = f"""(
-        EXISTS (
+    parts: list[str] = [f"ce.storyline_id = %s"]
+    params: list = [public_sl]
+
+    if _schema_has_table(conn, schema, "articles"):
+        parts.insert(
+            0,
+            f"""EXISTS (
             SELECT 1 FROM {schema}.articles a
             WHERE a.id = ce.source_article_id
+        )""",
         )
-        OR ce.storyline_id = %s
-        OR (
+    if _schema_has_table(conn, schema, "storylines"):
+        parts.append(
+            f"""(
             ce.storyline_id ~ '^[0-9]+$'
             AND EXISTS (
                 SELECT 1 FROM {schema}.storylines s
                 WHERE s.id::text = ce.storyline_id
             )
+        )"""
         )
-    )"""
-    return sql, (public_sl,)
+
+    sql = f"({' OR '.join(parts)})"
+    return sql, tuple(params)

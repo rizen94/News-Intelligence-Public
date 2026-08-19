@@ -34,13 +34,13 @@ logger = logging.getLogger("continuation_backfill")
 async def backfill_domain(domain_key: str, *, limit: int, apply: bool, force_recheck: bool) -> dict:
     schema = resolve_domain_schema(domain_key)
     stats = {"domain": domain_key, "processed": 0, "matched": 0, "founded": 0, "skipped": 0}
-
     recheck_sql, recheck_params = continuation_recheck_due_sql("ce")
-    domain_pred, domain_params = unlinked_event_domain_predicate(schema, domain_key)
-    recheck_clause = "TRUE" if force_recheck else recheck_sql
-    recheck_bind = () if force_recheck else recheck_params
 
     with get_db_connection_context() as conn:
+        domain_pred, domain_params = unlinked_event_domain_predicate(conn, schema, domain_key)
+        recheck_clause = "TRUE" if force_recheck else recheck_sql
+        recheck_bind = () if force_recheck else recheck_params
+
         with conn.cursor() as cur:
             cur.execute(
                 f"""
