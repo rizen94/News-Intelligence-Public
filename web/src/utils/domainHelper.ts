@@ -26,6 +26,8 @@ const FALLBACK_DOMAINS: Domain[] = [
   { key: 'artificial-intelligence', name: 'Artificial Intelligence', schema: 'artificial_intelligence' },
   { key: 'politics', name: 'Politics', schema: 'politics' },
   { key: 'finance', name: 'Finance', schema: 'finance' },
+  { key: 'environment-climate', name: 'Environment & Climate', schema: 'environment_climate' },
+  { key: 'neurodiversity', name: 'Neurodiversity', schema: 'neurodiversity' },
 ];
 
 let _cachedDomains: Domain[] | null = null;

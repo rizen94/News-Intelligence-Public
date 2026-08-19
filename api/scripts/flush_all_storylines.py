@@ -216,20 +216,24 @@ def flush_domain(cur, domain_key: str, schema: str, *, dry_run: bool) -> dict[st
     return stats
 
 
-def flush_globals(cur, *, dry_run: bool) -> dict[str, Any]:
+def flush_globals(cur, *, dry_run: bool, delete_events: bool) -> dict[str, Any]:
     stats: dict[str, Any] = {}
     if dry_run:
         cur.execute("SELECT COUNT(*)::int FROM public.chronological_events")
         stats["chronological_events"] = int(cur.fetchone()[0] or 0)
+        stats["events_will_delete"] = bool(delete_events)
         return stats
-    try:
-        cur.execute("TRUNCATE public.chronological_events CASCADE")
-        stats["chronological_events"] = "truncated"
-    except Exception as e:
-        logger.warning("chronological_events truncate: %s", e)
-        stats["chronological_events"] = _safe_delete(
-            cur, "DELETE FROM public.chronological_events"
-        )
+    if not delete_events:
+        stats["chronological_events"] = "skipped (pass --i-mean-delete-events)"
+    else:
+        try:
+            cur.execute("TRUNCATE public.chronological_events CASCADE")
+            stats["chronological_events"] = "truncated"
+        except Exception as e:
+            logger.warning("chronological_events truncate: %s", e)
+            stats["chronological_events"] = _safe_delete(
+                cur, "DELETE FROM public.chronological_events"
+            )
     for table in ("watchlist", "storyline_insights", "storyline_correlations"):
         n = _safe_delete(cur, f"DELETE FROM public.{table}")
         if n:
@@ -251,6 +255,12 @@ def main() -> int:
         help="Limit to domain key (repeatable). Default: all pipeline-active.",
     )
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--i-mean-delete-events",
+        action="store_true",
+        dest="delete_events",
+        help="Required with --apply to TRUNCATE public.chronological_events",
+    )
     args = parser.parse_args()
     dry_run = not args.apply
 
@@ -281,7 +291,9 @@ def main() -> int:
                 report["domains"][dk] = flush_domain(
                     cur, dk, schema, dry_run=dry_run
                 )
-            report["globals"] = flush_globals(cur, dry_run=dry_run)
+            report["globals"] = flush_globals(
+                cur, dry_run=dry_run, delete_events=bool(args.delete_events)
+            )
             if dry_run:
                 conn.rollback()
             else:

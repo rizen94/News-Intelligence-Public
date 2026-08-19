@@ -15,11 +15,19 @@ from .products import router as products_router
 from .quality import router as quality_router
 from .rag_queries import router as rag_router
 from .report import router as report_router
-from .desk_agent import router as desk_agent_router
 from .signals import router as signals_router
+from .narrative_enhancement import router as narrative_enhancement_router
+from .research_findings import router as research_findings_router
+from .editorial_packages import router as editorial_packages_router
+from .hub_facets import router as hub_facets_router
+from .episode_containers import router as episode_containers_router
+from .daily import router as daily_router
 
 router = APIRouter(tags=["Intelligence Hub"])
 router.include_router(hub_router)
+router.include_router(daily_router)
+router.include_router(hub_facets_router)
+router.include_router(episode_containers_router)
 router.include_router(analysis_router)
 router.include_router(rag_router)
 router.include_router(synthesis_router)
@@ -33,7 +41,9 @@ router.include_router(products_router)
 router.include_router(report_router)
 router.include_router(enrichment_router)
 router.include_router(longitudinal_router)
-router.include_router(desk_agent_router)
 router.include_router(signals_router)
+router.include_router(narrative_enhancement_router)
+router.include_router(research_findings_router)
+router.include_router(editorial_packages_router)
 
 __all__ = ["router"]

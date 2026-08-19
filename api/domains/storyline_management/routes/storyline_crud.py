@@ -53,6 +53,7 @@ async def validate_domain_dependency(domain: str = Path(..., pattern=DOMAIN_PATH
 
 
 @router.get("/{domain}/storylines", response_model=StorylineListResponse)
+@router.get("/{domain}/episodes", response_model=StorylineListResponse)
 async def get_domain_storylines(
     domain: str = Depends(validate_domain_dependency),
     page: int = Query(1, ge=1, description="Page number"),
@@ -266,6 +267,7 @@ async def create_domain_storyline(
 
 
 @router.get("/{domain}/storylines/{storyline_id}", response_model=StorylineDetailResponse)
+@router.get("/{domain}/episodes/{storyline_id}", response_model=StorylineDetailResponse)
 async def get_domain_storyline(
     domain: str = Depends(validate_domain_dependency),
     storyline_id: int = Path(..., description="Storyline ID", ge=1),

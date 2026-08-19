@@ -43,6 +43,7 @@ const PageFallback = () => (
 );
 
 const Dashboard = React.lazy(() => import('./pages/Dashboard/Dashboard'));
+const DailyPage = React.lazy(() => import('./pages/Daily/DailyPage'));
 const DiscoverPage = React.lazy(() => import('./pages/Discover/DiscoverPage'));
 const ContextDetailPage = React.lazy(() => import('./pages/Discover/ContextDetailPage'));
 const InvestigatePage = React.lazy(() => import('./pages/Investigate/InvestigatePage'));
@@ -58,10 +59,14 @@ const SpineBrowserPage = React.lazy(() => import('./pages/Investigate/SpineBrows
 const HypothesesPage = React.lazy(() => import('./pages/Investigate/HypothesesPage'));
 const EntityDossierPage = React.lazy(() => import('./pages/Investigate/EntityDossierPage'));
 const ArcCatalogPage = React.lazy(() => import('./pages/Arcs/ArcCatalogPage'));
+const ArcChroniclePage = React.lazy(() => import('./pages/Arcs/ArcChroniclePage'));
 const ArcSpinePage = React.lazy(() => import('./pages/Arcs/ArcSpinePage'));
 const ArcHeatmapPage = React.lazy(() => import('./pages/Arcs/ArcHeatmapPage'));
 const ArcWeeklyBriefsPage = React.lazy(() => import('./pages/Arcs/ArcWeeklyBriefsPage'));
 const RollingArcsPage = React.lazy(() => import('./pages/Arcs/RollingArcsPage'));
+const ResearchSubjectPage = React.lazy(() => import('./pages/Research/ResearchSubjectPage'));
+const KnowledgeProfilePage = React.lazy(() => import('./pages/Research/KnowledgeProfilePage'));
+const MatterDocketPage = React.lazy(() => import('./pages/Legal/MatterDocketPage'));
 const SignalsReviewPage = React.lazy(() => import('./pages/Finance/SignalsReviewPage'));
 const InvestigationOpsPage = React.lazy(() => import('./pages/Operations/InvestigationOpsPage'));
 const MonitorPage = React.lazy(() => import('./pages/Monitor/MonitorPage'));
@@ -83,18 +88,25 @@ const CongressTradingDashboard = React.lazy(
 );
 const Storylines = React.lazy(() => import('./pages/Storylines/Storylines'));
 const StorylineDetail = React.lazy(() => import('./pages/Storylines/StorylineDetail'));
-const StorylineDiscovery = React.lazy(() => import('./pages/Storylines/StorylineDiscovery'));
 const StorylineReviewQueue = React.lazy(() => import('./pages/Storylines/StorylineReviewQueue'));
 const SynthesizedView = React.lazy(() => import('./pages/Storylines/SynthesizedView'));
+const LEGACY_DESK_UI =
+  String(import.meta.env.VITE_LEGACY_DESK_UI ?? '0').toLowerCase() === '1' ||
+  String(import.meta.env.VITE_LEGACY_DESK_UI ?? '').toLowerCase() === 'true';
 const StoryTimeline = React.lazy(() => import('./pages/StoryTimeline/StoryTimeline'));
 const Articles = React.lazy(() => import('./pages/Articles/Articles'));
 const ArticleDetail = React.lazy(() => import('./pages/Articles/ArticleDetail'));
 const ArticleDeduplicationManager = React.lazy(() => import('./pages/Articles/ArticleDeduplicationManager'));
-const Briefings = React.lazy(() => import('./pages/Briefings/Briefings'));
 const RSSFeeds = React.lazy(() => import('./pages/RSSFeeds/RSSFeeds'));
 const Topics = React.lazy(() => import('./pages/Topics/Topics'));
 const Watchlist = React.lazy(() => import('./pages/Watchlist/Watchlist'));
 const Events = React.lazy(() => import('./pages/Events/Events'));
+const ResearchModalPage = React.lazy(() => import('./pages/Editorial/ResearchModalPage'));
+const NarrativeModalPage = React.lazy(() => import('./pages/Editorial/NarrativeModalPage'));
+const ReductionModalPage = React.lazy(() => import('./pages/Editorial/ReductionModalPage'));
+const EditorHomePage = React.lazy(() => import('./pages/Editorial/EditorHomePage'));
+const PackageDetailPage = React.lazy(() => import('./pages/Editorial/PackageDetailPage'));
+const NewsStoryPage = React.lazy(() => import('./pages/Editorial/NewsStoryPage'));
 
 function FinanceTracePlaceholder() {
   return (
@@ -123,7 +135,7 @@ const theme = createTheme({
 });
 
 function App() {
-  const defaultDomainPath = `/${getDefaultDomainKey()}/dashboard`;
+  const defaultDomainPath = `/${getDefaultDomainKey()}/daily`;
   useEffect(() => {
     // Clear one-shot stale-chunk reload guard after a successful boot
     try {
@@ -133,7 +145,7 @@ function App() {
     }
     errorHandler.initialize();
     loggingService.info('News Intelligence (Dashboard) initialized', {
-      version: '9.0',
+      version: '12.0.0',
       environment: import.meta.env.MODE || 'development',
     });
     return () => getAPIConnectionManager().cleanup();
@@ -154,7 +166,8 @@ function App() {
                   element={<Navigate to={defaultDomainPath} replace />}
                 />
                 <Route path='/:domain' element={<MainLayout />}>
-                  <Route index element={<Navigate to='dashboard' replace />} />
+                  <Route index element={<Navigate to='daily' replace />} />
+                  <Route path='daily' element={<DailyPage />} />
                   <Route path='dashboard' element={<Dashboard />} />
                   <Route path='discover' element={<DiscoverPage />} />
                   <Route
@@ -162,6 +175,7 @@ function App() {
                     element={<ContextDetailPage />}
                   />
                   <Route path='storylines' element={<Storylines />} />
+                  <Route path='episodes' element={<Storylines />} />
                   <Route
                     path='storylines/review-queue'
                     element={
@@ -172,21 +186,25 @@ function App() {
                   />
                   <Route
                     path='storylines/discovery'
-                    element={
-                      <DemoRouteGuard>
-                        <StorylineDiscovery />
-                      </DemoRouteGuard>
-                    }
+                    element={<Navigate to='../' relative='path' replace />}
                   />
-                  <Route
-                    path='storylines/:id/synthesized'
-                    element={<SynthesizedView />}
-                  />
+                  {LEGACY_DESK_UI ? (
+                    <Route
+                      path='storylines/:id/synthesized'
+                      element={<SynthesizedView />}
+                    />
+                  ) : (
+                    <Route
+                      path='storylines/:id/synthesized'
+                      element={<Navigate to='../' relative='path' replace />}
+                    />
+                  )}
                   <Route
                     path='storylines/:id/timeline'
                     element={<StoryTimeline />}
                   />
                   <Route path='storylines/:id' element={<StorylineDetail />} />
+                  <Route path='episodes/:id' element={<StorylineDetail />} />
                   <Route path='articles' element={<Articles />} />
                   <Route
                     path='articles/deduplication'
@@ -197,16 +215,46 @@ function App() {
                     }
                   />
                   <Route path='articles/:id' element={<ArticleDetail />} />
-                  <Route path='briefings' element={<Briefings />} />
+                  <Route
+                    path='briefings'
+                    element={<Navigate to='../daily' relative='path' replace />}
+                  />
                   <Route
                     path='report'
-                    element={<Navigate to='../briefings' replace />}
+                    element={<Navigate to='../daily' relative='path' replace />}
                   />
                   <Route path='arcs' element={<ArcCatalogPage />} />
                   <Route path='arcs/rolling' element={<RollingArcsPage />} />
                   <Route path='arcs/reports' element={<ArcWeeklyBriefsPage />} />
+                  <Route path='arcs/:arcId/chronicle' element={<ArcChroniclePage />} />
                   <Route path='arcs/:arcId/spine' element={<ArcSpinePage />} />
                   <Route path='arcs/:arcId/heatmap' element={<ArcHeatmapPage />} />
+                  <Route path='research/subjects' element={<ResearchSubjectPage />} />
+                  <Route
+                    path='research/profiles/:profileId'
+                    element={<KnowledgeProfilePage />}
+                  />
+                  <Route
+                    path='research/entities/:entityId/profile'
+                    element={<KnowledgeProfilePage />}
+                  />
+                  <Route path='research' element={<ResearchModalPage />} />
+                  <Route path='narrative' element={<NarrativeModalPage />} />
+                  <Route
+                    path='reduction'
+                    element={
+                      <DemoRouteGuard>
+                        <ReductionModalPage />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route path='editor' element={<EditorHomePage />} />
+                  <Route path='editor/packages/:packageId' element={<PackageDetailPage />} />
+                  <Route path='editor/stories/:storyId' element={<NewsStoryPage />} />
+                  <Route
+                    path='dockets/:storylineId'
+                    element={<MatterDocketPage />}
+                  />
                   <Route path='signals/review' element={<SignalsReviewPage />} />
                   <Route
                     path='rss_feeds'

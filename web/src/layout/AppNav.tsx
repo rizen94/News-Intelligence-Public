@@ -36,9 +36,10 @@ import LinkIcon from '@mui/icons-material/Link';
 import ScienceIcon from '@mui/icons-material/Science';
 import MemoryIcon from '@mui/icons-material/Memory';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
-import ExploreIcon from '@mui/icons-material/Explore';
 import HowToVoteIcon from '@mui/icons-material/HowToVote';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import EditNoteIcon from '@mui/icons-material/EditNote';
+import ContentCutIcon from '@mui/icons-material/ContentCut';
 import { usePublicDemoMode } from '../contexts/PublicDemoContext';
 import { getDefaultDomainKey } from '../utils/domainHelper';
 
@@ -59,9 +60,23 @@ type NavSection = { id: string; label: string; items: NavItem[] };
 
 const NAV_SECTIONS: NavSection[] = [
   {
+    id: 'desk',
+    label: 'Desk',
+    items: [
+      { path: 'articles', label: 'Intake', icon: <NewspaperIcon /> },
+      { path: 'research', label: 'Research', icon: <ScienceIcon /> },
+      { path: 'narrative', label: 'Narrative', icon: <AutoStoriesIcon /> },
+      { path: 'reduction', label: 'Reduction', icon: <ContentCutIcon />, demoHidden: true },
+      { path: 'editor', label: 'Editor', icon: <EditNoteIcon /> },
+    ],
+  },
+  {
     id: 'overview',
     label: 'Overview',
-    items: [{ path: 'dashboard', label: 'Dashboard', icon: <DashboardIcon /> }],
+    items: [
+      { path: 'daily', label: 'Daily', icon: <DashboardIcon /> },
+      { path: 'dashboard', label: 'Dashboard', icon: <DashboardIcon /> },
+    ],
   },
   {
     id: 'corpus',
@@ -75,13 +90,7 @@ const NAV_SECTIONS: NavSection[] = [
     id: 'stories',
     label: 'Stories',
     items: [
-      { path: 'storylines', label: 'Storylines', icon: <AutoStoriesIcon /> },
-      {
-        path: 'storylines/discovery',
-        label: 'Embedding catch-up',
-        icon: <ExploreIcon />,
-        demoHidden: true,
-      },
+      { path: 'storylines', label: 'Episodes', icon: <AutoStoriesIcon /> },
       {
         path: 'storylines/review-queue',
         label: 'Review queue',
@@ -94,8 +103,8 @@ const NAV_SECTIONS: NavSection[] = [
     id: 'signals',
     label: 'Signals',
     items: [
-      { path: 'topics', label: 'Topics (staging)', icon: <LabelIcon /> },
-      { path: 'events', label: 'Timeline atoms', icon: <EventNoteIcon /> },
+      { path: 'topics', label: 'Topics', icon: <LabelIcon /> },
+      { path: 'events', label: 'Events', icon: <EventNoteIcon /> },
     ],
   },
   {
@@ -118,7 +127,7 @@ const NAV_SECTIONS: NavSection[] = [
       },
       {
         path: 'investigate/spine-browser',
-        label: 'Spine browser',
+        label: 'Identity',
         icon: <ManageSearchIcon />,
       },
       { path: 'investigate/hypotheses', label: 'Hypotheses', icon: <ScienceIcon /> },
@@ -130,13 +139,18 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { path: 'arcs', label: 'Arc catalog', icon: <TimelineIcon />, exact: true },
       { path: 'arcs/rolling', label: 'Rolling 12m', icon: <TimelineIcon /> },
+      {
+        path: 'research/subjects',
+        label: 'Research subjects',
+        icon: <TimelineIcon />,
+      },
     ],
   },
   {
     id: 'outputs',
     label: 'Outputs',
     items: [
-      { path: 'briefings', label: 'Briefings', icon: <ArticleIcon /> },
+      { path: 'editor', label: 'News stories', icon: <ArticleIcon /> },
       { path: 'arcs/reports', label: 'Arc reports', icon: <NewspaperIcon /> },
     ],
   },
