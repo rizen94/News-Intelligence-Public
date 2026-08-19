@@ -22,7 +22,7 @@ echo ""
 ssh "${WIDOW_USER}@${WIDOW_HOST}" "sudo mkdir -p ${REMOTE_DIR} && sudo chown ${WIDOW_USER}:${WIDOW_USER} ${REMOTE_DIR}"
 
 # Rsync exclude patterns (match start_system.sh exclusions where relevant)
-rsync -avz --progress \
+rsync -avz --progress --no-perms --no-owner --no-group \
   --exclude='.venv' \
   --exclude='.venv.backup' \
   --exclude='__pycache__' \

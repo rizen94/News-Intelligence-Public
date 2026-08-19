@@ -15,5 +15,5 @@ if [[ "${SKIP_BUILD:-}" != "1" ]]; then
 fi
 
 echo "Rsync dist/ → ${WIDOW_USER}@${WIDOW_HOST}:${REMOTE_DIST}/"
-rsync -avz --delete "${ROOT}/web/dist/" "${WIDOW_USER}@${WIDOW_HOST}:${REMOTE_DIST}/"
+rsync -avz --delete --no-perms --no-owner --no-group "${ROOT}/web/dist/" "${WIDOW_USER}@${WIDOW_HOST}:${REMOTE_DIST}/"
 echo "Done. Open https://<your-public-hostname>/ on the LAN with curl -k for self-signed tests."
