@@ -519,6 +519,11 @@ async def run_episode_assembly_maintenance(
         bridged_total += int(br.get("bridged") or 0)
     out["te_bridge"] = {"bridged": bridged_total, "domains": bridge_results}
 
+    if env_bool("EPISODE_ASSEMBLY_GRAPH_PROJECTION", False):
+        from services.connection_query_service import refresh_assembly_graph_edges
+
+        out["graph_projection"] = refresh_assembly_graph_edges(apply=apply)
+
     out["items_processed"] = (
         cont_matched
         + cont_founded

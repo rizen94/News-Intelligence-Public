@@ -219,6 +219,19 @@ export const monitoringApi = {
     }
   },
 
+  /** Episode assembly linkage coverage (EEL %, orphan clusters, TE bridge). */
+  async getLinkageCoverage() {
+    try {
+      const response = await getApi().get('/api/system_monitoring/linkage_coverage', {
+        timeout: 30000,
+      });
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch linkage coverage', error as Error);
+      return { success: false, global: {}, domains: [], error: (error as any).message };
+    }
+  },
+
   /** Hourly GPU utilization + VRAM % (from nvidia-smi samples; requires migration 209). */
   async getGpuMetricHistory(hours: number = 72) {
     try {

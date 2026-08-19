@@ -610,6 +610,12 @@ export default function MonitorPage() {
   } | null>(null);
   const [processingPulse, setProcessingPulse] =
     useState<ProcessingPulseState | null>(null);
+  const [linkageCoverage, setLinkageCoverage] = useState<{
+    success?: boolean;
+    global?: Record<string, unknown>;
+    domains?: Array<Record<string, unknown>>;
+    error?: string;
+  } | null>(null);
   /** First full bundle (overview + pipeline + pulse) not yet finished. */
   const [initialLoad, setInitialLoad] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -755,6 +761,7 @@ export default function MonitorPage() {
     const pulseGpuResults = await Promise.allSettled([
       apiService.getProcessingProgress({ useBacklogSnapshot: true }),
       apiService.getGpuMetricHistory(72),
+      apiService.getLinkageCoverage(),
     ]);
     const results = [...pipelineResult, ...pulseGpuResults];
     const settledErr = (r: PromiseSettledResult<unknown>, label: string) =>
@@ -767,6 +774,7 @@ export default function MonitorPage() {
     const pulse =
       results[2].status === 'fulfilled' ? results[2].value : settledErr(results[2], 'processing_progress');
     const gpuH = results[3].status === 'fulfilled' ? results[3].value : null;
+    const linkCov = results[4].status === 'fulfilled' ? results[4].value : null;
     setPipeline(pipe ?? null);
     if (pulse && typeof pulse === 'object' && 'success' in pulse) {
       setProcessingPulse(prev => {
@@ -787,6 +795,9 @@ export default function MonitorPage() {
       setProcessingPulse(pulse ?? null);
     }
     setGpuMetricHistory(gpuH ?? null);
+    if (linkCov && typeof linkCov === 'object') {
+      setLinkageCoverage(linkCov as typeof linkageCoverage);
+    }
     const autoData = (
       autoEnvelope as {
         data?: {
@@ -1641,13 +1652,32 @@ export default function MonitorPage() {
                       size='small'
                       color={reviewPending > 0 ? 'warning' : 'default'}
                       variant='outlined'
-                      sx={{ mb: 1 }}
+                      sx={{ mb: 1, mr: 1 }}
                       label={`Storyline review queue · ${formatPulseCount(reviewPending)} pending`}
                       title={
                         domainBits
                           ? `Pending article suggestions awaiting approve/reject\n${domainBits}`
                           : 'Pending article suggestions awaiting approve/reject (storyline_review_agent)'
                       }
+                    />
+                  );
+                })()}
+                {(() => {
+                  const g = linkageCoverage?.global ?? {};
+                  const eelPct = g.eel_link_pct ?? '—';
+                  const orphans = g.orphan_clusters ?? '—';
+                  const tePct = g.te_bridge_pct ?? '—';
+                  const dupes = g.duplicate_title_groups ?? '—';
+                  return (
+                    <Chip
+                      size='small'
+                      color={
+                        typeof eelPct === 'number' && eelPct < 15 ? 'warning' : 'default'
+                      }
+                      variant='outlined'
+                      sx={{ mb: 1 }}
+                      label={`Linkage · EEL ${eelPct}% · orphans ${formatPulseCount(orphans)} · TE ${tePct}% · dup titles ${formatPulseCount(dupes)}`}
+                      title='Episode assembly coverage: event→episode links, orphan clusters, tracked-event bridge, duplicate-title episode groups'
                     />
                   );
                 })()}

@@ -1190,6 +1190,20 @@ def get_context_entity_coverage() -> dict[str, Any]:
         return {"success": False, "error": str(e)[:200], "data": None}
 
 
+@router.get("/linkage_coverage")
+@cached_response_sync(ttl=60)
+def get_linkage_coverage_endpoint() -> dict[str, Any]:
+    """
+    Episode assembly linkage coverage: EEL %, orphan clusters, TE bridge %, dup-title groups.
+    """
+    try:
+        from services.linkage_coverage_service import get_linkage_coverage
+
+        return get_linkage_coverage()
+    except Exception as e:
+        return {"success": False, "error": str(e)[:200], "global": {}, "domains": []}
+
+
 # ---------------------------------------------------------------------------
 # Devices: disk usage and processes (local now; remote via agent_url later)
 # ---------------------------------------------------------------------------

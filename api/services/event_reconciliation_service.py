@@ -286,3 +286,113 @@ def get_reconciliation_for_storyline(domain_key: str, storyline_id: int) -> dict
         "tracked_events": tracked,
         "chronological_events": chronological,
     }
+
+
+def get_connection_chain_for_tracked_event(tracked_event_id: int) -> dict[str, Any]:
+    """
+    Full read path: tracked_event → chronological cluster/events → episode (EEL) → narrative thread.
+    """
+    from services.connection_query_service import event_connections
+
+    base = get_reconciliation_for_tracked_event(tracked_event_id)
+    if not base or not base.get("found"):
+        return base or {"found": False, "tracked_event_id": tracked_event_id}
+
+    chains: list[dict[str, Any]] = []
+    seen_events: set[int] = set()
+    for ce_id in base.get("chronological_event_ids") or []:
+        cid = int(ce_id)
+        if cid in seen_events:
+            continue
+        seen_events.add(cid)
+        chains.append(event_connections(cid))
+
+    te_storyline = None
+    episode_chain: dict[str, Any] | None = None
+    try:
+        with get_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT storyline_id FROM intelligence.tracked_events WHERE id = %s",
+                    (int(tracked_event_id),),
+                )
+                row = cur.fetchone()
+                te_storyline = row[0] if row else None
+
+            ref = _parse_storyline_ref(str(te_storyline) if te_storyline else None)
+            if not ref and te_storyline and str(te_storyline).isdigit():
+                for dk in get_pipeline_active_domain_keys():
+                    schema = resolve_domain_schema(dk)
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            f"SELECT 1 FROM {schema}.storylines WHERE id = %s LIMIT 1",
+                            (int(te_storyline),),
+                        )
+                        if cur.fetchone():
+                            ref = {
+                                "domain": dk,
+                                "storyline_id": int(te_storyline),
+                                "schema": schema,
+                            }
+                            break
+
+            if ref:
+                schema = ref.get("schema") or resolve_domain_schema(str(ref["domain"]))
+                dk = str(ref["domain"])
+                sid = int(ref["storyline_id"])
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"SELECT title, status FROM {schema}.storylines WHERE id = %s",
+                        (sid,),
+                    )
+                    srow = cur.fetchone()
+                    cur.execute(
+                        """
+                        SELECT id, title, status FROM intelligence.narrative_threads
+                        WHERE domain_key = %s AND storyline_id = %s LIMIT 1
+                        """,
+                        (dk, sid),
+                    )
+                    trow = cur.fetchone()
+                    cur.execute(
+                        """
+                        SELECT ce.id FROM intelligence.event_episode_links eel
+                        JOIN public.chronological_events ce ON ce.id = eel.event_id
+                        WHERE eel.domain_key = %s AND eel.episode_id = %s
+                          AND eel.inference_stage <> 'quarantined'
+                        ORDER BY ce.extraction_timestamp DESC NULLS LAST
+                        LIMIT 10
+                        """,
+                        (dk, sid),
+                    )
+                    linked_ce = [int(r[0]) for r in cur.fetchall() or []]
+                episode_chain = {
+                    "domain_key": dk,
+                    "episode_id": sid,
+                    "episode_title": srow[0] if srow else None,
+                    "episode_status": srow[1] if srow else None,
+                    "narrative_thread": (
+                        {
+                            "narrative_thread_id": int(trow[0]),
+                            "title": trow[1],
+                            "status": trow[2],
+                        }
+                        if trow
+                        else None
+                    ),
+                    "linked_chronological_event_ids": linked_ce,
+                }
+                for ce_id in linked_ce:
+                    if ce_id not in seen_events:
+                        seen_events.add(ce_id)
+                        chains.append(event_connections(ce_id))
+    except Exception as exc:
+        logger.warning("get_connection_chain_for_tracked_event: %s", exc)
+
+    return {
+        **base,
+        "connection_chain": {
+            "tracked_event_episode": episode_chain,
+            "chronological_event_chains": chains,
+        },
+    }

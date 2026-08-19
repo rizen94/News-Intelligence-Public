@@ -1,6 +1,7 @@
 # Intelligence Hub — consolidated router
 from fastapi import APIRouter
 
+from .connections import router as connections_router
 from .tracking import router as tracking_router
 from .longitudinal import router as longitudinal_router
 from .content_synthesis import router as synthesis_router
@@ -32,6 +33,7 @@ router.include_router(analysis_router)
 router.include_router(rag_router)
 router.include_router(synthesis_router)
 router.include_router(context_centric_router)
+router.include_router(connections_router)
 router.include_router(tracking_router)
 router.include_router(entity_resolution_router)
 router.include_router(investigation_router)
