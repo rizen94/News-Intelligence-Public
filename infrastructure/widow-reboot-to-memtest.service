@@ -1,0 +1,21 @@
+# One-shot: reboot Widow into memtest86+ via grub-reboot (next boot only).
+# Timer: widow-reboot-to-memtest.timer (calendar absolute time; not recurring).
+# Script: /opt/news-intelligence/scripts/widow_reboot_to_memtest.sh
+
+[Unit]
+Description=Widow one-shot reboot into memtest86+ (NI stop + grub-reboot)
+Documentation=file:///opt/news-intelligence/scripts/widow_reboot_to_memtest.sh
+ConditionPathExists=!/run/systemd/shutdown/scheduled
+# Refuse if already completed this window
+ConditionPathExists=!/var/tmp/widow-reboot-to-memtest.done
+
+[Service]
+Type=oneshot
+User=pete
+Group=pete
+ExecStart=/opt/news-intelligence/scripts/widow_reboot_to_memtest.sh
+Nice=10
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target
