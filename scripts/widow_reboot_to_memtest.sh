@@ -30,6 +30,11 @@ BIOS_GRUB_FS_UUID="${WIDOW_BIOS_GRUB_FS_UUID:-a12a2d5c-0f35-4934-924f-02a89db9fd
 # USB root UUID — memtest binary + live /boot live here.
 USB_ROOT_FS_UUID="${WIDOW_USB_ROOT_FS_UUID:-435f4509-f615-45ec-b2ed-7b77ea8a70f9}"
 BIOS_GRUB_MNT="${WIDOW_BIOS_GRUB_MNT:-/mnt/widow-bios-grub}"
+# Never block the oneshot long enough for systemd TimeoutStartSec to kill mid-flight
+# after NI is already stopped (2026-09-16: CHECKPOINT hung → timeout → API left down).
+CHECKPOINT_TIMEOUT_SEC="${WIDOW_MEMTEST_CHECKPOINT_TIMEOUT_SEC:-30}"
+# Stale done/requested markers older than this are cleared so a future arm is not blocked.
+MARKER_MAX_AGE_HOURS="${WIDOW_MEMTEST_MARKER_MAX_AGE_HOURS:-36}"
 
 mkdir -p "$LOG_DIR"
 
@@ -48,6 +53,47 @@ notify() {
     -H "Tags: warning,computer" \
     -d "$body" \
     "${NTFY_BASE}/${NTFY_TOPIC}" >/dev/null 2>&1 || true
+}
+
+clear_stale_marker() {
+  # Remove path if missing, or if mtime is older than MARKER_MAX_AGE_HOURS.
+  local path="$1"
+  if [ ! -e "$path" ]; then
+    return 0
+  fi
+  local age_sec
+  age_sec=$(($(date +%s) - $(stat -c %Y "$path" 2>/dev/null || echo 0)))
+  local max_sec=$((MARKER_MAX_AGE_HOURS * 3600))
+  if [ "$age_sec" -ge "$max_sec" ]; then
+    log "clearing stale marker ${path} (age ${age_sec}s >= ${max_sec}s / ${MARKER_MAX_AGE_HOURS}h)"
+    rm -f "$path" 2>/dev/null || sudo -n rm -f "$path" 2>/dev/null || true
+  fi
+}
+
+postgres_checkpoint_best_effort() {
+  # Bound CHECKPOINT so a stuck psql session cannot consume TimeoutStartSec.
+  local rc=0
+  if ! command -v timeout >/dev/null 2>&1; then
+    if sudo -n -u postgres psql -c "CHECKPOINT;" >/dev/null 2>&1; then
+      log "postgres CHECKPOINT ok"
+    else
+      log "postgres CHECKPOINT skipped (not available)"
+    fi
+    return 0
+  fi
+  set +e
+  timeout --signal=TERM --kill-after=5 "${CHECKPOINT_TIMEOUT_SEC}" \
+    sudo -n -u postgres psql -c "CHECKPOINT;" >/dev/null 2>&1
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ]; then
+    log "postgres CHECKPOINT ok"
+  elif [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+    log "WARN: postgres CHECKPOINT timed out after ${CHECKPOINT_TIMEOUT_SEC}s (rc=${rc}) — continuing to grub-reboot"
+  else
+    log "postgres CHECKPOINT skipped (not available, rc=${rc})"
+  fi
+  return 0
 }
 
 cfg_has_memtest_title() {
@@ -96,6 +142,10 @@ set_next_entry_on_grubenv() {
   sudo -n grub-editenv "$envfile" list 2>/dev/null | tee -a "$LOG" || true
 }
 
+# Stale markers from an abandoned/failed window must not block a future arm.
+clear_stale_marker "$FLAG_DONE"
+clear_stale_marker "$MARKER"
+
 # Idempotent: if already fired successfully this window, do nothing.
 if [ -f "$FLAG_DONE" ]; then
   log "ABORT: done flag exists ($FLAG_DONE) — refusing second memtest reboot"
@@ -135,12 +185,9 @@ if systemctl is-active --quiet newsplatform-secondary 2>/dev/null; then
 fi
 sleep 8
 
-# 3. Checkpoint Postgres (leave PG/PgBouncer/nginx for systemd reboot stop).
-if sudo -n -u postgres psql -c "CHECKPOINT;" >/dev/null 2>&1; then
-  log "postgres CHECKPOINT ok"
-else
-  log "postgres CHECKPOINT skipped (not available)"
-fi
+# 3. Checkpoint Postgres (best-effort, bounded). Never block reboot on CHECKPOINT.
+#    Leave PG/PgBouncer/nginx for systemd reboot stop.
+postgres_checkpoint_best_effort
 
 # 4. Resolve memtest GRUB entry on live USB cfg (binary + canonical title live here).
 if ! sudo -n test -r "$GRUB_CFG"; then
