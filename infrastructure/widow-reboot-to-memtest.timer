@@ -1,14 +1,17 @@
-# Absolute one-shot: 2026-09-15 22:00 America/New_York (Widow local TZ = US/Eastern).
+# Absolute one-shot retry: 2026-09-16 01:14 America/New_York (Widow local TZ = US/Eastern).
 # Does NOT recur nightly. After fire, the script also disables this timer.
 # Cancel: sudo systemctl disable --now widow-reboot-to-memtest.timer
+#
+# Note: On Widow, BIOS GRUB is on the PNY SSD; the script sets next_entry there
+# (see scripts/widow_reboot_to_memtest.sh). Do not assume plain grub-reboot alone.
 
 [Unit]
-Description=Timer — one-shot Widow reboot to memtest86+ (2026-09-15 22:00 EDT)
+Description=Timer — one-shot Widow reboot to memtest86+ (2026-09-16 01:14 EDT retry)
 Documentation=file:///opt/news-intelligence/scripts/widow_reboot_to_memtest.sh
 
 [Timer]
 # Absolute calendar — fires once for this date/time only.
-OnCalendar=2026-09-15 22:00:00 America/New_York
+OnCalendar=2026-09-16 01:14:00 America/New_York
 AccuracySec=1min
 # Do not catch up after a missed window (avoid surprise reboot later).
 Persistent=false
