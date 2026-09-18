@@ -19,10 +19,48 @@ def distinct_article_count(members: list[_HasArticleIds]) -> int:
     return len(seen)
 
 
-def storyline_article_count_subquery(schema: str, storyline_alias: str = "s") -> str:
+def storyline_article_count_subquery(
+    schema: str,
+    storyline_alias: str = "s",
+    *,
+    domain_key: str | None = None,
+) -> str:
     """SQL scalar subquery: COUNT(*) for one storyline row."""
+    if domain_key:
+        try:
+            from shared.episode_attach_gate import episode_container_assembly_enabled
+
+            if episode_container_assembly_enabled():
+                from shared.episode_membership import episode_article_count_subquery
+
+                return episode_article_count_subquery(schema, storyline_alias, domain_key)
+        except Exception:
+            pass
     return (
         f"(SELECT COUNT(*)::int FROM {schema}.storyline_articles sa "
+        f"WHERE sa.storyline_id = {storyline_alias}.id)"
+    )
+
+
+def storyline_last_article_at_subquery(
+    schema: str,
+    storyline_alias: str = "s",
+    *,
+    domain_key: str | None = None,
+) -> str:
+    """SQL scalar subquery: latest article timestamp for one storyline row."""
+    if domain_key:
+        try:
+            from shared.episode_attach_gate import episode_container_assembly_enabled
+
+            if episode_container_assembly_enabled():
+                from shared.episode_membership import episode_last_article_at_subquery
+
+                return episode_last_article_at_subquery(schema, storyline_alias, domain_key)
+        except Exception:
+            pass
+    return (
+        f"(SELECT MAX(sa.added_at) FROM {schema}.storyline_articles sa "
         f"WHERE sa.storyline_id = {storyline_alias}.id)"
     )
 

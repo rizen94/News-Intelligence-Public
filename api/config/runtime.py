@@ -249,3 +249,70 @@ def unified_intake_extraction_parallel() -> int:
     if caps:
         n = min(n, min(caps))
     return max(1, min(16, n))
+
+
+# --- Pulse digest ---
+
+
+def pulse_default_window_hours() -> int:
+    return max(1, min(168, env_int("PULSE_WINDOW_HOURS", 48)))
+
+
+def pulse_default_limit() -> int:
+    return max(5, min(100, env_int("PULSE_LIMIT", 20)))
+
+
+def pulse_bonus_lifecycle_active() -> float:
+    return max(0.0, env_float("PULSE_BONUS_LIFECYCLE_ACTIVE", 3.0))
+
+
+def pulse_bonus_reactivation() -> float:
+    return max(0.0, env_float("PULSE_BONUS_REACTIVATION", 5.0))
+
+
+def pulse_bonus_new_episode() -> float:
+    return max(0.0, env_float("PULSE_BONUS_NEW_EPISODE", 2.0))
+
+
+def pulse_bonus_cross_domain() -> float:
+    return max(0.0, env_float("PULSE_BONUS_CROSS_DOMAIN", 1.5))
+
+
+def follow_living_cap() -> int:
+    return max(1, min(50, env_int("FOLLOW_LIVING_CAP", 15)))
+
+
+def living_republish_min_hours() -> int:
+    return max(1, env_int("LIVING_REPUBLISH_MIN_HOURS", 20))
+
+
+def living_republish_min_new_members() -> int:
+    return max(1, env_int("LIVING_REPUBLISH_MIN_NEW_MEMBERS", 3))
+
+
+def living_cooling_days() -> int:
+    return max(1, env_int("LIVING_COOLING_DAYS", 14))
+
+
+def pulse_stubs_enabled() -> bool:
+    return env_bool("PULSE_STUBS_ENABLED", False)
+
+
+def pulse_stubs_top_n() -> int:
+    return max(1, min(20, env_int("PULSE_STUBS_TOP_N", 10)))
+
+
+def external_research_ingest_enabled() -> bool:
+    return env_bool("EXTERNAL_RESEARCH_INGEST_ENABLED", True)
+
+
+def pulse_digest_enabled() -> bool:
+    return env_bool("PULSE_DIGEST_ENABLED", True)
+
+
+def follow_registry_enabled() -> bool:
+    return env_bool("FOLLOW_REGISTRY_ENABLED", True)
+
+
+def living_stories_enabled() -> bool:
+    return env_bool("LIVING_STORIES_ENABLED", True)
