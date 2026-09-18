@@ -36,6 +36,9 @@ SCAN_ROOTS: tuple[tuple[str, str], ...] = (
 )
 
 SKIP_PARTS = frozenset({"__pycache__", "_archived", "tests"})
+# Editor/agent debris such as api/services/<name>.py.tmp/ is gitignored but still on disk, and its
+# directory name is not a valid module path.
+SKIP_SUFFIXES = (".tmp", ".bak", ".orig", ".temp")
 
 
 def _module_names() -> list[str]:
@@ -46,6 +49,8 @@ def _module_names() -> list[str]:
             continue
         for path in sorted(base.rglob("*.py")):
             if SKIP_PARTS & set(path.parts) or path.name == "__init__.py":
+                continue
+            if any(part.endswith(SKIP_SUFFIXES) for part in path.parts):
                 continue
             rel = path.relative_to(base).with_suffix("")
             names.append(package + "." + ".".join(rel.parts))
