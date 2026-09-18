@@ -133,9 +133,9 @@ async def get_congress_trade_summary(
                     COUNT(DISTINCT politician_name) as unique_politicians,
                     COUNT(DISTINCT ticker) as unique_tickers,
                     COUNT(DISTINCT politician_bioguide_id) as unique_politicians_id,
-                    SUM(CASE WHEN transaction_type ILIKE '%purchase%' THEN 1 ELSE 0 END) as purchases,
-                    SUM(CASE WHEN transaction_type ILIKE '%sale%' THEN 1 ELSE 0 END) as sales,
-                    SUM(CASE WHEN transaction_type ILIKE '%exchange%' THEN 1 ELSE 0 END) as exchanges,
+                    SUM(CASE WHEN transaction_type ILIKE '%%purchase%%' THEN 1 ELSE 0 END) as purchases,
+                    SUM(CASE WHEN transaction_type ILIKE '%%sale%%' THEN 1 ELSE 0 END) as sales,
+                    SUM(CASE WHEN transaction_type ILIKE '%%exchange%%' THEN 1 ELSE 0 END) as exchanges,
                     SUM(CASE WHEN chamber ILIKE 'senate' THEN 1 ELSE 0 END) as senate_trades,
                     SUM(CASE WHEN chamber ILIKE 'house' THEN 1 ELSE 0 END) as house_trades,
                     MIN(filed_date) as earliest_trade,
@@ -152,8 +152,8 @@ async def get_congress_trade_summary(
                 SELECT politician_name, politician_bioguide_id, chamber, party, state,
                        COUNT(*) as trade_count,
                        COUNT(DISTINCT ticker) as unique_tickers,
-                       SUM(CASE WHEN transaction_type ILIKE '%purchase%' THEN 1 ELSE 0 END) as purchases,
-                       SUM(CASE WHEN transaction_type ILIKE '%sale%' THEN 1 ELSE 0 END) as sales,
+                       SUM(CASE WHEN transaction_type ILIKE '%%purchase%%' THEN 1 ELSE 0 END) as purchases,
+                       SUM(CASE WHEN transaction_type ILIKE '%%sale%%' THEN 1 ELSE 0 END) as sales,
                        MAX(filed_date) as latest_trade
                 FROM intelligence.quiver_congress_trades
                 WHERE filed_date >= %s
@@ -169,8 +169,8 @@ async def get_congress_trade_summary(
                 SELECT ticker, company_name,
                        COUNT(*) as trade_count,
                        COUNT(DISTINCT politician_name) as unique_politicians,
-                       SUM(CASE WHEN transaction_type ILIKE '%purchase%' THEN 1 ELSE 0 END) as purchases,
-                       SUM(CASE WHEN transaction_type ILIKE '%sale%' THEN 1 ELSE 0 END) as sales,
+                       SUM(CASE WHEN transaction_type ILIKE '%%purchase%%' THEN 1 ELSE 0 END) as purchases,
+                       SUM(CASE WHEN transaction_type ILIKE '%%sale%%' THEN 1 ELSE 0 END) as sales,
                        MAX(filed_date) as latest_trade
                 FROM intelligence.quiver_congress_trades
                 WHERE filed_date >= %s
@@ -186,8 +186,8 @@ async def get_congress_trade_summary(
                 SELECT party, 
                        COUNT(*) as trade_count,
                        COUNT(DISTINCT politician_name) as unique_politicians,
-                       SUM(CASE WHEN transaction_type ILIKE '%purchase%' THEN 1 ELSE 0 END) as purchases,
-                       SUM(CASE WHEN transaction_type ILIKE '%sale%' THEN 1 ELSE 0 END) as sales
+                       SUM(CASE WHEN transaction_type ILIKE '%%purchase%%' THEN 1 ELSE 0 END) as purchases,
+                       SUM(CASE WHEN transaction_type ILIKE '%%sale%%' THEN 1 ELSE 0 END) as sales
                 FROM intelligence.quiver_congress_trades
                 WHERE filed_date >= %s AND party IS NOT NULL
                 GROUP BY party
@@ -201,8 +201,8 @@ async def get_congress_trade_summary(
                 SELECT chamber, 
                        COUNT(*) as trade_count,
                        COUNT(DISTINCT politician_name) as unique_politicians,
-                       SUM(CASE WHEN transaction_type ILIKE '%purchase%' THEN 1 ELSE 0 END) as purchases,
-                       SUM(CASE WHEN transaction_type ILIKE '%sale%' THEN 1 ELSE 0 END) as sales
+                       SUM(CASE WHEN transaction_type ILIKE '%%purchase%%' THEN 1 ELSE 0 END) as purchases,
+                       SUM(CASE WHEN transaction_type ILIKE '%%sale%%' THEN 1 ELSE 0 END) as sales
                 FROM intelligence.quiver_congress_trades
                 WHERE filed_date >= %s AND chamber IS NOT NULL
                 GROUP BY chamber
@@ -297,8 +297,8 @@ async def get_politician_trades(
                 SELECT 
                     COUNT(*) as total_trades,
                     COUNT(DISTINCT ticker) as unique_tickers,
-                    SUM(CASE WHEN transaction_type ILIKE '%purchase%' THEN 1 ELSE 0 END) as purchases,
-                    SUM(CASE WHEN transaction_type ILIKE '%sale%' THEN 1 ELSE 0 END) as sales,
+                    SUM(CASE WHEN transaction_type ILIKE '%%purchase%%' THEN 1 ELSE 0 END) as purchases,
+                    SUM(CASE WHEN transaction_type ILIKE '%%sale%%' THEN 1 ELSE 0 END) as sales,
                     MIN(filed_date) as first_trade,
                     MAX(filed_date) as latest_trade,
                     chamber, party, state
@@ -361,8 +361,8 @@ async def get_ticker_congress_activity(
                 SELECT 
                     COUNT(*) as total_trades,
                     COUNT(DISTINCT politician_name) as unique_politicians,
-                    SUM(CASE WHEN transaction_type ILIKE '%purchase%' THEN 1 ELSE 0 END) as purchases,
-                    SUM(CASE WHEN transaction_type ILIKE '%sale%' THEN 1 ELSE 0 END) as sales,
+                    SUM(CASE WHEN transaction_type ILIKE '%%purchase%%' THEN 1 ELSE 0 END) as purchases,
+                    SUM(CASE WHEN transaction_type ILIKE '%%sale%%' THEN 1 ELSE 0 END) as sales,
                     SUM(CASE WHEN chamber ILIKE 'senate' THEN 1 ELSE 0 END) as senate_trades,
                     SUM(CASE WHEN chamber ILIKE 'house' THEN 1 ELSE 0 END) as house_trades,
                     MIN(filed_date) as earliest_trade,
