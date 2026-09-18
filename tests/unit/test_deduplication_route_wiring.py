@@ -98,3 +98,30 @@ def test_every_destructive_handler_calls_the_gate():
     src = inspect.getsource(mod)
     # One definition plus one call per destructive endpoint.
     assert src.count("require_destructive_ops_enabled()") == 1 + len(DESTRUCTIVE_PATHS)
+
+
+@pytest.mark.parametrize(
+    "handler,kwargs",
+    [
+        ("auto_merge_all_duplicates", {"dry_run": False}),
+        ("auto_merge_url_duplicates", {"dry_run": False}),
+        ("add_duplicate_prevention", {}),
+    ],
+)
+def test_destructive_handlers_refuse_before_touching_the_db(monkeypatch, handler, kwargs):
+    """The gate has to fire ahead of any connection, not inside the try/except that returns 500."""
+    import asyncio
+
+    from fastapi import HTTPException
+
+    mod = _dedup_module()
+    monkeypatch.delenv(mod.DESTRUCTIVE_OPS_ENV, raising=False)
+
+    def _no_db(*_a, **_kw):
+        raise AssertionError("handler reached the database despite the gate")
+
+    monkeypatch.setattr("shared.database.connection.get_db_connection", _no_db)
+
+    with pytest.raises(HTTPException) as excinfo:
+        asyncio.run(getattr(mod, handler)(**kwargs))
+    assert excinfo.value.status_code == 403
