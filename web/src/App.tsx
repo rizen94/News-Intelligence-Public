@@ -44,6 +44,8 @@ const PageFallback = () => (
 
 const Dashboard = React.lazy(() => import('./pages/Dashboard/Dashboard'));
 const DailyPage = React.lazy(() => import('./pages/Daily/DailyPage'));
+const PulsePage = React.lazy(() => import('./pages/Pulse/PulsePage'));
+const FollowingPage = React.lazy(() => import('./pages/Follows/FollowingPage'));
 const DiscoverPage = React.lazy(() => import('./pages/Discover/DiscoverPage'));
 const ContextDetailPage = React.lazy(() => import('./pages/Discover/ContextDetailPage'));
 const InvestigatePage = React.lazy(() => import('./pages/Investigate/InvestigatePage'));
@@ -65,6 +67,7 @@ const ArcHeatmapPage = React.lazy(() => import('./pages/Arcs/ArcHeatmapPage'));
 const ArcWeeklyBriefsPage = React.lazy(() => import('./pages/Arcs/ArcWeeklyBriefsPage'));
 const RollingArcsPage = React.lazy(() => import('./pages/Arcs/RollingArcsPage'));
 const ResearchSubjectPage = React.lazy(() => import('./pages/Research/ResearchSubjectPage'));
+const ResearchAssemblePage = React.lazy(() => import('./pages/Research/ResearchAssemblePage'));
 const KnowledgeProfilePage = React.lazy(() => import('./pages/Research/KnowledgeProfilePage'));
 const MatterDocketPage = React.lazy(() => import('./pages/Legal/MatterDocketPage'));
 const SignalsReviewPage = React.lazy(() => import('./pages/Finance/SignalsReviewPage'));
@@ -165,9 +168,26 @@ function App() {
                   path='/'
                   element={<Navigate to={defaultDomainPath} replace />}
                 />
+                <Route
+                  path='/pulse'
+                  element={<Navigate to={`/${getDefaultDomainKey()}/pulse`} replace />}
+                />
+                <Route
+                  path='/following'
+                  element={<Navigate to={`/${getDefaultDomainKey()}/following`} replace />}
+                />
                 <Route path='/:domain' element={<MainLayout />}>
                   <Route index element={<Navigate to='daily' replace />} />
                   <Route path='daily' element={<DailyPage />} />
+                  <Route path='pulse' element={<PulsePage />} />
+                  <Route
+                    path='following'
+                    element={
+                      <DemoRouteGuard>
+                        <FollowingPage />
+                      </DemoRouteGuard>
+                    }
+                  />
                   <Route path='dashboard' element={<Dashboard />} />
                   <Route path='discover' element={<DiscoverPage />} />
                   <Route
@@ -238,6 +258,7 @@ function App() {
                     path='research/entities/:entityId/profile'
                     element={<KnowledgeProfilePage />}
                   />
+                  <Route path='research/assemble' element={<ResearchAssemblePage />} />
                   <Route path='research' element={<ResearchModalPage />} />
                   <Route path='narrative' element={<NarrativeModalPage />} />
                   <Route

@@ -38,6 +38,7 @@ import MemoryIcon from '@mui/icons-material/Memory';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
 import HowToVoteIcon from '@mui/icons-material/HowToVote';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import BookmarkBorderIcon from '@mui/icons-material/BookmarkBorder';
 import EditNoteIcon from '@mui/icons-material/EditNote';
 import ContentCutIcon from '@mui/icons-material/ContentCut';
 import { usePublicDemoMode } from '../contexts/PublicDemoContext';
@@ -65,6 +66,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { path: 'articles', label: 'Intake', icon: <NewspaperIcon /> },
       { path: 'research', label: 'Research', icon: <ScienceIcon /> },
+      { path: 'research/assemble', label: 'Assemble', icon: <ScienceIcon /> },
       { path: 'narrative', label: 'Narrative', icon: <AutoStoriesIcon /> },
       { path: 'reduction', label: 'Reduction', icon: <ContentCutIcon />, demoHidden: true },
       { path: 'editor', label: 'Editor', icon: <EditNoteIcon /> },
@@ -75,6 +77,8 @@ const NAV_SECTIONS: NavSection[] = [
     label: 'Overview',
     items: [
       { path: 'daily', label: 'Daily', icon: <DashboardIcon /> },
+      { path: 'pulse', label: 'Pulse', icon: <TrendingUpIcon /> },
+      { path: 'following', label: 'Following', icon: <BookmarkBorderIcon />, demoHidden: true },
       { path: 'dashboard', label: 'Dashboard', icon: <DashboardIcon /> },
     ],
   },

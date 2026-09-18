@@ -19,14 +19,19 @@ from .report import router as report_router
 from .signals import router as signals_router
 from .narrative_enhancement import router as narrative_enhancement_router
 from .research_findings import router as research_findings_router
+from .research_assemble import router as research_assemble_router
 from .editorial_packages import router as editorial_packages_router
 from .hub_facets import router as hub_facets_router
 from .episode_containers import router as episode_containers_router
 from .daily import router as daily_router
+from .pulse import router as pulse_router
+from .follows import router as follows_router
 
 router = APIRouter(tags=["Intelligence Hub"])
 router.include_router(hub_router)
 router.include_router(daily_router)
+router.include_router(pulse_router)
+router.include_router(follows_router)
 router.include_router(hub_facets_router)
 router.include_router(episode_containers_router)
 router.include_router(analysis_router)
@@ -46,6 +51,7 @@ router.include_router(longitudinal_router)
 router.include_router(signals_router)
 router.include_router(narrative_enhancement_router)
 router.include_router(research_findings_router)
+router.include_router(research_assemble_router)
 router.include_router(editorial_packages_router)
 
 __all__ = ["router"]

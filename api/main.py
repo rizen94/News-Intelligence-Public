@@ -892,10 +892,21 @@ app = FastAPI(
 REQUEST_TIMEOUT_SECONDS = 30  # default ceiling; Monitor heavy routes get longer budgets below
 
 
-def _request_timeout_seconds(request: Request) -> float:
-    """Per-path timeout budget (Monitor SQL can exceed 30s under load)."""
-    path = (request.url.path or "").rstrip("/")
-    qs = str(request.url.query or "").lower()
+def resolve_request_timeout_seconds(
+    path: str,
+    method: str = "GET",
+    query: str = "",
+) -> float:
+    """
+    Per-path timeout budget (Monitor SQL can exceed 30s under load).
+
+    Pure helper so unit tests can assert path/method matching without importing
+    the FastAPI app. Sync investigation dossier POST is LLM-bound (180s);
+    cached GET stays on the default short ceiling.
+    """
+    path = (path or "").rstrip("/")
+    qs = str(query or "").lower()
+    method_u = (method or "GET").upper()
     if path.endswith("/processing_progress"):
         if "include_pending_metrics=true" in qs:
             return 300.0
@@ -910,7 +921,31 @@ def _request_timeout_seconds(request: Request) -> float:
         return 60.0
     if path.endswith("/sql_explorer/query"):
         return 120.0
+    # LLM interpret + retrieve/attach can exceed the default 30s ceiling.
+    if path.endswith("/research/assemble") or path.endswith("/research/interpret"):
+        return 180.0
+    if "/editorial/packages/" in path and path.endswith(
+        ("/research/run", "/narrative/run", "/reduction/run")
+    ):
+        return 180.0
+    # Sync investigation dossier POST (tracked event → Ollama) routinely exceeds 30s.
+    # Cached GET /tracked_events/{id}/report stays on REQUEST_TIMEOUT_SECONDS.
+    if (
+        method_u == "POST"
+        and "/tracked_events/" in path
+        and path.endswith("/report")
+    ):
+        return 180.0
     return float(REQUEST_TIMEOUT_SECONDS)
+
+
+def _request_timeout_seconds(request: Request) -> float:
+    """Per-path timeout budget from the live Request object."""
+    return resolve_request_timeout_seconds(
+        request.url.path or "",
+        method=request.method or "GET",
+        query=str(request.url.query or ""),
+    )
 
 
 @app.middleware("http")

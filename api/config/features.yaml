@@ -643,6 +643,24 @@ trading_signals:
     Event→ticker impact heuristics + GET /api/signals HITL review queue.
     No auto-execution.
 
+congress_trade_signals:
+  lifecycle: staged
+  enabled: true
+  introduced_in: "12.0.0"
+  modules:
+    - api/services/congress_trade_scoring_service.py
+    - api/services/congress_trade_signals_service.py
+    - api/domains/politics/routes/quiver_trades.py
+    - api/scripts/run_congress_trade_signals.py
+    - api/config/congress_trade_signals.yaml
+  flags:
+    env: CONGRESS_TRADE_SIGNALS_ENABLED
+  notes: >
+    Quiver congress trades → enrich → deterministic score → monthly paper vs SPY
+    → HITL trading_signals (metadata.source=congress_quiver). No live brokerage.
+    Requires migrations 265 + 300. Enable with FEATURE_OVERRIDE_CONGRESS_TRADE_SIGNALS=true
+    or FEATURE_STAGED_RUNTIME_ENABLED=true.
+
 event_core_membership:
   lifecycle: staged
   enabled: true
@@ -1021,3 +1039,69 @@ claim_evidence_appraisal:
   notes: >
     Corpus evidence appraisal → intelligence.claim_evidence_appraisal.
     Refusal contract: no quotes ⇒ insufficient_reporting.
+
+pulse_digest:
+  lifecycle: staged
+  enabled: true
+  introduced_in: "12.0.0"
+  modules:
+    - api/services/pulse_service.py
+    - api/domains/intelligence_hub/routes/pulse.py
+    - api/scripts/pulse_preview.py
+    - api/scripts/run_pulse_digest.py
+  flags:
+    env: PULSE_DIGEST_ENABLED
+  notes: >
+    Ranked episode/container movement digest. GET /api/pulse is read-only;
+    run_pulse_digest.py stamps follows and writes pulse_snapshots (migration 303).
+
+follow_registry:
+  lifecycle: staged
+  enabled: true
+  introduced_in: "12.0.0"
+  modules:
+    - api/services/follow_service.py
+    - api/domains/intelligence_hub/routes/follows.py
+  flags:
+    env: FOLLOW_REGISTRY_ENABLED
+  notes: >
+    Quiet vs living follow tiers. Mutating routes 403 on public demo host.
+    Migration 302 intelligence.followed_items.
+
+living_stories:
+  lifecycle: staged
+  enabled: true
+  introduced_in: "12.0.0"
+  modules:
+    - api/services/living_story_service.py
+    - api/scripts/living_story_cooling_sweep.py
+  flags:
+    env: LIVING_STORIES_ENABLED
+  notes: >
+    Living tier promotes episode follows to published packages with throttled
+    auto-republish (LIVING_REPUBLISH_MIN_HOURS / MIN_NEW_MEMBERS).
+
+external_research_ingest:
+  lifecycle: staged
+  enabled: true
+  introduced_in: "12.0.0"
+  modules:
+    - api/services/external_research_service.py
+    - api/domains/intelligence_hub/routes/editorial_packages.py
+  flags:
+    env: EXTERNAL_RESEARCH_INGEST_ENABLED
+  notes: >
+    POST /api/editorial/packages/{id}/external_research/attach — n8n/SearXNG
+    web captures as processed_document members with theme attach gate.
+
+pulse_stubs:
+  lifecycle: under_developed
+  enabled: false
+  introduced_in: "12.0.0"
+  modules:
+    - api/services/pulse_service.py
+  flags:
+    env: PULSE_STUBS_ENABLED
+  notes: >
+    Optional LLM movement stubs for pulse cards (default off). Cached in
+    pulse_snapshots only; never package prose.

@@ -8,6 +8,8 @@ export { topicsApi } from './topics';
 export { rssApi } from './rss';
 export { monitoringApi } from './monitoring';
 export { intelligenceApi } from './intelligence';
+export { pulseApi } from './pulse';
+export { followsApi } from './follows';
 export { financeAnalysisApi } from './financeAnalysis';
 export { contextCentricApi } from './contextCentric';
 export type {
