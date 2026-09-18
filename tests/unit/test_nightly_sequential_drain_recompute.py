@@ -3,9 +3,25 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
+import sys
 from unittest.mock import AsyncMock
 
-from services import nightly_ingest_window_service as nws
+
+def _import_nws():
+    """
+    Import the service with a real ``config.runtime``.
+
+    Several unit modules install partial ``config.runtime`` stubs into ``sys.modules`` at
+    collection time and never restore them, so a plain module-scope import here fails depending
+    on collection order.
+    """
+    for name in ("config.runtime", "config", "services.nightly_ingest_window_service"):
+        sys.modules.pop(name, None)
+    return importlib.import_module("services.nightly_ingest_window_service")
+
+
+nws = _import_nws()
 
 
 class _Automation:
