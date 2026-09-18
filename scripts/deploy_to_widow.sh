@@ -124,7 +124,7 @@ export PYTHONPATH=api
 if [ -f .db_password_widow ]; then
   export PGPASSWORD="\$(cat .db_password_widow | tr -d '\\n')"
 elif [ -f .env.public_demo ]; then
-  export PGPASSWORD="\$(grep -E '^DB_PASSWORD=' .env.public_demo | cut -d= -f2- | tr -d '\"' | tr -d \"'\")"
+  export PGPASSWORD="\$(grep -E '^DB_PASSWORD=' .env.public_demo | cut -d= -f2- | tr -d '"' | tr -d "'")"
 fi
 
 echo "Schema audit (politics/finance)..."
