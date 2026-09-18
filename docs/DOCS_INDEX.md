@@ -83,6 +83,7 @@ Use this index for **current** documentation. See **[../PROJECT_STATUS.md](../PR
 |-----|---------|
 | [DB_PRODUCTION_MAINTENANCE_RUNBOOK.md](DB_PRODUCTION_MAINTENANCE_RUNBOOK.md) | Prod maintenance, migrations ledger. |
 | [DATABASE_BACKUP.md](DATABASE_BACKUP.md) | Backup policy and scripts. |
+| [ORPHANED_DB_SURFACES.md](ORPHANED_DB_SURFACES.md) | Tables no code reads, the readiness checks, and the guarded drop migration. |
 
 ---
 

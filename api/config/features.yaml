@@ -990,6 +990,23 @@ pubmed_eutils_collector:
     NCBI E-utilities esearch/efetch; MeSH PublicationType → study_design.
     Optional NCBI_EMAIL / NCBI_API_KEY. Also NEURODIVERSITY_COLLECTORS_ENABLED.
 
+deduplication_destructive_ops:
+  lifecycle: incorporated
+  enabled: false
+  introduced_in: "12.0.0"
+  incorporated_in: "12.0.0"
+  replaces: []
+  replaced_by: null
+  modules:
+    - api/domains/content_analysis/routes/deduplication.py
+  flags:
+    env: DEDUPLICATION_DESTRUCTIVE_OPS_ENABLED
+  archive_path: null
+  notes: >
+    Gate on deduplication merge / auto_merge / prevent. Off by default: the router sat
+    outside /api until 2026-09 so these never ran here, and prevent executes DDL.
+    Read-only detect/exact/url/content/similar/stats are ungated.
+
 claim_evidence_appraisal:
   lifecycle: under_developed
   enabled: false
