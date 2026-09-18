@@ -54,8 +54,16 @@ def test_without_phase_every_pipeline_domain_is_kept(pds):
 
 def test_phase_narrows_to_domains_whose_band_runs_it(pds, monkeypatch):
     monkeypatch.setattr(
-        "shared.domain_processing_mode.filter_domains_for_phase",
-        lambda domains, phase: [d for d in domains if d != "neurodiversity"],
+        "shared.domain_registry.pipeline_url_schema_pairs",
+        lambda: (
+            ("politics", "politics"),
+            ("medicine", "medicine"),
+            ("neurodiversity", "nd"),
+        ),
+    )
+    monkeypatch.setattr(
+        "shared.domain_processing_mode.domain_runs_phase",
+        lambda dk, phase: dk != "neurodiversity",
     )
 
     _sql, keys = pds.pipeline_domain_any_sql(
@@ -66,13 +74,78 @@ def test_phase_narrows_to_domains_whose_band_runs_it(pds, monkeypatch):
 
 def test_no_eligible_domain_yields_false_and_no_params(pds, monkeypatch):
     monkeypatch.setattr(
-        "shared.domain_processing_mode.filter_domains_for_phase",
-        lambda domains, phase: [],
+        "shared.domain_registry.pipeline_url_schema_pairs",
+        lambda: (("politics", "politics"),),
+    )
+    monkeypatch.setattr(
+        "shared.domain_processing_mode.domain_runs_phase",
+        lambda dk, phase: False,
     )
 
     sql, keys = pds.pipeline_domain_any_sql("ep.domain_key", phase="corpus_only_phase")
     assert sql == "FALSE"
     assert keys == []
+
+
+def test_phase_filtered_helpers_exist_and_agree(pds, monkeypatch):
+    """
+    `pipeline_domain_keys_for_phase`, `pipeline_schema_names_for_phase`, and
+    `pipeline_url_schema_pairs_for_phase` were lost in the same v12 commits as the `phase` kwarg.
+    """
+    monkeypatch.setattr(
+        "shared.domain_registry.pipeline_url_schema_pairs",
+        lambda: (("politics", "politics"), ("neurodiversity", "neurodiversity")),
+    )
+    monkeypatch.setattr(
+        "shared.domain_processing_mode.domain_runs_phase",
+        lambda dk, phase: dk != "neurodiversity",
+    )
+
+    pairs = pds.pipeline_url_schema_pairs_for_phase("entity_profile_build")
+    assert pairs == [("politics", "politics")]
+    assert pds.pipeline_domain_keys_for_phase("entity_profile_build") == ["politics"]
+    assert pds.pipeline_schema_names_for_phase("entity_profile_build") == ["politics"]
+    # Callers annotate list[...]; returning tuples would still work but drifts from the contract.
+    assert isinstance(pairs, list)
+
+
+def test_no_phase_keeps_every_pipeline_domain(pds, monkeypatch):
+    monkeypatch.setattr(
+        "shared.domain_registry.pipeline_url_schema_pairs",
+        lambda: (("politics", "politics"), ("neurodiversity", "neurodiversity")),
+    )
+
+    assert pds.pipeline_domain_keys_for_phase() == ["politics", "neurodiversity"]
+
+
+def test_processing_mode_failure_fails_open(pds, monkeypatch):
+    monkeypatch.setattr(
+        "shared.domain_registry.pipeline_url_schema_pairs",
+        lambda: (("politics", "politics"), ("neurodiversity", "neurodiversity")),
+    )
+
+    def _boom(*_a, **_kw):
+        raise RuntimeError("processing_mode unavailable")
+
+    monkeypatch.setattr("shared.domain_processing_mode.domain_runs_phase", _boom)
+
+    # An efficiency filter must never narrow the pipeline to nothing when it cannot decide.
+    assert pds.pipeline_domain_keys_for_phase("entity_profile_build") == [
+        "politics",
+        "neurodiversity",
+    ]
+
+
+def test_committed_callers_of_the_for_phase_helpers_resolve():
+    """Exercise the real call sites that were raising ImportError on the live refine worker."""
+    from services.backlog_metrics import _pairs_for_phase, _schemas_for_phase
+    from services.entity_profile_builder_service import (
+        sql_entity_profile_upstream_cleared_exists,
+    )
+
+    assert isinstance(_pairs_for_phase("entity_profile_build"), list)
+    assert isinstance(_schemas_for_phase("entity_profile_build"), list)
+    assert "EXISTS" in sql_entity_profile_upstream_cleared_exists().upper()
 
 
 def test_every_committed_caller_signature_still_resolves():
