@@ -18,6 +18,55 @@ echo "Source: $PROJECT_DIR"
 echo "Target: ${WIDOW_USER}@${WIDOW_HOST}:${REMOTE_DIR}"
 echo ""
 
+# ---------------------------------------------------------------------------
+# Pre-flight: refuse rsync if this tree would shrink the live FastAPI surface.
+# Production previously grew via dirty-tree deploys; a clean checkout that is
+# missing uncommitted route modules would delete live endpoints on rsync.
+# ---------------------------------------------------------------------------
+_count_routes() {
+  local root="$1"
+  local py="${2:-python3}"
+  ( cd "$root" && PYTHONPATH=api "$py" -c '
+import sys
+paths = {getattr(r, "path", None) for r in __import__("main").app.routes}
+paths = {p for p in paths if p}
+print(len(paths))
+' )
+}
+
+echo "Pre-flight: comparing FastAPI route counts (deploy tree vs live Widow)..."
+LOCAL_ROUTES="$(_count_routes "$PROJECT_DIR" python3)" || {
+  echo "FAIL: could not import main / count routes in deploy tree: $PROJECT_DIR"
+  exit 1
+}
+REMOTE_PY='python3'
+if ssh "${WIDOW_USER}@${WIDOW_HOST}" "test -x ${REMOTE_DIR}/.venv/bin/python"; then
+  REMOTE_PY="${REMOTE_DIR}/.venv/bin/python"
+fi
+WIDOW_ROUTES="$(ssh "${WIDOW_USER}@${WIDOW_HOST}" \
+  "cd ${REMOTE_DIR} && PYTHONPATH=api ${REMOTE_PY} -c '
+paths={getattr(r,\"path\",None) for r in __import__(\"main\").app.routes}
+paths={p for p in paths if p}
+print(len(paths))
+'")" || {
+  echo "FAIL: could not count routes on live Widow (${WIDOW_USER}@${WIDOW_HOST}:${REMOTE_DIR})"
+  exit 1
+}
+
+echo "  Deploy tree routes: ${LOCAL_ROUTES}"
+echo "  Live Widow routes:  ${WIDOW_ROUTES}"
+if ! [[ "$LOCAL_ROUTES" =~ ^[0-9]+$ && "$WIDOW_ROUTES" =~ ^[0-9]+$ ]]; then
+  echo "FAIL: non-numeric route counts (local='${LOCAL_ROUTES}' widow='${WIDOW_ROUTES}')"
+  exit 1
+fi
+if (( LOCAL_ROUTES < WIDOW_ROUTES )); then
+  echo "FAIL: deploy tree has fewer FastAPI routes than live Widow (${LOCAL_ROUTES} < ${WIDOW_ROUTES})."
+  echo "      Refusing rsync — commit missing route modules (or deploy from a tree ≥ live) first."
+  exit 1
+fi
+echo "✅ Pre-flight OK (${LOCAL_ROUTES} ≥ ${WIDOW_ROUTES})"
+echo ""
+
 # Ensure remote directory exists
 ssh "${WIDOW_USER}@${WIDOW_HOST}" "sudo mkdir -p ${REMOTE_DIR} && sudo chown ${WIDOW_USER}:${WIDOW_USER} ${REMOTE_DIR}"
 
