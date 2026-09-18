@@ -153,6 +153,7 @@ def compute_readiness(
     *,
     package_status: str | None = None,
     reduction_cleared: bool = False,
+    package_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Checklist snapshot for Editor gate."""
     active = [m for m in members if m.get("status") == "active"]
@@ -174,11 +175,24 @@ def compute_readiness(
     )
     coverage = (citeable / len(active)) if active else 0.0
     status = (package_status or "").strip()
-    # in_editing alone is not clearance — need explicit cleared decision or ready_for_editor+.
-    cleared = bool(reduction_cleared) or status in (
-        "ready_for_editor",
-        "published",
-    )
+    # ready_for_editor is clearance; published is only cleared when membership
+    # has not drifted since the last odd-man-out prune stamp.
+    cleared = bool(reduction_cleared) or status == "ready_for_editor"
+    membership_drift = False
+    if status == "published":
+        from shared.editorial_package_attach_gate import membership_drifted_since_prune
+
+        membership_drift = membership_drifted_since_prune(
+            {
+                "status": status,
+                "metadata": package_metadata or {},
+                "members": members,
+            }
+        )
+        meta = package_metadata or {}
+        cleared = (not membership_drift) and bool(
+            meta.get("last_odd_man_out_at") or reduction_cleared
+        )
     research_brief_ready = has_claimish and citeable > 0
     event_narrative_ready = has_anchor and len(narrative) >= 1
     return {
@@ -195,5 +209,6 @@ def compute_readiness(
         "citation_coverage": round(coverage, 3),
         "contested_or_quarantined_count": len(quarantined),
         "reduction_cleared": cleared,
+        "membership_drift_since_prune": membership_drift if status == "published" else False,
         "package_status": status or None,
     }

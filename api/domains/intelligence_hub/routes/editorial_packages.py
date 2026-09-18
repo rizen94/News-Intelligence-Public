@@ -255,6 +255,7 @@ def api_add_member(
     provenance: dict[str, Any] | None = Body(None),
     metadata: dict[str, Any] | None = Body(None),
     actor: str = Body("operator"),
+    allow_reattach: bool = Body(False),
 ) -> dict[str, Any]:
     from services.editorial_package_service import add_member
 
@@ -271,6 +272,7 @@ def api_add_member(
             provenance=provenance,
             metadata=metadata,
             actor=actor,
+            allow_reattach=bool(allow_reattach),
         )
     except LookupError as e:
         _err(str(e), 404)
@@ -287,6 +289,7 @@ def api_set_member_status(
     actor: str = Body("operator", embed=True),
     modal: str = Body("reduction", embed=True),
     rationale: str | None = Body(None, embed=True),
+    flags: list[str] | None = Body(None, embed=True),
 ) -> dict[str, Any]:
     from services.editorial_package_service import set_member_status
 
@@ -298,6 +301,7 @@ def api_set_member_status(
             actor=actor,
             modal=modal,
             rationale=rationale,
+            flags=flags,
         )
     except ValueError as e:
         _err(str(e))
@@ -908,6 +912,29 @@ def api_merge_knowledge_profile_from_package(
         publish=bool(publish),
         regenerate=True,
     )
+    return _ok(result)
+
+
+@router.post("/packages/{package_id}/external_research/attach")
+def api_attach_external_research(
+    package_id: int = Path(..., ge=1),
+    items: list[dict[str, Any]] = Body(...),
+    actor: str = Body("n8n_external_research"),
+) -> dict[str, Any]:
+    """Attach SearXNG / vault-captured research as processed_document members.
+
+    Mutating — returns 403 on public demo host (expected).
+    """
+    from services.external_research_service import attach_external_research
+
+    if not items:
+        _err("items required")
+    try:
+        result = attach_external_research(int(package_id), items, actor=actor)
+    except LookupError as e:
+        _err(str(e), 404)
+    if not result.get("ok"):
+        _err(str(result.get("error") or "attach failed"))
     return _ok(result)
 
 

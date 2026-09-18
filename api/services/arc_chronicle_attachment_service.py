@@ -35,8 +35,11 @@ def load_chronicle_protein_attachments(
     if not arc:
         return {"success": False, "error": "arc_not_found", "arc_id": arc_id}
 
-    entity_qids = list(arc.get("primary_entity_qids") or [])
-    proteins = _load_linear_proteins(entity_qids, limit=max_proteins)
+    from services.arc_entity_resolution import resolve_arc_entity_names
+
+    entity_qids = [str(q).strip() for q in (arc.get("primary_entity_qids") or []) if str(q).strip()]
+    entity_names = resolve_arc_entity_names(arc)
+    proteins = _load_linear_proteins(entity_qids, entity_names, limit=max_proteins)
     protein_keys = {(p["domain_key"], int(p["storyline_id"])) for p in proteins}
     bonds = _load_established_bonds(protein_keys, limit=max_bonds)
     tracked = _load_tracked_events(protein_keys, limit=max_proteins)
@@ -49,11 +52,18 @@ def load_chronicle_protein_attachments(
         "established_bond_count": len(bonds),
         "tracked_events": tracked,
         "protein_count": len(proteins),
+        "match_mode": "qid_or_name" if entity_names else "qid_only",
     }
 
 
-def _load_linear_proteins(entity_qids: list[str], *, limit: int) -> list[dict[str, Any]]:
-    if not entity_qids:
+def _load_linear_proteins(
+    entity_qids: list[str],
+    entity_names: list[str] | None = None,
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    names = [n.lower().strip() for n in (entity_names or []) if n and str(n).strip()]
+    if not entity_qids and not names:
         return []
     out: list[dict[str, Any]] = []
     with get_ui_db_connection_context() as conn:
@@ -68,19 +78,49 @@ def _load_linear_proteins(entity_qids: list[str], *, limit: int) -> list[dict[st
             schema = resolve_domain_schema(dk)
             try:
                 with conn.cursor() as cur:
+                    # Soft join: QID when present, else name / alias match so
+                    # null wikidata_qid does not empty curated chronicles.
                     cur.execute(
                         f"""
                         SELECT DISTINCT s.id, s.title, s.status, s.updated_at,
                                COALESCE(s.total_articles, 0)
                         FROM {schema}.storylines s
                         JOIN {schema}.story_entity_index sei ON sei.storyline_id = s.id
-                        JOIN {schema}.entity_canonical ec
+                        LEFT JOIN {schema}.entity_canonical ec
                           ON lower(ec.canonical_name) = lower(sei.entity_name)
-                        WHERE ec.wikidata_qid = ANY(%s)
+                        WHERE (
+                          (
+                            %s::text[] IS NOT NULL AND cardinality(%s::text[]) > 0
+                            AND ec.wikidata_qid IS NOT NULL AND ec.wikidata_qid <> ''
+                            AND ec.wikidata_qid = ANY(%s)
+                          )
+                          OR (
+                            %s::text[] IS NOT NULL AND cardinality(%s::text[]) > 0
+                            AND (
+                              lower(sei.entity_name) = ANY(%s)
+                              OR lower(ec.canonical_name) = ANY(%s)
+                              OR EXISTS (
+                                SELECT 1
+                                FROM unnest(COALESCE(ec.aliases, ARRAY[]::text[])) AS al(alias)
+                                WHERE lower(al.alias) = ANY(%s)
+                              )
+                            )
+                          )
+                        )
                         ORDER BY s.updated_at DESC NULLS LAST
                         LIMIT %s
                         """,
-                        (entity_qids, limit),
+                        (
+                            entity_qids,
+                            entity_qids,
+                            entity_qids,
+                            names,
+                            names,
+                            names,
+                            names,
+                            names,
+                            limit,
+                        ),
                     )
                     for sid, title, status, updated_at, article_count in cur.fetchall():
                         out.append(

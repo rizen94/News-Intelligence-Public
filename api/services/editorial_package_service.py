@@ -45,6 +45,10 @@ def _row(cur) -> dict[str, Any] | None:
     return dict(zip(cols, r))
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def _rows(cur) -> list[dict[str, Any]]:
     cols = [d[0] for d in cur.description]
     return [dict(zip(cols, r)) for r in cur.fetchall()]
@@ -93,7 +97,7 @@ def _append_decision(
 def _refresh_readiness(cur, package_id: int) -> dict[str, Any]:
     cur.execute(
         """
-        SELECT id, member_family, member_type, role, status, provenance
+        SELECT id, member_family, member_type, role, status, provenance, added_at
         FROM intelligence.editorial_package_members
         WHERE package_id = %s
         """,
@@ -109,11 +113,14 @@ def _refresh_readiness(cur, package_id: int) -> dict[str, Any]:
     )
     links = _rows(cur)
     cur.execute(
-        "SELECT status FROM intelligence.editorial_packages WHERE id = %s",
+        "SELECT status, metadata FROM intelligence.editorial_packages WHERE id = %s",
         (package_id,),
     )
     status_row = cur.fetchone()
     package_status = status_row[0] if status_row else None
+    package_metadata = status_row[1] if status_row and len(status_row) > 1 else {}
+    if not isinstance(package_metadata, dict):
+        package_metadata = _as_dict(package_metadata) if package_metadata else {}
     cur.execute(
         """
         SELECT action FROM intelligence.editorial_package_decisions
@@ -130,6 +137,7 @@ def _refresh_readiness(cur, package_id: int) -> dict[str, Any]:
         links,
         package_status=package_status,
         reduction_cleared=reduction_cleared,
+        package_metadata=package_metadata,
     )
     cur.execute(
         """
@@ -506,7 +514,16 @@ def add_member(
     provenance: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
     actor: str = "operator",
+    allow_reattach: bool = False,
 ) -> dict[str, Any]:
+    """Attach or refresh a package member.
+
+    Sticky uncouple: if a row already exists with status ``removed`` /
+    ``quarantined``, it is **not** revived unless ``allow_reattach=True``
+    (operator / explicit rework). Prevents story_continuation from undoing
+    reduction. Returns ``reattach_blocked=True`` without writing a decision
+    (avoids decision-log spam on repeated seed refreshes).
+    """
     mt = (member_type or "").strip()
     if mt not in ALL_MEMBER_TYPES:
         raise ValueError(f"Invalid member_type: {mt}")
@@ -522,6 +539,10 @@ def add_member(
     _assert_modal_domain_allowed(added_by_modal, domain_key)
 
     from shared.editorial_package_evidence import hydrate_member_provenance
+    from shared.editorial_package_reattach import (
+        clear_suppress_from_metadata,
+        member_status_blocks_reattach,
+    )
 
     provenance = hydrate_member_provenance(
         member_type=mt,
@@ -538,6 +559,38 @@ def add_member(
             )
             if not cur.fetchone():
                 raise LookupError(f"Package {package_id} not found")
+
+            cur.execute(
+                """
+                SELECT id, status, metadata, role, provenance
+                FROM intelligence.editorial_package_members
+                WHERE package_id = %s
+                  AND member_family = %s
+                  AND member_type = %s
+                  AND member_id = %s
+                """,
+                (package_id, fam, mt, int(member_id)),
+            )
+            existing = _row(cur)
+            if existing and member_status_blocks_reattach(existing.get("status")):
+                if not allow_reattach:
+                    return {
+                        **existing,
+                        "reattach_blocked": True,
+                        "package_id": package_id,
+                    }
+                # Explicit reattach: clear suppress stamp, then fall through to upsert.
+                merged_meta = clear_suppress_from_metadata(
+                    {**(_as_dict(existing.get("metadata"))), **(_as_dict(metadata))}
+                )
+                metadata = merged_meta
+
+            write_meta = _as_dict(metadata)
+            if allow_reattach and existing:
+                write_meta = clear_suppress_from_metadata(
+                    {**(_as_dict(existing.get("metadata"))), **write_meta}
+                )
+
             cur.execute(
                 """
                 INSERT INTO intelligence.editorial_package_members
@@ -550,8 +603,15 @@ def add_member(
                     status = 'active',
                     provenance = EXCLUDED.provenance,
                     metadata = EXCLUDED.metadata,
-                    added_by_modal = COALESCE(EXCLUDED.added_by_modal, intelligence.editorial_package_members.added_by_modal),
-                    added_at = NOW()
+                    added_by_modal = COALESCE(
+                        EXCLUDED.added_by_modal,
+                        intelligence.editorial_package_members.added_by_modal
+                    ),
+                    added_at = CASE
+                        WHEN editorial_package_members.status IS DISTINCT FROM 'active'
+                        THEN NOW()
+                        ELSE editorial_package_members.added_at
+                    END
                 RETURNING *
                 """,
                 (
@@ -564,21 +624,31 @@ def add_member(
                     added_by_modal,
                     added_by,
                     _jsonb(provenance or {}),
-                    _jsonb(metadata or {}),
+                    _jsonb(write_meta),
                 ),
             )
             member = _row(cur)
             assert member is not None
-            _append_decision(
-                cur,
-                package_id=package_id,
-                action="member_added",
-                actor=actor,
-                modal=added_by_modal,
-                member_id=int(member["id"]),
-                rationale=f"Added {fam}/{mt}:{member_id}",
-                source_refs=provenance or {},
+            was_active_refresh = bool(
+                existing and (existing.get("status") or "") == "active" and not allow_reattach
             )
+            if not was_active_refresh:
+                action = "member_added"
+                _append_decision(
+                    cur,
+                    package_id=package_id,
+                    action=action,
+                    actor=actor,
+                    modal=added_by_modal,
+                    member_id=int(member["id"]),
+                    rationale=(
+                        f"Reattached {fam}/{mt}:{member_id} (allow_reattach)"
+                        if (existing and allow_reattach)
+                        else f"Added {fam}/{mt}:{member_id}"
+                    ),
+                    source_refs=provenance or {},
+                    metadata={"allow_reattach": True} if (existing and allow_reattach) else None,
+                )
             _sync_domain_keys(cur, package_id)
             readiness = _refresh_readiness(cur, package_id)
             conn.commit()
@@ -593,24 +663,64 @@ def set_member_status(
     actor: str = "operator",
     modal: str = "reduction",
     rationale: str | None = None,
+    flags: list[str] | None = None,
 ) -> dict[str, Any] | None:
     """Set package membership status (active|quarantined|removed).
 
     ``removed`` / ``quarantined`` only uncouple the member from this package.
     Underlying source rows (articles, events, entities, …) are never deleted.
+
+    When uncoupling with unrelated/geo/theme/entity flags, stamps
+    ``metadata.suppress_reattach`` so ``add_member`` and compose stay sticky.
     """
     if status not in MEMBER_STATUSES:
         raise ValueError(f"Invalid member status: {status}")
+
+    from shared.editorial_package_reattach import (
+        build_suppress_metadata,
+        clear_suppress_from_metadata,
+        flags_warrant_suppress,
+    )
+
     with get_ui_db_connection_context() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
+                SELECT id, status, metadata
+                FROM intelligence.editorial_package_members
+                WHERE id = %s AND package_id = %s
+                """,
+                (member_row_id, package_id),
+            )
+            prior = _row(cur)
+            if not prior:
+                return None
+
+            meta = _as_dict(prior.get("metadata"))
+            if status in ("removed", "quarantined") and flags_warrant_suppress(
+                flags, rationale
+            ):
+                stamp = build_suppress_metadata(
+                    flags=flags,
+                    rationale=rationale,
+                    actor=actor,
+                    modal=modal,
+                )
+                from datetime import datetime, timezone
+
+                stamp["suppress_at"] = datetime.now(timezone.utc).isoformat()
+                meta = {**meta, **stamp}
+            elif status == "active":
+                meta = clear_suppress_from_metadata(meta)
+
+            cur.execute(
+                """
                 UPDATE intelligence.editorial_package_members
-                SET status = %s
+                SET status = %s, metadata = %s::jsonb
                 WHERE id = %s AND package_id = %s
                 RETURNING *
                 """,
-                (status, member_row_id, package_id),
+                (status, _jsonb(meta), member_row_id, package_id),
             )
             member = _row(cur)
             if not member:
@@ -630,6 +740,12 @@ def set_member_status(
                 modal=modal,
                 member_id=member_row_id,
                 rationale=rationale or f"member status={status}",
+                metadata={
+                    "suppress_reattach": bool(meta.get("suppress_reattach")),
+                    "flags": list(flags or []),
+                }
+                if status in ("removed", "quarantined")
+                else None,
             )
             _sync_domain_keys(cur, package_id)
             readiness = _refresh_readiness(cur, package_id)
@@ -1125,6 +1241,22 @@ def _quote_from_sources(sources: Any) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _attachable_text_match(columns: list[str], query: str) -> tuple[str, list[Any]]:
+    """Build OR-matched SQL for attachable search.
+
+    Short single tokens (e.g. ICE) use word-boundary regex so ``ILIKE '%ICE%'``
+    cannot match substrings inside Justice/Police/office.
+    """
+    q = (query or "").strip()
+    if not q:
+        return ("FALSE", [])
+    if len(q) <= 4 and not any(c.isspace() for c in q):
+        pat = rf"\m{re.escape(q)}\M"
+        return (" OR ".join(f"{c} ~* %s" for c in columns), [pat] * len(columns))
+    like = f"%{q}%"
+    return (" OR ".join(f"{c} ILIKE %s" for c in columns), [like] * len(columns))
+
+
 def search_attachable(
     *,
     modal: str,
@@ -1384,15 +1516,16 @@ def search_attachable(
                             schema = resolve_domain_schema(dk)
                         except Exception:
                             continue
+                        title_sql, title_params = _attachable_text_match(["title"], query)
                         cur.execute(
                             f"""
                             SELECT id, title, url
                             FROM {schema}.articles
-                            WHERE title ILIKE %s
+                            WHERE {title_sql}
                             ORDER BY id DESC
                             LIMIT %s
                             """,
-                            (like, max(5, limit // max(1, len(domain_list)))),
+                            (*title_params, max(5, limit // max(1, len(domain_list)))),
                         )
                         for r in _rows(cur):
                             hits.append(
@@ -1415,25 +1548,58 @@ def search_attachable(
 
             if modal in narrative_modals:
                 try:
+                    from shared.domain_registry import resolve_domain_schema
+
+                    # Domain membership via source article schema — tags are ~99.7% empty,
+                    # so empty-tag fallthrough previously assigned politics to medicine papers.
+                    domain_exists: list[str] = []
+                    domain_case_arms: list[str] = []
+                    for dk in domain_list:
+                        try:
+                            schema = resolve_domain_schema(dk)
+                        except Exception:
+                            continue
+                        if not schema or not schema.replace("_", "").isalnum():
+                            continue
+                        domain_exists.append(
+                            f"EXISTS (SELECT 1 FROM {schema}.articles a "
+                            f"WHERE a.id = ce.source_article_id)"
+                        )
+                        domain_case_arms.append(
+                            f"WHEN EXISTS (SELECT 1 FROM {schema}.articles a "
+                            f"WHERE a.id = ce.source_article_id) THEN '{dk}'"
+                        )
+                    if not domain_exists:
+                        raise RuntimeError("no domain schemas for chrono filter")
+                    domain_sql = " OR ".join(domain_exists)
+                    resolved_dk_sql = (
+                        "CASE " + " ".join(domain_case_arms) + " ELSE NULL END"
+                    )
+                    text_sql, text_params = _attachable_text_match(
+                        ["ce.title", "ce.description", "ce.source_text"], query
+                    )
                     cur.execute(
-                        """
+                        f"""
                         SELECT ce.id, ce.title, ce.description, ce.actual_event_date,
                                ce.source_article_id, ce.source_text, ce.location,
-                               ce.tags, ce.key_actors
+                               ce.tags, ce.key_actors, ce.event_type,
+                               {resolved_dk_sql} AS resolved_domain_key
                         FROM public.chronological_events ce
-                        WHERE (ce.title ILIKE %s OR ce.description ILIKE %s
-                               OR ce.source_text ILIKE %s)
+                        WHERE ({text_sql})
+                          AND ({domain_sql})
                         ORDER BY ce.actual_event_date DESC NULLS LAST, ce.id DESC
                         LIMIT %s
                         """,
-                        (like, like, like, limit * 3),
+                        (*text_params, limit * 3),
                     )
                     event_count = 0
                     for r in _rows(cur):
                         tags = r.get("tags") or []
                         if not isinstance(tags, list):
                             tags = []
-                        dk = next((d for d in domain_list if d in tags), None)
+                        dk = str(r.get("resolved_domain_key") or "").strip() or None
+                        if not dk:
+                            dk = next((d for d in domain_list if d in tags), None)
                         if tags and dk is None and domain_list:
                             tagged_domains = [
                                 t
@@ -1452,7 +1618,8 @@ def search_attachable(
                                 t in domain_list for t in tagged_domains
                             ):
                                 continue
-                        dk = dk or (domain_list[0] if domain_list else None)
+                        if not dk:
+                            continue
                         source_text = (r.get("source_text") or "").strip()
                         quote = source_text[:500] if source_text else None
                         hits.append(
@@ -1581,14 +1748,49 @@ def attach_search_hits(
     modal: str,
     actor: str = "operator",
 ) -> list[dict[str, Any]]:
+    """Attach search hits with theme/geo gate (same spirit as storyline seed)."""
+    from shared.editorial_package_attach_gate import (
+        attach_allowed,
+        dominant_location_tokens_from_members,
+        storyline_title_from_package,
+    )
+
+    pkg = get_package(package_id, include=True) or get_package(package_id, include=False) or {}
+    title = str(pkg.get("working_title") or "")
+    stub = str(pkg.get("summary_stub") or "")
+    storyline_title = storyline_title_from_package(pkg) or None
+    dominant_geo = dominant_location_tokens_from_members(pkg.get("members") or [])
+
     added = []
+    skipped = 0
     for h in hits:
         prov = h.get("provenance") if isinstance(h.get("provenance"), dict) else {}
         if h.get("label") and not prov.get("label"):
             prov = {**prov, "label": str(h["label"])[:240]}
+        mt = str(h.get("member_type") or "")
+        ok, flags = attach_allowed(
+            title=title,
+            stub=stub,
+            provenance=prov,
+            dominant_geo=dominant_geo,
+            member_type=mt,
+            extra_text=str(h.get("label") or ""),
+            storyline_title=storyline_title,
+        )
+        if not ok:
+            skipped += 1
+            logger.info(
+                "attach_search_hits skip package=%s type=%s id=%s flags=%s label=%s",
+                package_id,
+                mt,
+                h.get("member_id"),
+                flags,
+                (h.get("label") or "")[:80],
+            )
+            continue
         member = add_member(
             package_id,
-            member_type=str(h["member_type"]),
+            member_type=mt,
             member_id=int(h["member_id"]),
             member_family=str(h.get("member_family") or ""),
             domain_key=h.get("domain_key"),
@@ -1598,7 +1800,20 @@ def attach_search_hits(
             provenance=prov,
             actor=actor,
         )
-        added.append(member)
+        if not member.get("reattach_blocked"):
+            added.append(member)
+            loc = prov.get("location")
+            if loc and not dominant_geo:
+                dominant_geo = dominant_location_tokens_from_members(
+                    [{"status": "active", "provenance": prov}]
+                )
+    if skipped:
+        logger.info(
+            "attach_search_hits theme-gate package=%s skipped=%s attached=%s",
+            package_id,
+            skipped,
+            len(added),
+        )
     # Promote draft packages into the modal queue on first attach.
     status_map = {
         "research": "in_research",
@@ -2144,8 +2359,17 @@ def _attach_storyline_seed_members(
     ``modal`` should be the destination rail (``research`` / ``narrative``) so a
     draft package is promoted into that queue after the first attach. Legacy
     ``intake`` remains accepted for provenance but does not promote.
+
+    Theme/geo/unrelated candidates are skipped (not suppressed) so kitchen-sink
+    storylines do not pollute membership; sources remain reusable elsewhere.
     """
+    from shared.editorial_package_attach_gate import (
+        attach_allowed,
+        dominant_location_tokens_from_members,
+    )
+
     added = 0
+    skipped_theme = 0
     article_urls: dict[int, str] = {
         int(a["id"]): (a.get("url") or "").strip()
         for a in (rows.get("articles") or [])
@@ -2157,19 +2381,72 @@ def _attach_storyline_seed_members(
         if c.get("id") is not None and c.get("article_id") is not None
     }
 
+    pkg = get_package(package_id, include=False) or {}
+    title = str(pkg.get("working_title") or "")
+    stub = str(pkg.get("summary_stub") or "")
+    storyline_title = str(rows.get("title") or "").strip()
+    existing = get_package(package_id) or {}
+    dominant_geo = dominant_location_tokens_from_members(existing.get("members") or [])
+
+    def _try_attach(
+        *,
+        member_type: str,
+        member_id: int,
+        member_family: str,
+        domain: str,
+        role: str,
+        provenance: dict[str, Any],
+    ) -> None:
+        nonlocal added, skipped_theme, dominant_geo
+        ok, flags = attach_allowed(
+            title=title,
+            stub=stub,
+            provenance=provenance,
+            dominant_geo=dominant_geo,
+            member_type=member_type,
+            storyline_title=storyline_title,
+        )
+        if not ok:
+            skipped_theme += 1
+            logger.info(
+                "storyline seed skip package=%s type=%s id=%s flags=%s",
+                package_id,
+                member_type,
+                member_id,
+                flags,
+            )
+            return
+        result = add_member(
+            package_id,
+            member_type=member_type,
+            member_id=member_id,
+            member_family=member_family,
+            domain_key=domain,
+            role=role,
+            added_by_modal=modal,
+            added_by=actor,
+            provenance=provenance,
+            actor=actor,
+        )
+        if not result.get("reattach_blocked"):
+            added += 1
+            # Refresh geo spine as local membership grows.
+            loc = provenance.get("location")
+            if loc and not dominant_geo:
+                dominant_geo = dominant_location_tokens_from_members(
+                    [{"status": "active", "provenance": provenance}]
+                )
+
     for a in rows.get("articles") or []:
         url = (a.get("url") or "").strip()
         if not url:
             continue
-        add_member(
-            package_id,
+        _try_attach(
             member_type="article",
             member_id=int(a["id"]),
             member_family=article_family,
-            domain_key=domain_key,
+            domain=domain_key,
             role="supporting",
-            added_by_modal=modal,
-            added_by=actor,
             provenance={
                 "label": (a.get("title") or "")[:240],
                 "source_url": url,
@@ -2177,22 +2454,17 @@ def _attach_storyline_seed_members(
                 "article_id": a["id"],
                 "legacy_seed": seed,
             },
-            actor=actor,
         )
-        added += 1
 
     for c in rows.get("contexts") or []:
         aid = c.get("article_id")
         url = article_urls.get(int(aid), "") if aid is not None else ""
-        add_member(
-            package_id,
+        _try_attach(
             member_type="context",
             member_id=int(c["id"]),
             member_family=article_family,
-            domain_key=c.get("domain_key") or domain_key,
+            domain=c.get("domain_key") or domain_key,
             role="supporting",
-            added_by_modal=modal,
-            added_by=actor,
             provenance={
                 "label": (c.get("title") or "")[:240],
                 "quote": (c.get("snippet") or "").strip()[:500] or None,
@@ -2200,23 +2472,18 @@ def _attach_storyline_seed_members(
                 "source_url": url or None,
                 "legacy_seed": seed,
             },
-            actor=actor,
         )
-        added += 1
 
     for cl in rows.get("claims") or []:
         ctx_id = cl.get("context_id")
         aid = ctx_article.get(int(ctx_id)) if ctx_id is not None else None
         url = article_urls.get(int(aid), "") if aid is not None else ""
-        add_member(
-            package_id,
+        _try_attach(
             member_type="extracted_claim",
             member_id=int(cl["id"]),
             member_family="research",
-            domain_key=domain_key,
+            domain=domain_key,
             role="core_claim",
-            added_by_modal=modal,
-            added_by=actor,
             provenance={
                 "label": (cl.get("text") or "")[:240],
                 "quote": (cl.get("text") or "")[:500] or None,
@@ -2225,23 +2492,18 @@ def _attach_storyline_seed_members(
                 "source_url": url or None,
                 "legacy_seed": seed,
             },
-            actor=actor,
         )
-        added += 1
 
     for ev in rows.get("events") or []:
         quote = (ev.get("source_text") or "").strip()[:500] or None
         aid = ev.get("source_article_id")
         url = article_urls.get(int(aid), "") if aid is not None else ""
-        add_member(
-            package_id,
+        _try_attach(
             member_type="chronological_event",
             member_id=int(ev["id"]),
             member_family="narrative",
-            domain_key=domain_key,
+            domain=domain_key,
             role="anchor_event",
-            added_by_modal=modal,
-            added_by=actor,
             provenance={
                 "label": (ev.get("title") or "")[:240],
                 "quote": quote,
@@ -2250,9 +2512,14 @@ def _attach_storyline_seed_members(
                 "location": ev.get("location"),
                 "legacy_seed": seed,
             },
-            actor=actor,
         )
-        added += 1
+    if skipped_theme:
+        logger.info(
+            "storyline seed theme-gate package=%s skipped=%s attached=%s",
+            package_id,
+            skipped_theme,
+            added,
+        )
 
     # Promote draft into the rail queue even when members were added via add_member
     # (attach_search_hits already does this; seed path needs the same).
