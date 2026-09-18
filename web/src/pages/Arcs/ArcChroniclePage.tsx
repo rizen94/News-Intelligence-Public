@@ -94,7 +94,7 @@ export default function ArcChroniclePage() {
           >
             {proteins.length === 0 ? (
               <Typography variant='body2' color='text.secondary'>
-                No linear-kind storylines linked via arc entity QIDs yet.
+                No linear-kind storylines linked via arc entities yet.
               </Typography>
             ) : (
               <Stack spacing={1}>
@@ -109,7 +109,7 @@ export default function ArcChroniclePage() {
                     <Chip size='small' label={p.story_kind ?? 'episode'} />
                     <Typography
                       component={RouterLink}
-                      to={`/${p.domain_key ?? domain}/stories/${p.storyline_id}`}
+                      to={`/${p.domain_key ?? domain}/storylines/${p.storyline_id}`}
                       variant='body2'
                       sx={{ textDecoration: 'none' }}
                     >

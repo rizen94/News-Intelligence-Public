@@ -108,7 +108,7 @@ export default function ResearchSubjectPage() {
                   <Typography
                     key={String(p.storyline_id)}
                     component={RouterLink}
-                    to={`/${dk}/stories/${p.storyline_id}`}
+                    to={`/${dk}/storylines/${p.storyline_id}`}
                     variant='body2'
                   >
                     {(p.title as string) || `Storyline ${p.storyline_id}`}

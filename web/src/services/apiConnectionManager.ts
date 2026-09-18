@@ -70,6 +70,13 @@ class APIConnectionManager {
             'public',
             'deduplication',
             'topics',
+            // Flat hub routes (must not become /api/{domain}/…)
+            'research',
+            'editorial',
+            'daily',
+            'connections',
+            'pulse',
+            'follows',
           ];
           const isGlobalRoute =
             globalApiPrefixes.includes(firstSegment) ||

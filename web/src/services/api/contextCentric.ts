@@ -14,10 +14,27 @@ function apiPath(absolutePath: string): string {
 }
 
 /** Use server origin (no path) so /api/tracked_events/... etc. resolve correctly when API base URL has a path. */
-function contextCentricConfig(): { baseURL?: string } {
+function contextCentricConfig(extra?: {
+  timeout?: number;
+  validateStatus?: (status: number) => boolean;
+}): {
+  baseURL?: string;
+  timeout?: number;
+  validateStatus?: (status: number) => boolean;
+} {
   const origin = getApiOrigin();
-  return origin ? { baseURL: origin } : {};
+  return {
+    ...(origin ? { baseURL: origin } : {}),
+    ...(extra?.timeout != null ? { timeout: extra.timeout } : {}),
+    ...(extra?.validateStatus ? { validateStatus: extra.validateStatus } : {}),
+  };
 }
+
+/** Match api/main.py resolve_request_timeout_seconds for POST /tracked_events/{id}/report (180s). */
+const INVESTIGATION_REPORT_TIMEOUT_MS = 180_000;
+/** Poll interval while an async dossier job is queued/running. */
+const INVESTIGATION_REPORT_POLL_MS = 2_500;
+const INVESTIGATION_REPORT_POLL_MAX_MS = 180_000;
 
 export interface EntityProfile {
   id: number;
@@ -769,14 +786,23 @@ export const contextCentricApi = {
 
   async getTrackedEventReport(eventId: number): Promise<{
     event_id: number;
-    report_md: string;
+    status?: 'queued' | 'running' | 'ready' | 'failed' | string;
+    report_md: string | null;
     generated_at: string | null;
     context_ids_included: number[];
     chronicle_count: number;
     context_count: number;
+    contexts_total?: number;
+    contexts_included?: number;
+    async?: boolean;
+    error?: string | null;
+    last_error?: string | null;
   } | null> {
     try {
-      const response = await getApi().get(apiPath(`/api/tracked_events/${eventId}/report`), contextCentricConfig());
+      const response = await getApi().get(
+        apiPath(`/api/tracked_events/${eventId}/report`),
+        contextCentricConfig({ timeout: 30_000 }),
+      );
       return response.data;
     } catch (error: unknown) {
       if (error && typeof error === 'object' && 'response' in error) {
@@ -789,6 +815,7 @@ export const contextCentricApi = {
 
   async generateTrackedEventReport(eventId: number): Promise<{
     success: boolean;
+    status?: 'queued' | 'running' | 'ready' | 'failed' | string;
     event_id?: number;
     event_name?: string;
     report_md?: string;
@@ -796,21 +823,98 @@ export const contextCentricApi = {
     context_ids_included?: number[];
     chronicle_count?: number;
     context_count?: number;
+    contexts_total?: number;
+    contexts_included?: number;
+    coherence?: Record<string, unknown>;
+    async?: boolean;
+    already_queued?: boolean;
     error?: string;
   }> {
     try {
-      const response = await getApi().post(apiPath(`/api/tracked_events/${eventId}/report`), undefined, contextCentricConfig());
-      return response.data;
+      const response = await getApi().post(
+        apiPath(`/api/tracked_events/${eventId}/report`),
+        undefined,
+        contextCentricConfig({
+          timeout: INVESTIGATION_REPORT_TIMEOUT_MS,
+          // Treat 202 Accepted (async enqueue) as success.
+          validateStatus: (status: number) =>
+            (status >= 200 && status < 300) || status === 202,
+        }),
+      );
+      const data = response.data || {};
+      const status = String(data.status || '').toLowerCase();
+      if (
+        response.status === 202 ||
+        status === 'queued' ||
+        status === 'running'
+      ) {
+        return {
+          success: true,
+          status: status || 'queued',
+          async: true,
+          event_id: data.event_id ?? eventId,
+          contexts_total: data.contexts_total,
+          already_queued: Boolean(data.already_queued),
+          error: data.error,
+        };
+      }
+      return data;
     } catch (error: unknown) {
-      const status = (error as { response?: { status?: number } })?.response?.status;
+      const ax = error as {
+        response?: { status?: number; data?: { message?: string; detail?: string } };
+        code?: string;
+        message?: string;
+      };
+      const status = ax?.response?.status;
       if (status === 404) {
         Logger.apiError('Report endpoint not found (404)', error as Error);
         throw new Error(
           'Report endpoint not found. Use the API server root as base URL (e.g. http://localhost:8000) and ensure context-centric routes are enabled.',
         );
       }
+      if (status === 504) {
+        const msg =
+          ax.response?.data?.message ||
+          ax.response?.data?.detail ||
+          'Report generation timed out. Try again, or wait for a cached report to appear.';
+        throw new Error(msg);
+      }
       return handleError('Failed to generate report', error) as never;
     }
+  },
+
+  /**
+   * Poll GET /tracked_events/{id}/report until status is ready|failed or timeout.
+   * Used after a 202 async enqueue for large containers.
+   */
+  async waitForTrackedEventReport(
+    eventId: number,
+    opts?: { intervalMs?: number; maxWaitMs?: number },
+  ): Promise<{
+    event_id: number;
+    status?: string;
+    report_md: string | null;
+    generated_at: string | null;
+    context_count: number;
+    contexts_total?: number;
+    contexts_included?: number;
+    error?: string | null;
+  } | null> {
+    const intervalMs = opts?.intervalMs ?? INVESTIGATION_REPORT_POLL_MS;
+    const maxWaitMs = opts?.maxWaitMs ?? INVESTIGATION_REPORT_POLL_MAX_MS;
+    const started = Date.now();
+    while (Date.now() - started < maxWaitMs) {
+      const report = await this.getTrackedEventReport(eventId);
+      if (!report) {
+        await new Promise(r => setTimeout(r, intervalMs));
+        continue;
+      }
+      const st = String(report.status || 'ready').toLowerCase();
+      if (st === 'ready' && report.report_md) return report;
+      if (st === 'failed') return report;
+      await new Promise(r => setTimeout(r, intervalMs));
+    }
+    return this.getTrackedEventReport(eventId);
   },
 
   async getClaims(params?: { context_id?: number; limit?: number; offset?: number }) {
@@ -1343,9 +1447,16 @@ export const contextCentricApi = {
     }
   },
 
-  /** @deprecated Prefer getArcChronicle */
   async getArcSpine(arcId: string): Promise<Record<string, unknown>> {
-    return this.getArcChronicle(arcId);
+    try {
+      const response = await getApi().get<{ success: boolean; data: Record<string, unknown> }>(
+        apiPath(`/api/intelligence/arcs/${encodeURIComponent(arcId)}/spine`),
+        contextCentricConfig(),
+      );
+      return response.data?.data ?? {};
+    } catch (error) {
+      return handleError('Failed to fetch arc spine', error);
+    }
   },
 
   async getResearchSubject(

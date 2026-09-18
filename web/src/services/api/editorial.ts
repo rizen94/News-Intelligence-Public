@@ -140,4 +140,15 @@ export const editorialApi = {
     actor?: string;
     publish?: boolean;
   }) => getApi().post('/api/editorial/knowledge_profiles/merge_from_package', body, cfg()),
+
+  attachExternalResearch: (
+    packageId: number,
+    items: Record<string, unknown>[],
+    actor = 'n8n_external_research'
+  ) =>
+    getApi().post(
+      `/api/editorial/packages/${packageId}/external_research/attach`,
+      { items, actor },
+      cfg()
+    ),
 };

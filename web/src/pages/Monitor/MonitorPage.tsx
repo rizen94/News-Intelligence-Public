@@ -1668,6 +1668,7 @@ export default function MonitorPage() {
                   const orphans = g.orphan_clusters ?? '—';
                   const tePct = g.te_bridge_pct ?? '—';
                   const dupes = g.duplicate_title_groups ?? '—';
+                  const discoveryOpen = g.discovery_findings_open ?? '—';
                   return (
                     <Chip
                       size='small'
@@ -1676,8 +1677,8 @@ export default function MonitorPage() {
                       }
                       variant='outlined'
                       sx={{ mb: 1 }}
-                      label={`Linkage · EEL ${eelPct}% · orphans ${formatPulseCount(orphans)} · TE ${tePct}% · dup titles ${formatPulseCount(dupes)}`}
-                      title='Episode assembly coverage: event→episode links, orphan clusters, tracked-event bridge, duplicate-title episode groups'
+                      label={`Linkage · EEL ${eelPct}% · orphans ${formatPulseCount(orphans)} · TE ${tePct}% · dup titles ${formatPulseCount(dupes)} · discovery ${formatPulseCount(discoveryOpen)}`}
+                      title='Episode assembly + discovery queue: EEL links, orphan clusters, TE bridge, duplicate titles, open connection findings'
                     />
                   );
                 })()}

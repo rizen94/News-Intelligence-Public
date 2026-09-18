@@ -1,16 +1,24 @@
 /**
  * Dedicated published news_story reader (final product surface).
+ * Also used for assemble handoff drafts (status=draft, research_brief).
  */
 import React, { useEffect, useState } from 'react';
-import { Link as RouterLink, useParams } from 'react-router-dom';
+import { Link as RouterLink, useLocation, useParams } from 'react-router-dom';
 import { Alert, Button, Stack } from '@mui/material';
 import { PageShell, UiCard, LoadingState } from '@/components/ui';
 import { editorialApi } from '@/services/api/editorial';
 import { unwrapData } from '@/services/api/editorialUnwrap';
 import NewsStoryReader, { type NewsStoryLike } from '@/components/Editorial/NewsStoryReader';
 
+type AssembleNavState = {
+  fromAssemble?: boolean;
+  package_id?: number | null;
+};
+
 export default function NewsStoryPage() {
   const { storyId, domain } = useParams<{ storyId: string; domain: string }>();
+  const location = useLocation();
+  const navState = (location.state || {}) as AssembleNavState;
   const id = Number(storyId);
   const dk = domain || 'politics';
   const [story, setStory] = useState<NewsStoryLike | null>(null);
@@ -60,22 +68,32 @@ export default function NewsStoryPage() {
         { label: `Story ${id}` },
       ]}
     >
+      {navState.fromAssemble || story.status === 'draft' ? (
+        <Alert severity='success' sx={{ mb: 2 }}>
+          {navState.fromAssemble
+            ? 'Assemble finished — this is your readable draft brief. Open the package to cite sources, edit in Composer, then Publish.'
+            : 'Draft manuscript — edit or publish from the package workspace.'}
+        </Alert>
+      ) : null}
       {error ? (
         <Alert severity='error' sx={{ mb: 2 }}>
           {error}
         </Alert>
       ) : null}
       <Stack direction='row' spacing={1} sx={{ mb: 2 }}>
-        {story.package_id ? (
+        {story.package_id || navState.package_id ? (
           <Button
             component={RouterLink}
-            to={`/${dk}/editor/packages/${story.package_id}`}
+            to={`/${dk}/editor/packages/${String(story.package_id || navState.package_id)}`}
             size='small'
-            variant='outlined'
+            variant='contained'
           >
-            Open package #{String(story.package_id)}
+            Open package #{String(story.package_id || navState.package_id)}
           </Button>
         ) : null}
+        <Button component={RouterLink} to={`/${dk}/research/assemble`} size='small' variant='outlined'>
+          Back to Assemble
+        </Button>
         <Button component={RouterLink} to={`/${dk}/editor`} size='small'>
           Editor home
         </Button>

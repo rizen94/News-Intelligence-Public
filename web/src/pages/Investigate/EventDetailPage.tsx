@@ -251,8 +251,11 @@ export default function EventDetailPage() {
     report_md: string;
     generated_at: string | null;
     context_count: number;
+    contexts_total?: number;
+    contexts_included?: number;
   } | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
+  const [reportJobStatus, setReportJobStatus] = useState<string | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
   const [reportSavedNote, setReportSavedNote] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -326,13 +329,24 @@ export default function EventDetailPage() {
     contextCentricApi
       .getTrackedEventReport(numId)
       .then(r => {
-        if (r)
+        if (r?.report_md) {
           setReport({
             report_md: r.report_md,
             generated_at: r.generated_at,
             context_count: r.context_count,
+            contexts_total: r.contexts_total,
+            contexts_included: r.contexts_included ?? r.context_count,
           });
-        else setReport(null);
+          const st = String(r.status || 'ready').toLowerCase();
+          setReportJobStatus(
+            st === 'queued' || st === 'running' ? st : null,
+          );
+        } else if (r && (r.status === 'queued' || r.status === 'running')) {
+          setReportJobStatus(String(r.status));
+        } else {
+          setReport(null);
+          setReportJobStatus(null);
+        }
       })
       .catch(() => setReport(null));
   }, [numId]);
@@ -409,14 +423,46 @@ export default function EventDetailPage() {
     setReportLoading(true);
     setReportError(null);
     setReportSavedNote(false);
+    setReportJobStatus(null);
     contextCentricApi
       .generateTrackedEventReport(numId)
-      .then(r => {
+      .then(async r => {
+        const st = String(r.status || '').toLowerCase();
+        if (r.async || st === 'queued' || st === 'running') {
+          setReportJobStatus(st || 'queued');
+          const finished = await contextCentricApi.waitForTrackedEventReport(numId);
+          if (finished?.report_md) {
+            setReport({
+              report_md: finished.report_md,
+              generated_at: finished.generated_at ?? null,
+              context_count:
+                finished.contexts_included ?? finished.context_count ?? 0,
+              contexts_total: finished.contexts_total,
+              contexts_included:
+                finished.contexts_included ?? finished.context_count,
+            });
+            setReportSavedNote(true);
+            setReportJobStatus(null);
+          } else if (String(finished?.status || '').toLowerCase() === 'failed') {
+            setReportError(
+              finished?.error || 'Background report generation failed',
+            );
+            setReportJobStatus(null);
+          } else {
+            setReportError(
+              'Report is still generating. Refresh this page in a minute.',
+            );
+            setReportJobStatus(finished?.status || 'running');
+          }
+          return;
+        }
         if (r.success && r.report_md) {
           setReport({
             report_md: r.report_md,
             generated_at: r.generated_at ?? null,
-            context_count: r.context_count ?? 0,
+            context_count: r.context_count ?? r.contexts_included ?? 0,
+            contexts_total: r.contexts_total,
+            contexts_included: r.contexts_included ?? r.context_count,
           });
           setReportSavedNote(true);
         } else {
@@ -958,7 +1004,13 @@ export default function EventDetailPage() {
                       report.generated_at
                         ? new Date(report.generated_at).toLocaleString()
                         : ''
-                    } from ${report.context_count} contexts`
+                    } from ${report.contexts_included ?? report.context_count} contexts${
+                      report.contexts_total != null &&
+                      report.contexts_total >
+                        (report.contexts_included ?? report.context_count)
+                        ? ` (of ${report.contexts_total} linked)`
+                        : ''
+                    }`
                   : 'Journalism-style dossier from chronicles and contexts'
               }
               action={
@@ -989,11 +1041,26 @@ export default function EventDetailPage() {
                 </Alert>
               )}
               {reportLoading && (
-                <Skeleton
-                  variant='rectangular'
-                  height={120}
-                  sx={{ borderRadius: 1 }}
-                />
+                <Box>
+                  <Skeleton
+                    variant='rectangular'
+                    height={120}
+                    sx={{ borderRadius: 1 }}
+                  />
+                  {reportJobStatus && (
+                    <Typography
+                      variant='body2'
+                      color='text.secondary'
+                      sx={{ mt: 1 }}
+                    >
+                      Background job {reportJobStatus}…
+                      {reportJobStatus === 'queued' ||
+                      reportJobStatus === 'running'
+                        ? ' Large containers generate asynchronously; this page will update when ready.'
+                        : null}
+                    </Typography>
+                  )}
+                </Box>
               )}
               {!reportLoading && report && (
                 <Box
@@ -1014,8 +1081,9 @@ export default function EventDetailPage() {
                 <Typography color='text.secondary'>
                   Generate a dossier that summarises this investigation with an
                   executive summary, timeline, key entities, sources, and what
-                  we know vs what&apos;s uncertain. Regenerate after new
-                  contexts are added to refresh the report.
+                  we know vs what&apos;s uncertain. Generation can take up to a
+                  couple of minutes (LLM). Regenerate after new contexts are
+                  added to refresh the report.
                 </Typography>
               )}
             </CardContent>
