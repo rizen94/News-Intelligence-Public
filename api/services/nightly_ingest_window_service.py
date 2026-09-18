@@ -386,7 +386,6 @@ async def _drain_sequential_phase(
     max_backlog_loops: int,
     stats: dict[str, Any],
 ) -> None:
-    from services.backlog_metrics import invalidate_backlog_metrics_cache
     from services.nightly_phase_idle import is_single_pass_phase, phase_has_pending_work
 
     if is_single_pass_phase(phase_name):
@@ -402,8 +401,10 @@ async def _drain_sequential_phase(
 
     phase_max_loops = _phase_loop_cap(phase_name, max_backlog_loops)
     i = 0
+    # phase_has_pending_work() already invalidates the backlog caches and recomputes every raw
+    # pending count (~50 COUNT queries), so check once per iteration: the top-of-loop check is the
+    # post-run check for the previous iteration.
     while i < phase_max_loops and window_active():
-        invalidate_backlog_metrics_cache()
         if not phase_has_pending_work(phase_name):
             logger.debug("Nightly sequential %s: no backlog — advancing to next phase", phase_name)
             break
@@ -414,14 +415,6 @@ async def _drain_sequential_phase(
         stats["sequential_phase_runs"] = stats.get("sequential_phase_runs", 0) + 1
         stats.setdefault("sequential_by_phase", {})
         stats["sequential_by_phase"][phase_name] = stats["sequential_by_phase"].get(phase_name, 0) + 1
-
-        invalidate_backlog_metrics_cache()
-        if not phase_has_pending_work(phase_name):
-            logger.debug(
-                "Nightly sequential %s: backlog cleared after run — advancing to next phase",
-                phase_name,
-            )
-            break
 
 
 async def run_nightly_unified_pipeline_drain(
@@ -515,6 +508,8 @@ async def run_nightly_unified_pipeline_drain(
 
             # --- Enrichment ---
             enrich_i = 0
+            # One backlog recompute per iteration: the top-of-loop check is also the post-batch
+            # check for the previous iteration.
             while enrich_i < max_enrich_loops and window_active():
                 invalidate_backlog_metrics_cache()
                 try:
@@ -560,16 +555,11 @@ async def run_nightly_unified_pipeline_drain(
                         pe,
                     )
                     break
-                invalidate_backlog_metrics_cache()
-                try:
-                    if int(get_all_pending_counts().get("content_enrichment") or 0) == 0:
-                        break
-                except Exception:
-                    pass
 
             # --- Context sync ---
             if context_sync_enabled:
                 sync_i = 0
+                # Same one-recompute-per-iteration rule as the enrichment loop above.
                 while sync_i < max_sync_loops and window_active():
                     invalidate_backlog_metrics_cache()
                     try:
@@ -600,12 +590,6 @@ async def run_nightly_unified_pipeline_drain(
                             pc,
                         )
                         break
-                    invalidate_backlog_metrics_cache()
-                    try:
-                        if int(get_all_pending_counts().get("context_sync") or 0) == 0:
-                            break
-                    except Exception:
-                        pass
 
             # --- Sequential automation phases (one phase at a time, drain backlog) ---
             if automation is not None:
