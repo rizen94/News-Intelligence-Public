@@ -209,15 +209,11 @@ class APIService {
   getSqlExplorerEnabled = monitoringApi.getSqlExplorerEnabled;
   getSqlExplorerSchema = monitoringApi.getSqlExplorerSchema;
   postSqlExplorerQuery = monitoringApi.postSqlExplorerQuery;
-  getDuplicateStats = monitoringApi.getDuplicateStats;
   detectDuplicates = monitoringApi.detectDuplicates;
   getURLDuplicates = monitoringApi.getURLDuplicates;
   getContentDuplicates = monitoringApi.getContentDuplicates;
   getSimilarArticles = monitoringApi.getSimilarArticles;
   autoMergeDuplicates = monitoringApi.autoMergeDuplicates;
-  preventDuplicates = monitoringApi.preventDuplicates;
-  analyzeSimilarity = monitoringApi.analyzeSimilarity;
-  getDeduplicationStats = monitoringApi.getDeduplicationStats;
   getMLQueueStatus = monitoringApi.getMLQueueStatus;
   getAllMLProcessingStatus = monitoringApi.getAllMLProcessingStatus;
   getMLTimingStats = monitoringApi.getMLTimingStats;

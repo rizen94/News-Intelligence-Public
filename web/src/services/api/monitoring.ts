@@ -472,16 +472,6 @@ export const monitoringApi = {
     }
   },
 
-  async getDuplicateStats() {
-    try {
-      const response = await getApi().get('/api/articles/duplicates/stats');
-      return response.data;
-    } catch (error) {
-      Logger.apiError('Failed to get duplicate stats', error as Error);
-      return { success: false, error: (error as any).message };
-    }
-  },
-
   async detectDuplicates(
     params: {
       similarity_threshold?: number;
@@ -490,7 +480,7 @@ export const monitoringApi = {
     } = {}
   ) {
     try {
-      const response = await getApi().get('/api/articles/duplicates/detect', {
+      const response = await getApi().get('/api/deduplication/articles/detect', {
         params,
       });
       return response.data;
@@ -502,7 +492,7 @@ export const monitoringApi = {
 
   async getURLDuplicates() {
     try {
-      const response = await getApi().get('/api/articles/duplicates/url');
+      const response = await getApi().get('/api/deduplication/articles/url');
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to get URL duplicates', error as Error);
@@ -512,7 +502,7 @@ export const monitoringApi = {
 
   async getContentDuplicates() {
     try {
-      const response = await getApi().get('/api/articles/duplicates/content');
+      const response = await getApi().get('/api/deduplication/articles/content');
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to get content duplicates', error as Error);
@@ -522,7 +512,7 @@ export const monitoringApi = {
 
   async getSimilarArticles(articleId: number, threshold: number = 0.8) {
     try {
-      const response = await getApi().get('/api/articles/duplicates/similar', {
+      const response = await getApi().get('/api/deduplication/articles/similar', {
         params: { article_id: articleId, threshold },
       });
       return response.data;
@@ -534,46 +524,16 @@ export const monitoringApi = {
 
   async autoMergeDuplicates(dryRun: boolean = true) {
     try {
+      // dry_run is a query param on the route; a JSON body was silently ignored, so
+      // "apply" always behaved as a dry run. Gated by DEDUPLICATION_DESTRUCTIVE_OPS_ENABLED.
       const response = await getApi().post(
-        '/api/articles/duplicates/auto_merge',
-        { dry_run: dryRun }
+        '/api/deduplication/articles/auto_merge',
+        null,
+        { params: { dry_run: dryRun } }
       );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to auto-merge duplicates', error as Error);
-      return { success: false, error: (error as any).message };
-    }
-  },
-
-  async preventDuplicates() {
-    try {
-      const response = await getApi().post('/api/articles/duplicates/prevent');
-      return response.data;
-    } catch (error) {
-      Logger.apiError('Failed to prevent duplicates', error as Error);
-      return { success: false, error: (error as any).message };
-    }
-  },
-
-  async analyzeSimilarity(articleId1: number, articleId2: number) {
-    try {
-      const response = await getApi().post(
-        '/api/articles/duplicates/analyze_similarity',
-        { article_id_1: articleId1, article_id_2: articleId2 }
-      );
-      return response.data;
-    } catch (error) {
-      Logger.apiError('Failed to analyze similarity', error as Error);
-      return { success: false, error: (error as any).message };
-    }
-  },
-
-  async getDeduplicationStats() {
-    try {
-      const response = await getApi().get('/api/articles/duplicates/stats');
-      return response.data;
-    } catch (error) {
-      Logger.apiError('Failed to get deduplication stats', error as Error);
       return { success: false, error: (error as any).message };
     }
   },

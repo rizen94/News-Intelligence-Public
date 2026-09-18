@@ -11,6 +11,13 @@ from fastapi import APIRouter
 router_feeds = APIRouter(prefix="/feeds", tags=["Deduplication - Feeds"])
 router_articles = APIRouter(prefix="/articles", tags=["Deduplication - Articles"])
 
+# merge / auto_merge / prevent rewrite or drop rows and (for prevent) add DB constraints. This
+# router sat outside /api for as long as it has existed, so nginx never proxied it and nothing has
+# exercised them in production. Moving the prefix under /api must not silently switch them on, so
+# they stay behind an opt-in env flag. Read-only detect/exact/similar/url/content/stats are
+# unaffected.
+DESTRUCTIVE_OPS_ENV = "DEDUPLICATION_DESTRUCTIVE_OPS_ENABLED"
+
 
 # ==================== FEEDS DEDUPLICATION ====================
 
@@ -23,6 +30,25 @@ from shared.database.connection import get_db_connection
 from shared.services.domain_aware_service import get_domain_data_schemas
 
 from scripts.rss_duplicate_detector import RSSDuplicateDetector
+
+
+def destructive_ops_enabled() -> bool:
+    from config.runtime import env_bool
+
+    return env_bool(DESTRUCTIVE_OPS_ENV, False)
+
+
+def require_destructive_ops_enabled() -> None:
+    """403 unless an operator has opted the host in to destructive dedup operations."""
+    if destructive_ops_enabled():
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "Deduplication merge/auto_merge/prevent are disabled on this host. "
+            f"Set {DESTRUCTIVE_OPS_ENV}=true to enable them."
+        ),
+    )
 
 
 def _find_rss_feed_schema(conn, feed_id: int) -> str | None:
@@ -139,6 +165,7 @@ async def get_similar_feeds():
 @router_feeds.post("/merge")
 async def merge_duplicates(request: DuplicateMergeRequest):
     """Merge duplicate RSS feeds"""
+    require_destructive_ops_enabled()
     try:
         detector = RSSDuplicateDetector()
 
@@ -212,6 +239,7 @@ async def merge_duplicates(request: DuplicateMergeRequest):
 @router_feeds.post("/auto_merge")
 async def auto_merge_all_duplicates(dry_run: bool = Query(True, description="Dry run mode")):
     """Automatically merge all detected duplicates"""
+    require_destructive_ops_enabled()
     try:
         detector = RSSDuplicateDetector()
 
@@ -251,6 +279,7 @@ async def auto_merge_all_duplicates(dry_run: bool = Query(True, description="Dry
 @router_feeds.post("/prevent")
 async def add_duplicate_prevention():
     """Add database constraints to prevent future duplicates"""
+    require_destructive_ops_enabled()
     try:
         detector = RSSDuplicateDetector()
 
@@ -480,6 +509,7 @@ async def get_content_similarities():
 @router_articles.post("/merge")
 async def merge_duplicates(request: DuplicateMergeRequest):
     """Merge duplicate articles"""
+    require_destructive_ops_enabled()
     try:
         deduplicator = ArticleDeduplicationSystem()
 
@@ -536,6 +566,7 @@ async def merge_duplicates(request: DuplicateMergeRequest):
 @router_articles.post("/auto_merge")
 async def auto_merge_url_duplicates(dry_run: bool = Query(True, description="Dry run mode")):
     """Automatically merge all URL duplicates"""
+    require_destructive_ops_enabled()
     try:
         deduplicator = ArticleDeduplicationSystem()
 
@@ -574,6 +605,6 @@ async def auto_merge_url_duplicates(dry_run: bool = Query(True, description="Dry
 
 # ==================== MAIN ROUTER ====================
 
-main_router = APIRouter(prefix="/deduplication", tags=["Deduplication"])
+main_router = APIRouter(prefix="/api/deduplication", tags=["Deduplication"])
 main_router.include_router(router_feeds)
 main_router.include_router(router_articles)

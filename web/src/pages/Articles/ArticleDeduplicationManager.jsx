@@ -4,7 +4,6 @@ import {
   Typography,
   Card,
   CardContent,
-  Grid,
   Button,
   Alert,
   CircularProgress,
@@ -42,7 +41,6 @@ import {
   Info,
   Search,
   AutoFixHigh,
-  Security,
   ContentCopy,
   Link,
 } from '@mui/icons-material';
@@ -52,7 +50,6 @@ const ArticleDeduplicationManager = () => {
   const [duplicates, setDuplicates] = useState([]);
   const [contentDuplicates, setContentDuplicates] = useState([]);
   const [similarities, setSimilarities] = useState([]);
-  const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [mergeDialog, setMergeDialog] = useState({
@@ -67,13 +64,11 @@ const ArticleDeduplicationManager = () => {
     setError(null);
 
     try {
-      const [duplicatesRes, contentRes, similaritiesRes, statsRes] =
-        await Promise.all([
-          api.get('/api/articles/duplicates/url'),
-          api.get('/api/articles/duplicates/content'),
-          api.get('/api/articles/duplicates/similar'),
-          api.get('/api/articles/duplicates/stats'),
-        ]);
+      const [duplicatesRes, contentRes, similaritiesRes] = await Promise.all([
+        api.get('/api/deduplication/articles/url'),
+        api.get('/api/deduplication/articles/content'),
+        api.get('/api/deduplication/articles/similar'),
+      ]);
 
       if (duplicatesRes.data?.success) {
         setDuplicates(duplicatesRes.data.data?.duplicates || []);
@@ -92,12 +87,6 @@ const ArticleDeduplicationManager = () => {
       } else if (similaritiesRes.data) {
         setSimilarities(similaritiesRes.data.similarities || []);
       }
-
-      if (statsRes.data?.success) {
-        setStats(statsRes.data.data || {});
-      } else if (statsRes.data) {
-        setStats(statsRes.data);
-      }
     } catch (err) {
       console.error('Error loading deduplication data:', err);
       setError('Failed to load deduplication data. Please try again.');
@@ -113,7 +102,7 @@ const ArticleDeduplicationManager = () => {
   const handleDetectDuplicates = async () => {
     setLoading(true);
     try {
-      const response = await api.get('/api/articles/duplicates/detect');
+      const response = await api.get('/api/deduplication/articles/detect');
       if (response.data?.success) {
         setDuplicates(response.data.data?.url_duplicates || []);
         setContentDuplicates(response.data.data?.content_duplicates || []);
@@ -135,7 +124,7 @@ const ArticleDeduplicationManager = () => {
     setLoading(true);
     try {
       const response = await api.post(
-        '/api/articles/duplicates/auto_merge',
+        '/api/deduplication/articles/auto_merge',
         null,
         {
           params: { dry_run: dryRun },
@@ -152,22 +141,6 @@ const ArticleDeduplicationManager = () => {
       }
     } catch (err) {
       setError('Failed to merge duplicates');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAddPrevention = async () => {
-    setLoading(true);
-    try {
-      const response = await api.post('/api/articles/duplicates/prevent');
-
-      if (response.data?.success) {
-        alert('Deduplication prevention constraints added successfully');
-        loadDeduplicationData(); // Refresh data
-      }
-    } catch (err) {
-      setError('Failed to add deduplication prevention');
     } finally {
       setLoading(false);
     }
@@ -255,59 +228,6 @@ const ArticleDeduplicationManager = () => {
         </Alert>
       )}
 
-      {/* Statistics */}
-      {stats && (
-        <Card sx={{ mb: 3 }}>
-          <CardContent>
-            <Typography variant='h6' gutterBottom>
-              Deduplication Statistics
-            </Typography>
-            <Grid container spacing={2}>
-              <Grid item xs={12} sm={6} md={3}>
-                <Box textAlign='center'>
-                  <Typography variant='h4' color='primary'>
-                    {stats.total_articles.toLocaleString()}
-                  </Typography>
-                  <Typography variant='body2' color='text.secondary'>
-                    Total Articles
-                  </Typography>
-                </Box>
-              </Grid>
-              <Grid item xs={12} sm={6} md={3}>
-                <Box textAlign='center'>
-                  <Typography variant='h4' color='success.main'>
-                    {stats.hash_coverage_percentage.toFixed(1)}%
-                  </Typography>
-                  <Typography variant='body2' color='text.secondary'>
-                    Hash Coverage
-                  </Typography>
-                </Box>
-              </Grid>
-              <Grid item xs={12} sm={6} md={3}>
-                <Box textAlign='center'>
-                  <Typography variant='h4' color='error.main'>
-                    {stats.url_duplicate_groups}
-                  </Typography>
-                  <Typography variant='body2' color='text.secondary'>
-                    URL Duplicates
-                  </Typography>
-                </Box>
-              </Grid>
-              <Grid item xs={12} sm={6} md={3}>
-                <Box textAlign='center'>
-                  <Typography variant='h4' color='warning.main'>
-                    {stats.content_duplicate_groups}
-                  </Typography>
-                  <Typography variant='body2' color='text.secondary'>
-                    Content Duplicates
-                  </Typography>
-                </Box>
-              </Grid>
-            </Grid>
-          </CardContent>
-        </Card>
-      )}
-
       {/* Action Buttons */}
       <Card sx={{ mb: 3 }}>
         <CardContent>
@@ -332,15 +252,6 @@ const ArticleDeduplicationManager = () => {
               disabled={loading}
             >
               Auto-Merge URL Duplicates
-            </Button>
-            <Button
-              startIcon={<Security />}
-              onClick={handleAddPrevention}
-              variant='contained'
-              color='success'
-              disabled={loading}
-            >
-              Add Prevention Constraints
             </Button>
           </Box>
           <Box sx={{ mt: 2 }}>
