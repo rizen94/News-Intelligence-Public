@@ -323,13 +323,14 @@ export const intelligenceApi = {
     }
   },
 
-  async getRecentDigests(count: number = 5, domain?: string) {
+  // Weekly digests are global products, not domain-scoped: the live routes are
+  // GET/POST /api/products/weekly_digest[/generate] backed by digest_automation_service. These
+  // two used to post to /api/{domain}/intelligence/digests[/weekly], which no route has ever served.
+  async getRecentDigests(count: number = 5) {
     try {
-      const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(
-        `/api/${domainKey}/intelligence/digests`,
-        { params: { limit: count } }
-      );
+      const response = await getApi().get('/api/products/weekly_digest', {
+        params: { limit: count },
+      });
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to get recent digests', error as Error);
@@ -337,11 +338,10 @@ export const intelligenceApi = {
     }
   },
 
-  async generateWeeklyDigest(domain?: string) {
+  async generateWeeklyDigest() {
     try {
-      const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/${domainKey}/intelligence/digests/weekly`
+        '/api/products/weekly_digest/generate'
       );
       return response.data;
     } catch (error) {

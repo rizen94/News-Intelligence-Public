@@ -15,6 +15,7 @@ rollback and forensics — do not import from `api/services/`.
 | `quiver_correlation.py` | Superseded by `congress_trade_signals_service` / `congress_trade_scoring_service`. `quiver_entity_resolver.py` stays in `api/services/` pending the in-flight Quiver work. |
 | `run_major_backlog_catchup.py` | Dead fork of `api/scripts/run_major_backlog_catchup.py`; every `scripts/*.sh` invocation targets the `api/scripts/` path. Its one extra branch (`entity_profile_build`) is already covered by `get_all_pending_counts()`, which includes that key. |
 | `shared_extraction_service.py` | Pre-unified extraction consolidator; superseded by `unified_intake_extraction_service`. |
+| `topic_intelligence_service.py` | From `api/domains/content_analysis/services/`. No reference from any tracked source, YAML, or route; the only hits were a stale `diagnostics/discovery_report.*` and historical repomix dumps. Its module-scope singleton called `resolve_domain_schema()` in `__init__`, making it the last module in the tree that opened a DB connection at import — see `scripts/verify_no_import_time_db.py`. |
 | `topic_clustering_service.py` (earlier) | Live implementation is `api/domains/content_analysis/services/topic_clustering_service.py`. |
 
 ## Sibling archives from the same review
