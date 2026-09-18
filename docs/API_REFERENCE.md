@@ -67,15 +67,32 @@
 | GET | `/api/content_analysis/llm/activity` | LLM activity. |
 | GET | `/api/{domain}/content_analysis/llm/activity` | LLM activity per domain. |
 
-### 3.3 Article deduplication (`/api/articles`)
+### 3.3 Deduplication (`/api/deduplication`)
+
+Paths corrected 2026-09: the router had always been mounted at a bare `/deduplication` prefix that no
+nginx config proxies, and the `/api/articles/duplicates/...` shape documented here never existed.
+`merge`, `auto_merge`, and `prevent` return **403** unless `DEDUPLICATION_DESTRUCTIVE_OPS_ENABLED=true`
+on that host.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/articles/duplicates/detect` | Detect duplicates. |
-| GET | `/api/articles/duplicates/url` | Duplicates by URL. |
-| POST | `/api/articles/duplicates/merge` | Merge duplicates. |
-| POST | `/api/articles/duplicates/auto_merge` | Auto-merge. |
-| GET | `/api/articles/duplicates/stats` | Duplicate stats. |
+| GET | `/api/deduplication/articles/detect` | Detect article duplicates. |
+| GET | `/api/deduplication/articles/url` | Article duplicates by URL. |
+| GET | `/api/deduplication/articles/content` | Article duplicates by content hash. |
+| GET | `/api/deduplication/articles/similar` | Article content similarities. |
+| POST | `/api/deduplication/articles/merge` | Merge articles. **Gated.** |
+| POST | `/api/deduplication/articles/auto_merge` | Auto-merge URL duplicates (`dry_run` query param, default true). **Gated.** |
+| GET | `/api/deduplication/feeds/detect` | Detect feed duplicates. |
+| GET | `/api/deduplication/feeds/exact` | Exact feed URL duplicates. |
+| GET | `/api/deduplication/feeds/similar` | Similar-domain feeds. |
+| GET | `/api/deduplication/feeds/stats` | Feed duplicate stats. |
+| POST | `/api/deduplication/feeds/merge` | Merge feeds. **Gated.** |
+| POST | `/api/deduplication/feeds/auto_merge` | Auto-merge all feed duplicates (`dry_run` query param, default true). **Gated.** |
+| POST | `/api/deduplication/feeds/prevent` | Add duplicate-prevention constraints (DDL). **Gated.** |
+| POST | `/api/deduplication/consolidate_articles` | Article consolidation (P3). |
+| POST | `/api/deduplication/merge_claims` | Claim merge (P3). |
+
+There is no `articles/stats` or `articles/prevent` route — both exist for feeds only.
 
 ### 3.4 Storylines (`/api`)
 

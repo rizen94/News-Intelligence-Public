@@ -65,12 +65,13 @@ All routes are mounted from `api/main.py`. Each domain router defines its own pr
 | DELETE | `/api/{domain}/articles` | Bulk delete |
 | POST | `/api/articles/{article_id}/analyze_quality` | LLM quality analysis |
 | GET | `/api/statistics` | Aggregation statistics |
-| GET | `/api/rss_feeds/duplicates/detect` | Detect feed duplicates |
-| GET | `/api/rss_feeds/duplicates/exact` | Exact URL duplicates |
-| GET | `/api/rss_feeds/duplicates/similar` | Similar-domain feeds |
-| POST | `/api/rss_feeds/duplicates/merge` | Merge duplicate feeds |
-| POST | `/api/rss_feeds/duplicates/auto_merge` | Auto-merge all |
-| GET | `/api/rss_feeds/duplicates/stats` | Duplicate stats |
+| GET | `/api/deduplication/feeds/detect` | Detect feed duplicates |
+| GET | `/api/deduplication/feeds/exact` | Exact URL duplicates |
+| GET | `/api/deduplication/feeds/similar` | Similar-domain feeds |
+| GET | `/api/deduplication/feeds/stats` | Duplicate stats |
+| POST | `/api/deduplication/feeds/merge` | Merge duplicate feeds (**403** unless `DEDUPLICATION_DESTRUCTIVE_OPS_ENABLED=true`) |
+| POST | `/api/deduplication/feeds/auto_merge` | Auto-merge all (**gated**, `dry_run` default true) |
+| POST | `/api/deduplication/feeds/prevent` | Add prevention constraints (**gated**, DDL) |
 
 ### 3.2 Content Analysis
 

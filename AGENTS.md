@@ -175,7 +175,7 @@ Context for AI assistants. Use project terminology consistently.
 - **Registry vs pipeline:** **Registry active** = `public.domains.is_active`. **Pipeline active** = env-filtered subset via `get_pipeline_active_domain_keys()`. On Widow prod both sets are identical (no `PIPELINE_*` filter).
 - **`science-tech` retired:** schema dropped (migration 212). See [`docs/LEGACY_DOMAIN_RETIREMENT.md`](docs/LEGACY_DOMAIN_RETIREMENT.md) — do not reference as an active silo.
 - **YAML provisioning:** new silos via `api/config/domains/*.yaml` and [`docs/DOMAIN_EXTENSION_TEMPLATE.md`](docs/DOMAIN_EXTENSION_TEMPLATE.md).
-- **After changing YAML or registry:** restart API and worker processes — `DOMAIN_PATH_PATTERN` and `ACTIVE_DOMAIN_KEYS` are computed at import time.
+- **After changing YAML or registry:** the registry is cached per process for **`DOMAIN_REGISTRY_CACHE_TTL_SECONDS`** (default 60), so edits appear within one TTL; `provision_domain.py` invalidates immediately via `activate_domain_row()`. Restart API and worker processes for **`domain_key` / `schema_name` renames**. `DOMAIN_PATH_PATTERN` is **shape-only** and `ACTIVE_DOMAIN_KEYS` is a **lazy back-compat alias** (no longer an import-time DB read) — prefer **`get_active_domain_keys()`**. See [docs/DOMAIN_REGISTRY_AND_PROVISIONING_2026_03.md](docs/DOMAIN_REGISTRY_AND_PROVISIONING_2026_03.md).
 - **Per-domain:** `articles`, `storylines`, `topic_clusters`, `article_topic_clusters`, `rss_feeds`, `events` (legacy `topics` read-only).
 - **Global:** watchlist, monitoring (`system_monitoring`), health.
 
