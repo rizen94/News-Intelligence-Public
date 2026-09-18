@@ -110,6 +110,8 @@ class StorylineDevelopmentConfig:
     )
     narrative: StorylineNarrativeConfig = field(default_factory=StorylineNarrativeConfig)
     automation: StorylineAutomationConfig = field(default_factory=StorylineAutomationConfig)
+    # Politics pilot: seed storylines from tracked_events (also gated by EVENT_IDENTITY_STORYLINE_SEED).
+    event_identity_seed: bool = False
 
 
 @dataclass
@@ -420,12 +422,19 @@ def _merge_storyline_development(
         min_semantic_score=float(_ms_raw) if _ms_raw is not None else None,
         min_quality_tier=_int(_mq_raw, 3) if _mq_raw is not None else None,
     )
+    event_identity_seed = bool(
+        dom_block.get(
+            "event_identity_seed",
+            def_block.get("event_identity_seed", False),
+        )
+    )
     return StorylineDevelopmentConfig(
         discovery=discovery,
         proactive=proactive,
         consolidation=consolidation,
         narrative=narrative,
         automation=automation,
+        event_identity_seed=event_identity_seed,
     )
 
 

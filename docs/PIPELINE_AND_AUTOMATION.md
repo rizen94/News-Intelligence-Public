@@ -215,6 +215,16 @@ Storyline deep analysis: set `CONTENT_REFINEMENT_AUTO_ENQUEUE=true` to let autom
 
 When the refinement queue has pending durable jobs, admission allows `content_refinement_queue` even if structure catchup is hot, and the phase is in both `mode_postprocess` and `mode_maintenance` priority lists. Quiet/desk windows admit it when pending ≥ `CONTENT_REFINEMENT_QUIET_MIN_PENDING` (default 5).
 
+#### Event-identity-first assembly (politics pilot)
+
+Opt-in flag **`EVENT_IDENTITY_STORYLINE_SEED=politics`** (rollback: unset / `off`). When on:
+
+1. **`event_tracking`** / assembly call `promote_storylines_from_tracked_events` — for politics `tracked_events` with no `storyline_id`, create `politics.storylines` from `event_name`, link articles via `article_to_context` → `storyline_articles`, set `tracked_events.storyline_id` + `automation_enabled=true`. Gated by `storyline_coherence_guardrails` (generic title + cluster coherence).
+2. **`storyline_assembly`** for politics skips AI discovery (`reason=event_identity_seed`) so event-named shells own bundling; automation still attaches further members under existing quality gates.
+3. **Finance (and other domains) unchanged** — flag is hard-scoped to politics.
+
+Feature registry key: `event_identity_storyline_seed`. Optional YAML: `storyline_development.event_identity_seed` under politics (env remains the one-switch rollback).
+
 #### Storyline membership review (decoupling)
 
 Phase `storyline_membership_review` audits **existing** mega-thread membership (not suggestion intake). It scores linked articles against storyline core (title/narrative + SEI entities), then:

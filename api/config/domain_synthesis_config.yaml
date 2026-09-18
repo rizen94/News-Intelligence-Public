@@ -232,6 +232,9 @@ domains:
       changes. Identify who benefits, who opposes, and what precedents exist.
 
     storyline_development:
+      # Opt-in via EVENT_IDENTITY_STORYLINE_SEED=politics (preferred one-switch rollback).
+      # Setting true here also enables politics-only seed when env is unset.
+      event_identity_seed: false
       discovery:
         clustering_similarity_threshold: 0.73
         min_cluster_size: 4

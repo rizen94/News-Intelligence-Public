@@ -521,13 +521,29 @@ async def run_storyline_assembly_for_domain(
         }
 
     try:
-        from services.event_tracking_service import link_tracked_events_to_storylines
+        from services.event_tracking_service import (
+            link_tracked_events_to_storylines,
+            seed_from_tracked_events,
+        )
+        from config.settings import event_identity_storyline_seed_enabled
 
         linked_te = link_tracked_events_to_storylines(limit=25)
         if linked_te:
             steps["tracked_event_storyline_links"] = linked_te
+
+        # Event-identity-first (politics + flag): seed storylines from tracked events
+        # before discovery so covered articles are not re-clustered.
+        if event_identity_storyline_seed_enabled(domain_key):
+            seed_stats = seed_from_tracked_events(domain_key, limit=40)
+            steps["event_identity_seed"] = seed_stats
+            if seed_stats.get("promoted") or seed_stats.get("articles_linked"):
+                logger.info(
+                    "storyline assembly event_identity_seed domain=%s stats=%s",
+                    domain_key,
+                    seed_stats,
+                )
     except Exception as e:
-        logger.debug("storyline assembly tracked_event link %s: %s", domain_key, e)
+        logger.debug("storyline assembly tracked_event link/seed %s: %s", domain_key, e)
 
     # Event-core: scan recent articles for rare anchors → mint TE + typed membership
     try:
@@ -607,6 +623,22 @@ async def run_storyline_assembly_for_domain(
                 domain_key,
                 discovery_gate_reason,
             )
+
+    # Politics + EVENT_IDENTITY_STORYLINE_SEED: skip AI discovery so event-named
+    # storylines own bundling; uncovered articles still grow via automation.
+    if run_discovery_effective and not force:
+        try:
+            from config.settings import event_identity_storyline_seed_enabled
+
+            if event_identity_storyline_seed_enabled(domain_key):
+                run_discovery_effective = False
+                discovery_gate_reason = "event_identity_seed"
+                logger.info(
+                    "storyline assembly discovery skipped domain=%s reason=event_identity_seed",
+                    domain_key,
+                )
+        except Exception:
+            pass
 
     if run_discovery_effective:
         try:

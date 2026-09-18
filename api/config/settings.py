@@ -307,6 +307,55 @@ def event_tracking_storyline_min_entity_overlap() -> int:
     return max(1, min(50, n))
 
 
+# Politics-only pilot: seed domain storylines from tracked_events identity.
+# Rollback = unset / off. Values: politics | 1 | true | on (comma-list allowed; only politics honored).
+_EVENT_IDENTITY_SEED_ALLOWED = frozenset({"politics"})
+
+
+def event_identity_storyline_seed_domains() -> frozenset[str]:
+    """
+    Domains allowed to promote storylines from tracked_events when the seed flag is on.
+
+    Env ``EVENT_IDENTITY_STORYLINE_SEED`` (one-switch rollback):
+    - empty / 0 / false / off → disabled
+    - politics / 1 / true / on / all / * → ``{politics}`` (finance never included in this slice)
+    - comma list → intersection with politics-only allowlist
+    """
+    raw = (os.environ.get("EVENT_IDENTITY_STORYLINE_SEED") or "").strip().lower()
+    if not raw or raw in ("0", "false", "no", "off"):
+        return frozenset()
+    if raw in ("1", "true", "yes", "on", "all", "*"):
+        return frozenset(_EVENT_IDENTITY_SEED_ALLOWED)
+    requested = {
+        p.strip().replace("_", "-")
+        for p in raw.split(",")
+        if p.strip()
+    }
+    return frozenset(requested & _EVENT_IDENTITY_SEED_ALLOWED)
+
+
+def event_identity_storyline_seed_enabled(domain_key: str) -> bool:
+    """True when event-identity storyline seed is on for this domain (politics pilot)."""
+    dk = (domain_key or "").strip().lower().replace("_", "-")
+    if not dk or dk not in _EVENT_IDENTITY_SEED_ALLOWED:
+        return False
+    if dk in event_identity_storyline_seed_domains():
+        return True
+    # Optional domain YAML under storyline_development.event_identity_seed
+    try:
+        from services.domain_synthesis_config import get_domain_synthesis_config
+
+        return bool(
+            getattr(
+                get_domain_synthesis_config(dk).storyline_development,
+                "event_identity_seed",
+                False,
+            )
+        )
+    except Exception:
+        return False
+
+
 def topic_clustering_graduation_confidence() -> float:
     """
     Average article-topic confidence at/above which an article is considered clustered.

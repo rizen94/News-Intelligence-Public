@@ -681,6 +681,23 @@ event_core_membership:
     episode_container_assembly (events→episodes via signature). TE/hubs are
     containers that never own articles. Split hygiene still useful for migrate.
 
+event_identity_storyline_seed:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "10.1.0"
+  modules:
+    - api/services/event_tracking_service.py
+    - api/services/storyline_assembly_service.py
+    - api/config/settings.py
+  flags:
+    env: EVENT_IDENTITY_STORYLINE_SEED
+  notes: >
+    Politics-only pilot: promote domain storylines from intelligence.tracked_events
+    (event_name → politics.storylines) when storyline_id is missing, then skip AI
+    discovery for those covered articles. One-switch rollback: unset or set
+    EVENT_IDENTITY_STORYLINE_SEED=off. Finance assembly unchanged. Optional YAML
+    storyline_development.event_identity_seed under politics.
+
 episode_container_assembly:
   lifecycle: incorporated
   enabled: true
