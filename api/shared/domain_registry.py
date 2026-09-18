@@ -18,6 +18,8 @@ See docs/DOMAIN_EXTENSION_TEMPLATE.md and api/config/domains/README.md.
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -31,6 +33,35 @@ except ImportError:  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "config" / "domains"
+
+# The registry sits under resolve_domain_schema() and get_pipeline_active_domain_keys(), which are
+# called from hundreds of sites and from inside per-domain loops. Without a cache each call cost a
+# reserved-UI-pool checkout, a SELECT on public.domains, and a re-parse of every domains/*.yaml.
+_CACHE_LOCK = threading.Lock()
+_cached_entries: list[dict[str, Any]] | None = None
+_cached_at_mono: float = 0.0
+_cached_from_db: bool = False
+
+
+def _cache_ttl_seconds() -> float:
+    return max(0.0, env_float("DOMAIN_REGISTRY_CACHE_TTL_SECONDS", 60.0))
+
+
+def _bootstrap_cache_ttl_seconds() -> float:
+    """
+    Shorter TTL for the YAML-only fallback so a process that starts before Postgres accepts
+    connections picks the DB registry up promptly instead of running blind for a full TTL.
+    """
+    return max(0.0, env_float("DOMAIN_REGISTRY_BOOTSTRAP_CACHE_TTL_SECONDS", 5.0))
+
+
+def invalidate_domain_registry_cache() -> None:
+    """Drop the cached registry — call after provisioning or retiring a domain."""
+    global _cached_entries, _cached_at_mono, _cached_from_db
+    with _CACHE_LOCK:
+        _cached_entries = None
+        _cached_at_mono = 0.0
+        _cached_from_db = False
 
 from shared.domain_registry_constants import RESERVED_SCHEMA_NAMES  # noqa: E402
 
@@ -72,7 +103,13 @@ def _load_domain_entries_from_db() -> list[dict[str, Any]] | None:
         logger.debug("domain_registry DB load skipped: %s", e)
         return None
 
-    conn = get_ui_db_connection()
+    try:
+        conn = get_ui_db_connection()
+    except Exception as e:
+        # Matches the documented contract: DB unreachable / no credentials falls back to YAML-only
+        # instead of propagating out of whatever happened to touch the registry first.
+        logger.warning("domain_registry: could not connect for public.domains: %s", e)
+        return None
     if not conn:
         return None
     try:
@@ -117,7 +154,29 @@ def get_domain_entries() -> list[dict[str, Any]]:
     """
     All domains: **DB first**, merged with YAML for matching ``domain_key``.
     If ``public.domains`` is empty/unavailable, active YAML files only (bootstrap).
+
+    Cached per process for ``DOMAIN_REGISTRY_CACHE_TTL_SECONDS`` (see
+    ``invalidate_domain_registry_cache``). Callers must not mutate the returned list.
     """
+    global _cached_entries, _cached_at_mono, _cached_from_db
+
+    now = time.monotonic()
+    with _CACHE_LOCK:
+        if _cached_entries is not None:
+            ttl = _cache_ttl_seconds() if _cached_from_db else _bootstrap_cache_ttl_seconds()
+            if (now - _cached_at_mono) < ttl:
+                return _cached_entries
+
+    entries, from_db = _build_domain_entries()
+
+    with _CACHE_LOCK:
+        _cached_entries = entries
+        _cached_at_mono = time.monotonic()
+        _cached_from_db = from_db
+    return entries
+
+
+def _build_domain_entries() -> tuple[list[dict[str, Any]], bool]:
     db_rows = _load_domain_entries_from_db()
     yaml_docs = _load_yaml_domain_files()
     yaml_by_key = {d["domain_key"]: d for d in yaml_docs if d.get("domain_key")}
@@ -131,16 +190,19 @@ def get_domain_entries() -> list[dict[str, Any]]:
                 continue
             merged = {**y, **by_key[k]}
             by_key[k] = merged
-        return sorted(by_key.values(), key=lambda x: (x.get("display_order", 99), x["domain_key"]))
+        ordered = sorted(
+            by_key.values(), key=lambda x: (x.get("display_order", 99), x["domain_key"])
+        )
+        return ordered, True
 
     # Bootstrap: no DB rows — use YAML-only (tests / pre-migration dev).
     if not yaml_docs:
         logger.warning(
             "domain_registry: public.domains is empty and no active YAML domains; registry is empty"
         )
-        return []
+        return [], False
     logger.info("domain_registry: using YAML-only domain list (public.domains empty or unreachable)")
-    return sorted(yaml_docs, key=lambda x: (x.get("display_order", 99), x["domain_key"]))
+    return sorted(yaml_docs, key=lambda x: (x.get("display_order", 99), x["domain_key"])), False
 
 
 def first_active_domain_key(fallback: str = "politics") -> str:
@@ -228,8 +290,6 @@ def get_pipeline_excluded_domain_keys() -> frozenset[str]:
 
     Comparison is case-insensitive.
     """
-    import os
-
     raw = env_str("PIPELINE_EXCLUDE_DOMAIN_KEYS", "").strip()
     if not raw:
         return frozenset()
@@ -241,8 +301,6 @@ def get_pipeline_included_domain_keys() -> frozenset[str] | None:
     Optional allowlist: when ``PIPELINE_INCLUDE_DOMAIN_KEYS`` is non-empty, only those URL keys
     (must also be active in the registry) participate in pipeline iteration. Exclusions still apply after.
     """
-    import os
-
     raw = env_str("PIPELINE_INCLUDE_DOMAIN_KEYS", "").strip()
     if not raw:
         return None
@@ -277,8 +335,22 @@ def get_pipeline_active_domain_keys() -> tuple[str, ...]:
 # FastAPI Path: shape-only so YAML-onboarded silos work without restarting the API process.
 DOMAIN_PATH_PATTERN = r"^[a-z0-9]+(?:-[a-z0-9]+)*$"
 
-ACTIVE_DOMAIN_KEYS: tuple[str, ...] = get_active_domain_keys()
-ACTIVE_DOMAIN_KEYS_SET: frozenset[str] = frozenset(ACTIVE_DOMAIN_KEYS)
+
+def __getattr__(name: str) -> Any:
+    """
+    Back-compat snapshots ``ACTIVE_DOMAIN_KEYS`` / ``ACTIVE_DOMAIN_KEYS_SET`` (PEP 562).
+
+    Computing these at module scope meant every process that imported anything reaching this
+    module — API, PopOS workers, every CLI script, the */15 cron, pytest collection — opened the
+    reserved UI pool and queried ``public.domains`` just to finish the import, and could not import
+    at all without DB credentials. Prefer ``get_active_domain_keys()`` / ``is_valid_domain_key()``
+    in new code; see docs/DOMAIN_REGISTRY_AND_PROVISIONING_2026_03.md.
+    """
+    if name == "ACTIVE_DOMAIN_KEYS":
+        return get_active_domain_keys()
+    if name == "ACTIVE_DOMAIN_KEYS_SET":
+        return frozenset(get_active_domain_keys())
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def is_valid_domain_key(key: str) -> bool:

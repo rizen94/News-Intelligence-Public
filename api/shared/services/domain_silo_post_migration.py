@@ -36,6 +36,10 @@ def activate_domain_row(conn, domain_key: str) -> int:
             (domain_key,),
         )
         n = cur.rowcount
+    if n > 0:
+        from shared.domain_registry import invalidate_domain_registry_cache
+
+        invalidate_domain_registry_cache()
     if n == 0:
         logger.warning(
             "domain_silo_post_migration: no public.domains row for domain_key=%r",
