@@ -12,7 +12,12 @@ redis_data/
 # Docker volumes and data
 docker/data/
 volumes/
-data/
+# Data dirs, but NOT source packages named data/ (api/domains/finance/data is source).
+/data/
+/api/data/
+docker/data/
+news-intelligence-kit/data/
+**/db_data/
 
 # Virtual environments
 venv/
@@ -67,7 +72,12 @@ api/temp/
 # Code assistant files (legacy)
 *code-assistant*
 *aider*
-*ollama*
+# Local assistant caches. NOT source: api/**/*ollama*.py are real modules.
+*code-assistant*
+*aider*
+ollama_models_cache*
+!api/**/*ollama*.py
+!scripts/**/*ollama*
 
 # OS generated files
 .DS_Store
@@ -94,7 +104,10 @@ npm-debug.log*
 
 # Large data files
 *.csv
-models/
+# ML model binaries, but NOT source packages named models/
+# (api/domains/*/models/ hold pydantic models).
+/models/
+**/ml_models/
 
 # Large backup and export files
 news-system-backup-*/
