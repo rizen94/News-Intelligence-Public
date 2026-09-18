@@ -76,6 +76,9 @@ api/temp/
 *code-assistant*
 *aider*
 ollama_models_cache*
+# Machine-local XDG config (e.g. .config/ollama/ollama.env); was covered by *ollama*
+# until that rule was narrowed for source files.
+.config/
 !api/**/*ollama*.py
 !scripts/**/*ollama*
 
