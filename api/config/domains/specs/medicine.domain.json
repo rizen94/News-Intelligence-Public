@@ -54,7 +54,34 @@
         "feed_url": "https://connect.medrxiv.org/medrxiv_xml.php"
       },
       {
-        "feed_url": "https://connect.biorxiv.org/biorxiv_xml.php?subject=all"
+        "feed_url": "https://connect.biorxiv.org/biorxiv_xml.php?subject=pathology"
+      },
+      {
+        "feed_url": "https://connect.biorxiv.org/biorxiv_xml.php?subject=immunology"
+      },
+      {
+        "feed_url": "https://connect.biorxiv.org/biorxiv_xml.php?subject=microbiology"
+      },
+      {
+        "feed_url": "https://connect.biorxiv.org/biorxiv_xml.php?subject=pharmacology_and_toxicology"
+      },
+      {
+        "feed_url": "https://connect.biorxiv.org/biorxiv_xml.php?subject=genetics"
+      },
+      {
+        "feed_url": "https://connect.biorxiv.org/biorxiv_xml.php?subject=genomics"
+      },
+      {
+        "feed_url": "https://connect.biorxiv.org/biorxiv_xml.php?subject=cancer_biology"
+      },
+      {
+        "feed_url": "https://connect.biorxiv.org/biorxiv_xml.php?subject=epidemiology"
+      },
+      {
+        "feed_url": "https://connect.biorxiv.org/biorxiv_xml.php?subject=clinical_trials"
+      },
+      {
+        "feed_url": "https://connect.biorxiv.org/biorxiv_xml.php?subject=physiology"
       }
     ]
   },

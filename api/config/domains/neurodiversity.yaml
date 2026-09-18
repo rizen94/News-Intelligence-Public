@@ -4,7 +4,8 @@ schema_name: neurodiversity
 display_name: Neurodiversity (Autism / ADHD / AuDHD)
 is_active: true
 description: Literature corpus for autism spectrum, ADHD, and overlapping AuDHD research — intake and evidence appraisal only
-  (corpus processing mode; no storyline/chemistry band).
+  (corpus processing mode; no storyline/chemistry band). Pulse and RSS use opt-in include_keywords
+  (Autism / ADHD / AuDHD only — not broad neuro* or developmental terms).
 display_order: 25
 processing_mode: corpus
 data_sources:

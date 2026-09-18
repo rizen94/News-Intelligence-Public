@@ -3,7 +3,7 @@
   "domain_key": "neurodiversity",
   "schema_name": "neurodiversity",
   "display_name": "Neurodiversity (Autism / ADHD / AuDHD)",
-  "description": "Literature corpus for autism spectrum, ADHD, and overlapping AuDHD research — intake and evidence appraisal only (corpus processing mode; no storyline/chemistry band).",
+  "description": "Literature corpus for autism spectrum, ADHD, and overlapping AuDHD research — intake and evidence appraisal only (corpus processing mode; no storyline/chemistry band). Pulse and RSS use opt-in include_keywords (Autism / ADHD / AuDHD only).",
   "display_order": 25,
   "is_active": true,
   "processing_mode": "corpus",

@@ -11,17 +11,26 @@ data_sources:
     - https://pubmed.ncbi.nlm.nih.gov/rss/create/saved_searches/?term=medicine%5BMeSH+Major+Topic%5D&limit=100
     - https://www.nejm.org/action/showFeed?jc=nejm&type=etoc&feed=rss
     - https://www.thelancet.com/rssfeed/lancet_current.xml
-    - https://jamanetwork.com/feeds/journals/jama
+    - https://jamanetwork.com/rss/site_3/67.xml
     - https://www.bmj.com/content/current.rss
     - https://www.nature.com/nm.rss
     - https://www.who.int/rss-feeds/news-english.xml
     - https://www.who.int/feeds/entity/csr/don/en/rss.xml
     - https://pubmed.ncbi.nlm.nih.gov/rss/create/saved_searches/?term=hantavirus%5BTitle%2FAbstract%5D&limit=50
     - https://pubmed.ncbi.nlm.nih.gov/rss/create/saved_searches/?term=%28outbreak%5BTitle%2FAbstract%5D+OR+epidemic%5BTitle%2FAbstract%5D%29+AND+%28WHO%5BCorporate%5D+OR+CDC%5BCorporate%5D%29&limit=50
-    - https://www.fda.gov/news-events/fda-newsroom/rss.xml
+    - https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/press-releases/rss.xml
     - https://clinicaltrials.gov/ct2/results/rss.xml?rcv_d=14&lup_d=14&sel_rss=new14&count=10000
     - https://connect.medrxiv.org/medrxiv_xml.php
-    - https://connect.biorxiv.org/biorxiv_xml.php?subject=all
+    - https://connect.biorxiv.org/biorxiv_xml.php?subject=pathology
+    - https://connect.biorxiv.org/biorxiv_xml.php?subject=immunology
+    - https://connect.biorxiv.org/biorxiv_xml.php?subject=microbiology
+    - https://connect.biorxiv.org/biorxiv_xml.php?subject=pharmacology_and_toxicology
+    - https://connect.biorxiv.org/biorxiv_xml.php?subject=genetics
+    - https://connect.biorxiv.org/biorxiv_xml.php?subject=genomics
+    - https://connect.biorxiv.org/biorxiv_xml.php?subject=cancer_biology
+    - https://connect.biorxiv.org/biorxiv_xml.php?subject=epidemiology
+    - https://connect.biorxiv.org/biorxiv_xml.php?subject=clinical_trials
+    - https://connect.biorxiv.org/biorxiv_xml.php?subject=physiology
 focus_areas:
 - Clinical trials and drug development
 - Epidemiology and disease surveillance
