@@ -25,9 +25,28 @@ def normalize_legacy_domain_key(domain_key: str) -> str:
     return normalized
 
 
-def pipeline_domain_any_sql(column: str = "domain_key") -> tuple[str, list[str]]:
-    """Return (sql_fragment, keys) for ``column = ANY(%s)`` (psycopg2 needs a list)."""
+def pipeline_domain_any_sql(
+    column: str = "domain_key",
+    phase: str | None = None,
+) -> tuple[str, list[str]]:
+    """
+    Return (sql_fragment, keys) for ``column = ANY(%s)`` (psycopg2 needs a list).
+
+    ``phase`` narrows the keys to domains whose ``processing_mode`` band runs that phase, so a
+    research-band phase stops scanning corpus-only silos. Shared or unknown phase names fail open,
+    and ``PROCESSING_MODE_ENFORCE=0`` disables the gate — both handled by
+    ``domain_processing_mode.domain_runs_phase``.
+    """
     keys = list(pipeline_domain_keys())
+    if phase:
+        try:
+            from shared.domain_processing_mode import filter_domains_for_phase
+
+            keys = filter_domains_for_phase(keys, phase)
+        except Exception:
+            # Fail open on the whole pipeline set rather than narrowing to nothing: the band gate is
+            # an efficiency filter, not an authorisation boundary.
+            pass
     if not keys:
         return "FALSE", []
     return f"{column} = ANY(%s)", keys

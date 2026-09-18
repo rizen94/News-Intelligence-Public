@@ -129,7 +129,13 @@ def get_domain_processing_modes() -> dict[str, str]:
     except Exception:
         return yaml_modes
 
-    conn = get_ui_db_connection()
+    try:
+        conn = get_ui_db_connection()
+    except Exception as e:
+        # Same contract as the YAML bootstrap below: DB unreachable or no credentials falls back to
+        # YAML instead of raising out of whatever asked for a processing mode.
+        logger.debug("processing_mode DB connect failed: %s", e)
+        return yaml_modes
     if not conn:
         return yaml_modes
     try:
