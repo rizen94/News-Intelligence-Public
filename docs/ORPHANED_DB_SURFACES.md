@@ -13,13 +13,48 @@ sources. Marked with `COMMENT ON TABLE` by
 | `intelligence.unseeded_claims_parking_lot` | `261_create_unseeded_claims_parking_lot.sql` | No reader or writer. **Not** the *editorial* parking lot that `api/scripts/triage_editorial_parking_lot.py` operates on — that is a different table, which is why a name-based grep looks like a false negative here. |
 | `intelligence.entity_alias_merge_log` | `262_entity_alias_merge_hygiene.sql` | Alias-merge audit trail that nothing writes. The merge hygiene logic in that migration landed, the log table never got wired to it. |
 
-## Before dropping either
+## Dropping them (approved, pending verification)
 
-1. `SELECT count(*) FROM <table>;` on Widow — a non-zero count means something wrote to it at some
-   point and the history may be worth exporting.
-2. Confirm no out-of-tree consumer: Homelab `postgres-mcp` reads `news_intel` read-only, and vault or
+The drop is prepared but **not executed**. Two artefacts:
+
+| Artefact | Role |
+|----------|------|
+| [`api/database/checks/orphan_table_drop_readiness.sql`](../api/database/checks/orphan_table_drop_readiness.sql) | Read-only. Nine checks: existence, row counts, newest row, `pg_stat_all_tables` write counters, inbound foreign keys, dependent views/matviews, triggers and publications, the migration 306 markers, and a sanity check that the *editorial* parking lot is a different table. |
+| [`api/database/migrations/307_drop_orphaned_intelligence_tables.sql`](../api/database/migrations/307_drop_orphaned_intelligence_tables.sql) | The drop. Refuses unless opted in **and** re-verifies everything itself. |
+
+### Order of operations
+
+1. Run the readiness checks on Widow, against **direct Postgres `:5432`** (admin port, not PgBouncer):
+
+   ```bash
+   psql -h 127.0.0.1 -p 5432 -U newsapp -d news_intel \
+     -f api/database/checks/orphan_table_drop_readiness.sql
+   ```
+
+2. Proceed only when check 2 reports **0 rows** for both tables and checks 5, 6, and 7 are **empty**.
+   A non-zero row count means something wrote to them at some point and the history may be worth
+   exporting first.
+3. Confirm no out-of-tree consumer: Homelab `postgres-mcp` reads `news_intel` read-only, and vault or
    notebook queries are not in this repo.
-3. Drop in its own migration so it is revertible from the migration log.
+4. Then, and only then:
+
+   ```bash
+   PGOPTIONS="-c ni.allow_orphan_table_drop=1" psql -h 127.0.0.1 -p 5432 -U newsapp -d news_intel \
+     -f api/database/migrations/307_drop_orphaned_intelligence_tables.sql
+   ```
+
+### Why 307 is safe to have sitting in the tree
+
+It cannot fire by accident. It raises, and rolls back, unless **all** of these hold:
+
+- session var `ni.allow_orphan_table_drop = '1'` (same opt-in shape as the `ni.membership_store_write`
+  guard in migration 298) — a plain migration-runner pass does not set it;
+- the table holds **zero** rows;
+- **no** inbound foreign keys;
+- **no** dependent views or matviews.
+
+Any unmet condition leaves both tables and the migration 306 comments untouched. Migration 306 stays
+as the interim marker until 307 actually runs.
 
 ## Not on this list, and why
 
