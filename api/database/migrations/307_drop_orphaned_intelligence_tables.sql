@@ -1,15 +1,16 @@
 -- Drop the two orphaned intelligence tables marked by migration 306.
 --
--- DO NOT RUN THIS BLINDLY. It refuses unless every safety condition holds, so a stray
--- migration-runner pass cannot destroy data:
+-- SAFE TO LEAVE IN THE TREE. Without the explicit opt-in below it is a pure no-op: it raises a
+-- NOTICE and returns, so a routine migration pass neither fails nor drops anything.
 --
 --   1. session var  ni.allow_orphan_table_drop = '1'  must be set (same opt-in shape as the
---      ni.membership_store_write guard in migration 298);
---   2. the table must contain ZERO rows;
---   3. nothing may depend on it — no inbound foreign keys, no views, no matviews.
+--      ni.membership_store_write guard in migration 298) — unset means skip;
+--   2. once opted in, the table must contain ZERO rows;
+--   3. once opted in, nothing may depend on it — no inbound foreign keys, no views, no matviews.
 --
--- Any unmet condition raises and rolls the whole migration back, leaving the tables and the
--- migration 306 comments in place.
+-- Conditions 2 and 3 raise and roll the whole migration back, leaving the tables and the
+-- migration 306 comments in place. Deploy scripts apply migrations by explicit id only
+-- (see the allowlist in scripts/deploy_to_widow.sh), so this never runs unattended.
 --
 -- Run the read-only checks in api/database/checks/orphan_table_drop_readiness.sql on Widow FIRST and
 -- confirm they come back clean. See docs/ORPHANED_DB_SURFACES.md.
@@ -26,10 +27,13 @@ DECLARE
     n_deps INT;
 BEGIN
     IF COALESCE(current_setting('ni.allow_orphan_table_drop', true), '') <> '1' THEN
-        RAISE EXCEPTION
-            'Refusing to drop orphaned tables: set ni.allow_orphan_table_drop=1 after running '
-            'api/database/checks/orphan_table_drop_readiness.sql on Widow. '
-            'See docs/ORPHANED_DB_SURFACES.md.';
+        -- No-op, not an error: a routine migration pass must never fail because of this file, and
+        -- must never drop anything. Opt in explicitly once the readiness checks come back clean.
+        RAISE NOTICE
+            'Skipping orphan table drop: ni.allow_orphan_table_drop is not set. Run '
+            'api/database/checks/orphan_table_drop_readiness.sql on Widow first, then re-run with '
+            'PGOPTIONS="-c ni.allow_orphan_table_drop=1". See docs/ORPHANED_DB_SURFACES.md.';
+        RETURN;
     END IF;
 
     FOR tbl IN SELECT unnest(ARRAY[

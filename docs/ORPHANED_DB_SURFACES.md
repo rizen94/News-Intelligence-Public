@@ -45,15 +45,19 @@ The drop is prepared but **not executed**. Two artefacts:
 
 ### Why 307 is safe to have sitting in the tree
 
-It cannot fire by accident. It raises, and rolls back, unless **all** of these hold:
+It cannot fire by accident, and it cannot fail a routine pass either.
 
-- session var `ni.allow_orphan_table_drop = '1'` (same opt-in shape as the `ni.membership_store_write`
-  guard in migration 298) — a plain migration-runner pass does not set it;
-- the table holds **zero** rows;
-- **no** inbound foreign keys;
-- **no** dependent views or matviews.
+- Without session var `ni.allow_orphan_table_drop = '1'` it raises a **NOTICE and returns** — a pure
+  no-op, so a migration pass neither drops anything nor errors. (Same opt-in shape as the
+  `ni.membership_store_write` guard in migration 298.)
+- Once opted in, it independently re-checks **zero rows**, **no inbound foreign keys**, and **no
+  dependent views or matviews** per table, and raises — rolling the whole migration back — if any
+  check fails.
 
-Any unmet condition leaves both tables and the migration 306 comments untouched. Migration 306 stays
+Belt and braces: `scripts/deploy_to_widow.sh` applies migrations from an **explicit allowlist**
+(`for mig in 196 231 232`), never by scanning the directory, and nothing applies migrations at API
+startup. So 306 and 307 are inert on deploy regardless. Any unmet condition leaves both tables and
+the migration 306 comments untouched. Migration 306 stays
 as the interim marker until 307 actually runs.
 
 ## Not on this list, and why
