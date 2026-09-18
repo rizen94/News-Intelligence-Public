@@ -88,6 +88,7 @@ class TestDeskThreeBand:
         _default_hours(monkeypatch)
         desk = _et(2026, 5, 18, 15)
         assert not automation_phase_allowed("unified_intake_extraction", now_local=desk)
+        assert not automation_phase_allowed("chronological_events_catchup", now_local=desk)
         assert not automation_phase_allowed("claim_extraction", now_local=desk)
         assert not automation_phase_allowed("storyline_assembly", now_local=desk)
 

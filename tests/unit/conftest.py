@@ -42,7 +42,9 @@ def _drop_stubbed_modules() -> None:
         if _is_stub(name):
             sys.modules.pop(name, None)
             parent = name.rsplit(".", 1)[0]
-            if parent in sys.modules and not getattr(sys.modules[parent], "__file__", None):
+            if parent in sys.modules and not getattr(
+                sys.modules[parent], "__file__", None
+            ):
                 sys.modules.pop(parent, None)
 
 

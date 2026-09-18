@@ -47,7 +47,10 @@ def test_repeated_lookups_hit_the_db_once(monkeypatch, db_calls):
     monkeypatch.setenv("DOMAIN_REGISTRY_CACHE_TTL_SECONDS", "60")
 
     for _ in range(25):
-        assert dr.resolve_domain_schema("artificial-intelligence") == "artificial_intelligence"
+        assert (
+            dr.resolve_domain_schema("artificial-intelligence")
+            == "artificial_intelligence"
+        )
         assert dr.get_pipeline_active_domain_keys()
         assert dr.is_valid_domain_key("politics")
 
@@ -105,7 +108,9 @@ def test_db_connect_failure_falls_back_instead_of_raising(monkeypatch):
 
 def test_lazy_back_compat_snapshots(db_calls):
     assert dr.ACTIVE_DOMAIN_KEYS == ("politics", "artificial-intelligence")
-    assert dr.ACTIVE_DOMAIN_KEYS_SET == frozenset({"politics", "artificial-intelligence"})
+    assert dr.ACTIVE_DOMAIN_KEYS_SET == frozenset(
+        {"politics", "artificial-intelligence"}
+    )
 
     with pytest.raises(AttributeError):
         dr.NOT_A_REAL_ATTRIBUTE

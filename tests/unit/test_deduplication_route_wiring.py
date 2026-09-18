@@ -108,7 +108,9 @@ def test_every_destructive_handler_calls_the_gate():
         ("add_duplicate_prevention", {}),
     ],
 )
-def test_destructive_handlers_refuse_before_touching_the_db(monkeypatch, handler, kwargs):
+def test_destructive_handlers_refuse_before_touching_the_db(
+    monkeypatch, handler, kwargs
+):
     """The gate has to fire ahead of any connection, not inside the try/except that returns 500."""
     import asyncio
 

@@ -127,7 +127,10 @@ def collect_routes() -> set[str]:
 
 
 def _segments_match(call_parts: list[str], route_parts: list[str]) -> bool:
-    return all(c == r or c == "*" or r == "*" for c, r in zip(call_parts, route_parts, strict=True))
+    return all(
+        c == r or c == "*" or r == "*"
+        for c, r in zip(call_parts, route_parts, strict=True)
+    )
 
 
 def resolves(call: str, prefix_only: bool, routes: set[str]) -> bool:
@@ -151,7 +154,9 @@ def resolves(call: str, prefix_only: bool, routes: set[str]) -> bool:
 
 def main_cli() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--list", action="store_true", help="print every resolved call too")
+    parser.add_argument(
+        "--list", action="store_true", help="print every resolved call too"
+    )
     args = parser.parse_args()
 
     calls = collect_frontend_calls()
@@ -168,7 +173,9 @@ def main_cli() -> int:
     errors: list[str] = []
     for call, where in unresolved.items():
         if call in KNOWN_GAPS:
-            print(f"known {call}\n        {KNOWN_GAPS[call]}\n        called from: {sorted(where)[0]}")
+            print(
+                f"known {call}\n        {KNOWN_GAPS[call]}\n        called from: {sorted(where)[0]}"
+            )
             continue
         errors.append(
             f"{call} has no backend route; called from {', '.join(sorted(where)[:3])}"

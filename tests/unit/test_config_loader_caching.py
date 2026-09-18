@@ -46,7 +46,9 @@ class TestOrchestratorGovernance:
         b = og.get_orchestrator_governance_config()
         assert "_sentinel" not in (b.get("pipeline_controller") or {})
 
-    def test_a_yaml_edit_is_picked_up_without_an_explicit_invalidate(self, og, monkeypatch, tmp_path):
+    def test_a_yaml_edit_is_picked_up_without_an_explicit_invalidate(
+        self, og, monkeypatch, tmp_path
+    ):
         yaml_file = tmp_path / "orchestrator_governance.yaml"
         yaml_file.write_text("resources:\n  daily_llm_tokens: 111\n", encoding="utf-8")
 
@@ -54,13 +56,21 @@ class TestOrchestratorGovernance:
         monkeypatch.setitem(sys.modules, "config.paths", fake_paths)
         og.invalidate_orchestrator_governance_cache()
 
-        assert og.get_orchestrator_governance_config()["resources"]["daily_llm_tokens"] == 111
+        assert (
+            og.get_orchestrator_governance_config()["resources"]["daily_llm_tokens"]
+            == 111
+        )
 
         yaml_file.write_text("resources:\n  daily_llm_tokens: 222\n", encoding="utf-8")
-        assert og.get_orchestrator_governance_config()["resources"]["daily_llm_tokens"] == 222
+        assert (
+            og.get_orchestrator_governance_config()["resources"]["daily_llm_tokens"]
+            == 222
+        )
 
     def test_missing_file_still_returns_defaults(self, og, monkeypatch, tmp_path):
-        fake_paths = type("_p", (), {"ORCHESTRATOR_GOVERNANCE_YAML": str(tmp_path / "nope.yaml")})
+        fake_paths = type(
+            "_p", (), {"ORCHESTRATOR_GOVERNANCE_YAML": str(tmp_path / "nope.yaml")}
+        )
         monkeypatch.setitem(sys.modules, "config.paths", fake_paths)
         og.invalidate_orchestrator_governance_cache()
 
@@ -139,7 +149,13 @@ class TestFeatureRegistry:
         monkeypatch.setattr(
             fr,
             "_db_overrides",
-            lambda: {"demo_feature": {"enabled": False, "lifecycle": "deprecated", "notes": "off"}},
+            lambda: {
+                "demo_feature": {
+                    "enabled": False,
+                    "lifecycle": "deprecated",
+                    "notes": "off",
+                }
+            },
         )
 
         entry = fr.get_feature_registry()["demo_feature"]

@@ -59,7 +59,9 @@ def _module_names() -> list[str]:
 
 def main_cli() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--verbose", action="store_true", help="list modules that failed to import")
+    parser.add_argument(
+        "--verbose", action="store_true", help="list modules that failed to import"
+    )
     args = parser.parse_args()
 
     logging.disable(logging.CRITICAL)

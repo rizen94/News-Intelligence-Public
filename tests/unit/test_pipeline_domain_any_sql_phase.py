@@ -39,7 +39,9 @@ def pds(monkeypatch):
 
 
 def test_phase_kwarg_is_accepted(pds):
-    sql, keys = pds.pipeline_domain_any_sql("ep.domain_key", phase="entity_profile_build")
+    sql, keys = pds.pipeline_domain_any_sql(
+        "ep.domain_key", phase="entity_profile_build"
+    )
     assert sql == "ep.domain_key = ANY(%s)"
     assert keys
 
@@ -56,7 +58,9 @@ def test_phase_narrows_to_domains_whose_band_runs_it(pds, monkeypatch):
         lambda domains, phase: [d for d in domains if d != "neurodiversity"],
     )
 
-    _sql, keys = pds.pipeline_domain_any_sql("ep.domain_key", phase="entity_profile_build")
+    _sql, keys = pds.pipeline_domain_any_sql(
+        "ep.domain_key", phase="entity_profile_build"
+    )
     assert keys == ["politics", "medicine"]
 
 
@@ -74,7 +78,11 @@ def test_no_eligible_domain_yields_false_and_no_params(pds, monkeypatch):
 def test_every_committed_caller_signature_still_resolves():
     """Guard against the regression recurring: call each site's shape for real."""
     pds = _import("shared.pipeline_domain_sql")
-    tracked = subprocess.check_output(["git", "ls-files", "api"], cwd=str(ROOT)).decode().split()
+    tracked = (
+        subprocess.check_output(["git", "ls-files", "api"], cwd=str(ROOT))
+        .decode()
+        .split()
+    )
     phases: set[str] = set()
     for rel in tracked:
         if not rel.endswith(".py") or "_archived" in rel:
