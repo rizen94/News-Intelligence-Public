@@ -12,7 +12,7 @@ Unified intake extracts entities/events/claims. Article Queue blurbs are usually
 
 | Action | Method |
 |--------|--------|
-| Read dossier | `GET /api/tracked_events/{event_id}/report` |
+| Read dossier (or poll async job) | `GET /api/tracked_events/{event_id}/report` |
 | Generate dossier | `POST /api/tracked_events/{event_id}/report` |
 | Latest arc brief | `GET /api/intelligence/arc_report/{arc_id}/latest` |
 | Generate arc brief | `POST /api/intelligence/arc_report/{arc_id}/generate` |
@@ -35,7 +35,9 @@ Relevant arc for energy / Gulf supply shocks: **`resource_geopolitics`** (`api/c
 2. **Find the tracked event** it is attached to (`event_chronicle_contexts` ↔ context).
 3. **Accuracy gate — reject conflation.** Example (2026-07-21): Atlantic Council “Houthis … blockade on Saudi Arabia” (`politics.articles` 353356 → context 327758) is linked to event **2479** “Iran Strait of Hormuz Blockade”. Those are different theaters; do **not** generate a dossier until the chronicle link is corrected or a dedicated Houthi/Red Sea–Saudi event exists.
 4. **Confirm chronicles have real developments** (not empty `[]`). Thin chronicles → thin dossiers.
-5. **`POST /api/tracked_events/{id}/report`** — dossier sections lead with **What We Know / What's Uncertain / Sources**, then timeline and a short executive summary. Tone is neutral and evidence-bound.
+5. **`POST /api/tracked_events/{id}/report`** — dossier sections lead with **What We Know / What's Uncertain / Sources**, then timeline and a short executive summary. Tone is neutral and evidence-bound. Newest contexts are capped (`INVESTIGATION_REPORT_MAX_CONTEXTS`, default 12).
+   - **Small containers** (`contexts_total` ≤ `INVESTIGATION_REPORT_ASYNC_THRESHOLD`, default = max contexts): sync LLM; HTTP **200** with `status: ready`. API POST timeout budget **180s** (GET cached report stays on the default **30s** ceiling).
+   - **Large containers** (above threshold): HTTP **202** with `status: queued|running` stored in `intelligence.investigation_report_jobs`. Poll **GET** until `status: ready` (or `failed`). Optional `?force_async=true` always enqueues.
 6. **`POST /api/intelligence/arc_report/resource_geopolitics/generate`** with a focused `retrieval_query` for oil / shipping / Gulf implications. Arc reports validate **citation density**; prefer passed validation over fluent uncited prose.
 7. **Read citations** via `/api/intelligence/citation/{id}` before treating numbers/dates as established.
 8. Optional later: storyline narrative finisher / desk promote for prose — only after facts stabilize.
@@ -52,8 +54,11 @@ Relevant arc for energy / Gulf supply shocks: **`resource_geopolitics`** (`api/c
 ## Example curls (after event hygiene)
 
 ```bash
-# Dossier for a verified tracked event
-curl -sS -X POST "https://news-intelligence-ag.duckdns.org/api/tracked_events/EVENT_ID/report"
+# Dossier for a verified tracked event (sync when small; 202 when large)
+curl -sS -D- -X POST "https://news-intelligence-ag.duckdns.org/api/tracked_events/EVENT_ID/report"
+
+# Poll cached / in-flight status (short timeout)
+curl -sS "https://news-intelligence-ag.duckdns.org/api/tracked_events/EVENT_ID/report"
 
 # Energy-arc brief scoped to the signal
 curl -sS -X POST "https://news-intelligence-ag.duckdns.org/api/intelligence/arc_report/resource_geopolitics/generate" \
