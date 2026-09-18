@@ -78,7 +78,7 @@ Four themes cover the former 0.1–0.8 list; each points to **root cause** (sing
 | `graph_connection_distillation` | `_count_graph_connection_distillation_pending`     | `process_graph_connection_proposals_batch` → merges + `graph_connection_links`            | Pending = rows in `intelligence.graph_connection_proposals` with `status = 'pending'`; align batch behavior with [GRAPH_CONNECTION_DISTILLATION.md](GRAPH_CONNECTION_DISTILLATION.md). |
 
 
-**Phases with no row in `_get_raw_pending_counts`:** Everything else (`event_coherence_review`, `cross_domain_synthesis`, `editorial_`*, `digest_generation`, `event_deduplication`, …) relies on **interval-only** scheduling (`SKIP_WHEN_EMPTY` = N) or manual `request_phase` — not a pending/backlog mismatch, but Monitor will show **0** pending for them.
+**Phases with no row in `_get_raw_pending_counts`:** Interval-only or retired phases not listed in `RAW_PENDING_COUNT_KEYS` (e.g. `event_coherence_review`, `cross_domain_synthesis`, `digest_generation`, …). **Not** in that bucket anymore (as of 2026-07 handoff wiring): `event_deduplication`, `story_continuation`, `chronological_events_catchup`, `editorial_research_pass`, `editorial_narrative_pass`, `editorial_reduction_pass` — these have backlog counts + `SKIP_WHEN_EMPTY` and inline `request_phase` handoffs (`api/shared/pipeline_handoffs.py`).
 
 ---
 
@@ -142,8 +142,10 @@ Check each line when the **idempotency + quality** review for that process is do
 ### Events v5 and timeline
 
 - **event_extraction** — v5 extraction; entity dependency
-- **event_deduplication** — **SKIP empty: N** — cheap no-op when nothing to merge
-- **story_continuation** — **SKIP empty: N**
+- **event_deduplication** — **SKIP empty: Y** — backlog probe on unmerged CE; handoff → `story_continuation`
+- **story_continuation** — **SKIP empty: Y** — backlog probe on unlinked CE; seeds editorial packages + handoff → Research
+- **chronological_events_catchup** — **SKIP empty: Y** — CE watchdog / UIE-without-CE count; handoff → coref
+- **editorial_research_pass** / **editorial_narrative_pass** / **editorial_reduction_pass** — **SKIP empty: Y** — package status queues; modal-to-modal handoffs
 - **timeline_generation** — `chronological_events`; depends on rag_enhancement per schedule
 
 ### RAG entity and refinement queue

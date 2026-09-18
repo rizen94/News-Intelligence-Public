@@ -26,19 +26,28 @@ export const monitoringApi = {
     try {
       const response = await getApi().get(
         '/api/system_monitoring/monitoring/overview',
-        // Fail fast when API/pool is saturated — Monitor loads other panels in parallel.
-        { timeout: 20000 }
+        // Server aims to answer (or degraded) within ~12s; keep client under that + proxy slack.
+        // Longer waits only mask a hung/dead upstream and freeze the Monitor banner.
+        { timeout: 15000 }
       );
       return response.data;
     } catch (error) {
       const err = error as Error & { code?: string };
       const msg = err.message || 'request failed';
+      const timedOut = /timeout/i.test(msg) || err.code === 'ECONNABORTED';
       Logger.apiError('Failed to fetch monitoring overview', err);
       return {
-        success: false,
-        connections: {},
+        success: true,
+        degraded: true,
+        connections: {
+          api: timedOut ? 'timeout' : 'error',
+          database: 'unknown',
+          webserver: { status: 'unknown' },
+        },
         activities: { current: [], recent: [] },
-        error: `monitoring/overview: ${msg}`,
+        error: timedOut
+          ? 'monitoring/overview: API did not respond in 15s (host overloaded or API restarting)'
+          : `monitoring/overview: ${msg}`,
       };
     }
   },
@@ -181,25 +190,45 @@ export const monitoringApi = {
   },
 
   /**
-   * Processing pulse (throughput + phase run history). Pending row counts are optional: when false,
-   * skips heavy backlog_metrics queries (avoids nginx/proxy "Network Error" under load). Use
-   * backlog_status for full queue ETAs, or pass includePendingMetrics true when proxy timeouts allow.
+   * Processing pulse (throughput + phase run history). Pending row counts:
+   * - useBacklogSnapshot (default true): fast precomputed index (~15 min refresh)
+   * - includePendingMetrics true: live heavy backlog_metrics SQL
    */
-  async getProcessingProgress(options?: { includePendingMetrics?: boolean }) {
+  async getProcessingProgress(options?: {
+    includePendingMetrics?: boolean;
+    useBacklogSnapshot?: boolean;
+  }) {
     const includePendingMetrics = options?.includePendingMetrics === true;
+    const useBacklogSnapshot =
+      !includePendingMetrics && options?.useBacklogSnapshot !== false;
     try {
       const response = await getApi().get(
         '/api/system_monitoring/processing_progress',
         {
-          params: { include_pending_metrics: includePendingMetrics },
-          // Light response ~seconds; with pending metrics can be minutes — keep headroom for cold DB.
-          timeout: includePendingMetrics ? 300000 : 30000,
+          params: {
+            include_pending_metrics: includePendingMetrics,
+            use_backlog_snapshot: useBacklogSnapshot,
+          },
+          timeout: includePendingMetrics ? 300000 : 120000,
         }
       );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch processing progress', error as Error);
       return { success: false, data: null, error: (error as any).message };
+    }
+  },
+
+  /** Episode assembly linkage coverage (EEL %, orphan clusters, TE bridge). */
+  async getLinkageCoverage() {
+    try {
+      const response = await getApi().get('/api/system_monitoring/linkage_coverage', {
+        timeout: 30000,
+      });
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch linkage coverage', error as Error);
+      return { success: false, global: {}, domains: [], error: (error as any).message };
     }
   },
 
@@ -443,16 +472,6 @@ export const monitoringApi = {
     }
   },
 
-  async getDuplicateStats() {
-    try {
-      const response = await getApi().get('/api/articles/duplicates/stats');
-      return response.data;
-    } catch (error) {
-      Logger.apiError('Failed to get duplicate stats', error as Error);
-      return { success: false, error: (error as any).message };
-    }
-  },
-
   async detectDuplicates(
     params: {
       similarity_threshold?: number;
@@ -461,7 +480,7 @@ export const monitoringApi = {
     } = {}
   ) {
     try {
-      const response = await getApi().get('/api/articles/duplicates/detect', {
+      const response = await getApi().get('/api/deduplication/articles/detect', {
         params,
       });
       return response.data;
@@ -473,7 +492,7 @@ export const monitoringApi = {
 
   async getURLDuplicates() {
     try {
-      const response = await getApi().get('/api/articles/duplicates/url');
+      const response = await getApi().get('/api/deduplication/articles/url');
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to get URL duplicates', error as Error);
@@ -483,7 +502,7 @@ export const monitoringApi = {
 
   async getContentDuplicates() {
     try {
-      const response = await getApi().get('/api/articles/duplicates/content');
+      const response = await getApi().get('/api/deduplication/articles/content');
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to get content duplicates', error as Error);
@@ -493,7 +512,7 @@ export const monitoringApi = {
 
   async getSimilarArticles(articleId: number, threshold: number = 0.8) {
     try {
-      const response = await getApi().get('/api/articles/duplicates/similar', {
+      const response = await getApi().get('/api/deduplication/articles/similar', {
         params: { article_id: articleId, threshold },
       });
       return response.data;
@@ -505,46 +524,16 @@ export const monitoringApi = {
 
   async autoMergeDuplicates(dryRun: boolean = true) {
     try {
+      // dry_run is a query param on the route; a JSON body was silently ignored, so
+      // "apply" always behaved as a dry run. Gated by DEDUPLICATION_DESTRUCTIVE_OPS_ENABLED.
       const response = await getApi().post(
-        '/api/articles/duplicates/auto_merge',
-        { dry_run: dryRun }
+        '/api/deduplication/articles/auto_merge',
+        null,
+        { params: { dry_run: dryRun } }
       );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to auto-merge duplicates', error as Error);
-      return { success: false, error: (error as any).message };
-    }
-  },
-
-  async preventDuplicates() {
-    try {
-      const response = await getApi().post('/api/articles/duplicates/prevent');
-      return response.data;
-    } catch (error) {
-      Logger.apiError('Failed to prevent duplicates', error as Error);
-      return { success: false, error: (error as any).message };
-    }
-  },
-
-  async analyzeSimilarity(articleId1: number, articleId2: number) {
-    try {
-      const response = await getApi().post(
-        '/api/articles/duplicates/analyze_similarity',
-        { article_id_1: articleId1, article_id_2: articleId2 }
-      );
-      return response.data;
-    } catch (error) {
-      Logger.apiError('Failed to analyze similarity', error as Error);
-      return { success: false, error: (error as any).message };
-    }
-  },
-
-  async getDeduplicationStats() {
-    try {
-      const response = await getApi().get('/api/articles/duplicates/stats');
-      return response.data;
-    } catch (error) {
-      Logger.apiError('Failed to get deduplication stats', error as Error);
       return { success: false, error: (error as any).message };
     }
   },
@@ -752,6 +741,23 @@ export const monitoringApi = {
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch finance market data', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  async getCreditSpread(
+    params: { days?: number; view?: 'fred' | 'etf' } = {},
+    domain?: string
+  ) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(
+        `/api/${domainKey}/finance/credit-spread`,
+        { params }
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch credit spread data', error as Error);
       return { success: false, error: (error as any).message };
     }
   },

@@ -8,11 +8,10 @@ Job types:
   - timeline_narrative_chronological | timeline_narrative_briefing: 8B narrative from timeline, stored on storylines
 
 Processed by automation task `content_refinement_queue` (see automation_manager).
-Before each drain batch, automation calls `auto_enqueue_comprehensive_rag_for_automation()` so
-deep analysis (`comprehensive_rag`) is queued without using the UI (disable via
-`AUTO_ENQUEUE_COMPREHENSIVE_RAG=0`). The scheduler also calls
-`maybe_auto_enqueue_comprehensive_rag_from_scheduler()` every ~30s so the DB queue gains work even
-when the refinement phase is starved (`AUTO_ENQUEUE_RAG_SCHEDULER_SECONDS`).
+Before each drain batch, automation calls `auto_enqueue_comprehensive_rag_for_automation()` when
+`CONTENT_REFINEMENT_AUTO_ENQUEUE=true` (default off). Legacy path:
+`CONTENT_REFINEMENT_API_ENQUEUE_ONLY=false` and `AUTO_ENQUEUE_COMPREHENSIVE_RAG=1`.
+Minimum linked articles: `CONTENT_REFINEMENT_AUTO_ENQUEUE_MIN_ARTICLES` (default 3).
 
 Nightly pipeline (America/New_York by default): automation phase `nightly_enrichment_context` runs
 02:00–07:00 (`NIGHTLY_PIPELINE_*`): kickoff RSS once per local day, drain enrichment and context_sync,
@@ -27,18 +26,15 @@ import asyncio
 import json
 import logging
 import os
-import time
 from datetime import datetime, timezone
 from collections.abc import Callable
 from typing import Any
 
 from shared.database.connection import get_db_connection
 from shared.domain_registry import get_active_domain_keys
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
-
-# Throttle scheduler-driven enqueue so we fill the DB queue even if the refinement phase is starved.
-_last_scheduler_auto_enqueue_monotonic: float = 0.0
 
 JOB_COMPREHENSIVE_RAG = "comprehensive_rag"
 JOB_NARRATIVE_FINISHER = "narrative_finisher"
@@ -56,38 +52,73 @@ VALID_JOB_TYPES = frozenset(
     }
 )
 
+
+def _ensure_core_prune_before_synthesis(domain_key: str, storyline_id: int) -> dict[str, Any]:
+    """
+    Pre-synthesis gate: if a mega still has dissimilar outliers, prune first so
+    finisher/RAG do not trust the full polluted member set.
+    """
+    try:
+        from services.storyline_core_prune_service import (
+            prune_dissimilar_parts,
+            should_gate_synthesis,
+        )
+
+        gated, info = should_gate_synthesis(domain_key, storyline_id)
+        if not gated:
+            return {"gated": False, "info": info}
+        logger.info(
+            "content_refinement pre-synthesis prune domain=%s storyline=%s outliers=%s",
+            domain_key,
+            storyline_id,
+            (info or {}).get("outliers"),
+        )
+        # Outer finisher/RAG holds membership freeze; nested prune must not clear it.
+        prune_stats = prune_dissimilar_parts(
+            domain_key, storyline_id, dry_run=False, manage_freeze=False
+        )
+        return {"gated": True, "info": info, "prune": prune_stats}
+    except Exception as e:
+        logger.warning(
+            "core prune pre-synthesis gate failed domain=%s storyline=%s: %s",
+            domain_key,
+            storyline_id,
+            e,
+        )
+        return {"gated": False, "error": str(e)[:200]}
+
 # ~70B narrative finisher + headline refiner share one GPU-friendly cap per batch
 _HEAVY_70B_JOB_TYPES = frozenset({JOB_NARRATIVE_FINISHER, JOB_HEADLINE_REFINER})
 _MAX_FINISHER_PER_CYCLE = int(
-    os.environ.get(
+    env_str(
         "NARRATIVE_FINISHER_MAX_INFLIGHT",
-        os.environ.get("CONTENT_REFINEMENT_MAX_FINISHER_JOBS_PER_CYCLE", "1"),
+        env_str("CONTENT_REFINEMENT_MAX_FINISHER_JOBS_PER_CYCLE", "1"),
     )
 )
-_MAX_JOBS_PER_CYCLE = int(os.environ.get("CONTENT_REFINEMENT_MAX_JOBS_PER_CYCLE", "4"))
+_MAX_JOBS_PER_CYCLE = int(env_str("CONTENT_REFINEMENT_MAX_JOBS_PER_CYCLE", "4"))
 # Claim enough pending rows to sort by "initial master narrative" vs refresh before applying caps
-_CLAIM_BATCH = int(os.environ.get("CONTENT_REFINEMENT_CLAIM_BATCH", "32"))
+_CLAIM_BATCH = int(env_str("CONTENT_REFINEMENT_CLAIM_BATCH", "32"))
 
 # Nightly window (local TZ): higher throughput for ~70B finisher catch-up
 _NIGHTLY_MAX_FINISHER = int(
-    os.environ.get(
+    env_str(
         "CONTENT_REFINEMENT_NIGHTLY_MAX_FINISHER_JOBS_PER_CYCLE",
         str(max(_MAX_FINISHER_PER_CYCLE, 2)),
     )
 )
 _NIGHTLY_MAX_JOBS = int(
-    os.environ.get(
+    env_str(
         "CONTENT_REFINEMENT_NIGHTLY_MAX_JOBS_PER_CYCLE",
         str(max(_MAX_JOBS_PER_CYCLE, 6)),
     )
 )
 _NIGHTLY_CLAIM_BATCH = int(
-    os.environ.get(
+    env_str(
         "CONTENT_REFINEMENT_NIGHTLY_CLAIM_BATCH",
         str(max(_CLAIM_BATCH, 48)),
     )
 )
-_NIGHTLY_MAX_BATCH_LOOPS = int(os.environ.get("NIGHTLY_GPU_REFINEMENT_MAX_BATCH_LOOPS", "500"))
+_NIGHTLY_MAX_BATCH_LOOPS = int(env_str("NIGHTLY_GPU_REFINEMENT_MAX_BATCH_LOOPS", "500"))
 
 _nightly_drain_lock = asyncio.Lock()
 
@@ -111,7 +142,7 @@ def _default_nightly_pipeline_window_active() -> bool:
 
 def nightly_gpu_refinement_exclusive_gpu_enabled() -> bool:
     """When True, automation defers other Ollama phases during the nightly refinement window."""
-    return os.environ.get("NIGHTLY_GPU_REFINEMENT_EXCLUSIVE_GPU", "0").lower() in (
+    return env_str("NIGHTLY_GPU_REFINEMENT_EXCLUSIVE_GPU", "0").lower() in (
         "1",
         "true",
         "yes",
@@ -242,7 +273,7 @@ def enqueue_initial_narrative_finisher(
     domain_key: str, storyline_id: int, *, source: str
 ) -> dict[str, Any]:
     """Queue ~70B master narrative at high priority (deduped per storyline/job_type)."""
-    if os.getenv("STORYLINE_AUTO_ENQUEUE_NARRATIVE_FINISHER", "1") == "0":
+    if env_str("STORYLINE_AUTO_ENQUEUE_NARRATIVE_FINISHER", "1") == "0":
         return {"success": True, "skipped": True, "reason": "disabled_by_env"}
     return enqueue_content_refinement(
         domain_key,
@@ -251,6 +282,95 @@ def enqueue_initial_narrative_finisher(
         priority="high",
         metadata={"finisher_pass": "initial", "source": source},
     )
+
+
+def content_refinement_auto_enqueue_enabled() -> bool:
+    """
+    True when automation may enqueue comprehensive_rag without a UI click.
+
+    Prefer CONTENT_REFINEMENT_AUTO_ENQUEUE=true (plan SSOT; default off).
+    Legacy: CONTENT_REFINEMENT_API_ENQUEUE_ONLY=false and AUTO_ENQUEUE_COMPREHENSIVE_RAG=1.
+    """
+    if env_str("CONTENT_REFINEMENT_AUTO_ENQUEUE", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return True
+    if env_str("CONTENT_REFINEMENT_API_ENQUEUE_ONLY", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return False
+    return env_str("AUTO_ENQUEUE_COMPREHENSIVE_RAG", "1").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def enqueue_refinement_for_stimulus(
+    *,
+    domain_key: str,
+    article_id: int | None = None,
+    storyline_id: int | None = None,
+    reason: str = "stimulus",
+) -> dict[str, Any]:
+    """Enqueue comprehensive_rag from a chemistry stimulus (evidence pull / harden), not heat census."""
+    from shared.domain_registry import resolve_domain_schema
+
+    schema = resolve_domain_schema(domain_key)
+    sid = storyline_id
+    conn = get_db_connection()
+    if not conn:
+        return {"enqueued": 0, "error": "no_db"}
+    try:
+        with conn.cursor() as cur:
+            if sid is None and article_id is not None:
+                cur.execute(
+                    f"""
+                    SELECT storyline_id FROM {schema}.storyline_articles
+                    WHERE article_id = %s
+                    ORDER BY COALESCE(relevance_score, 0) DESC
+                    LIMIT 1
+                    """,
+                    (article_id,),
+                )
+                row = cur.fetchone()
+                if row:
+                    sid = int(row[0])
+        if sid is None:
+            return {"enqueued": 0, "reason": "no_storyline"}
+        result = enqueue_content_refinement(
+            domain_key=domain_key,
+            storyline_id=int(sid),
+            job_type=JOB_COMPREHENSIVE_RAG,
+            priority="high",
+            metadata={"source": reason, "stimulus": True, "article_id": article_id},
+        )
+        ok = bool(result.get("success"))
+        return {
+            "enqueued": 1 if ok and not result.get("already_queued") else 0,
+            "storyline_id": sid,
+            "result": result,
+        }
+    except Exception as e:
+        logger.debug("enqueue_refinement_for_stimulus: %s", e)
+        return {"enqueued": 0, "error": str(e)[:200]}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def auto_enqueue_comprehensive_rag_min_articles() -> int:
+    """Minimum linked articles before auto-enqueue comprehensive_rag."""
+    try:
+        return max(1, int(env_str("CONTENT_REFINEMENT_AUTO_ENQUEUE_MIN_ARTICLES", "3")))
+    except ValueError:
+        return 3
 
 
 def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
@@ -262,18 +382,22 @@ def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
     Candidates:
       - ml_processing_status in (pending, processing) — e.g. topic→storyline promotion
       - Else if document_status is present: never rag_analyzed (NULL or other values)
+      - At least CONTENT_REFINEMENT_AUTO_ENQUEUE_MIN_ARTICLES linked articles (default 3)
 
-    Disabled with AUTO_ENQUEUE_COMPREHENSIVE_RAG=0. Per-domain scan cap:
-    AUTO_ENQUEUE_COMPREHENSIVE_RAG_PER_DOMAIN (default 8).
+    Enable with CONTENT_REFINEMENT_AUTO_ENQUEUE=true (default off).
+    Legacy disable: CONTENT_REFINEMENT_API_ENQUEUE_ONLY=true (default) without AUTO_ENQUEUE flag.
+    Per-domain scan cap: AUTO_ENQUEUE_COMPREHENSIVE_RAG_PER_DOMAIN (default 8).
     """
-    if os.getenv("AUTO_ENQUEUE_COMPREHENSIVE_RAG", "1").lower() not in (
-        "1",
-        "true",
-        "yes",
-    ):
-        return {"skipped": True, "reason": "disabled_by_env", "enqueued": 0, "already_queued": 0}
+    if not content_refinement_auto_enqueue_enabled():
+        return {
+            "skipped": True,
+            "reason": "auto_enqueue_disabled",
+            "enqueued": 0,
+            "already_queued": 0,
+        }
 
-    limit = max(1, int(os.environ.get("AUTO_ENQUEUE_COMPREHENSIVE_RAG_PER_DOMAIN", "8")))
+    limit = max(1, int(env_str("AUTO_ENQUEUE_COMPREHENSIVE_RAG_PER_DOMAIN", "8")))
+    min_articles = auto_enqueue_comprehensive_rag_min_articles()
     stats: dict[str, Any] = {"enqueued": 0, "already_queued": 0, "errors": 0, "by_domain": {}}
 
     for domain_key in sorted(get_active_domain_keys()):
@@ -296,10 +420,10 @@ def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
                           END AS prio
                         FROM {schema}.storylines s
                         WHERE s.status = 'active'
-                          AND EXISTS (
-                              SELECT 1 FROM {schema}.storyline_articles sa
+                          AND (
+                              SELECT COUNT(*) FROM {schema}.storyline_articles sa
                               WHERE sa.storyline_id = s.id
-                          )
+                          ) >= %s
                           AND NOT EXISTS (
                               SELECT 1 FROM intelligence.content_refinement_queue q
                               WHERE q.domain_key = %s
@@ -322,7 +446,7 @@ def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
                           s.updated_at DESC NULLS LAST
                         LIMIT %s
                         """,
-                        (domain_key, JOB_COMPREHENSIVE_RAG, limit),
+                        (min_articles, domain_key, JOB_COMPREHENSIVE_RAG, limit),
                     )
                     rows = [(int(r[0]), str(r[1])) for r in cur.fetchall()]
                 except Exception as e:
@@ -334,10 +458,10 @@ def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
                         SELECT s.id, 'high'::text AS prio
                         FROM {schema}.storylines s
                         WHERE s.status = 'active'
-                          AND EXISTS (
-                              SELECT 1 FROM {schema}.storyline_articles sa
+                          AND (
+                              SELECT COUNT(*) FROM {schema}.storyline_articles sa
                               WHERE sa.storyline_id = s.id
-                          )
+                          ) >= %s
                           AND NOT EXISTS (
                               SELECT 1 FROM intelligence.content_refinement_queue q
                               WHERE q.domain_key = %s
@@ -349,7 +473,7 @@ def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
                         ORDER BY s.updated_at DESC NULLS LAST
                         LIMIT %s
                         """,
-                        (domain_key, JOB_COMPREHENSIVE_RAG, limit),
+                        (min_articles, domain_key, JOB_COMPREHENSIVE_RAG, limit),
                     )
                     rows = [(int(r[0]), str(r[1])) for r in cur.fetchall()]
         except Exception as e:
@@ -388,39 +512,6 @@ def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
             stats.get("by_domain", {}),
         )
     return stats
-
-
-def maybe_auto_enqueue_comprehensive_rag_from_scheduler() -> None:
-    """
-    Run auto_enqueue on an interval from AutomationManager._scheduler (not only when the
-    content_refinement_queue task runs). Otherwise pending=0 skips visible work and the phase
-    can starve behind higher-backlog tasks, so storylines never get comprehensive_rag rows.
-
-    Skipped during the unified nightly pipeline window (nightly_enrichment_context owns drain +
-    enqueue at drain start). Interval: AUTO_ENQUEUE_RAG_SCHEDULER_SECONDS (default 30).
-    """
-    global _last_scheduler_auto_enqueue_monotonic
-    if os.getenv("AUTO_ENQUEUE_COMPREHENSIVE_RAG", "1").lower() not in (
-        "1",
-        "true",
-        "yes",
-    ):
-        return
-    try:
-        from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
-
-        if in_nightly_pipeline_window_est():
-            return
-    except Exception:
-        pass
-    interval = float(os.environ.get("AUTO_ENQUEUE_RAG_SCHEDULER_SECONDS", "30"))
-    if interval <= 0:
-        return
-    now = time.monotonic()
-    if now - _last_scheduler_auto_enqueue_monotonic < interval:
-        return
-    _last_scheduler_auto_enqueue_monotonic = now
-    auto_enqueue_comprehensive_rag_for_automation()
 
 
 def _need_initial_narrative_map_for_batch(
@@ -505,6 +596,68 @@ def count_content_refinement_pending() -> int:
             pass
 
 
+def reclaim_stale_content_refinement_processing(
+    *,
+    older_than_hours: float | None = None,
+) -> int:
+    """
+    Mark long-stuck ``processing`` rows as ``failed`` so they cannot block operators
+    or confuse queue health. Safe for jobs abandoned after process crash / restart.
+    """
+    try:
+        from config.runtime import env_float
+
+        hours = float(
+            older_than_hours
+            if older_than_hours is not None
+            else env_float("CONTENT_REFINEMENT_STALE_PROCESSING_HOURS", 24.0)
+        )
+    except Exception:
+        hours = 24.0
+    hours = max(1.0, min(720.0, hours))
+    conn = get_db_connection()
+    if not conn:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE intelligence.content_refinement_queue
+                SET status = 'failed',
+                    error_message = COALESCE(
+                        NULLIF(TRIM(error_message), ''),
+                        'reclaimed_stale_processing'
+                    ) || ' [stale_processing>' || %s::text || 'h]',
+                    completed_at = COALESCE(completed_at, NOW())
+                WHERE status = 'processing'
+                  AND started_at IS NOT NULL
+                  AND started_at < NOW() - (%s || ' hours')::interval
+                """,
+                (str(int(hours)), str(hours)),
+            )
+            n = int(cur.rowcount or 0)
+        conn.commit()
+        if n:
+            logger.warning(
+                "content_refinement reclaim: marked %s stale processing rows failed (>%sh)",
+                n,
+                hours,
+            )
+        return n
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.warning("reclaim_stale_content_refinement_processing: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _claim_pending_batch(conn, limit: int) -> list[tuple[Any, ...]]:
     with conn.cursor() as cur:
         cur.execute(
@@ -565,12 +718,20 @@ async def _run_comprehensive_rag(domain_key: str, storyline_id: int) -> None:
         load_rag_analysis_inputs_for_queue,
         process_storyline_rag_analysis,
     )
+    from shared.domain_registry import domain_key_to_schema
+    from services.storyline_membership_ops_lock import membership_ops_freeze
 
-    loaded = load_rag_analysis_inputs_for_queue(domain_key, storyline_id)
-    if not loaded:
-        raise RuntimeError("storyline_not_found_or_no_articles")
-    storyline_tuple, articles = loaded
-    await process_storyline_rag_analysis(domain_key, storyline_id, storyline_tuple, articles)
+    schema = domain_key_to_schema(domain_key)
+    with membership_ops_freeze(schema, storyline_id, "comprehensive_rag"):
+        _ensure_core_prune_before_synthesis(domain_key, storyline_id)
+
+        loaded = load_rag_analysis_inputs_for_queue(domain_key, storyline_id)
+        if not loaded:
+            raise RuntimeError("storyline_not_found_or_no_articles")
+        storyline_tuple, articles = loaded
+        await process_storyline_rag_analysis(
+            domain_key, storyline_id, storyline_tuple, articles
+        )
 
 
 async def _run_narrative_finisher(domain_key: str, storyline_id: int) -> None:
@@ -578,11 +739,27 @@ async def _run_narrative_finisher(domain_key: str, storyline_id: int) -> None:
         persist_narrative_finish_to_db,
         run_narrative_finish_from_db,
     )
+    from services.storyline_rag_context_service import ensure_storyline_rag_context
+    from shared.domain_registry import domain_key_to_schema
+    from services.storyline_membership_ops_lock import membership_ops_freeze
 
-    result = await run_narrative_finish_from_db(domain_key, storyline_id, parse_json=True)
-    if not result.get("success"):
-        raise RuntimeError(result.get("error", "finisher_failed"))
-    persist_narrative_finish_to_db(domain_key, storyline_id, result)
+    schema = domain_key_to_schema(domain_key)
+    with membership_ops_freeze(schema, storyline_id, "narrative_finisher"):
+        _ensure_core_prune_before_synthesis(domain_key, storyline_id)
+
+        try:
+            await ensure_storyline_rag_context(
+                domain_key, storyline_id, timeout_seconds=45.0
+            )
+        except Exception:
+            pass
+
+        result = await run_narrative_finish_from_db(
+            domain_key, storyline_id, parse_json=True
+        )
+        if not result.get("success"):
+            raise RuntimeError(result.get("error", "finisher_failed"))
+        persist_narrative_finish_to_db(domain_key, storyline_id, result)
 
 
 async def _run_headline_refiner(domain_key: str, storyline_id: int) -> None:
@@ -595,12 +772,18 @@ async def _run_headline_refiner(domain_key: str, storyline_id: int) -> None:
         raise RuntimeError("no_db_connection")
     draft_title = ""
     draft_desc = ""
-    evidence_lines: list[str] = []
+    evidence_summary = ""
+    prefer_regen = False
+    kitchen_sink_flag: bool | None = None
+    member_rows: list[dict] = []
     try:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT title, COALESCE(description, '')
+                SELECT title, COALESCE(description, ''),
+                       COALESCE(canonical_narrative, COALESCE(analysis_summary, '')),
+                       COALESCE(narrative_finisher_meta, '{{}}'::jsonb),
+                       COALESCE(quality_metrics, '{{}}'::jsonb)
                 FROM {schema}.storylines
                 WHERE id = %s
                 """,
@@ -611,9 +794,31 @@ async def _run_headline_refiner(domain_key: str, storyline_id: int) -> None:
                 raise RuntimeError("storyline_not_found")
             draft_title = row[0] or ""
             draft_desc = row[1] or ""
+            evidence_summary = row[2] or ""
+            try:
+                import json as _json
+
+                meta = _json.loads(row[3]) if isinstance(row[3], str) else row[3]
+                if isinstance(meta, dict):
+                    prefer_regen = bool(meta.get("prefer_regenerate_from_keepers"))
+                    prune_meta = meta.get("core_prune")
+                    if isinstance(prune_meta, dict):
+                        if prune_meta.get("prefer_regenerate_from_keepers"):
+                            prefer_regen = True
+                        if prune_meta.get("kitchen_sink"):
+                            kitchen_sink_flag = True
+                qm = _json.loads(row[4]) if isinstance(row[4], str) else row[4]
+                if isinstance(qm, dict):
+                    if qm.get("prefer_regenerate_from_keepers"):
+                        prefer_regen = True
+                    if qm.get("kitchen_sink"):
+                        kitchen_sink_flag = True
+            except Exception:
+                pass
             cur.execute(
                 f"""
-                SELECT a.title, COALESCE(a.summary, '') AS summary
+                SELECT a.id, a.title, COALESCE(a.summary, '') AS summary,
+                       COALESCE(sa.relationship_type, '')
                 FROM {schema}.articles a
                 JOIN {schema}.storyline_articles sa ON sa.article_id = a.id
                 WHERE sa.storyline_id = %s
@@ -624,13 +829,61 @@ async def _run_headline_refiner(domain_key: str, storyline_id: int) -> None:
                 (storyline_id,),
             )
             for r in cur.fetchall() or []:
-                bt = (r[0] or "").strip()
-                sm = (r[1] or "").strip()
-                line = f"{bt[:400]} — {sm[:400]}".strip(" —")
-                if line:
-                    evidence_lines.append(line)
+                member_rows.append(
+                    {
+                        "id": r[0],
+                        "title": (r[1] or "").strip(),
+                        "summary": (r[2] or "").strip(),
+                        "relationship_type": (r[3] or "").strip().lower(),
+                        "entities": set(),
+                    }
+                )
+            aids = [int(m["id"]) for m in member_rows if m.get("id")]
+            if aids:
+                try:
+                    cur.execute(
+                        f"""
+                        SELECT ae.article_id, LOWER(ec.canonical_name)
+                        FROM {schema}.article_entities ae
+                        JOIN {schema}.entity_canonical ec ON ec.id = ae.canonical_entity_id
+                        WHERE ae.article_id = ANY(%s)
+                          AND ec.canonical_name IS NOT NULL
+                        LIMIT 1000
+                        """,
+                        (aids,),
+                    )
+                    by_id = {int(m["id"]): m for m in member_rows}
+                    for aid, name in cur.fetchall():
+                        row_m = by_id.get(int(aid))
+                        if row_m and name:
+                            row_m["entities"].add(str(name).strip().lower())
+                except Exception:
+                    pass
     finally:
         conn.close()
+
+    try:
+        from services.storyline_core_prune_service import (
+            filter_articles_for_keeper_evidence,
+        )
+
+        member_rows = filter_articles_for_keeper_evidence(
+            storyline_title=draft_title,
+            storyline_summary=evidence_summary,
+            articles=member_rows,
+            prefer_regenerate_from_keepers=prefer_regen,
+            kitchen_sink=kitchen_sink_flag,
+        )
+    except Exception:
+        pass
+
+    evidence_lines: list[str] = []
+    for m in member_rows:
+        bt = (m.get("title") or "").strip()
+        sm = (m.get("summary") or "").strip()
+        line = f"{bt[:400]} — {sm[:400]}".strip(" —")
+        if line:
+            evidence_lines.append(line)
 
     if not evidence_lines:
         raise RuntimeError("no_articles_for_headline_evidence")
@@ -771,11 +1024,20 @@ async def process_content_refinement_queue_batch(
         else _MAX_FINISHER_PER_CYCLE
     )
     cap_jobs = max_jobs_per_cycle if max_jobs_per_cycle is not None else _MAX_JOBS_PER_CYCLE
+    if max_jobs_per_cycle is None:
+        try:
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            cap_jobs, _meta = resolve_adaptive_batch("content_refinement_queue", int(cap_jobs))
+            cap_jobs = max(1, int(cap_jobs))
+        except Exception:
+            pass
     cap_claim = claim_batch if claim_batch is not None else _CLAIM_BATCH
 
+    reclaimed = reclaim_stale_content_refinement_processing()
     conn = get_db_connection()
     if not conn:
-        return {"processed": 0, "error": "no_db_connection"}
+        return {"processed": 0, "error": "no_db_connection", "reclaimed_stale": reclaimed}
 
     stats: dict[str, Any] = {
         "processed": 0,
@@ -783,6 +1045,8 @@ async def process_content_refinement_queue_batch(
         "by_type": {},
         "pending_before": 0,
         "pending_after": 0,
+        "reclaimed_stale": reclaimed,
+        "batch_limit": int(cap_jobs),
     }
     finisher_run = 0
     to_process: list[tuple[Any, ...]] = []

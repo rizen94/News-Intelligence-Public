@@ -85,4 +85,109 @@ def test_mega_earnings_children_without_shared_entities_blocked():
     ]
     ok, reason = g.assess_mega_group_coherence("finance", children)
     assert ok is False
-    assert reason == "finance_earnings_mega_insufficient_entities"
+    assert reason in {
+        "insufficient_shared_entities",
+        "finance_earnings_mega_insufficient_entities",
+    }
+
+
+def test_placeholder_mega_title_detected():
+    assert g.is_placeholder_mega_title("Ongoing: WHAT") is True
+    assert g.is_placeholder_mega_title("Ongoing: Who") is True
+    assert g.is_overly_generic_storyline_title("Ongoing: WHAT", "legal") is True
+    assert g.is_placeholder_mega_title("Ongoing: Gaza") is False
+
+
+def test_leaked_storyline_title_detected():
+    assert g.is_leaked_storyline_title("{: The Next Stage in Enforcement") is True
+    assert g.is_leaked_storyline_title('lede: Something happened') is True
+    assert g.is_leaked_storyline_title("Apple sues OpenAI over trade secrets") is False
+
+
+def test_sanitize_storyline_title_for_display():
+    assert (
+        g.sanitize_storyline_title_for_display(
+            "{: The Next Stage in Enforcement Escalation: DOJ’s First DEI-Related FCA Settlement"
+        )
+        == "The Next Stage in Enforcement Escalation: DOJ’s First DEI-Related FCA Settlement"
+    )
+    assert (
+        g.sanitize_storyline_title_for_display(
+            "Year_2026: California spars with expert witness over safety of abortion reversals"
+        )
+        == "California spars with expert witness over safety of abortion reversals"
+    )
+    assert (
+        g.sanitize_storyline_title_for_display("Ongoing: WHAT", fallback="Storyline #9")
+        == "Storyline #9"
+    )
+    assert (
+        g.sanitize_storyline_title_for_display("Normal Legal Storyline Title")
+        == "Normal Legal Storyline Title"
+    )
+    # Mid-word truncation → soft ellipsis at last full word
+    assert (
+        g.sanitize_storyline_title_for_display(
+            "California spars with expert witness ove"
+        )
+        == "California spars with expert witness…"
+    )
+
+
+def test_mega_group_requires_shared_entity_all_domains():
+    children = [
+        _Child("DOJ enforcement escalation", {"doj"}),
+        _Child("Cyclospora outbreak insurance cases", {"cyclospora"}),
+    ]
+    ok, reason = g.assess_mega_group_coherence("legal", children)
+    assert ok is False
+    assert reason == "insufficient_shared_entities"
+
+
+def test_mega_group_shared_entity_passes_legal():
+    children = [
+        _Child("DOJ probes OpenAI trade secrets", {"openai", "doj"}),
+        _Child("Apple sues OpenAI over model weights", {"openai", "apple"}),
+    ]
+    ok, reason = g.assess_mega_group_coherence("legal", children)
+    assert ok is True
+    assert reason == "ok"
+
+
+def test_mega_group_rejects_leaked_child_title():
+    children = [
+        _Child("{: Enforcement Escalation", {"doj"}),
+        _Child("DOJ files second brief", {"doj"}),
+    ]
+    ok, reason = g.assess_mega_group_coherence("legal", children)
+    assert ok is False
+    assert reason == "leaked_child_title"
+
+
+def test_pairwise_merge_unrelated_entities_blocked():
+    s1 = _Child("Apple Q2 earnings report", {"apple"})
+    s2 = _Child("Exxon quarterly earnings", {"exxon"})
+    ok, reason = g.assess_storyline_pair_merge_coherence("finance", s1, s2)
+    assert ok is False
+    assert reason == "insufficient_shared_entities"
+
+
+def test_pairwise_merge_shared_entity_allowed():
+    s1 = _Child("Apple Q2 earnings report", {"apple", "tim cook"})
+    s2 = _Child("Apple supply chain earnings impact", {"apple", "foxconn"})
+    ok, reason = g.assess_storyline_pair_merge_coherence("finance", s1, s2)
+    assert ok is True
+    assert reason == "ok"
+
+
+def test_kitchen_sink_amid_title():
+    articles = [
+        {"title": "Apple sues OpenAI", "summary": "", "content": ""},
+        {"title": "Cyclospora outbreak spreads", "summary": "", "content": ""},
+    ]
+    sink, reason = g.assess_kitchen_sink_risk(
+        "Apple Sues OpenAI Amid Cyclospora Outbreak and Insurance Cases",
+        articles,
+    )
+    assert sink is True
+    assert reason == "title_amid_join"

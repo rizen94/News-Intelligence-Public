@@ -18,6 +18,7 @@ from config.settings import (
 
 # Import after settings to avoid cycles at collection time
 from shared.services.llm_service import ModelType, TaskType
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 
 class InvocationKind(str, Enum):
@@ -55,6 +56,9 @@ def resolve_model_for_invocation(
     - Long synthesis (draft) → primary — finisher is STORYLINE_NARRATIVE_FINISH, not this kind.
     """
     if kind == InvocationKind.STORYLINE_NARRATIVE_FINISH:
+        # 32B tag is often not pulled; fall back to installed primary so jobs drain.
+        if env_bool("OLLAMA_NARRATIVE_FINISHER_FALLBACK_TO_PRIMARY", True):
+            return ModelType.LLAMA_8B
         return ModelType.LLAMA_70B
 
     if kind == InvocationKind.FINANCE_GENERATION_HIGH:
@@ -74,9 +78,9 @@ def resolve_model_for_invocation(
         return ModelType.LLAMA_8B
 
     if kind == InvocationKind.STRUCTURED_EXTRACTION:
-        if OLLAMA_USE_QWEN_FOR_EXTRACTION:
+        if env_bool("OLLAMA_USE_QWEN_FOR_EXTRACTION", OLLAMA_USE_QWEN_FOR_EXTRACTION):
             return ModelType.QWEN_25_7B
-        if OLLAMA_USE_SECONDARY_FOR_EXTRACTION:
+        if env_bool("OLLAMA_USE_SECONDARY_FOR_EXTRACTION", OLLAMA_USE_SECONDARY_FOR_EXTRACTION):
             return ModelType.MISTRAL_7B
         return ModelType.LLAMA_8B
 
@@ -113,7 +117,19 @@ def resolve_model_for_llm_task(
     return resolve_model_for_invocation(InvocationKind.DEFAULT, urgency, approx_prompt_chars)
 
 
-def num_predict_for_invocation(kind: InvocationKind | None) -> int:
+def extraction_temperature_for_invocation(kind: InvocationKind | None) -> float:
+    """Lower temperature for structured JSON extraction."""
+    if kind == InvocationKind.STRUCTURED_EXTRACTION:
+        try:
+            return float(env_str("OLLAMA_EXTRACTION_TEMPERATURE", "0.15"))
+        except ValueError:
+            return 0.15
+    return 0.7
+
+
+def num_predict_for_invocation(
+    kind: InvocationKind | None, batch_size: int | None = 1
+) -> int:
     """Token cap by invocation kind — avoids 2000-token budget on short extraction passes."""
     if kind is None:
         return 800
@@ -122,7 +138,25 @@ def num_predict_for_invocation(kind: InvocationKind | None) -> int:
         InvocationKind.FAST_SIMPLE,
         InvocationKind.REAL_TIME_UI,
     ):
-        return 512
+        if kind == InvocationKind.STRUCTURED_EXTRACTION:
+            # Scale with batch size: ~700 tokens/article, minimum 2048.
+            # Callers often pass batch_size=None (single-doc); coerce before multiply.
+            try:
+                bs = int(batch_size) if batch_size is not None else 1
+            except (TypeError, ValueError):
+                bs = 1
+            if bs < 1:
+                bs = 1
+            try:
+                base = int(env_str("OLLAMA_EXTRACTION_NUM_PREDICT", "4096"))
+            except ValueError:
+                base = 4096
+            # ~900 tokens/article for full entity+event+claims JSON; keep headroom.
+            return max(base, 900 * bs)
+        try:
+            return int(env_str("OLLAMA_EXTRACTION_NUM_PREDICT", "2048"))
+        except ValueError:
+            return 2048
     if kind in (
         InvocationKind.INTERACTIVE_SUMMARY,
         InvocationKind.BRIEFING_LEAD,
@@ -137,11 +171,44 @@ def num_predict_for_invocation(kind: InvocationKind | None) -> int:
     return 800
 
 
+def num_ctx_for_invocation(kind: InvocationKind | None) -> int | None:
+    """Cap context window — large ctx on Widow forces ``--no-mmap`` and eats system RAM.
+
+    Widow GTX 1080 (8GB): keep extraction ctx modest so weights stay in VRAM.
+    PopOS 5090 can raise ``OLLAMA_EXTRACTION_NUM_CTX`` independently.
+
+    Narrative finisher (``LLAMA_70B`` → often ``qwen2.5:32b-instruct``) must not
+    inherit the model default 32k: that KV spills layers to CPU and thrash-swaps.
+    """
+    if kind == InvocationKind.STRUCTURED_EXTRACTION:
+        try:
+            # Default 8192 — PopOS 5090 is the sole extraction host; batch-of-6
+            # prompts (6×8k chars + schema) truncate under 2048 and trigger retries.
+            return max(512, min(8192, int(env_str("OLLAMA_EXTRACTION_NUM_CTX", "8192"))))
+        except ValueError:
+            return 8192
+    if kind == InvocationKind.STORYLINE_NARRATIVE_FINISH:
+        try:
+            # Default 8192 keeps 32B weights mostly on a 32GB card; raise via env if needed.
+            return max(512, min(16384, int(env_str("OLLAMA_NARRATIVE_FINISHER_NUM_CTX", "8192"))))
+        except ValueError:
+            return 8192
+    # Cap other Widow-local generations when explicitly configured.
+    raw = env_str("OLLAMA_DEFAULT_NUM_CTX", "").strip()
+    if raw:
+        try:
+            return max(512, min(8192, int(raw)))
+        except ValueError:
+            return None
+    return None
+
+
 def keep_alive_for_invocation(kind: InvocationKind | None) -> str:
-    """Ollama model residency — longer for automation, shorter for UI."""
+    """Ollama model residency — short on Widow so RAM/VRAM recover between bursts."""
     if kind in (
         InvocationKind.REAL_TIME_UI,
         InvocationKind.INTERACTIVE_SUMMARY,
     ):
-        return "5m"
-    return "30m"
+        return env_str("OLLAMA_UI_KEEP_ALIVE", "2m").strip() or "2m"
+    # Automation default was 30m and kept 8B resident after profile/build bursts.
+    return env_str("OLLAMA_AUTOMATION_KEEP_ALIVE", "2m").strip() or "2m"

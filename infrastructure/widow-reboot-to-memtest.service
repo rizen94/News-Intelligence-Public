@@ -1,0 +1,27 @@
+# One-shot: reboot Widow into memtest86+ via grub-reboot (next boot only).
+# Timer: widow-reboot-to-memtest.timer (calendar absolute time; not recurring).
+# Script: /opt/news-intelligence/scripts/widow_reboot_to_memtest.sh
+
+[Unit]
+Description=Widow one-shot reboot into memtest86+ (NI stop + grub-reboot)
+Documentation=file:///opt/news-intelligence/scripts/widow_reboot_to_memtest.sh
+ConditionPathExists=!/run/systemd/shutdown/scheduled
+# Done-flag gating lives in the script (clears markers older than
+# WIDOW_MEMTEST_MARKER_MAX_AGE_HOURS, then aborts if a fresh .done remains).
+# Do not use ConditionPathExists=!...done here — that skips ExecStart entirely
+# and leaves stale markers uncleared after an abandoned window.
+
+[Service]
+Type=oneshot
+User=pete
+Group=pete
+ExecStart=/opt/news-intelligence/scripts/widow_reboot_to_memtest.sh
+Nice=10
+# Must exceed worst-case stop drains + bounded CHECKPOINT + GRUB/PNY work.
+# 180s previously killed the unit mid-CHECKPOINT after NI was already stopped,
+# leaving API failed and never reaching grub-reboot (2026-09-16 01:14 EDT).
+# Script bounds CHECKPOINT to ~30s; this budget covers stop SEGV drains + reboot.
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

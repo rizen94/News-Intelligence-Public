@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 
 def bootstrap_migration_env() -> None:
@@ -23,13 +24,13 @@ def bootstrap_migration_env() -> None:
     except ImportError:
         pass
 
-    if os.environ.get("DB_PASSWORD"):
+    if env_str("DB_PASSWORD"):
         return
     repo_root = Path(__file__).resolve().parent.parent.parent
     pw_path = repo_root / ".db_password_widow"
     if pw_path.is_file():
         try:
-            os.environ["DB_PASSWORD"] = pw_path.read_text().strip()
+            env_set("DB_PASSWORD", pw_path.read_text().strip())
         except OSError:
             pass
 

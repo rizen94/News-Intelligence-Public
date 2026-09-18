@@ -16,6 +16,7 @@ from typing import Any
 
 from shared.database.connection import get_db_connection
 from shared.domain_registry import domain_key_to_schema, get_active_domain_keys, is_valid_domain_key
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,8 @@ def _normalize_for_fuzzy(text: str) -> str:
         if len(w) >= 4 and w[0] == w[1] and w[0].isalpha():
             w = w[1:]
         words.append(w)
+    # Drop generational suffixes so "Robert F Kennedy Jr" ≉ "Martin Luther King Jr"
+    words = [w for w in words if w not in {"jr", "sr", "ii", "iii", "iv", "v"}]
     return " ".join(words)
 
 
@@ -131,6 +134,15 @@ _ENTITY_EQUIVALENCE_GROUPS_RAW: tuple[tuple[str, ...], ...] = (
         "Washington DC",
         "Washington D.C.",
         "Washington, D.C.",
+    ),
+    # Foodborne / parasitic disease — surface forms from outbreak coverage
+    (
+        "cyclospora",
+        "cyclosporiasis",
+        "cyclospora outbreak",
+        "cyclosporiasis outbreak",
+        "Cyclospora outbreak",
+        "Cyclosporiasis outbreak",
     ),
 )
 
@@ -217,16 +229,34 @@ LAST_WORD_ROLE_BLOCKLIST = frozenset(
         "department",
         "unit",
         "group",
+        # Generational suffixes are NOT surnames — matching on "Jr" merged
+        # RFK Jr / Biden Jr / Trump Jr into Martin Luther King Jr.
+        "jr",
+        "sr",
+        "ii",
+        "iii",
+        "iv",
+        "v",
     }
 )
 
+# Strip before surname extraction (with or without trailing period).
+_GENERATIONAL_SUFFIXES = frozenset({"jr", "sr", "ii", "iii", "iv", "v"})
+
+
+def _strip_generational_suffixes(parts: list[str]) -> list[str]:
+    out = list(parts)
+    while len(out) >= 2 and out[-1].lower().rstrip(".").rstrip("'s") in _GENERATIONAL_SUFFIXES:
+        out.pop()
+    return out
+
 
 def _extract_last_name(name: str) -> str | None:
-    """For person entities, extract the last word as surname (if not a role word)."""
-    parts = name.strip().split()
+    """For person entities, extract surname (skip role words and Jr/Sr/II…)."""
+    parts = _strip_generational_suffixes(name.strip().split())
     if len(parts) >= 2:
         last = parts[-1].lower().rstrip("'s")
-        if last not in LAST_WORD_ROLE_BLOCKLIST:
+        if last not in LAST_WORD_ROLE_BLOCKLIST and last not in _GENERATIONAL_SUFFIXES:
             return parts[-1]
     return None
 
@@ -289,25 +319,18 @@ def _get_or_create_family_canonical(cur, schema: str, surname_token: str) -> int
 
 
 def _ensure_member_of_family_edge(cur, domain_key: str, person_canonical_id: int, family_canonical_id: int) -> None:
+    from shared.entity_relationships_store import UPSERT_ENTITY_RELATIONSHIP_SQL
+
     cur.execute(
-        """
-        SELECT 1 FROM intelligence.entity_relationships
-        WHERE source_domain = %s AND source_entity_id = %s
-          AND target_domain = %s AND target_entity_id = %s
-          AND relationship_type = %s
-        LIMIT 1
-        """,
-        (domain_key, person_canonical_id, domain_key, family_canonical_id, REL_MEMBER_OF_FAMILY),
-    )
-    if cur.fetchone():
-        return
-    cur.execute(
-        """
-        INSERT INTO intelligence.entity_relationships
-        (source_domain, source_entity_id, target_domain, target_entity_id, relationship_type, confidence)
-        VALUES (%s, %s, %s, %s, %s, 0.99)
-        """,
-        (domain_key, person_canonical_id, domain_key, family_canonical_id, REL_MEMBER_OF_FAMILY),
+        UPSERT_ENTITY_RELATIONSHIP_SQL,
+        (
+            domain_key,
+            person_canonical_id,
+            domain_key,
+            family_canonical_id,
+            REL_MEMBER_OF_FAMILY,
+            0.99,
+        ),
     )
 
 
@@ -327,6 +350,156 @@ def _link_surname_cluster_to_family(
 # ---------------------------------------------------------------------------
 # Core resolution (enhanced with title stripping + last-name fallback)
 # ---------------------------------------------------------------------------
+
+
+def resolve_to_canonical_on_cursor(
+    cur,
+    schema: str,
+    domain_key: str,
+    entity_name: str,
+    entity_type: str,
+    create_if_missing: bool = True,
+) -> int | None:
+    """Resolve using an existing cursor (caller owns connection + transaction)."""
+    name = (entity_name or "").strip()
+    if not name or len(name) < 2:
+        return None
+    etype = (entity_type or "person").strip().lower()
+    if etype not in ENTITY_TYPES:
+        etype = "person"
+
+    cur.execute(f"SET search_path TO {schema}, public")
+
+    cur.execute(
+        f"""
+        SELECT id FROM {schema}.entity_canonical
+        WHERE entity_type = %s
+          AND (
+            LOWER(canonical_name) = LOWER(%s)
+            OR EXISTS (
+                SELECT 1 FROM unnest(COALESCE(aliases, '{{}}')) a
+                WHERE LOWER(a) = LOWER(%s)
+            )
+          )
+        LIMIT 1
+        """,
+        (etype, name, name),
+    )
+    row = cur.fetchone()
+    if row:
+        return row[0]
+
+    eq_terms = _equivalence_sql_terms(name, etype)
+    if eq_terms:
+        cur.execute(
+            f"""
+            SELECT id FROM {schema}.entity_canonical
+            WHERE entity_type = %s
+              AND (
+                lower(trim(canonical_name)) = ANY(%s)
+                OR EXISTS (
+                    SELECT 1 FROM unnest(COALESCE(aliases, '{{}}')) a
+                    WHERE lower(trim(a)) = ANY(%s)
+                )
+              )
+            LIMIT 1
+            """,
+            (etype, eq_terms, eq_terms),
+        )
+        row = cur.fetchone()
+        if row:
+            _add_alias(cur, schema, row[0], name)
+            return row[0]
+
+    stripped = _normalize_name(name, etype)
+    if stripped.lower() != name.lower():
+        cur.execute(
+            f"""
+            SELECT id FROM {schema}.entity_canonical
+            WHERE entity_type = %s
+              AND (
+                LOWER(canonical_name) = LOWER(%s)
+                OR EXISTS (
+                    SELECT 1 FROM unnest(COALESCE(aliases, '{{}}')) a
+                    WHERE LOWER(a) = LOWER(%s)
+                )
+              )
+            LIMIT 1
+            """,
+            (etype, stripped, stripped),
+        )
+        row = cur.fetchone()
+        if row:
+            _add_alias(cur, schema, row[0], name)
+            return row[0]
+
+    if etype == "person":
+        last_name = _extract_last_name(stripped)
+        if (
+            not last_name
+            and len(stripped.split()) == 1
+            and len(stripped.strip()) >= 3
+            and not _name_ends_with_role_word(stripped)
+        ):
+            last_name = stripped.strip()
+        if last_name and len(last_name) >= 3:
+            ln_pat = f" {last_name.lower()}"
+            cur.execute(
+                f"""
+                SELECT id, canonical_name, COALESCE(aliases, '{{}}')
+                FROM {schema}.entity_canonical
+                WHERE entity_type = 'person'
+                  AND (
+                    LOWER(canonical_name) LIKE '%%' || LOWER(%s)
+                    OR EXISTS (
+                        SELECT 1 FROM unnest(COALESCE(aliases, '{{}}')) a
+                        WHERE LOWER(a) LIKE '%%' || LOWER(%s)
+                    )
+                  )
+                """,
+                (ln_pat, ln_pat),
+            )
+            candidates = cur.fetchall()
+            if len(candidates) == 1:
+                _add_alias(cur, schema, candidates[0][0], name)
+                return candidates[0][0]
+            if len(candidates) > 1:
+                parts_s = stripped.split()
+                first_tok = parts_s[0] if parts_s else ""
+                matched = [
+                    row
+                    for row in candidates
+                    if _person_matches_first_name(row[1], row[2], first_tok)
+                ]
+                if len(matched) == 1:
+                    cid = matched[0][0]
+                    _add_alias(cur, schema, cid, name)
+                    return cid
+                fam_id = _link_surname_cluster_to_family(
+                    cur, schema, domain_key, last_name, list(candidates)
+                )
+                single_token_surname = len(parts_s) == 1 and parts_s[0].lower().rstrip(
+                    "'s"
+                ) == last_name.lower()
+                ambiguous_multi = len(matched) != 1
+                if fam_id and (single_token_surname or ambiguous_multi):
+                    return fam_id
+
+    if not create_if_missing:
+        return None
+
+    cur.execute(
+        f"""
+        INSERT INTO {schema}.entity_canonical (canonical_name, entity_type, aliases)
+        VALUES (%s, %s, ARRAY[%s]::TEXT[])
+        ON CONFLICT (canonical_name, entity_type) DO UPDATE SET
+            updated_at = NOW()
+        RETURNING id
+        """,
+        (name[:255], etype, name[:255]),
+    )
+    new_row = cur.fetchone()
+    return new_row[0] if new_row else None
 
 
 def resolve_to_canonical(
@@ -362,158 +535,25 @@ def resolve_to_canonical(
         logger.warning("entity resolution: no DB connection")
         return None
 
+    def _release(result: int | None) -> int | None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return result
+
     try:
         with conn.cursor() as cur:
-            cur.execute(f"SET search_path TO {schema}, public")
-
-            # --- Step 1: exact match on canonical_name or alias ---
-            cur.execute(
-                f"""
-                SELECT id FROM {schema}.entity_canonical
-                WHERE entity_type = %s
-                  AND (
-                    LOWER(canonical_name) = LOWER(%s)
-                    OR EXISTS (
-                        SELECT 1 FROM unnest(COALESCE(aliases, '{{}}')) a
-                        WHERE LOWER(a) = LOWER(%s)
-                    )
-                  )
-                LIMIT 1
-                """,
-                (etype, name, name),
+            result = resolve_to_canonical_on_cursor(
+                cur,
+                schema,
+                domain_key,
+                name,
+                etype,
+                create_if_missing=create_if_missing,
             )
-            row = cur.fetchone()
-            if row:
-                conn.close()
-                return row[0]
-
-            # --- Step 1b: known abbreviation / geo bucket (US / USA / United States, …) ---
-            eq_terms = _equivalence_sql_terms(name, etype)
-            if eq_terms:
-                cur.execute(
-                    f"""
-                    SELECT id FROM {schema}.entity_canonical
-                    WHERE entity_type = %s
-                      AND (
-                        lower(trim(canonical_name)) = ANY(%s)
-                        OR EXISTS (
-                            SELECT 1 FROM unnest(COALESCE(aliases, '{{}}')) a
-                            WHERE lower(trim(a)) = ANY(%s)
-                        )
-                      )
-                    LIMIT 1
-                    """,
-                    (etype, eq_terms, eq_terms),
-                )
-                row = cur.fetchone()
-                if row:
-                    _add_alias(cur, schema, row[0], name)
-                    conn.commit()
-                    conn.close()
-                    return row[0]
-
-            # --- Step 2: title-stripped match ---
-            stripped = _normalize_name(name, etype)
-            if stripped.lower() != name.lower():
-                cur.execute(
-                    f"""
-                    SELECT id FROM {schema}.entity_canonical
-                    WHERE entity_type = %s
-                      AND (
-                        LOWER(canonical_name) = LOWER(%s)
-                        OR EXISTS (
-                            SELECT 1 FROM unnest(COALESCE(aliases, '{{}}')) a
-                            WHERE LOWER(a) = LOWER(%s)
-                        )
-                      )
-                    LIMIT 1
-                    """,
-                    (etype, stripped, stripped),
-                )
-                row = cur.fetchone()
-                if row:
-                    _add_alias(cur, schema, row[0], name)
-                    conn.commit()
-                    conn.close()
-                    return row[0]
-
-            # --- Step 3: last-name fallback for persons (single match, first-name tie-break, or family umbrella)
-            if etype == "person":
-                last_name = _extract_last_name(stripped)
-                if (
-                    not last_name
-                    and len(stripped.split()) == 1
-                    and len(stripped.strip()) >= 3
-                    and not _name_ends_with_role_word(stripped)
-                ):
-                    last_name = stripped.strip()
-                if last_name and len(last_name) >= 3:
-                    ln_pat = f" {last_name.lower()}"
-                    cur.execute(
-                        f"""
-                        SELECT id, canonical_name, COALESCE(aliases, '{{}}')
-                        FROM {schema}.entity_canonical
-                        WHERE entity_type = 'person'
-                          AND (
-                            LOWER(canonical_name) LIKE '%%' || LOWER(%s)
-                            OR EXISTS (
-                                SELECT 1 FROM unnest(COALESCE(aliases, '{{}}')) a
-                                WHERE LOWER(a) LIKE '%%' || LOWER(%s)
-                            )
-                          )
-                        """,
-                        (ln_pat, ln_pat),
-                    )
-                    candidates = cur.fetchall()
-                    if len(candidates) == 1:
-                        _add_alias(cur, schema, candidates[0][0], name)
-                        conn.commit()
-                        conn.close()
-                        return candidates[0][0]
-                    if len(candidates) > 1:
-                        parts_s = stripped.split()
-                        first_tok = parts_s[0] if parts_s else ""
-                        matched = [
-                            row
-                            for row in candidates
-                            if _person_matches_first_name(row[1], row[2], first_tok)
-                        ]
-                        if len(matched) == 1:
-                            cid = matched[0][0]
-                            _add_alias(cur, schema, cid, name)
-                            conn.commit()
-                            conn.close()
-                            return cid
-                        fam_id = _link_surname_cluster_to_family(
-                            cur, schema, domain_key, last_name, list(candidates)
-                        )
-                        single_token_surname = len(parts_s) == 1 and parts_s[0].lower().rstrip(
-                            "'s"
-                        ) == last_name.lower()
-                        ambiguous_multi = len(matched) != 1
-                        if fam_id and (single_token_surname or ambiguous_multi):
-                            conn.commit()
-                            conn.close()
-                            return fam_id
-
-            if not create_if_missing:
-                conn.close()
-                return None
-
-            cur.execute(
-                f"""
-                INSERT INTO {schema}.entity_canonical (canonical_name, entity_type, aliases)
-                VALUES (%s, %s, ARRAY[%s]::TEXT[])
-                ON CONFLICT (canonical_name, entity_type) DO UPDATE SET
-                    updated_at = NOW()
-                RETURNING id
-                """,
-                (name[:255], etype, name[:255]),
-            )
-            new_row = cur.fetchone()
-            conn.commit()
-            conn.close()
-            return new_row[0] if new_row else None
+        conn.commit()
+        return _release(result)
     except Exception as e:
         logger.debug("entity resolution failed for %s/%s: %s", domain_key, name, e)
         try:
@@ -647,7 +687,7 @@ def resolve_with_candidates(
 
 
 def _similarity(a: str, b: str) -> float:
-    """Bigram similarity (Dice coefficient) on fuzzy-normalized strings; known buckets match as 1.0."""
+    """Fuzzy similarity on normalized strings; RapidFuzz when installed."""
     na = _normalize_for_fuzzy(a)
     nb = _normalize_for_fuzzy(b)
     if not na or not nb:
@@ -657,6 +697,12 @@ def _similarity(a: str, b: str) -> float:
         return 1.0
     if na == nb:
         return 1.0
+    try:
+        from rapidfuzz import fuzz
+
+        return float(fuzz.token_set_ratio(na, nb)) / 100.0
+    except ImportError:
+        pass
     bigrams_a = set(na[i : i + 2] for i in range(len(na) - 1))
     bigrams_b = set(nb[i : i + 2] for i in range(len(nb) - 1))
     if not bigrams_a or not bigrams_b:
@@ -668,6 +714,53 @@ def _similarity(a: str, b: str) -> float:
 # ---------------------------------------------------------------------------
 # Batch alias population — collect name variants from article_entities
 # ---------------------------------------------------------------------------
+
+_RESOLUTION_CURSOR_KEY = "entity_resolution_incremental_cursor"
+
+
+def _get_resolution_cursor() -> dict[str, int]:
+    from shared.database.connection import get_db_connection_context
+
+    try:
+        with get_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT value FROM public.automation_state WHERE key = %s",
+                    (_RESOLUTION_CURSOR_KEY,),
+                )
+                row = cur.fetchone()
+        if row and row[0]:
+            raw = row[0]
+            if isinstance(raw, str):
+                import json
+
+                return {str(k): int(v) for k, v in json.loads(raw).items()}
+            if isinstance(raw, dict):
+                return {str(k): int(v) for k, v in raw.items()}
+    except Exception as e:
+        logger.debug("resolution cursor read: %s", e)
+    return {}
+
+
+def _set_resolution_cursor(cursor: dict[str, int]) -> None:
+    import json
+
+    from shared.database.connection import get_db_connection_context
+
+    try:
+        with get_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO public.automation_state (key, value, updated_at)
+                    VALUES (%s, %s::jsonb, NOW())
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+                    """,
+                    (_RESOLUTION_CURSOR_KEY, json.dumps(cursor)),
+                )
+            conn.commit()
+    except Exception as e:
+        logger.debug("resolution cursor write: %s", e)
 
 
 def populate_aliases_from_mentions(
@@ -776,6 +869,103 @@ def populate_aliases_from_mentions(
         return {"success": False, "updated": 0, "new_aliases": 0, "error": str(e)}
 
 
+def populate_aliases_from_mentions_incremental(
+    domain_key: str,
+    *,
+    min_mentions: int = 2,
+    batch_limit: int = 200,
+) -> dict[str, Any]:
+    """Incremental alias population — only article_entities since per-domain cursor."""
+    schema = _schema_for_domain(domain_key)
+    cursor = _get_resolution_cursor()
+    since_article_id = int(cursor.get(domain_key, 0) or 0)
+    conn = get_db_connection()
+    if not conn:
+        return {"success": False, "updated": 0, "new_aliases": 0, "error": "no_db"}
+
+    updated = 0
+    new_aliases = 0
+    max_article_id = since_article_id
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT ae.canonical_entity_id,
+                       array_agg(DISTINCT ae.entity_name) AS mention_names,
+                       MAX(ae.article_id) AS max_aid
+                FROM {schema}.article_entities ae
+                WHERE ae.canonical_entity_id IS NOT NULL
+                  AND ae.article_id > %s
+                GROUP BY ae.canonical_entity_id
+                HAVING COUNT(DISTINCT ae.entity_name) >= 1
+                ORDER BY MAX(ae.article_id)
+                LIMIT %s
+                """,
+                (since_article_id, batch_limit),
+            )
+            rows = cur.fetchall()
+            for canonical_id, mention_names, max_aid in rows:
+                max_article_id = max(max_article_id, int(max_aid or 0))
+                if not mention_names:
+                    continue
+                cur.execute(
+                    f"SELECT aliases FROM {schema}.entity_canonical WHERE id = %s",
+                    (canonical_id,),
+                )
+                arow = cur.fetchone()
+                if not arow:
+                    continue
+                current_aliases = arow[0] or []
+                current_lower = {a.lower() for a in current_aliases}
+                to_add = []
+                for mname in mention_names:
+                    if mname and mname.lower() not in current_lower:
+                        cur.execute(
+                            f"""
+                            SELECT COUNT(*) FROM {schema}.article_entities
+                            WHERE canonical_entity_id = %s
+                              AND LOWER(entity_name) = LOWER(%s)
+                              AND article_id > %s
+                            """,
+                            (canonical_id, mname, since_article_id),
+                        )
+                        cnt = cur.fetchone()[0]
+                        if cnt >= min_mentions:
+                            to_add.append(mname[:255])
+                            current_lower.add(mname.lower())
+                if to_add:
+                    cur.execute(
+                        f"""
+                        UPDATE {schema}.entity_canonical
+                        SET aliases = aliases || %s::TEXT[],
+                            updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (to_add, canonical_id),
+                    )
+                    updated += 1
+                    new_aliases += len(to_add)
+        conn.commit()
+        cursor[domain_key] = max_article_id
+        _set_resolution_cursor(cursor)
+        return {
+            "success": True,
+            "updated": updated,
+            "new_aliases": new_aliases,
+            "cursor_article_id": max_article_id,
+            "incremental": True,
+        }
+    except Exception as e:
+        logger.warning("populate_aliases_incremental %s: %s", domain_key, e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return {"success": False, "updated": 0, "new_aliases": 0, "error": str(e)}
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Disambiguation — find merge candidates (likely-duplicate canonical entities)
 # ---------------------------------------------------------------------------
@@ -807,6 +997,10 @@ def find_merge_candidates(
     if not conn:
         return {"success": False, "candidates": [], "error": "Database connection failed"}
 
+    # Cap pair scan — blocking key by normalized last/stripped name before nested loops.
+    max_entities = env_int("ENTITY_MERGE_CANDIDATE_MAX_ENTITIES", 2500)
+    max_pairs = env_int("ENTITY_MERGE_CANDIDATE_MAX_PAIRS", 50_000)
+
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -814,83 +1008,104 @@ def find_merge_candidates(
                 SELECT id, canonical_name, entity_type, aliases
                 FROM {schema}.entity_canonical
                 ORDER BY id
+                LIMIT %s
                 """,
+                (max_entities,),
             )
             entities = cur.fetchall()
         conn.close()
 
         candidates: list[dict[str, Any]] = []
         seen_pairs = set()
+        pairs_checked = 0
 
-        for i, (id_a, name_a, type_a, aliases_a) in enumerate(entities):
-            stripped_a = _normalize_name(name_a, type_a).lower()
-            last_a = _extract_last_name(name_a)
-            all_a: set[str] = set(_match_variant_strings(name_a, type_a))
-            for ax in aliases_a or []:
-                all_a.update(_match_variant_strings(ax, type_a))
+        # Blocking: group by entity_type + first letter of stripped name
+        blocks: dict[tuple[str, str], list] = {}
+        for row in entities:
+            id_a, name_a, type_a, aliases_a = row
+            stripped = _normalize_name(name_a, type_a).lower()
+            key = (str(type_a or ""), (stripped[:1] if stripped else ""))
+            blocks.setdefault(key, []).append(row)
 
-            for j in range(i + 1, len(entities)):
-                id_b, name_b, type_b, aliases_b = entities[j]
-                if type_a != type_b:
-                    continue
-                pair = (min(id_a, id_b), max(id_a, id_b))
-                if pair in seen_pairs:
-                    continue
+        for block_rows in blocks.values():
+            for i, (id_a, name_a, type_a, aliases_a) in enumerate(block_rows):
+                stripped_a = _normalize_name(name_a, type_a).lower()
+                last_a = _extract_last_name(name_a)
+                all_a: set[str] = set(_match_variant_strings(name_a, type_a))
+                for ax in aliases_a or []:
+                    all_a.update(_match_variant_strings(ax, type_a))
 
-                stripped_b = _normalize_name(name_b, type_b).lower()
-                all_b: set[str] = set(_match_variant_strings(name_b, type_b))
-                for bx in aliases_b or []:
-                    all_b.update(_match_variant_strings(bx, type_b))
+                for j in range(i + 1, len(block_rows)):
+                    if pairs_checked >= max_pairs:
+                        break
+                    pairs_checked += 1
+                    id_b, name_b, type_b, aliases_b = block_rows[j]
+                    if type_a != type_b:
+                        continue
+                    pair = (min(id_a, id_b), max(id_a, id_b))
+                    if pair in seen_pairs:
+                        continue
 
-                confidence = 0.0
-                reason = ""
+                    stripped_b = _normalize_name(name_b, type_b).lower()
+                    all_b: set[str] = set(_match_variant_strings(name_b, type_b))
+                    for bx in aliases_b or []:
+                        all_b.update(_match_variant_strings(bx, type_b))
 
-                # Check cross-set overlap (one entity's alias matches another's name)
-                if all_a & all_b:
-                    confidence = 0.95
-                    reason = "shared_name_or_alias"
-                elif stripped_a == stripped_b:
-                    confidence = 0.9
-                    reason = "title_stripped_match"
-                elif type_a == "person" and last_a:
-                    last_b = _extract_last_name(name_b)
-                    if last_a and last_b and last_a.lower() == last_b.lower():
-                        # Single word equals other's last name (e.g. "Trump" vs "Donald Trump") -> higher
-                        words_a, words_b = len(name_a.split()), len(name_b.split())
-                        if words_a == 1 or words_b == 1:
-                            confidence = 0.8
-                            reason = "last_name_match"
-                        else:
-                            confidence = 0.75
-                            reason = "same_last_name"
-                if confidence < min_confidence:
-                    # Substring check
-                    for na in all_a:
-                        for nb in all_b:
-                            if len(na) >= 4 and len(nb) >= 4:
-                                if na in nb or nb in na:
-                                    confidence = max(confidence, 0.7)
-                                    reason = reason or "substring"
-                    # Bigram similarity (normalization + bucket equivalence inside _similarity)
+                    confidence = 0.0
+                    reason = ""
+
+                    # Check cross-set overlap (one entity's alias matches another's name)
+                    if all_a & all_b:
+                        confidence = 0.95
+                        reason = "shared_name_or_alias"
+                    elif stripped_a == stripped_b:
+                        confidence = 0.9
+                        reason = "title_stripped_match"
+                    elif type_a == "person" and last_a:
+                        last_b = _extract_last_name(name_b)
+                        if last_a and last_b and last_a.lower() == last_b.lower():
+                            # Single word equals other's last name (e.g. "Trump" vs "Donald Trump") -> higher
+                            words_a, words_b = len(name_a.split()), len(name_b.split())
+                            if words_a == 1 or words_b == 1:
+                                confidence = 0.8
+                                reason = "last_name_match"
+                            else:
+                                confidence = 0.75
+                                reason = "same_last_name"
                     if confidence < min_confidence:
-                        sim = _similarity(name_a, name_b)
-                        if sim >= 0.7:
-                            confidence = max(confidence, sim * 0.8)
-                            reason = reason or "fuzzy_similarity"
+                        # Substring check
+                        for na in all_a:
+                            for nb in all_b:
+                                if len(na) >= 4 and len(nb) >= 4:
+                                    if na in nb or nb in na:
+                                        confidence = max(confidence, 0.7)
+                                        reason = reason or "substring"
+                        # Bigram similarity (normalization + bucket equivalence inside _similarity)
+                        if confidence < min_confidence:
+                            sim = _similarity(name_a, name_b)
+                            if sim >= 0.7:
+                                confidence = max(confidence, sim * 0.8)
+                                reason = reason or "fuzzy_similarity"
 
-                if confidence >= min_confidence:
-                    seen_pairs.add(pair)
-                    candidates.append(
-                        {
-                            "source_id": id_a,
-                            "source_name": name_a,
-                            "target_id": id_b,
-                            "target_name": name_b,
-                            "entity_type": type_a,
-                            "confidence": round(confidence, 2),
-                            "reason": reason,
-                        }
-                    )
+                    if confidence >= min_confidence:
+                        seen_pairs.add(pair)
+                        candidates.append(
+                            {
+                                "source_id": id_a,
+                                "source_name": name_a,
+                                "target_id": id_b,
+                                "target_name": name_b,
+                                "entity_type": type_a,
+                                "confidence": round(confidence, 2),
+                                "reason": reason,
+                            }
+                        )
+                        if len(candidates) >= limit * 3:
+                            break
+                if pairs_checked >= max_pairs or len(candidates) >= limit * 3:
+                    break
+            if pairs_checked >= max_pairs or len(candidates) >= limit * 3:
+                break
 
         candidates.sort(key=lambda c: c["confidence"], reverse=True)
         return {"success": True, "candidates": candidates[:limit]}
@@ -1304,8 +1519,201 @@ def split_role_merged_canonicals(
 # ---------------------------------------------------------------------------
 
 DECOUPLE_STEP_ROLE_WORD = "role_word"
+DECOUPLE_STEP_CROSS_TYPE = "cross_type"
 
-DEFAULT_DECOUPLE_STEPS = (DECOUPLE_STEP_ROLE_WORD,)
+# cross_type is opt-in: heuristic is noisy at scale and can flood the refuse ledger.
+# Enable with ENTITY_DECOUPLE_CROSS_TYPE_ENABLED=true once reviewed.
+def _default_decouple_steps() -> tuple[str, ...]:
+    from config.runtime import env_bool
+
+    if env_bool("ENTITY_DECOUPLE_CROSS_TYPE_ENABLED", False):
+        return (DECOUPLE_STEP_ROLE_WORD, DECOUPLE_STEP_CROSS_TYPE)
+    return (DECOUPLE_STEP_ROLE_WORD,)
+
+
+DEFAULT_DECOUPLE_STEPS = (DECOUPLE_STEP_ROLE_WORD,)  # runtime via _default_decouple_steps()
+
+
+def split_cross_type_merged_canonicals(
+    domain_key: str,
+    dry_run: bool = False,
+    max_splits: int | None = None,
+) -> dict[str, Any]:
+    """
+    Split canonicals that incorrectly merged person + organization (or mixed types)
+    under one id via alias collision. Creates a new canonical for minority-type aliases
+    that have article_entities rows and reassigns those mentions.
+    """
+    schema = _schema_for_domain(domain_key)
+    conn = get_db_connection()
+    if not conn:
+        return {"success": False, "split_count": 0, "error": "Database connection failed", "dry_run": dry_run}
+
+    person_like = {"person", "people", "individual", "politician"}
+    org_like = {"organization", "org", "company", "corporation", "government", "agency"}
+    details: list[dict[str, Any]] = []
+    split_count = 0
+    canonicals_processed = 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT id, canonical_name, entity_type, aliases
+                FROM {schema}.entity_canonical
+                WHERE aliases IS NOT NULL AND cardinality(aliases) > 0
+                """
+            )
+            rows = cur.fetchall()
+        try:
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+        for canonical_id, canonical_name, entity_type, aliases in rows:
+            if max_splits is not None and split_count >= max_splits:
+                break
+            base_type = (entity_type or "").strip().lower()
+            if not base_type:
+                continue
+            base_bucket = (
+                "person"
+                if base_type in person_like
+                else ("org" if base_type in org_like else None)
+            )
+            if base_bucket is None:
+                continue
+            # Heuristic: aliases that look like the opposite bucket (Inc/Corp/LLC vs person names)
+            conflict_aliases: list[str] = []
+            for alias in aliases or []:
+                if not alias:
+                    continue
+                al = alias.lower()
+                looks_org = any(
+                    tok in al for tok in (" inc", " corp", " llc", " ltd", " company", " agency")
+                )
+                looks_person = (" " in alias.strip()) and not looks_org
+                if base_bucket == "person" and looks_org:
+                    conflict_aliases.append(alias)
+                elif base_bucket == "org" and looks_person and len(alias.split()) >= 2:
+                    conflict_aliases.append(alias)
+            if not conflict_aliases:
+                continue
+            canonicals_processed += 1
+            with conn.cursor() as cur:
+                for alias_name in conflict_aliases:
+                    if max_splits is not None and split_count >= max_splits:
+                        break
+                    cur.execute(
+                        f"""
+                        SELECT COUNT(*) FROM {schema}.article_entities
+                        WHERE canonical_entity_id = %s AND LOWER(TRIM(entity_name)) = LOWER(TRIM(%s))
+                        """,
+                        (canonical_id, alias_name),
+                    )
+                    (cnt,) = cur.fetchone()
+                    if not cnt:
+                        continue
+                    new_type = "organization" if base_bucket == "person" else "person"
+                    if dry_run:
+                        details.append(
+                            {
+                                "canonical_id": canonical_id,
+                                "canonical_name": canonical_name,
+                                "split_off": alias_name,
+                                "new_type": new_type,
+                                "articles_reassigned": cnt,
+                            }
+                        )
+                        split_count += 1
+                        continue
+                    cur.execute(
+                        f"""
+                        INSERT INTO {schema}.entity_canonical (canonical_name, entity_type, aliases)
+                        VALUES (%s, %s, '{{}}')
+                        ON CONFLICT (canonical_name, entity_type) DO UPDATE SET updated_at = NOW()
+                        RETURNING id
+                        """,
+                        (alias_name[:255], new_type),
+                    )
+                    new_row = cur.fetchone()
+                    if not new_row:
+                        continue
+                    new_id = int(new_row[0])
+                    cur.execute(
+                        f"""
+                        UPDATE {schema}.article_entities
+                        SET canonical_entity_id = %s
+                        WHERE canonical_entity_id = %s AND LOWER(TRIM(entity_name)) = LOWER(TRIM(%s))
+                        """,
+                        (new_id, canonical_id, alias_name),
+                    )
+                    cur.execute(
+                        f"""
+                        UPDATE {schema}.entity_canonical
+                        SET aliases = array_remove(aliases, %s), updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (alias_name, canonical_id),
+                    )
+                    details.append(
+                        {
+                            "canonical_id": canonical_id,
+                            "split_off": alias_name,
+                            "new_canonical_id": new_id,
+                            "articles_reassigned": cnt,
+                        }
+                    )
+                    split_count += 1
+                    # Refuse re-merge of this pair
+                    try:
+                        from services.graph_connection_queue_service import (
+                            entity_pair_dedupe_key,
+                            record_pattern_refusal,
+                        )
+
+                        record_pattern_refusal(
+                            endpoint_key=f"entity|{domain_key}|{min(canonical_id, new_id)}|{max(canonical_id, new_id)}",
+                            status="refuse",
+                            reason="cross_type_decouple",
+                            domain_key=domain_key,
+                            endpoints={
+                                "domain_key": domain_key,
+                                "entity_ids": [canonical_id, new_id],
+                            },
+                            dedupe_key=entity_pair_dedupe_key(domain_key, canonical_id, new_id),
+                            source="entity_decouple_cross_type",
+                        )
+                    except Exception:
+                        pass
+            if not dry_run:
+                conn.commit()
+        return {
+            "success": True,
+            "split_count": split_count,
+            "canonicals_processed": canonicals_processed,
+            "details": details,
+            "dry_run": dry_run,
+        }
+    except Exception as e:
+        logger.warning("split_cross_type_merged_canonicals %s: %s", domain_key, e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return {
+            "success": False,
+            "split_count": split_count,
+            "error": str(e),
+            "dry_run": dry_run,
+        }
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def run_entity_decouple_pipeline(
@@ -1319,14 +1727,11 @@ def run_entity_decouple_pipeline(
     represents a single real-world entity. Safe to run as part of data_cleanup.
 
     Steps (all run when steps is None):
-      - role_word: split canonicals that merged distinct entities by shared
-        role-word last name (e.g. "X executives" + "Y executives" → separate).
-
-    Use from automation (data_cleanup), cron, or manual scripts.
-    Returns {success, total_splits, by_domain: {domain: {split_count, canonicals_processed, ...}}, steps_run: [...]}.
+      - role_word: split role-word last-name umbrellas
+      - cross_type: split person/org mixed aliases on one canonical
     """
     domains = list(domain_keys) if domain_keys else list(get_active_domain_keys())
-    steps_to_run = list(steps) if steps else list(DEFAULT_DECOUPLE_STEPS)
+    steps_to_run = list(steps) if steps else list(_default_decouple_steps())
     by_domain: dict[str, dict[str, Any]] = {}
     total_splits = 0
 
@@ -1342,13 +1747,35 @@ def run_entity_decouple_pipeline(
                     max_splits=max_splits_per_domain,
                 )
                 if out.get("success"):
-                    domain_result["split_count"] = out.get("split_count", 0)
-                    domain_result["canonicals_processed"] = out.get("canonicals_processed", 0)
-                    total_splits += domain_result["split_count"]
+                    domain_result["split_count"] = int(domain_result.get("split_count") or 0) + int(
+                        out.get("split_count") or 0
+                    )
+                    domain_result["canonicals_processed"] = int(
+                        domain_result.get("canonicals_processed") or 0
+                    ) + int(out.get("canonicals_processed") or 0)
+                    total_splits += int(out.get("split_count") or 0)
                 else:
                     domain_result["error"] = out.get("error", "unknown")
                     logger.warning("Decouple role_word %s: %s", domain_key, domain_result["error"])
                 domain_result["role_word"] = out
+            elif step == DECOUPLE_STEP_CROSS_TYPE:
+                out = split_cross_type_merged_canonicals(
+                    domain_key,
+                    dry_run=dry_run,
+                    max_splits=max_splits_per_domain,
+                )
+                if out.get("success"):
+                    domain_result["split_count"] = int(domain_result.get("split_count") or 0) + int(
+                        out.get("split_count") or 0
+                    )
+                    domain_result["canonicals_processed"] = int(
+                        domain_result.get("canonicals_processed") or 0
+                    ) + int(out.get("canonicals_processed") or 0)
+                    total_splits += int(out.get("split_count") or 0)
+                else:
+                    domain_result.setdefault("errors", []).append(out.get("error", "unknown"))
+                    logger.warning("Decouple cross_type %s: %s", domain_key, out.get("error"))
+                domain_result["cross_type"] = out
             else:
                 logger.debug("Decouple step %s not implemented, skipping", step)
         by_domain[domain_key] = domain_result
@@ -1409,20 +1836,35 @@ def link_cross_domain_entities(
             except Exception:
                 pass
 
-        # Find cross-domain matches
+        # Find cross-domain matches (blocked by type + first letter; pair cap).
         relationships: list[tuple[str, int, str, int, float, str]] = []
         domains = list(domain_entities.keys())
+        max_pairs = env_int("ENTITY_CROSS_DOMAIN_MAX_PAIRS", 100_000)
+        pairs_checked = 0
 
         for i in range(len(domains)):
             for j in range(i + 1, len(domains)):
                 d1, d2 = domains[i], domains[j]
+                # Index d2 by type + first letter for blocking
+                index2: dict[tuple[str, str], list] = {}
+                for row in domain_entities[d2]:
+                    id2, name2, type2, aliases2 = row
+                    stripped = _normalize_name(name2, type2).lower()
+                    index2.setdefault((str(type2 or ""), stripped[:1] if stripped else ""), []).append(
+                        row
+                    )
                 for id1, name1, type1, aliases1 in domain_entities[d1]:
+                    if pairs_checked >= max_pairs:
+                        break
                     all_names_1: set[str] = set(_match_variant_strings(name1, type1))
                     for a1 in aliases1 or []:
                         all_names_1.update(_match_variant_strings(a1, type1))
                     stripped_1 = _normalize_name(name1, type1).lower()
-
-                    for id2, name2, type2, aliases2 in domain_entities[d2]:
+                    block = index2.get((str(type1 or ""), stripped_1[:1] if stripped_1 else "")) or []
+                    for id2, name2, type2, aliases2 in block:
+                        if pairs_checked >= max_pairs:
+                            break
+                        pairs_checked += 1
                         if type1 != type2:
                             continue
 
@@ -1443,37 +1885,23 @@ def link_cross_domain_entities(
                             relationships.append(
                                 (d1, id1, d2, id2, confidence, "cross_domain_same_entity")
                             )
+                if pairs_checked >= max_pairs:
+                    break
+            if pairs_checked >= max_pairs:
+                break
 
         created = 0
+        from shared.entity_relationships_store import UPSERT_ENTITY_RELATIONSHIP_SQL, normalize_edge
+
         with conn.cursor() as cur:
             for src_d, src_id, tgt_d, tgt_id, conf, rel_type in relationships[:limit]:
                 try:
-                    # Check if this relationship already exists (either direction)
-                    cur.execute(
-                        """
-                        SELECT id FROM intelligence.entity_relationships
-                        WHERE (
-                            (source_domain = %s AND source_entity_id = %s
-                             AND target_domain = %s AND target_entity_id = %s)
-                            OR
-                            (source_domain = %s AND source_entity_id = %s
-                             AND target_domain = %s AND target_entity_id = %s)
+                    if rel_type == "cross_domain_same_entity":
+                        src_d, src_id, tgt_d, tgt_id = normalize_edge(
+                            src_d, src_id, tgt_d, tgt_id
                         )
-                        AND relationship_type = %s
-                        LIMIT 1
-                        """,
-                        (src_d, src_id, tgt_d, tgt_id, tgt_d, tgt_id, src_d, src_id, rel_type),
-                    )
-                    if cur.fetchone():
-                        continue
                     cur.execute(
-                        """
-                        INSERT INTO intelligence.entity_relationships
-                        (source_domain, source_entity_id, target_domain, target_entity_id,
-                         relationship_type, confidence)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        RETURNING id
-                        """,
+                        UPSERT_ENTITY_RELATIONSHIP_SQL,
                         (src_d, src_id, tgt_d, tgt_id, rel_type, conf),
                     )
                     if cur.fetchone():
@@ -1520,9 +1948,9 @@ def reconcile_surname_family_clusters(domain_key: str) -> dict[str, Any]:
         return {"success": False, "error": "invalid_domain", "clusters": 0}
     schema = _schema_for_domain(domain_key)
     try:
-        min_m = max(2, int(os.environ.get("SURNAME_FAMILY_MIN_MEMBERS", "2")))
-        max_m = max(min_m, int(os.environ.get("SURNAME_FAMILY_MAX_MEMBERS", "24")))
-        min_sur = max(2, int(os.environ.get("SURNAME_FAMILY_MIN_SURNAME_LEN", "4")))
+        min_m = max(2, int(env_str("SURNAME_FAMILY_MIN_MEMBERS", "2")))
+        max_m = max(min_m, int(env_str("SURNAME_FAMILY_MAX_MEMBERS", "24")))
+        min_sur = max(2, int(env_str("SURNAME_FAMILY_MIN_SURNAME_LEN", "4")))
     except ValueError:
         min_m, max_m, min_sur = 2, 24, 4
 
@@ -1600,19 +2028,126 @@ def reconcile_surname_family_clusters(domain_key: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def run_resolution_batch(
+def _ambiguous_band() -> tuple[float, float]:
+    from config.runtime import env_str
+
+    try:
+        low = float(env_str("GRAPH_CONNECTION_AMBIGUOUS_BAND_LOW", "0.55"))
+        high = float(env_str("GRAPH_CONNECTION_AMBIGUOUS_BAND_HIGH", "0.72"))
+    except ValueError:
+        low, high = 0.55, 0.72
+    return low, high
+
+
+def run_resolution_ambiguous_batch(
+    *,
     auto_merge_confidence: float = 0.9,
     cross_domain_confidence: float = 0.8,
 ) -> dict[str, Any]:
     """
-    Run a full resolution cycle across all domains:
-      1. Populate aliases from article mentions
-      2. Auto-merge high-confidence duplicates
-      3. Reconcile surname family umbrellas (member_of_family edges)
-      4. Link cross-domain entities
-
-    Suitable for orchestrator or cron scheduling.
+    T0/T1 programmatic resolution for assembly conductor — incremental aliases,
+    high-confidence auto-merge, T1 ambiguous band enqueued as proposals (T2 → editorial room).
     """
+    band_low, band_high = _ambiguous_band()
+    results: dict[str, Any] = {
+        "incremental": True,
+        "domains": {},
+        "ambiguous_proposals": 0,
+        "cross_domain": {},
+    }
+
+    for domain_key in get_active_domain_keys():
+        domain_result: dict[str, Any] = {}
+        domain_result["aliases"] = populate_aliases_from_mentions_incremental(domain_key)
+        domain_result["merges"] = auto_merge_high_confidence(
+            domain_key, min_confidence=auto_merge_confidence
+        )
+        ambiguous_n = _enqueue_ambiguous_merge_proposals(
+            domain_key, band_low=band_low, band_high=band_high
+        )
+        results["ambiguous_proposals"] += ambiguous_n
+        domain_result["ambiguous_enqueued"] = ambiguous_n
+        results["domains"][domain_key] = domain_result
+
+    if cross_domain_confidence >= 0.75:
+        results["cross_domain"] = link_cross_domain_entities(min_confidence=cross_domain_confidence)
+    return results
+
+
+def _enqueue_ambiguous_merge_proposals(
+    domain_key: str,
+    *,
+    band_low: float,
+    band_high: float,
+    limit: int = 25,
+) -> int:
+    from services.graph_connection_queue_service import upsert_graph_connection_proposal
+
+    result = find_merge_candidates(domain_key, min_confidence=band_low, limit=limit)
+    n = 0
+    for candidate in result.get("candidates") or []:
+        conf = float(candidate.get("confidence") or 0)
+        if conf >= band_high:
+            continue
+        if conf < band_low:
+            continue
+        keep_id = int(candidate["source_id"])
+        merge_id = int(candidate["target_id"])
+        pid = upsert_graph_connection_proposal(
+            dedupe_key=(
+                f"entity_ambiguous|{domain_key}|{keep_id}|{merge_id}"
+            ),
+            proposal_kind="merge",
+            domain_key=domain_key,
+            confidence=conf,
+            source="entity_resolution_t1",
+            endpoints={
+                "domain_key": domain_key,
+                "entity_ids": [keep_id, merge_id],
+            },
+            evidence={
+                "reason": candidate.get("reason"),
+                "source_name": candidate.get("source_name"),
+                "target_name": candidate.get("target_name"),
+                "tier": "T1_ambiguous",
+                "keep_canonical_id": keep_id,
+                "merge_canonical_id": merge_id,
+            },
+            subject_summary=(
+                f"{candidate.get('source_name')} ↔ {candidate.get('target_name')}"
+            )[:255],
+            min_confidence_for_auto=band_high,
+        )
+        if pid:
+            n += 1
+    return n
+
+
+def run_resolution_batch(
+    auto_merge_confidence: float = 0.9,
+    cross_domain_confidence: float = 0.8,
+    *,
+    incremental: bool | None = None,
+) -> dict[str, Any]:
+    """
+    Run a resolution cycle across all domains.
+    When incremental=True (default under assembly ordered mode), use cursor-based alias
+    population and ambiguous-band T1 merges only; skip full-domain scans.
+    """
+    if incremental is None:
+        try:
+            from shared.assembly_phase_order import assembly_pipeline_ordered_active
+
+            incremental = assembly_pipeline_ordered_active()
+        except Exception:
+            incremental = False
+
+    if incremental:
+        return run_resolution_ambiguous_batch(
+            auto_merge_confidence=auto_merge_confidence,
+            cross_domain_confidence=cross_domain_confidence,
+        )
+
     results: dict[str, Any] = {"domains": {}, "cross_domain": {}}
 
     for domain_key in get_active_domain_keys():

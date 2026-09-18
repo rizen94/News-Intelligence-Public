@@ -4,9 +4,12 @@ Handles system metrics, health monitoring, and alerts
 """
 
 import asyncio
+import concurrent.futures
 import logging
 import os
 import sys
+import threading
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -28,14 +31,40 @@ from shared.services.domain_aware_service import (
 )
 from shared.services.pipeline_trace_writer import log_pipeline_trace as _log_pipeline_trace
 from shared.services.response_cache import cached_response, cached_response_sync
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 # Reserve dedicated pool for monitoring/page-load endpoints in this module
 get_monitoring_db_connection = get_ui_db_connection
+
+# Isolated from the default asyncio thread pool so overview stays responsive under load.
+_MONITOR_OVERVIEW_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4,
+    thread_name_prefix="monitor-overview",
+)
+
+_OVERVIEW_CACHE_LOCK = threading.Lock()
+_OVERVIEW_CACHE: dict[str, Any] = {}
+_OVERVIEW_CACHE_AT: float = 0.0
+# Monitor polls every 15s — keep fresh hits cheap; serve stale while rebuilding under load.
+_OVERVIEW_CACHE_TTL_SECONDS = 30.0
+_OVERVIEW_STALE_MAX_SECONDS = 300.0
+_OVERVIEW_BUILD_LOCK = asyncio.Lock()
+_OVERVIEW_REFRESH_INFLIGHT = False
+_OVERVIEW_REFRESH_LOCK = threading.Lock()
+
+_RECENT_ACTIVITY_CACHE_LOCK = threading.Lock()
+_RECENT_ACTIVITY_CACHE: list[dict[str, Any]] = []
+_RECENT_ACTIVITY_CACHE_AT: float = 0.0
+_RECENT_ACTIVITY_CACHE_TTL_SECONDS = 60.0
 
 logger = logging.getLogger(__name__)
 
 # Omit from Monitor phase timeline, run summary catalog, and merged current activity (orchestrator; ~daily).
 MONITOR_EXCLUDED_AUTOMATION_PHASES = frozenset({"nightly_enrichment_context"})
+MONITOR_STALE_ACTIVITY_GRACE_SECONDS = 180.0
+MONITOR_RECENT_ACTIVITY_DB_HOURS = 24
+MONITOR_RECENT_ACTIVITY_DB_LIMIT = 50
+MONITOR_RECENT_ACTIVITY_EXCLUDED = frozenset({"health_check"})
 
 # Import filtering functions from RSS collector
 sys.path.insert(
@@ -85,34 +114,38 @@ def _check_frontend_once() -> dict[str, Any]:
     """One-off frontend health check (e.g. when Route Supervisor has not run yet after reboot)."""
     import time
 
-    frontend_url = "http://localhost:3000"
-    start = time.perf_counter()
-    try:
-        import requests
+    import requests
 
-        r = requests.get(frontend_url, timeout=3, allow_redirects=False)
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        status = "healthy" if r.status_code == 200 else "unhealthy"
-        return {
-            "status": status,
-            "response_time_ms": round(elapsed_ms, 1),
-            "url": frontend_url,
-            "last_check": datetime.now().isoformat(),
-        }
-    except requests.exceptions.ConnectionError:
-        return {
-            "status": "unhealthy",
-            "error": "Cannot connect to frontend (is it running on port 3000?)",
-            "url": frontend_url,
-            "last_check": datetime.now().isoformat(),
-        }
-    except Exception as e:
-        return {
-            "status": "unknown",
-            "error": str(e)[:80],
-            "url": frontend_url,
-            "last_check": datetime.now().isoformat(),
-        }
+    # Widow prod serves SPA via nginx on :80; dev uses Vite on :3000.
+    candidates: list[tuple[str, float]] = [
+        ("http://127.0.0.1", 1.5),
+        ("http://localhost:3000", 1.0),
+    ]
+    last_error: str | None = None
+    for frontend_url, req_timeout in candidates:
+        start = time.perf_counter()
+        try:
+            r = requests.get(frontend_url, timeout=req_timeout, allow_redirects=True)
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            status = "healthy" if r.status_code < 400 else "unhealthy"
+            return {
+                "status": status,
+                "response_time_ms": round(elapsed_ms, 1),
+                "url": frontend_url,
+                "last_check": datetime.now().isoformat(),
+            }
+        except requests.exceptions.ConnectionError:
+            last_error = f"Cannot connect to frontend at {frontend_url}"
+            continue
+        except Exception as e:
+            last_error = str(e)[:80]
+            continue
+    return {
+        "status": "unhealthy",
+        "error": last_error or "Cannot connect to frontend",
+        "url": candidates[-1][0],
+        "last_check": datetime.now().isoformat(),
+    }
 
 
 def _get_gpu_metrics() -> dict[str, Any]:
@@ -146,23 +179,43 @@ def get_registry_domains() -> dict[str, Any]:
     """
     Active domains from shared.domain_registry (built-ins + active YAML).
     Used by the web SPA for nav, domain validation, and API path detection.
+    Includes processing_mode and post-processing modals allowlist membership (v11).
     """
     from shared.domain_registry import get_domain_entries
+    from shared.post_processing_modals import list_modals, modals_for_domain
 
     rows: list[dict[str, Any]] = []
     for e in get_domain_entries():
         if not e.get("is_active", True):
             continue
+        dk = e["domain_key"]
         rows.append(
             {
-                "domain_key": e["domain_key"],
+                "domain_key": dk,
                 "schema_name": str(e["schema_name"]),
-                "display_name": e.get("display_name") or e["domain_key"],
+                "display_name": e.get("display_name") or dk,
                 "display_order": int(e.get("display_order", 99) or 99),
+                "processing_mode": e.get("processing_mode") or "research",
+                "modals": modals_for_domain(dk),
             }
         )
     rows.sort(key=lambda x: (x["display_order"], x["domain_key"]))
-    return {"success": True, "data": {"domains": rows}}
+    return {
+        "success": True,
+        "data": {
+            "domains": rows,
+            "modals": list_modals(),
+        },
+    }
+
+
+@router.get("/post_processing_modals")
+@cached_response_sync(ttl=60)
+def get_post_processing_modals() -> dict[str, Any]:
+    """v11 modal catalog SSOT (research|narrative|reduction|editor allowlists)."""
+    from shared.post_processing_modals import list_modals
+
+    return {"success": True, "data": {"modals": list_modals()}}
 
 
 def _probe_db_health_fast() -> str:
@@ -197,6 +250,12 @@ async def health_check():
         cpu_percent = psutil.cpu_percent(interval=None)
         memory = psutil.virtual_memory()
         disk = psutil.disk_usage("/")
+        try:
+            from shared.process_memory import process_rss_mb
+
+            api_process_rss_mb = process_rss_mb()
+        except Exception:
+            api_process_rss_mb = None
 
         # GPU subprocess must not block the uvicorn event loop (nvidia-smi can take up to 5s).
         try:
@@ -288,6 +347,7 @@ async def health_check():
                 "cpu_percent": cpu_percent,
                 "memory_percent": memory.percent,
                 "disk_percent": disk.percent,
+                "process_rss_mb": api_process_rss_mb,
                 "gpu_vram_percent": gpu_vram_percent,
                 "gpu_utilization_percent": gpu_utilization_percent,
                 "gpu_temperature_c": gpu.get("gpu_temperature_c"),
@@ -336,7 +396,12 @@ def _safe_get_automation_status(automation: Any | None, timeout: float = 2.0) ->
 
     def _run():
         try:
-            result_queue.put(mgr.get_status())
+            # Never call full get_status() here — it runs heavy backlog DB queries and
+            # orphaned daemon threads from join timeouts would stampede the pool.
+            if hasattr(mgr, "get_orchestrator_snapshot"):
+                result_queue.put(mgr.get_orchestrator_snapshot(include_pending=False))
+            else:
+                result_queue.put(mgr.get_status())
         except Exception as e:
             logger.debug("_safe_get_automation_status: %s", e)
             result_queue.put({})
@@ -353,12 +418,18 @@ def _safe_get_automation_status(automation: Any | None, timeout: float = 2.0) ->
     return {}
 
 
-def _synthesize_current_activities_from_automation(automation: Any | None) -> list[dict[str, Any]]:
+def _synthesize_current_activities_from_automation(
+    automation: Any | None,
+    *,
+    automation_status: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """
     When the in-memory activity feed is empty (multi-worker mismatch, missed add_current, etc.),
     derive rows from live AutomationManager counters.
     """
-    st = _safe_get_automation_status(automation, timeout=2.0)
+    st = automation_status
+    if st is None:
+        st = _safe_get_automation_status(automation, timeout=2.0)
     if not st:
         return []
     active = st.get("active_tasks_by_phase") or {}
@@ -386,10 +457,219 @@ def _synthesize_current_activities_from_automation(automation: Any | None) -> li
     return out
 
 
+_RUN_HISTORY_ACTIVITY_MESSAGES: dict[str, str] = {
+    "collection_cycle": "Collection cycle (RSS, enrichment, documents, pending queue)",
+    "context_sync": "Syncing articles to contexts",
+    "entity_profile_sync": "Syncing entity profiles",
+    "entity_profile_build": "Building entity profiles from contexts",
+    "entity_dossier_compile": "Compiling entity dossiers (people/orgs)",
+    "unified_intake_extraction": "Unified intake extraction (entities, events, claims, scoring)",
+    "claim_extraction": "Extracting claims from contexts",
+    "content_enrichment": "Content enrichment",
+    "topic_clustering": "Topic clustering",
+    "mention_resolution": "Mention resolution (investigation)",
+}
+
+
+def _run_history_activity_message(phase_name: str) -> str:
+    if phase_name in _RUN_HISTORY_ACTIVITY_MESSAGES:
+        return _RUN_HISTORY_ACTIVITY_MESSAGES[phase_name]
+    return str(phase_name).replace("_", " ").strip().title()
+
+
+def _synthesize_recent_activities_from_run_history(
+    *,
+    hours: int = MONITOR_RECENT_ACTIVITY_DB_HOURS,
+    limit: int = MONITOR_RECENT_ACTIVITY_DB_LIMIT,
+) -> list[dict[str, Any]]:
+    """Backfill Monitor recent activity from automation_run_history (survives restart + cron)."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    excluded = sorted(MONITOR_RECENT_ACTIVITY_EXCLUDED | MONITOR_EXCLUDED_AUTOMATION_PHASES)
+    out: list[dict[str, Any]] = []
+    conn = get_monitoring_db_connection()
+    if not conn:
+        return out
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, phase_name, finished_at, success, error_message
+                FROM automation_run_history
+                WHERE finished_at >= %s
+                  AND NOT (phase_name = ANY(%s))
+                ORDER BY finished_at DESC
+                LIMIT %s
+                """,
+                (cutoff, excluded, limit),
+            )
+            for run_id, phase_name, finished_at, success, error_message in cur.fetchall():
+                finished_iso = (
+                    finished_at.isoformat()
+                    if hasattr(finished_at, "isoformat")
+                    else str(finished_at)
+                )
+                msg = _run_history_activity_message(str(phase_name))
+                if not success and error_message:
+                    msg = f"{msg} (failed)"
+                out.append(
+                    {
+                        "id": f"run_history:{run_id}",
+                        "message": msg,
+                        "task_name": phase_name,
+                        "completed_at": finished_iso,
+                        "success": bool(success),
+                        "source": "automation_run_history",
+                    }
+                )
+    except Exception as e:
+        logger.debug("recent activity run_history backfill: %s", e)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return out
+
+
+def _cached_recent_activities_from_run_history() -> list[dict[str, Any]]:
+    """Cached DB backfill for Monitor recent activity (avoids query on every overview rebuild)."""
+    global _RECENT_ACTIVITY_CACHE, _RECENT_ACTIVITY_CACHE_AT
+    now = time.monotonic()
+    with _RECENT_ACTIVITY_CACHE_LOCK:
+        if _RECENT_ACTIVITY_CACHE and (now - _RECENT_ACTIVITY_CACHE_AT) <= _RECENT_ACTIVITY_CACHE_TTL_SECONDS:
+            return list(_RECENT_ACTIVITY_CACHE)
+    rows = _synthesize_recent_activities_from_run_history()
+    with _RECENT_ACTIVITY_CACHE_LOCK:
+        _RECENT_ACTIVITY_CACHE = list(rows)
+        _RECENT_ACTIVITY_CACHE_AT = time.monotonic()
+    return list(rows)
+
+
+def _recent_activity_semantic_key(item: dict[str, Any]) -> str | None:
+    """Cross-source dedupe: memory phase:* vs automation_run_history rows for same completion."""
+    phase = item.get("task_name") or item.get("phase_name")
+    completed = item.get("completed_at") or item.get("finished_at")
+    if not isinstance(phase, str) or not phase.strip() or not completed:
+        return None
+    try:
+        raw = str(completed).strip()
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        bucket = dt.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+        return f"{phase.strip()}:{bucket}"
+    except Exception:
+        return None
+
+
+def _activity_completed_at_dt(item: dict[str, Any]) -> datetime | None:
+    raw = item.get("completed_at") or item.get("finished_at")
+    if not raw:
+        return None
+    try:
+        s = str(raw).strip()
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _merge_recent_activity_lists(
+    memory_recent: list[dict[str, Any]],
+    db_recent: list[dict[str, Any]],
+    *,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """
+    Merge memory + DB recent activity, preferring *newest completed_at*.
+
+    Memory-first ordering used to bury live automation_run_history behind stale
+    in-process completions after long-lived API workers (Monitor looked ~1 day idle).
+    """
+    seen_ids: set[str] = set()
+    seen_semantic: set[str] = set()
+    candidates: list[dict[str, Any]] = []
+    for item in list(memory_recent) + list(db_recent):
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("id") or "").strip()
+        if not key:
+            phase = item.get("task_name") or item.get("phase_name") or "activity"
+            completed = item.get("completed_at") or item.get("finished_at") or ""
+            key = f"{phase}:{completed}"
+        semantic = _recent_activity_semantic_key(item)
+        if key in seen_ids:
+            continue
+        if semantic and semantic in seen_semantic:
+            continue
+        seen_ids.add(key)
+        if semantic:
+            seen_semantic.add(semantic)
+        candidates.append(item)
+
+    def _sort_key(row: dict[str, Any]) -> float:
+        dt = _activity_completed_at_dt(row)
+        return dt.timestamp() if dt else 0.0
+
+    candidates.sort(key=_sort_key, reverse=True)
+    return candidates[:limit]
+
+
+def _finalize_monitoring_activities_recent(activities: dict[str, Any]) -> dict[str, Any]:
+    memory_recent = activities.get("recent")
+    if not isinstance(memory_recent, list):
+        memory_recent = []
+    excluded = MONITOR_RECENT_ACTIVITY_EXCLUDED | MONITOR_EXCLUDED_AUTOMATION_PHASES
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=MONITOR_RECENT_ACTIVITY_DB_HOURS)
+    filtered_memory: list[dict[str, Any]] = []
+    for item in memory_recent:
+        if not isinstance(item, dict):
+            continue
+        phase = str(item.get("task_name") or item.get("phase") or "")
+        if phase in excluded:
+            continue
+        completed = _activity_completed_at_dt(item)
+        # Drop stale in-memory completions so DB/heartbeat SSOT can surface
+        if completed is not None and completed < cutoff:
+            continue
+        filtered_memory.append(item)
+    db_recent = _cached_recent_activities_from_run_history()
+    merged_recent = _merge_recent_activity_lists(
+        filtered_memory, db_recent, limit=50
+    )
+    return {**activities, "recent": merged_recent}
+
+
+def _activity_row_is_stale_ghost(
+    row: dict[str, Any],
+    active_by_phase: dict[str, int],
+    *,
+    grace_seconds: float = MONITOR_STALE_ACTIVITY_GRACE_SECONDS,
+) -> bool:
+    """True when feed still lists a phase but no worker is executing it (post-hang/orphan)."""
+    tn = row.get("task_name")
+    if not isinstance(tn, str) or not tn.strip():
+        return False
+    phase = tn.strip()
+    if int(active_by_phase.get(phase, 0) or 0) > 0:
+        return False
+    elapsed = _activity_started_elapsed_seconds(row.get("started_at"))
+    if elapsed is None:
+        return True
+    return elapsed > grace_seconds
+
+
 def _merge_current_activities_with_run_counts(
     current: list[dict[str, Any]],
     *,
     automation: Any | None = None,
+    automation_status: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """
     One row per automation phase (task_name), with running_instances from AutomationManager
@@ -397,7 +677,9 @@ def _merge_current_activities_with_run_counts(
     """
     active_by_phase: dict[str, int] = {}
     try:
-        st = _safe_get_automation_status(automation, timeout=2.0)
+        st = automation_status
+        if st is None:
+            st = _safe_get_automation_status(automation, timeout=2.0)
         active_by_phase = dict(st.get("active_tasks_by_phase") or {})
     except Exception:
         pass
@@ -416,12 +698,88 @@ def _merge_current_activities_with_run_counts(
             continue
         primary = max(items, key=lambda x: (x.get("started_at") or ""))
         row = dict(primary)
+        if _activity_row_is_stale_ghost(row, active_by_phase):
+            continue
         from_counter = int(active_by_phase.get(key, 0) or 0)
-        row["running_instances"] = max(from_counter, len(items), 1)
+        if from_counter > 0:
+            row["running_instances"] = max(from_counter, len(items))
+        else:
+            # Brief race after add_current before counter increments.
+            elapsed = _activity_started_elapsed_seconds(row.get("started_at"))
+            if elapsed is not None and elapsed <= MONITOR_STALE_ACTIVITY_GRACE_SECONDS:
+                row["running_instances"] = max(len(items), 1)
+            else:
+                continue
+        row.setdefault("execution_host", "widow")
         merged.append(row)
 
     merged.sort(key=lambda x: x.get("started_at") or "", reverse=True)
     return merged
+
+
+def _merge_popos_into_current_activities(
+    current: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Union Widow feed rows with in-flight PopOS/Widow drains (heartbeat status=running)."""
+    try:
+        from services.pipeline_phase_heartbeat_service import (
+            popos_current_activities_from_heartbeats,
+            widow_current_activities_from_heartbeats,
+        )
+
+        popos_rows = popos_current_activities_from_heartbeats()
+        widow_hb_rows = widow_current_activities_from_heartbeats()
+    except Exception as e:
+        logger.debug("heartbeat current activities: %s", e)
+        popos_rows = []
+        widow_hb_rows = []
+
+    # Prefer heartbeat-backed running rows over stale AM ghosts when both exist.
+    if not widow_hb_rows and not popos_rows:
+        return current
+
+    by_phase: dict[str, dict[str, Any]] = {}
+    for row in current:
+        if not isinstance(row, dict):
+            continue
+        tn = row.get("task_name")
+        key = tn if isinstance(tn, str) and tn.strip() else str(row.get("id") or "")
+        if not key:
+            continue
+        by_phase[key] = dict(row)
+
+    for row in widow_hb_rows:
+        phase = str(row.get("task_name") or "")
+        if not phase or phase in MONITOR_EXCLUDED_AUTOMATION_PHASES:
+            continue
+        # Heartbeat running wins over ghost AM rows for Widow.
+        by_phase[phase] = dict(row)
+
+    for row in popos_rows:
+        phase = str(row.get("task_name") or "")
+        if not phase or phase in MONITOR_EXCLUDED_AUTOMATION_PHASES:
+            continue
+        existing = by_phase.get(phase)
+        if existing is None:
+            by_phase[phase] = dict(row)
+            continue
+        # Same phase on both hosts — show PopOS (remote-owned drains run there).
+        merged = dict(existing)
+        merged["execution_host"] = "popos"
+        merged["worker_id"] = row.get("worker_id")
+        merged["running_instances"] = max(
+            int(merged.get("running_instances") or 1),
+            int(row.get("running_instances") or 1),
+        )
+        if row.get("started_at"):
+            merged["started_at"] = row["started_at"]
+        if row.get("message"):
+            merged["message"] = row["message"]
+        by_phase[phase] = merged
+
+    out = list(by_phase.values())
+    out.sort(key=lambda x: x.get("started_at") or "", reverse=True)
+    return out
 
 
 def _activity_started_elapsed_seconds(started_at: Any) -> float | None:
@@ -478,7 +836,7 @@ def _typical_phase_duration_seconds(
 
 
 def _fetch_phase_avg_durations_from_db(phase_names: list[str]) -> dict[str, float]:
-    """Mean duration (seconds) of up to 15 most recent successful runs per phase."""
+    """Mean duration (seconds) of up to 15 most recent meaningful successful runs per phase."""
     if not phase_names:
         return {}
     conn = get_monitoring_db_connection()
@@ -503,7 +861,9 @@ def _fetch_phase_avg_durations_from_db(phase_names: list[str]) -> dict[str, floa
                     WHERE success = TRUE
                       AND finished_at IS NOT NULL
                       AND started_at IS NOT NULL
-                      AND finished_at >= started_at
+                      AND finished_at > started_at
+                      AND COALESCE(metadata->>'status', '') NOT IN ('drain_started', 'phase_started')
+                      AND EXTRACT(EPOCH FROM (finished_at - started_at)) >= 1
                       AND phase_name = ANY(%s)
                 )
                 SELECT phase_name, AVG(dur_seconds)::double precision
@@ -575,10 +935,55 @@ def _enrich_current_activities_with_run_estimates(
 
 
 MONITOR_OVERVIEW_AUTOMATION_HISTORY_TIMEOUT = 2.0
+MONITOR_OVERVIEW_HANDLER_TIMEOUT = 12.0
 
 
-def _get_processing_history_for_monitor() -> dict[str, Any] | None:
-    st = _safe_get_automation_status(None, timeout=MONITOR_OVERVIEW_AUTOMATION_HISTORY_TIMEOUT)
+def _overview_cache_get(*, allow_stale: bool = False) -> dict[str, Any] | None:
+    import copy
+
+    with _OVERVIEW_CACHE_LOCK:
+        if not _OVERVIEW_CACHE:
+            return None
+        age = time.monotonic() - _OVERVIEW_CACHE_AT
+        if age <= _OVERVIEW_CACHE_TTL_SECONDS:
+            return copy.deepcopy(_OVERVIEW_CACHE)
+        if allow_stale and age <= _OVERVIEW_STALE_MAX_SECONDS:
+            out = copy.deepcopy(_OVERVIEW_CACHE)
+            out["degraded"] = True
+            out["cache_stale"] = True
+            return out
+    return None
+
+
+def _overview_cache_set(payload: dict[str, Any]) -> None:
+    global _OVERVIEW_CACHE_AT
+    with _OVERVIEW_CACHE_LOCK:
+        _OVERVIEW_CACHE.clear()
+        _OVERVIEW_CACHE.update(payload)
+        _OVERVIEW_CACHE_AT = time.monotonic()
+
+
+def _monitoring_overview_degraded(*, error: str) -> dict[str, Any]:
+    return {
+        "success": True,
+        "degraded": True,
+        "connections": {
+            "api": "ok",
+            "database": "timeout",
+            "webserver": {"status": "unknown"},
+        },
+        "activities": {"current": [], "recent": []},
+        "error": error,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+def _get_processing_history_for_monitor(
+    automation_status: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    st = automation_status
+    if st is None:
+        st = _safe_get_automation_status(None, timeout=MONITOR_OVERVIEW_AUTOMATION_HISTORY_TIMEOUT)
     if not st:
         return None
     metrics = st.get("metrics") or {}
@@ -586,68 +991,93 @@ def _get_processing_history_for_monitor() -> dict[str, Any] | None:
     return hist if isinstance(hist, dict) else None
 
 
-def _build_monitoring_overview_sync(request: Request) -> dict[str, Any]:
-    """Build overview payload (runs in thread pool; must stay bounded)."""
-    connections: dict[str, Any] = {"api": "ok"}
-    db_status = "unknown"
-    try:
-        import concurrent.futures
-
-        def _overview_db_probe() -> str:
-            result = _probe_db_health_fast()
-            return "healthy" if result == "healthy" else "unhealthy"
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            fut = ex.submit(_overview_db_probe)
-            try:
-                db_status = fut.result(timeout=2.5)
-            except concurrent.futures.TimeoutError:
-                db_status = "timeout"
-    except Exception:
-        db_status = "unhealthy"
-    connections["database"] = db_status
-
-    webserver: dict[str, Any] = {}
+def _build_webserver_status_for_overview() -> dict[str, Any]:
+    """Use Route Supervisor's last probe only — never block overview on HTTP to :3000/:80."""
     try:
         from shared.services.route_supervisor import get_route_supervisor
 
         supervisor = get_route_supervisor()
         if supervisor.frontend_health:
             f = supervisor.frontend_health
-            webserver = {
+            return {
                 "status": f.status.value if hasattr(f.status, "value") else str(f.status),
                 "response_time_ms": getattr(f, "response_time_ms", None),
                 "api_connection": getattr(f, "api_connection", None),
                 "url": getattr(f, "url", None),
                 "last_check": f.last_check.isoformat() if getattr(f, "last_check", None) else None,
             }
-        else:
-            webserver = _check_frontend_once()
+        return {"status": "unknown", "error": "no_supervisor_probe_yet"}
     except Exception as e:
-        webserver = {"status": "unknown", "error": str(e)[:80]}
+        return {"status": "unknown", "error": str(e)[:80]}
+
+
+def _build_monitoring_overview_sync(request: Request) -> dict[str, Any]:
+    """Build overview payload (runs in thread pool; must stay bounded)."""
+    import concurrent.futures
+
+    connections: dict[str, Any] = {"api": "ok"}
+    db_status = "unknown"
+    webserver: dict[str, Any] = {}
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+            db_fut = ex.submit(_probe_db_health_fast)
+            web_fut = ex.submit(_build_webserver_status_for_overview)
+            try:
+                result = db_fut.result(timeout=2.5)
+                db_status = "healthy" if result == "healthy" else "unhealthy"
+            except concurrent.futures.TimeoutError:
+                db_status = "timeout"
+            except Exception:
+                db_status = "unhealthy"
+            try:
+                webserver = web_fut.result(timeout=2.0)
+            except concurrent.futures.TimeoutError:
+                webserver = {"status": "unknown", "error": "frontend_probe_timeout"}
+            except Exception as e:
+                webserver = {"status": "unknown", "error": str(e)[:80]}
+    except Exception:
+        db_status = "unhealthy"
+    connections["database"] = db_status
     connections["webserver"] = webserver
 
     activities: dict[str, Any] = {}
     live_automation = getattr(request.app.state, "automation", None)
+    automation_status = _safe_get_automation_status(live_automation, timeout=2.0)
     try:
         from services.activity_feed_service import get_activity_feed
 
-        activities = get_activity_feed().get_snapshot(recent_limit=50)
+        feed = get_activity_feed()
+        try:
+            active_for_reconcile = dict(
+                (automation_status or {}).get("active_tasks_by_phase") or {}
+            )
+            feed.reconcile_stale_current(
+                active_for_reconcile,
+                grace_seconds=MONITOR_STALE_ACTIVITY_GRACE_SECONDS,
+            )
+        except Exception as e:
+            logger.debug("Activity feed reconcile: %s", e)
+        activities = feed.get_snapshot(recent_limit=50)
         cur = activities.get("current")
         if not isinstance(cur, list):
             cur = []
         if not cur:
-            cur = _synthesize_current_activities_from_automation(live_automation)
+            cur = _synthesize_current_activities_from_automation(
+                live_automation,
+                automation_status=automation_status,
+            )
         if cur:
             try:
                 merged = _merge_current_activities_with_run_counts(
-                    cur, automation=live_automation
+                    cur,
+                    automation=live_automation,
+                    automation_status=automation_status,
                 )
             except Exception as e:
                 logger.debug("Activity feed merge: %s", e)
                 merged = cur
             try:
-                hist = _get_processing_history_for_monitor()
+                hist = _get_processing_history_for_monitor(automation_status)
                 merged = _enrich_current_activities_with_run_estimates(
                     merged,
                     processing_history=hist,
@@ -655,20 +1085,39 @@ def _build_monitoring_overview_sync(request: Request) -> dict[str, Any]:
                 )
             except Exception as e:
                 logger.debug("Activity feed enrich: %s", e)
+            try:
+                merged = _merge_popos_into_current_activities(merged)
+            except Exception as e:
+                logger.debug("Activity feed popos merge: %s", e)
             activities = {**activities, "current": merged}
         else:
-            activities = {**activities, "current": []}
+            try:
+                popos_only = _merge_popos_into_current_activities([])
+            except Exception:
+                popos_only = []
+            activities = {**activities, "current": popos_only}
     except Exception as e:
         logger.debug("Activity feed: %s", e)
-        syn = _synthesize_current_activities_from_automation(live_automation)
+        syn = _synthesize_current_activities_from_automation(
+            live_automation,
+            automation_status=automation_status,
+        )
         if syn:
             try:
                 syn = _merge_current_activities_with_run_counts(
-                    syn, automation=live_automation
+                    syn,
+                    automation=live_automation,
+                    automation_status=automation_status,
                 )
             except Exception:
                 pass
+        try:
+            syn = _merge_popos_into_current_activities(syn or [])
+        except Exception:
+            pass
         activities = {"current": syn, "recent": []}
+
+    activities = _finalize_monitoring_activities_recent(activities)
 
     return {
         "success": True,
@@ -678,31 +1127,105 @@ def _build_monitoring_overview_sync(request: Request) -> dict[str, Any]:
     }
 
 
+class _OverviewRequestShim:
+    """Minimal request stand-in for background overview refresh."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+
+def _overview_background_refresh(app: Any) -> None:
+    global _OVERVIEW_REFRESH_INFLIGHT
+    with _OVERVIEW_REFRESH_LOCK:
+        if _OVERVIEW_REFRESH_INFLIGHT:
+            return
+        _OVERVIEW_REFRESH_INFLIGHT = True
+    try:
+        payload = _build_monitoring_overview_sync(_OverviewRequestShim(app))
+        _overview_cache_set(payload)
+    except Exception as e:
+        logger.debug("overview background refresh: %s", e)
+    finally:
+        with _OVERVIEW_REFRESH_LOCK:
+            _OVERVIEW_REFRESH_INFLIGHT = False
+
+
+def _kick_overview_background_refresh(app: Any) -> bool:
+    """Start async overview rebuild if not already running."""
+    with _OVERVIEW_REFRESH_LOCK:
+        if _OVERVIEW_REFRESH_INFLIGHT:
+            return False
+    _MONITOR_OVERVIEW_EXECUTOR.submit(_overview_background_refresh, app)
+    return True
+
+
 @router.get("/monitoring/overview")
 async def get_monitoring_overview(request: Request):
     """
     Enhanced monitoring: connection status (API, database, webserver) and live activity feed.
     Use for the monitoring UI that shows system health and "what the backend is doing".
     """
+    cached = _overview_cache_get()
+    if cached is not None:
+        return cached
+
+    stale = _overview_cache_get(allow_stale=True)
+    if stale is not None:
+        _kick_overview_background_refresh(request.app)
+        return stale
+
+    if _OVERVIEW_BUILD_LOCK.locked():
+        _kick_overview_background_refresh(request.app)
+        return _monitoring_overview_degraded(error="overview_build_busy")
+
+    acquired = False
     try:
-        return await asyncio.wait_for(
-            asyncio.to_thread(_build_monitoring_overview_sync, request),
-            timeout=8.0,
-        )
+        await asyncio.wait_for(_OVERVIEW_BUILD_LOCK.acquire(), timeout=0.05)
     except asyncio.TimeoutError:
-        logger.warning("monitoring/overview timed out after 8s")
-        return {
-            "success": False,
-            "degraded": True,
-            "connections": {
-                "api": "ok",
-                "database": "timeout",
-                "webserver": {"status": "unknown"},
-            },
-            "activities": {"current": [], "recent": []},
-            "error": "overview_handler_timeout",
-            "timestamp": datetime.now().isoformat(),
-        }
+        kicked = _kick_overview_background_refresh(request.app)
+        stale_retry = _overview_cache_get(allow_stale=True)
+        if stale_retry is not None:
+            return stale_retry
+        return _monitoring_overview_degraded(error="overview_build_busy")
+
+    acquired = True
+    try:
+        cached = _overview_cache_get()
+        if cached is not None:
+            return cached
+        stale_retry = _overview_cache_get(allow_stale=True)
+        if stale_retry is not None:
+            _kick_overview_background_refresh(request.app)
+            return stale_retry
+
+        loop = asyncio.get_running_loop()
+        result = await asyncio.wait_for(
+            loop.run_in_executor(
+                _MONITOR_OVERVIEW_EXECUTOR,
+                _build_monitoring_overview_sync,
+                request,
+            ),
+            timeout=MONITOR_OVERVIEW_HANDLER_TIMEOUT,
+        )
+        _overview_cache_set(result)
+        return result
+    except asyncio.TimeoutError:
+        logger.warning(
+            "monitoring/overview timed out after %.0fs",
+            MONITOR_OVERVIEW_HANDLER_TIMEOUT,
+        )
+        _kick_overview_background_refresh(request.app)
+        degraded = _monitoring_overview_degraded(error="overview_handler_timeout")
+        _overview_cache_set(degraded)
+        return degraded
+    except Exception as e:
+        logger.warning("monitoring/overview failed: %s", e)
+        degraded = _monitoring_overview_degraded(error=str(e)[:120])
+        _overview_cache_set(degraded)
+        return degraded
+    finally:
+        if acquired:
+            _OVERVIEW_BUILD_LOCK.release()
 
 
 @router.get("/database/connections")
@@ -869,6 +1392,24 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
     """
     import asyncio
 
+    def _remote_worker_fields() -> dict[str, Any]:
+        try:
+            from shared.remote_phase_worker import remote_owned_phases
+
+            remote_owned = sorted(remote_owned_phases())
+        except Exception:
+            remote_owned = []
+        try:
+            from services.pipeline_phase_heartbeat_service import popos_worker_status_summary
+
+            popos_worker = popos_worker_status_summary()
+        except Exception:
+            popos_worker = {"alive": False, "phases": [], "cycle": None, "age_sec": None}
+        return {
+            "remote_owned_phases": remote_owned,
+            "popos_phase_worker": popos_worker,
+        }
+
     automation = getattr(request.app.state, "automation", None)
     thread_alive = _automation_thread_alive(request)
     if automation is None or not hasattr(automation, "get_status"):
@@ -895,6 +1436,7 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
                 "message": "Automation manager not available"
                 if automation is None
                 else "Automation thread not running",
+                **_remote_worker_fields(),
             },
         }
     if not thread_alive:
@@ -908,11 +1450,12 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
                 "automation_thread_alive": False,
                 "startup_ready": False,
                 "message": "Automation thread died",
+                **_remote_worker_fields(),
             },
         }
     try:
         status = await asyncio.wait_for(
-            asyncio.to_thread(automation.get_status),
+            asyncio.to_thread(lambda: automation.get_status(include_pending=False)),
             timeout=AUTOMATION_STATUS_TIMEOUT_SECONDS,
         )
         schedules = status.get("schedules") or {}
@@ -1044,6 +1587,18 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
             if hasattr(automation, "get_disabled_schedule_names")
             else []
         )
+        try:
+            from shared.remote_phase_worker import remote_owned_phases
+
+            remote_owned = sorted(remote_owned_phases())
+        except Exception:
+            remote_owned = []
+        try:
+            from services.pipeline_phase_heartbeat_service import popos_worker_status_summary
+
+            popos_worker = popos_worker_status_summary()
+        except Exception:
+            popos_worker = {"alive": False, "phases": [], "cycle": None}
         startup_ready = thread_alive and bool(status.get("is_running", False))
         return {
             "success": True,
@@ -1058,17 +1613,24 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
                 ),
                 "automation_thread_alive": thread_alive,
                 "disabled_schedules": disabled,
+                "remote_owned_phases": remote_owned,
+                "popos_phase_worker": popos_worker,
                 "pipeline_schedule": schedule_info,
                 "startup_ready": startup_ready,
                 "phases": phases,
                 "backlog_counts": backlog_counts,
                 "pending_counts": status.get("pending_counts") or {},
+                "queue_depths": status.get("pending_counts") or {},
+                "in_memory_queue_depth": status.get("combined_queue_depth"),
+                "combined_queue_depth": status.get("combined_queue_depth"),
                 "document_pipeline": status.get("document_pipeline") or {},
-                "work_balancer": status.get("work_balancer") or {},
-                "resource_router": status.get("resource_router") or {},
+                "db_pools": status.get("db_pools") or {},
+                "pipeline_controller": status.get("pipeline_controller") or {},
+                "llm_routing": status.get("llm_routing") or {},
                 "queued_tasks_by_lane": status.get("queued_tasks_by_lane") or {},
                 "active_tasks_by_lane": status.get("active_tasks_by_lane") or {},
                 "runs_last_60m_by_lane": status.get("runs_last_60m_by_lane") or {},
+                "runs_last_60m_by_phase": status.get("runs_last_60m_by_phase") or {},
                 "pipeline_article_selection": _pipe_sel,
             },
         }
@@ -1082,11 +1644,16 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
                 "active_workers": 0,
                 "phases": [],
                 "message": "Status temporarily unavailable (pipeline busy); refresh in a moment.",
+                **_remote_worker_fields(),
             },
         }
     except Exception as e:
         logger.warning("get_automation_status failed: %s", e)
-        return {"success": False, "data": {}, "error": str(e)[:200]}
+        return {
+            "success": False,
+            "data": {**_remote_worker_fields()},
+            "error": str(e)[:200],
+        }
 
 
 @router.get("/sources_collected")
@@ -1610,10 +2177,39 @@ async def get_system_metrics(
 
         finally:
             conn.close()
-
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error fetching metrics: {e}")
+        logger.error(f"Error getting system metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/prometheus")
+async def get_prometheus_metrics(request: Request, force: bool = Query(False)):
+    """Prometheus text exposition for Homelab Grafana (Monitor-parity + DB inventory)."""
+    from fastapi.responses import PlainTextResponse
+    from services.ni_prometheus_metrics_service import (
+        build_prometheus_metrics,
+        is_enabled,
+        scrape_token,
+    )
+
+    if not is_enabled():
+        raise HTTPException(status_code=404, detail="NI Prometheus metrics disabled")
+    expected = scrape_token()
+    if expected:
+        got = (request.headers.get("X-NI-Scrape-Token") or "").strip()
+        if got != expected:
+            raise HTTPException(status_code=401, detail="Invalid scrape token")
+    try:
+        body = await asyncio.to_thread(build_prometheus_metrics, force=bool(force))
+    except Exception as e:
+        logger.exception("prometheus metrics failed")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    return PlainTextResponse(
+        content=body,
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 @router.post("/metrics/collect")
@@ -2413,7 +3009,10 @@ async def process_metric_collection():
 @cached_response_sync(ttl=90)
 def get_pipeline_status():
     """
-    Pipeline trace summary + per-silo article counts for Monitor.
+    Live pipeline work snapshot for Monitor.
+
+    SSOT for "work done" is ``automation_run_history`` + phase heartbeats — not the
+    legacy ``pipeline_traces`` table (orchestration traces stopped updating mid-2026).
 
     **Must stay a sync ``def`` route** (not ``async def``): this handler uses blocking
     psycopg2. An async route would run that work on the event loop and freeze the API
@@ -2438,7 +3037,12 @@ def get_pipeline_status():
                 "recent_articles": 0,
                 "errors": 0,
                 "recent_traces": [],
+                "recent_runs": [],
                 "latest_trace_id": None,
+                "last_activity_at": None,
+                "runs_last_1h": 0,
+                "runs_last_24h": 0,
+                "activity_source": "automation_run_history",
             },
             "timestamp": datetime.now().isoformat(),
         }
@@ -2455,84 +3059,106 @@ def get_pipeline_status():
                     cur.execute("SET LOCAL statement_timeout = '15s'")
                 except Exception:
                     pass
-                # Get pipeline trace statistics (using correct column names)
-                # Table has: success (boolean), error_stage (varchar), not status/stage
-                cur.execute("""
+
+                excluded = sorted(
+                    MONITOR_RECENT_ACTIVITY_EXCLUDED | MONITOR_EXCLUDED_AUTOMATION_PHASES
+                )
+
+                # 24h run history (work done SSOT)
+                cur.execute(
+                    """
                     SELECT
-                        COUNT(*) as total_traces,
-                        COUNT(CASE WHEN success = true THEN 1 END) as successful_traces,
-                        COUNT(CASE WHEN success = false THEN 1 END) as error_traces,
-                        COUNT(CASE WHEN COALESCE(end_time, start_time) >= NOW() - INTERVAL '1 hour' THEN 1 END) as recent_traces,
-                        COUNT(CASE WHEN success IS NULL AND end_time IS NULL THEN 1 END) as active_traces
-                    FROM pipeline_traces
-                """)
+                        COUNT(*) FILTER (
+                            WHERE finished_at >= NOW() - INTERVAL '24 hours'
+                        ) AS runs_24h,
+                        COUNT(*) FILTER (
+                            WHERE finished_at >= NOW() - INTERVAL '1 hour'
+                        ) AS runs_1h,
+                        COUNT(*) FILTER (
+                            WHERE finished_at >= NOW() - INTERVAL '24 hours'
+                              AND success IS TRUE
+                        ) AS ok_24h,
+                        COUNT(*) FILTER (
+                            WHERE finished_at >= NOW() - INTERVAL '24 hours'
+                              AND success IS FALSE
+                        ) AS err_24h,
+                        MAX(finished_at) AS last_finished
+                    FROM automation_run_history
+                    WHERE NOT (phase_name = ANY(%s))
+                    """,
+                    (excluded,),
+                )
+                rh = cur.fetchone() or (0, 0, 0, 0, None)
+                runs_24h = int(rh[0] or 0)
+                runs_1h = int(rh[1] or 0)
+                ok_24h = int(rh[2] or 0)
+                err_24h = int(rh[3] or 0)
+                last_finished = rh[4]
+                success_rate = (
+                    round(100.0 * ok_24h / runs_24h, 1) if runs_24h > 0 else 0.0
+                )
 
-                trace_stats = cur.fetchone()
-                total_traces = trace_stats[0] if trace_stats[0] else 0
-                successful_traces = trace_stats[1] if trace_stats[1] else 0
-                error_traces = trace_stats[2] if trace_stats[2] else 0
-                recent_traces = trace_stats[3] if trace_stats[3] else 0
-                truly_active_traces = trace_stats[4] if trace_stats[4] else 0
-
-                # Calculate success rate
-                success_rate = (successful_traces / total_traces * 100) if total_traces > 0 else 0.0
-
-                # Get the most recent orchestration run
-                cur.execute("""
-                    SELECT DISTINCT trace_id
-                    FROM pipeline_traces
-                    WHERE trace_id LIKE 'pipeline_%'
-                    ORDER BY trace_id DESC
-                    LIMIT 1
-                """)
-                latest_trace = cur.fetchone()
-                latest_trace_id = latest_trace[0] if latest_trace else None
-
-                # Get stage progress for latest orchestration
-                # Note: pipeline_traces table doesn't have stage/status columns
-                # It has error_stage and success (boolean)
-                stage_progress = {}
-                current_stage = None
-
-                # Get recent pipeline traces (using actual column names)
-                cur.execute("""
-                    SELECT id, trace_id, error_stage, success,
-                           COALESCE(end_time, start_time) as ts,
-                           performance_metrics
-                    FROM pipeline_traces
-                    ORDER BY COALESCE(end_time, start_time) DESC
-                    LIMIT 10
-                """)
-
-                recent_traces_data = []
-                for row in cur.fetchall():
-                    trace_id = row[1]
-                    error_stage = row[2]
-                    success = row[3]
-                    ts = row[4]
-                    row[5]
-
-                    # Determine status from success boolean
-                    if success is None:
-                        status = "running"
-                    elif success:
-                        status = "completed"
-                    else:
-                        status = "error"
-
-                    recent_traces_data.append(
+                cur.execute(
+                    """
+                    SELECT id, phase_name, finished_at, success, error_message,
+                           started_at
+                    FROM automation_run_history
+                    WHERE finished_at >= NOW() - INTERVAL '24 hours'
+                      AND NOT (phase_name = ANY(%s))
+                    ORDER BY finished_at DESC
+                    LIMIT 15
+                    """,
+                    (excluded,),
+                )
+                recent_runs: list[dict[str, Any]] = []
+                for row in cur.fetchall() or []:
+                    run_id, phase_name, finished_at, success, error_message, started_at = row
+                    status = (
+                        "running"
+                        if success is None
+                        else ("completed" if success else "error")
+                    )
+                    recent_runs.append(
                         {
-                            "id": str(row[0]),
-                            "trace_id": trace_id,
-                            "stage": error_stage or "unknown",
+                            "id": str(run_id),
+                            "trace_id": f"run:{phase_name}:{run_id}",
+                            "phase_name": phase_name,
+                            "stage": phase_name,
                             "status": status,
-                            "created_at": ts.isoformat() if ts else None,
-                            "error_message": None,  # No error_message column
+                            "created_at": (
+                                finished_at.isoformat() if finished_at else None
+                            ),
+                            "started_at": (
+                                started_at.isoformat() if started_at else None
+                            ),
+                            "completed_at": (
+                                finished_at.isoformat() if finished_at else None
+                            ),
+                            "error_message": (error_message or None),
                             "success": success,
+                            "source": "automation_run_history",
                         }
                     )
 
-                # Sum article stats across pipeline silos (includes template silos when in pipeline)
+                # Active work from heartbeats (PopOS / Widow drains in flight)
+                active_phases = 0
+                try:
+                    cur.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM public.pipeline_phase_heartbeats
+                        WHERE last_run_at >= NOW() - INTERVAL '10 minutes'
+                          AND (
+                                COALESCE(detail->>'status', '') = 'running'
+                             OR phase_name LIKE '\\_\\_popos_worker\\_\\_%%' ESCAPE '\\'
+                          )
+                        """
+                    )
+                    active_phases = int((cur.fetchone() or (0,))[0] or 0)
+                except Exception:
+                    active_phases = 0
+
+                # Article inventory (still useful context)
                 _schemas = get_pipeline_schema_names_active() or get_schema_names_active() or (
                     "politics",
                     "finance",
@@ -2555,46 +3181,52 @@ def get_pipeline_status():
                         {_sum_recent} as recent_articles
                     """
                 )
-
                 processing_stats = cur.fetchone()
-                articles_processed = processing_stats[0] if processing_stats[0] else 0
-                articles_analyzed = processing_stats[1] if processing_stats[1] else 0
-                recent_articles = processing_stats[2] if processing_stats[2] else 0
+                articles_processed = processing_stats[0] if processing_stats and processing_stats[0] else 0
+                articles_analyzed = processing_stats[1] if processing_stats and processing_stats[1] else 0
+                recent_articles = processing_stats[2] if processing_stats and processing_stats[2] else 0
 
-                # Calculate overall pipeline progress
-                overall_progress = 0
-                if stage_progress:
-                    stage_count = len(stage_progress)
-                    total_progress = sum(s.get("progress", 0) for s in stage_progress.values())
-                    overall_progress = int(total_progress / stage_count) if stage_count > 0 else 0
-
-                # Determine pipeline status
-                if total_traces == 0:
-                    pipeline_status = "idle"  # No traces yet
-                elif truly_active_traces > 0:
+                if active_phases > 0 or runs_1h > 0:
                     pipeline_status = "running"
-                elif error_traces > 0 and error_traces > successful_traces:
+                elif err_24h > ok_24h and runs_24h > 0:
                     pipeline_status = "error"
-                else:
+                elif runs_24h > 0:
                     pipeline_status = "healthy"
+                else:
+                    pipeline_status = "idle"
+
+                last_activity_at = (
+                    last_finished.isoformat() if last_finished else None
+                )
+                current_stage = (
+                    recent_runs[0].get("phase_name") if recent_runs else None
+                )
 
                 payload = {
                     "success": True,
                     "data": {
                         "pipeline_status": pipeline_status,
-                        "overall_progress": overall_progress,
+                        "overall_progress": 0,
                         "current_stage": current_stage,
-                        "stage_progress": stage_progress,
-                        "active_traces": truly_active_traces,
-                        "recent_traces_count": recent_traces,
-                        "total_traces": total_traces,
-                        "success_rate": round(success_rate, 1),
+                        "stage_progress": {},
+                        # Legacy field names kept for Monitor chips; values from run history
+                        "active_traces": active_phases,
+                        "recent_traces_count": runs_1h,
+                        "total_traces": runs_24h,
+                        "success_rate": success_rate,
                         "articles_processed": articles_processed,
                         "articles_analyzed": articles_analyzed,
                         "recent_articles": recent_articles,
-                        "errors": error_traces,
-                        "recent_traces": recent_traces_data,
-                        "latest_trace_id": latest_trace_id,
+                        "errors": err_24h,
+                        "recent_traces": recent_runs,
+                        "recent_runs": recent_runs,
+                        "latest_trace_id": (
+                            recent_runs[0]["trace_id"] if recent_runs else None
+                        ),
+                        "last_activity_at": last_activity_at,
+                        "runs_last_1h": runs_1h,
+                        "runs_last_24h": runs_24h,
+                        "activity_source": "automation_run_history",
                     },
                     "timestamp": datetime.now().isoformat(),
                 }
@@ -2688,6 +3320,7 @@ def execute_pipeline_orchestration():
         try:
             from shared.database.connection import get_db_connection
 
+            # Cross-domain: pipeline trace orchestration invokes topic extraction for monitoring.
             from domains.content_analysis.services.advanced_topic_extractor import (
                 AdvancedTopicExtractor,
             )
@@ -2838,7 +3471,7 @@ async def cron_heartbeat(request: Request, body: dict[str, Any] = Body(default_f
 
     Body (optional): ``{"phase": "cron_rss", "detail": "6am run ok"}`` — phase defaults to ``cron_rss``.
     """
-    expected = (os.environ.get("CRON_HEARTBEAT_KEY") or "").strip()
+    expected = (env_str("CRON_HEARTBEAT_KEY") or "").strip()
     if not expected:
         raise HTTPException(
             status_code=501,

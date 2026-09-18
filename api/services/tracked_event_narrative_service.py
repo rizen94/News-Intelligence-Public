@@ -23,10 +23,9 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_tracked_domain_key_for_lens(key: str) -> str:
-    k = str(key).lower().strip().replace("_", "-")
-    if k in ("science-tech", "sciencetech", "science tech"):
-        return "artificial-intelligence"
-    return k
+    from shared.pipeline_domain_sql import normalize_legacy_domain_key
+
+    return normalize_legacy_domain_key(key)
 
 
 # Optional hints so lenses differ meaningfully when multiple domains apply.

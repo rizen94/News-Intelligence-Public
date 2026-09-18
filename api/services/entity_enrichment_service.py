@@ -11,6 +11,7 @@ import os
 from typing import Any
 
 from shared.database.connection import get_db_connection
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -219,15 +220,21 @@ def enrich_entity_profile(entity_profile_id: int) -> bool:
 
 def get_entity_profile_ids_to_enrich(limit: int = 20) -> list[int]:
     """Return entity_profile IDs missing Wikipedia section and/or wiki versioned_facts."""
+    from shared.pipeline_domain_sql import pipeline_domain_any_sql
+
     conn = get_db_connection()
     if not conn:
+        return []
+    domain_sql, domain_keys = pipeline_domain_any_sql("ep.domain_key")
+    if not domain_keys:
         return []
     try:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT ep.id FROM intelligence.entity_profiles ep
-                WHERE ep.metadata->>'canonical_name' IS NOT NULL
+                WHERE {domain_sql}
+                  AND ep.metadata->>'canonical_name' IS NOT NULL
                   AND ep.metadata->>'canonical_name' != ''
                   AND COALESCE(ep.metadata->>'wiki_enrichment_status', 'pending') = 'pending'
                   AND (
@@ -243,7 +250,7 @@ def get_entity_profile_ids_to_enrich(limit: int = 20) -> list[int]:
                 ORDER BY ep.updated_at ASC NULLS FIRST
                 LIMIT %s
                 """,
-                (limit,),
+                (domain_keys, limit),
             )
             return [r[0] for r in cur.fetchall()]
     except Exception as e:
@@ -256,7 +263,7 @@ def get_entity_profile_ids_to_enrich(limit: int = 20) -> list[int]:
 
 # Log-only threshold: large backlog used to skip all work and block enrichment forever (v8 fix).
 ENTITY_ENRICHMENT_QUEUE_WARN_THRESHOLD = int(
-    os.environ.get("ENTITY_ENRICHMENT_QUEUE_WARN_THRESHOLD", "5000")
+    env_str("ENTITY_ENRICHMENT_QUEUE_WARN_THRESHOLD", "5000")
 )
 
 
@@ -271,28 +278,36 @@ def run_enrichment_batch(limit: int = 20) -> int:
     ids = get_entity_profile_ids_to_enrich(limit=limit)
     if not ids:
         return 0
+    from shared.pipeline_domain_sql import pipeline_domain_any_sql
+
     conn = get_db_connection()
     if conn:
+        domain_sql, domain_keys = pipeline_domain_any_sql("ep.domain_key")
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT COUNT(*) FROM intelligence.entity_profiles ep
-                    WHERE ep.metadata->>'canonical_name' IS NOT NULL
-                      AND ep.metadata->>'canonical_name' != ''
-                      AND COALESCE(ep.metadata->>'wiki_enrichment_status', 'pending') = 'pending'
-                      AND (
-                        ep.sections IS NULL
-                        OR ep.sections::text NOT ILIKE '%%Background (Wikipedia)%%'
-                        OR NOT EXISTS (
-                          SELECT 1 FROM intelligence.versioned_facts vf
-                          WHERE vf.entity_profile_id = ep.id
-                            AND vf.extraction_method = 'wikipedia'
-                          LIMIT 1
-                        )
-                      )
-                    """
-                )
+                if domain_keys:
+                    cur.execute(
+                        f"""
+                        SELECT COUNT(*) FROM intelligence.entity_profiles ep
+                        WHERE {domain_sql}
+                          AND ep.metadata->>'canonical_name' IS NOT NULL
+                          AND ep.metadata->>'canonical_name' != ''
+                          AND COALESCE(ep.metadata->>'wiki_enrichment_status', 'pending') = 'pending'
+                          AND (
+                            ep.sections IS NULL
+                            OR ep.sections::text NOT ILIKE '%%Background (Wikipedia)%%'
+                            OR NOT EXISTS (
+                              SELECT 1 FROM intelligence.versioned_facts vf
+                              WHERE vf.entity_profile_id = ep.id
+                                AND vf.extraction_method = 'wikipedia'
+                              LIMIT 1
+                            )
+                          )
+                        """,
+                        (domain_keys,),
+                    )
+                else:
+                    cur.execute("SELECT 0")
                 (queue_depth,) = cur.fetchone()
                 if queue_depth > ENTITY_ENRICHMENT_QUEUE_WARN_THRESHOLD:
                     logger.warning(

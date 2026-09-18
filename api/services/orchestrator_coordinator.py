@@ -74,7 +74,6 @@ class OrchestratorCoordinator:
         self._get_db_connection = get_db_connection
         self._collect_rss_feeds_fn = collect_rss_feeds_fn
         self._processing_governor = processing_governor or ProcessingGovernor(
-            get_automation=get_automation,
             get_finance_orchestrator=get_finance_orchestrator,
         )
         orch = config.get("orchestrator") or {}
@@ -108,6 +107,49 @@ class OrchestratorCoordinator:
             self._task = None
         logger.info("OrchestratorCoordinator loop stopped")
 
+    async def _kickoff_post_collection_processing(self, current_cycle: int) -> None:
+        """After RSS ingest, trigger PipelineController replan + chemistry beaker when intake clear."""
+        if not self._get_automation:
+            return
+        try:
+            from services.pipeline_controller import post_collection_kickoff_enabled
+        except Exception as e:
+            logger.debug("Post-collection kickoff import failed: %s", e)
+            return
+        if not post_collection_kickoff_enabled():
+            return
+        automation = self._get_automation()
+        if not automation:
+            return
+        ctrl = getattr(automation, "pipeline_controller", None)
+        if ctrl is not None:
+            ctrl.request_replan()
+            logger.info(
+                "Orchestrator post-collection: pipeline replan requested (cycle=%s)",
+                current_cycle,
+            )
+            try:
+                from shared.chemistry_beaker import kickoff_beaker_phases
+
+                kickoff_beaker_phases(automation, reason=f"orchestrator_post_collection_{current_cycle}")
+            except Exception as e:
+                logger.debug("Orchestrator beaker kickoff: %s", e)
+            try:
+                from . import orchestrator_state
+
+                orchestrator_state.append_decision_log(
+                    "process_phase",
+                    factors={"cycle": current_cycle, "source": "post_collection_replan"},
+                    outcome="replan",
+                )
+            except Exception as e:
+                logger.debug("Orchestrator kickoff decision_log failed: %s", e)
+            return
+        logger.debug(
+            "Orchestrator post-collection: pipeline_controller unavailable (cycle=%s)",
+            current_cycle,
+        )
+
     async def _wait_for_automation(self, timeout_seconds: float = 120.0) -> None:
         """Defer processing until AutomationManager is running (avoids dropped requests on boot)."""
         if not self._get_automation:
@@ -136,7 +178,13 @@ class OrchestratorCoordinator:
                 current_cycle = (state.get("current_cycle") or 0) + 1
                 state["current_cycle"] = current_cycle
 
-                # 2. Plan next action
+                automation = self._get_automation() if self._get_automation else None
+                if automation is not None and getattr(automation, "pipeline_controller", None):
+                    # Collection folded into PipelineController tree; skip orchestrator RSS loop.
+                    await asyncio.sleep(self._loop_interval_seconds)
+                    continue
+
+                # Plan next collection action
                 last_times = state.get("last_collection_times") or {}
                 action = self._collection_governor.recommend_fetch(last_times)
 
@@ -156,10 +204,29 @@ class OrchestratorCoordinator:
                             )
                             try:
                                 loop = asyncio.get_event_loop()
-                                observations_count = await loop.run_in_executor(
-                                    self._executor,
-                                    self._collect_rss_feeds_fn,
+                                observations_count = await asyncio.wait_for(
+                                    loop.run_in_executor(
+                                        self._executor,
+                                        self._collect_rss_feeds_fn,
+                                    ),
+                                    timeout=90.0,
                                 )
+                            except asyncio.TimeoutError:
+                                logger.warning(
+                                    "Orchestrator RSS collect timed out (cycle=%s)",
+                                    current_cycle,
+                                )
+                                log_pipeline_trace(
+                                    orch_trace,
+                                    "orchestrator_rss_collection",
+                                    "error",
+                                    {
+                                        "error": "timeout_90s",
+                                        "source": source,
+                                        "cycle": current_cycle,
+                                    },
+                                )
+                                raise
                             except Exception as rss_exc:
                                 logger.warning(
                                     "Orchestrator RSS collect failed: %s", rss_exc
@@ -189,6 +256,7 @@ class OrchestratorCoordinator:
                                     "cycle": current_cycle,
                                 },
                             )
+                            await self._kickoff_post_collection_processing(current_cycle)
                         else:
                             # Finance (gold, silver, platinum) or other handlers from config
                             handler, topic = self._collection_handler_and_topic(source)
@@ -252,64 +320,6 @@ class OrchestratorCoordinator:
                             self._last_idle_log_at = now_ts
                     except Exception as e:
                         logger.warning("Orchestrator append_decision_log failed: %s", e)
-
-                # Processing: recommend and run one phase (importance + user guidance)
-                state = orchestrator_state.get_controller_state()
-                resource_ok = (
-                    self._resource_governor.can_run("processing")
-                    if self._resource_governor
-                    else True
-                )
-                processing_action = self._processing_governor.recommend_next_processing(
-                    state, resource_ok, get_db_connection=self._get_db_connection
-                )
-                if processing_action and self._get_automation:
-                    automation = self._get_automation()
-                    if automation and hasattr(automation, "request_phase"):
-                        try:
-                            automation.request_phase(
-                                processing_action["phase"],
-                                domain=processing_action.get("domain"),
-                                storyline_id=processing_action.get("storyline_id"),
-                            )
-                            self._processing_governor.record_processing_result(
-                                processing_action["phase"],
-                                domain=processing_action.get("domain"),
-                                storyline_id=processing_action.get("storyline_id"),
-                                success=True,
-                            )
-                            try:
-                                phase_name = processing_action["phase"]
-                                now_ts = datetime.now(timezone.utc)
-                                skip = (
-                                    self._last_process_phase_name == phase_name
-                                    and self._last_process_phase_log_at is not None
-                                    and (now_ts - self._last_process_phase_log_at).total_seconds()
-                                    < DECISION_LOG_PHASE_THROTTLE_SECONDS
-                                )
-                                if not skip:
-                                    orchestrator_state.append_decision_log(
-                                        "process_phase",
-                                        factors={
-                                            "cycle": current_cycle,
-                                            "phase": phase_name,
-                                            "domain": processing_action.get("domain"),
-                                            "storyline_id": processing_action.get("storyline_id"),
-                                        },
-                                        outcome="queued",
-                                    )
-                                    self._last_process_phase_log_at = now_ts
-                                    self._last_process_phase_name = phase_name
-                            except Exception as e:
-                                logger.warning("Orchestrator append_decision_log failed: %s", e)
-                        except Exception as e:
-                            logger.warning("Orchestrator request_phase failed: %s", e)
-                            self._processing_governor.record_processing_result(
-                                processing_action["phase"],
-                                domain=processing_action.get("domain"),
-                                storyline_id=processing_action.get("storyline_id"),
-                                success=False,
-                            )
 
                 state["current_cycle"] = current_cycle
                 state["last_collection_times"] = state.get("last_collection_times") or {}
@@ -510,6 +520,20 @@ class OrchestratorCoordinator:
             }
             if self._resource_governor:
                 out["resource_budget"] = self._resource_governor.get_budget_status()
+            try:
+                from services.pipeline_conductor_service import (
+                    conductor_pipeline_modes,
+                    get_post_collection_kickoff_phases,
+                    orchestrator_post_collection_kickoff_enabled,
+                )
+
+                out["pipeline_conductor"] = {
+                    **conductor_pipeline_modes(),
+                    "post_collection_kickoff_enabled": orchestrator_post_collection_kickoff_enabled(),
+                    "post_collection_phases": get_post_collection_kickoff_phases(),
+                }
+            except Exception:
+                pass
             return out
         except Exception as e:
             logger.warning("Orchestrator get_status failed: %s", e)

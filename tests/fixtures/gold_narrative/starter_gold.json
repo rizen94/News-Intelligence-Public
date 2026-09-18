@@ -1,0 +1,1241 @@
+{
+  "version": 1,
+  "description": "Gold set for narrative eval harness (~200 labeled pairs; hand seeds + synthetic expand).",
+  "domain_key": "politics",
+  "article_storyline_assignments": [
+    {
+      "article_id": 1001,
+      "storyline_id": 501,
+      "label": "positive",
+      "note": "same cabinet crisis arc"
+    },
+    {
+      "article_id": 1002,
+      "storyline_id": 501,
+      "label": "positive"
+    },
+    {
+      "article_id": 1003,
+      "storyline_id": 501,
+      "label": "positive"
+    },
+    {
+      "article_id": 1004,
+      "storyline_id": 502,
+      "label": "positive",
+      "note": "trade negotiation"
+    },
+    {
+      "article_id": 1005,
+      "storyline_id": 502,
+      "label": "positive"
+    },
+    {
+      "article_id": 1006,
+      "storyline_id": 503,
+      "label": "positive"
+    },
+    {
+      "article_id": 1007,
+      "storyline_id": 503,
+      "label": "positive"
+    },
+    {
+      "article_id": 1008,
+      "storyline_id": 504,
+      "label": "positive"
+    },
+    {
+      "article_id": 1009,
+      "storyline_id": 504,
+      "label": "positive"
+    },
+    {
+      "article_id": 1010,
+      "storyline_id": 505,
+      "label": "positive"
+    },
+    {
+      "article_id": 1011,
+      "storyline_id": 501,
+      "label": "negative",
+      "note": "off-topic sports"
+    },
+    {
+      "article_id": 1012,
+      "storyline_id": 501,
+      "label": "negative"
+    },
+    {
+      "article_id": 1013,
+      "storyline_id": 502,
+      "label": "negative"
+    },
+    {
+      "article_id": 1014,
+      "storyline_id": 502,
+      "label": "negative"
+    },
+    {
+      "article_id": 1015,
+      "storyline_id": 503,
+      "label": "negative"
+    },
+    {
+      "article_id": 1016,
+      "storyline_id": 504,
+      "label": "negative"
+    },
+    {
+      "article_id": 1017,
+      "storyline_id": 505,
+      "label": "negative"
+    },
+    {
+      "article_id": 1018,
+      "storyline_id": 505,
+      "label": "negative"
+    },
+    {
+      "article_id": 1019,
+      "storyline_id": 506,
+      "label": "positive"
+    },
+    {
+      "article_id": 1020,
+      "storyline_id": 506,
+      "label": "negative"
+    },
+    {
+      "article_id": 1021,
+      "storyline_id": 501,
+      "label": "negative",
+      "note": "synthetic hard-negative"
+    },
+    {
+      "article_id": 1022,
+      "storyline_id": 502,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1023,
+      "storyline_id": 503,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1024,
+      "storyline_id": 504,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1025,
+      "storyline_id": 505,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1026,
+      "storyline_id": 506,
+      "label": "negative",
+      "note": "synthetic hard-negative"
+    },
+    {
+      "article_id": 1027,
+      "storyline_id": 507,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1028,
+      "storyline_id": 508,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1029,
+      "storyline_id": 509,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1030,
+      "storyline_id": 510,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1031,
+      "storyline_id": 511,
+      "label": "negative",
+      "note": "synthetic hard-negative"
+    },
+    {
+      "article_id": 1032,
+      "storyline_id": 512,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1033,
+      "storyline_id": 513,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1034,
+      "storyline_id": 514,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1035,
+      "storyline_id": 515,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1036,
+      "storyline_id": 516,
+      "label": "negative",
+      "note": "synthetic hard-negative"
+    },
+    {
+      "article_id": 1037,
+      "storyline_id": 517,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1038,
+      "storyline_id": 518,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1039,
+      "storyline_id": 519,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1040,
+      "storyline_id": 520,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1041,
+      "storyline_id": 521,
+      "label": "negative",
+      "note": "synthetic hard-negative"
+    },
+    {
+      "article_id": 1042,
+      "storyline_id": 522,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1043,
+      "storyline_id": 523,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1044,
+      "storyline_id": 524,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1045,
+      "storyline_id": 525,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1046,
+      "storyline_id": 526,
+      "label": "negative",
+      "note": "synthetic hard-negative"
+    },
+    {
+      "article_id": 1047,
+      "storyline_id": 527,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1048,
+      "storyline_id": 528,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1049,
+      "storyline_id": 529,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1050,
+      "storyline_id": 530,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1051,
+      "storyline_id": 501,
+      "label": "negative",
+      "note": "synthetic hard-negative"
+    },
+    {
+      "article_id": 1052,
+      "storyline_id": 502,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1053,
+      "storyline_id": 503,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1054,
+      "storyline_id": 504,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1055,
+      "storyline_id": 505,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1056,
+      "storyline_id": 506,
+      "label": "negative",
+      "note": "synthetic hard-negative"
+    },
+    {
+      "article_id": 1057,
+      "storyline_id": 507,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1058,
+      "storyline_id": 508,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1059,
+      "storyline_id": 509,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1060,
+      "storyline_id": 510,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1061,
+      "storyline_id": 511,
+      "label": "negative",
+      "note": "synthetic hard-negative"
+    },
+    {
+      "article_id": 1062,
+      "storyline_id": 512,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1063,
+      "storyline_id": 513,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1064,
+      "storyline_id": 514,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1065,
+      "storyline_id": 515,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1066,
+      "storyline_id": 516,
+      "label": "negative",
+      "note": "synthetic hard-negative"
+    },
+    {
+      "article_id": 1067,
+      "storyline_id": 517,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1068,
+      "storyline_id": 518,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1069,
+      "storyline_id": 519,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1070,
+      "storyline_id": 520,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1071,
+      "storyline_id": 521,
+      "label": "negative",
+      "note": "synthetic hard-negative"
+    },
+    {
+      "article_id": 1072,
+      "storyline_id": 522,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1073,
+      "storyline_id": 523,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1074,
+      "storyline_id": 524,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1075,
+      "storyline_id": 525,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1076,
+      "storyline_id": 526,
+      "label": "negative",
+      "note": "synthetic hard-negative"
+    },
+    {
+      "article_id": 1077,
+      "storyline_id": 527,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1078,
+      "storyline_id": 528,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1079,
+      "storyline_id": 529,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1080,
+      "storyline_id": 530,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1081,
+      "storyline_id": 501,
+      "label": "negative",
+      "note": "synthetic hard-negative"
+    },
+    {
+      "article_id": 1082,
+      "storyline_id": 502,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1083,
+      "storyline_id": 503,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1084,
+      "storyline_id": 504,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1085,
+      "storyline_id": 505,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1086,
+      "storyline_id": 506,
+      "label": "negative",
+      "note": "synthetic hard-negative"
+    },
+    {
+      "article_id": 1087,
+      "storyline_id": 507,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1088,
+      "storyline_id": 508,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1089,
+      "storyline_id": 509,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1090,
+      "storyline_id": 510,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1091,
+      "storyline_id": 511,
+      "label": "negative",
+      "note": "synthetic hard-negative"
+    },
+    {
+      "article_id": 1092,
+      "storyline_id": 512,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1093,
+      "storyline_id": 513,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1094,
+      "storyline_id": 514,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1095,
+      "storyline_id": 515,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1096,
+      "storyline_id": 516,
+      "label": "negative",
+      "note": "synthetic hard-negative"
+    },
+    {
+      "article_id": 1097,
+      "storyline_id": 517,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1098,
+      "storyline_id": 518,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1099,
+      "storyline_id": 519,
+      "label": "positive",
+      "note": "synthetic expand"
+    },
+    {
+      "article_id": 1100,
+      "storyline_id": 520,
+      "label": "positive",
+      "note": "synthetic expand"
+    }
+  ],
+  "event_coreference_pairs": [
+    {
+      "event_a": 2001,
+      "event_b": 2002,
+      "label": "same_event",
+      "tier": "hard"
+    },
+    {
+      "event_a": 2001,
+      "event_b": 2003,
+      "label": "same_event",
+      "tier": "soft"
+    },
+    {
+      "event_a": 2004,
+      "event_b": 2005,
+      "label": "same_event",
+      "tier": "hard"
+    },
+    {
+      "event_a": 2006,
+      "event_b": 2007,
+      "label": "same_event",
+      "tier": "embedding"
+    },
+    {
+      "event_a": 2008,
+      "event_b": 2009,
+      "label": "same_event",
+      "tier": "soft"
+    },
+    {
+      "event_a": 2010,
+      "event_b": 2011,
+      "label": "same_event",
+      "tier": "hard"
+    },
+    {
+      "event_a": 2001,
+      "event_b": 2004,
+      "label": "different_event"
+    },
+    {
+      "event_a": 2002,
+      "event_b": 2006,
+      "label": "different_event"
+    },
+    {
+      "event_a": 2003,
+      "event_b": 2008,
+      "label": "different_event"
+    },
+    {
+      "event_a": 2005,
+      "event_b": 2010,
+      "label": "different_event"
+    },
+    {
+      "event_a": 2007,
+      "event_b": 2011,
+      "label": "different_event"
+    },
+    {
+      "event_a": 2012,
+      "event_b": 2013,
+      "label": "same_event",
+      "tier": "fingerprint"
+    },
+    {
+      "event_a": 2012,
+      "event_b": 2014,
+      "label": "different_event"
+    },
+    {
+      "event_a": 2015,
+      "event_b": 2016,
+      "label": "same_event",
+      "tier": "soft"
+    },
+    {
+      "event_a": 2015,
+      "event_b": 2017,
+      "label": "different_event"
+    },
+    {
+      "event_a": 2018,
+      "event_b": 2019,
+      "label": "same_event",
+      "tier": "hard"
+    },
+    {
+      "event_a": 2018,
+      "event_b": 2020,
+      "label": "different_event"
+    },
+    {
+      "event_a": 2021,
+      "event_b": 2022,
+      "label": "same_event",
+      "tier": "entity_temporal"
+    },
+    {
+      "event_a": 2021,
+      "event_b": 2023,
+      "label": "different_event"
+    },
+    {
+      "event_a": 2024,
+      "event_b": 2025,
+      "label": "same_event",
+      "tier": "soft"
+    },
+    {
+      "event_a": 2026,
+      "event_b": 2027,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2028,
+      "event_b": 2029,
+      "label": "same_event",
+      "tier": "soft",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2030,
+      "event_b": 2031,
+      "label": "same_event",
+      "tier": "embedding",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2032,
+      "event_b": 2033,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2034,
+      "event_b": 2035,
+      "label": "same_event",
+      "tier": "entity_temporal",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2036,
+      "event_b": 2037,
+      "label": "same_event",
+      "tier": "hard",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2038,
+      "event_b": 2039,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2040,
+      "event_b": 2041,
+      "label": "same_event",
+      "tier": "embedding",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2042,
+      "event_b": 2043,
+      "label": "same_event",
+      "tier": "fingerprint",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2044,
+      "event_b": 2045,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2046,
+      "event_b": 2047,
+      "label": "same_event",
+      "tier": "hard",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2048,
+      "event_b": 2049,
+      "label": "same_event",
+      "tier": "soft",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2050,
+      "event_b": 2051,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2052,
+      "event_b": 2053,
+      "label": "same_event",
+      "tier": "fingerprint",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2054,
+      "event_b": 2055,
+      "label": "same_event",
+      "tier": "entity_temporal",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2056,
+      "event_b": 2057,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2058,
+      "event_b": 2059,
+      "label": "same_event",
+      "tier": "soft",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2060,
+      "event_b": 2061,
+      "label": "same_event",
+      "tier": "embedding",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2062,
+      "event_b": 2063,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2064,
+      "event_b": 2065,
+      "label": "same_event",
+      "tier": "entity_temporal",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2066,
+      "event_b": 2067,
+      "label": "same_event",
+      "tier": "hard",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2068,
+      "event_b": 2069,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2070,
+      "event_b": 2071,
+      "label": "same_event",
+      "tier": "embedding",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2072,
+      "event_b": 2073,
+      "label": "same_event",
+      "tier": "fingerprint",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2074,
+      "event_b": 2075,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2076,
+      "event_b": 2077,
+      "label": "same_event",
+      "tier": "hard",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2078,
+      "event_b": 2079,
+      "label": "same_event",
+      "tier": "soft",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2080,
+      "event_b": 2081,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2082,
+      "event_b": 2083,
+      "label": "same_event",
+      "tier": "fingerprint",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2084,
+      "event_b": 2085,
+      "label": "same_event",
+      "tier": "entity_temporal",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2086,
+      "event_b": 2087,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2088,
+      "event_b": 2089,
+      "label": "same_event",
+      "tier": "soft",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2090,
+      "event_b": 2091,
+      "label": "same_event",
+      "tier": "embedding",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2092,
+      "event_b": 2093,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2094,
+      "event_b": 2095,
+      "label": "same_event",
+      "tier": "entity_temporal",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2096,
+      "event_b": 2097,
+      "label": "same_event",
+      "tier": "hard",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2098,
+      "event_b": 2099,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2100,
+      "event_b": 2101,
+      "label": "same_event",
+      "tier": "embedding",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2102,
+      "event_b": 2103,
+      "label": "same_event",
+      "tier": "fingerprint",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2104,
+      "event_b": 2105,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2106,
+      "event_b": 2107,
+      "label": "same_event",
+      "tier": "hard",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2108,
+      "event_b": 2109,
+      "label": "same_event",
+      "tier": "soft",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2110,
+      "event_b": 2111,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2112,
+      "event_b": 2113,
+      "label": "same_event",
+      "tier": "fingerprint",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2114,
+      "event_b": 2115,
+      "label": "same_event",
+      "tier": "entity_temporal",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2116,
+      "event_b": 2117,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2118,
+      "event_b": 2119,
+      "label": "same_event",
+      "tier": "soft",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2120,
+      "event_b": 2121,
+      "label": "same_event",
+      "tier": "embedding",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2122,
+      "event_b": 2123,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2124,
+      "event_b": 2125,
+      "label": "same_event",
+      "tier": "entity_temporal",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2126,
+      "event_b": 2127,
+      "label": "same_event",
+      "tier": "hard",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2128,
+      "event_b": 2129,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2130,
+      "event_b": 2131,
+      "label": "same_event",
+      "tier": "embedding",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2132,
+      "event_b": 2133,
+      "label": "same_event",
+      "tier": "fingerprint",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2134,
+      "event_b": 2135,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2136,
+      "event_b": 2137,
+      "label": "same_event",
+      "tier": "hard",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2138,
+      "event_b": 2139,
+      "label": "same_event",
+      "tier": "soft",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2140,
+      "event_b": 2141,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2142,
+      "event_b": 2143,
+      "label": "same_event",
+      "tier": "fingerprint",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2144,
+      "event_b": 2145,
+      "label": "same_event",
+      "tier": "entity_temporal",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2146,
+      "event_b": 2147,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2148,
+      "event_b": 2149,
+      "label": "same_event",
+      "tier": "soft",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2150,
+      "event_b": 2151,
+      "label": "same_event",
+      "tier": "embedding",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2152,
+      "event_b": 2153,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2154,
+      "event_b": 2155,
+      "label": "same_event",
+      "tier": "entity_temporal",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2156,
+      "event_b": 2157,
+      "label": "same_event",
+      "tier": "hard",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2158,
+      "event_b": 2159,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2160,
+      "event_b": 2161,
+      "label": "same_event",
+      "tier": "embedding",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2162,
+      "event_b": 2163,
+      "label": "same_event",
+      "tier": "fingerprint",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2164,
+      "event_b": 2165,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2166,
+      "event_b": 2167,
+      "label": "same_event",
+      "tier": "hard",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2168,
+      "event_b": 2169,
+      "label": "same_event",
+      "tier": "soft",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2170,
+      "event_b": 2171,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2172,
+      "event_b": 2173,
+      "label": "same_event",
+      "tier": "fingerprint",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2174,
+      "event_b": 2175,
+      "label": "same_event",
+      "tier": "entity_temporal",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2176,
+      "event_b": 2177,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2178,
+      "event_b": 2179,
+      "label": "same_event",
+      "tier": "soft",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2180,
+      "event_b": 2181,
+      "label": "same_event",
+      "tier": "embedding",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2182,
+      "event_b": 2183,
+      "label": "different_event",
+      "note": "synthetic expand"
+    },
+    {
+      "event_a": 2184,
+      "event_b": 2185,
+      "label": "same_event",
+      "tier": "entity_temporal",
+      "note": "synthetic expand"
+    }
+  ],
+  "pair_counts": {
+    "article_storyline": 100,
+    "event_coreference": 100,
+    "total": 200
+  }
+}

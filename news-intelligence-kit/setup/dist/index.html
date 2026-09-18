@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>News Intelligence Kit — Setup</title>
+  <style>
+    :root { --accent: #1565c0; --muted: #666; --border: #ddd; }
+    body { font-family: system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+    .steps-nav { display: flex; gap: 0.35rem; flex-wrap: wrap; margin: 1rem 0; font-size: 0.75rem; color: var(--muted); }
+    .steps-nav span.on { color: var(--accent); font-weight: 600; }
+    .step { display: none; }
+    .step.active { display: block; }
+    button, .btn { margin: 0.5rem 0.25rem 0.5rem 0; padding: 0.5rem 1rem; cursor: pointer; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+    button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    textarea, input[type=text], input[type=url] { width: 100%; box-sizing: border-box; padding: 0.5rem; margin: 0.25rem 0; }
+    textarea { min-height: 100px; }
+    .domain-card { border: 1px solid var(--border); padding: 1rem; margin: 0.75rem 0; border-radius: 8px; }
+    .status { color: var(--muted); font-size: 0.9rem; }
+    .error { color: #c00; }
+    .ok { color: #2e7d32; }
+    .feed-row { display: flex; gap: 0.5rem; align-items: center; margin: 0.25rem 0; font-size: 0.85rem; }
+    .feed-row input { flex: 1; }
+    .progress { height: 8px; background: #eee; border-radius: 4px; overflow: hidden; margin: 1rem 0; }
+    .progress > div { height: 100%; background: var(--accent); width: 0%; transition: width 0.3s; }
+    table.review { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    table.review th, table.review td { border: 1px solid var(--border); padding: 0.5rem; text-align: left; }
+    .tag { display: inline-block; background: #e3f2fd; padding: 0.15rem 0.5rem; border-radius: 4px; margin: 0.15rem; font-size: 0.8rem; }
+  </style>
+</head>
+<body>
+  <h1>News Intelligence Kit Setup</h1>
+  <p class="status" id="statusLine">Loading…</p>
+  <nav class="steps-nav" id="stepsNav"></nav>
+
+  <!-- Step 1: Welcome / hardware -->
+  <div class="step active" data-step="1">
+    <h2>1. Welcome</h2>
+    <p>Configure topics and RSS feeds. No pre-built domains — you choose what to follow.</p>
+    <div id="hwProfile"></div>
+    <button type="button" class="primary" onclick="go(2)">Continue</button>
+  </div>
+
+  <!-- Step 2: Topics -->
+  <div class="step" data-step="2">
+    <h2>2. Topics of interest</h2>
+    <p>What do you want to follow? Separate with commas (sports, pop culture, tech, …).</p>
+    <textarea id="interests" placeholder="e.g. sports, pop culture, local tech news"></textarea>
+    <div id="topicTags"></div>
+    <button type="button" class="primary" onclick="proposeDomains()">Suggest domains</button>
+    <button type="button" onclick="go(1)">Back</button>
+  </div>
+
+  <!-- Step 3: Domains -->
+  <div class="step" data-step="3">
+    <h2>3. Domains</h2>
+    <p>Review agent-proposed domains. Remove any you do not want.</p>
+    <div id="domainsList"></div>
+    <button type="button" onclick="go(4)">Next: Sources</button>
+    <button type="button" onclick="go(2)">Back</button>
+  </div>
+
+  <!-- Step 4: Sources -->
+  <div class="step" data-step="4">
+    <h2>4. RSS sources</h2>
+    <p>Add feeds per domain, paste URLs, or upload OPML.</p>
+    <div id="sourcesPanel"></div>
+    <label>OPML file <input type="file" id="opmlFile" accept=".opml,.xml" onchange="importOpml(event)" /></label>
+    <button type="button" onclick="go(5)">Next: Review</button>
+    <button type="button" onclick="go(3)">Back</button>
+  </div>
+
+  <!-- Step 5: Review -->
+  <div class="step" data-step="5">
+    <h2>5. Review</h2>
+    <div id="reviewSummary"></div>
+    <button type="button" class="primary" onclick="go(6)">Apply setup</button>
+    <button type="button" onclick="go(4)">Back</button>
+  </div>
+
+  <!-- Step 6: Apply -->
+  <div class="step" data-step="6">
+    <h2>6. Applying</h2>
+    <div class="progress"><div id="applyBar"></div></div>
+    <p id="applyStatus">Provisioning domains…</p>
+    <button type="button" class="primary" id="applyBtn" style="display:none" onclick="go(7)">Continue</button>
+  </div>
+
+  <!-- Step 7: Done -->
+  <div class="step" data-step="7">
+    <h2>7. Done</h2>
+    <p class="ok">Setup complete.</p>
+    <p>On the host, run:</p>
+    <pre>./scripts/enable_automation.sh
+./scripts/pull_ollama_models.sh</pre>
+    <p><a href="/">Open Dashboard</a> · <a id="agentLink" href="http://localhost:3001" target="_blank">Open WebUI Agent</a></p>
+  </div>
+
+  <script>
+    let draft = { domains: [], interests: '' };
+    let currentStep = 1;
+    const api = '/api/setup';
+    const STEP_LABELS = ['Welcome', 'Topics', 'Domains', 'Sources', 'Review', 'Apply', 'Done'];
+
+    function renderNav() {
+      document.getElementById('stepsNav').innerHTML = STEP_LABELS.map((l, i) =>
+        `<span class="${i + 1 === currentStep ? 'on' : ''}">${i + 1}. ${l}</span>`
+      ).join(' · ');
+    }
+
+    async function loadStatus() {
+      try {
+        const r = await fetch(api + '/status');
+        const s = await r.json();
+        document.getElementById('statusLine').textContent =
+          `DB: ${s.db_ok ? 'ok' : 'down'} · Ollama: ${s.ollama_ok ? 'ok' : 'down'} · Tier: ${s.hardware_tier || 'standard'}`;
+        document.getElementById('hwProfile').innerHTML =
+          `<p><span class="tag">Hardware tier: ${s.hardware_tier || 'standard'}</span>` +
+          `<span class="tag">Ollama: ${s.ollama_ok ? 'ready' : 'starting…'}</span></p>`;
+        if (s.setup_complete) go(7);
+      } catch (e) {
+        document.getElementById('statusLine').textContent = 'Cannot reach API — wait for stack to start';
+      }
+    }
+
+    function go(n) {
+      currentStep = n;
+      document.querySelectorAll('.step').forEach(el => el.classList.remove('active'));
+      document.querySelector(`.step[data-step="${n}"]`).classList.add('active');
+      renderNav();
+      if (n === 3) renderDomains();
+      if (n === 4) renderSources();
+      if (n === 5) renderReview();
+      if (n === 6) applySetup();
+    }
+
+    document.getElementById('interests').addEventListener('input', (e) => {
+      const parts = e.target.value.split(/[,;]+/).map(s => s.trim()).filter(Boolean);
+      document.getElementById('topicTags').innerHTML = parts.map(p => `<span class="tag">${p}</span>`).join('');
+    });
+
+    async function proposeDomains() {
+      const interests = document.getElementById('interests').value.trim();
+      if (!interests) return alert('Enter topics first');
+      draft.interests = interests;
+      document.getElementById('statusLine').textContent = 'Asking setup agent…';
+      const r = await fetch(api + '/topics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ interests }),
+      });
+      const data = await r.json();
+      draft.domains = data.domains || [];
+      document.getElementById('statusLine').textContent = `Proposed ${draft.domains.length} domain(s)`;
+      renderDomains();
+      go(3);
+    }
+
+    function renderDomains() {
+      const el = document.getElementById('domainsList');
+      if (!draft.domains.length) {
+        el.innerHTML = '<p class="error">No domains yet — go back and suggest domains.</p>';
+        return;
+      }
+      el.innerHTML = draft.domains.map((d, i) => `
+        <div class="domain-card">
+          <strong>${esc(d.display_name)}</strong> <code>${esc(d.domain_key)}</code>
+          <button type="button" onclick="removeDomain(${i})">Remove</button><br/>
+          <small>${esc(d.description || '')}</small>
+        </div>`).join('');
+    }
+
+    function removeDomain(i) {
+      draft.domains.splice(i, 1);
+      renderDomains();
+    }
+
+    function renderSources() {
+      const el = document.getElementById('sourcesPanel');
+      el.innerHTML = draft.domains.map((d, di) => {
+        const feeds = (d.rss && d.rss.feeds) || [];
+        const feedHtml = feeds.map((f, fi) => `
+          <div class="feed-row">
+            <input type="url" value="${esc(f.url || '')}" onchange="updateFeed(${di},${fi}, this.value)" />
+            <button type="button" onclick="removeFeed(${di},${fi})">×</button>
+          </div>`).join('');
+        return `<div class="domain-card">
+          <strong>${esc(d.display_name)}</strong>
+          ${feedHtml}
+          <div class="feed-row">
+            <input type="url" id="newFeed-${di}" placeholder="https://…" />
+            <button type="button" onclick="addFeed(${di})">Add URL</button>
+            <button type="button" onclick="suggestFeeds(${di})">Suggest</button>
+            <button type="button" onclick="validateFeeds(${di})">Validate all</button>
+          </div>
+          <p id="feedStatus-${di}" class="status"></p>
+        </div>`;
+      }).join('');
+    }
+
+    function ensureRss(d) {
+      if (!d.rss) d.rss = { feeds: [] };
+      if (!d.rss.feeds) d.rss.feeds = [];
+    }
+
+    function updateFeed(di, fi, url) {
+      ensureRss(draft.domains[di]);
+      draft.domains[di].rss.feeds[fi].url = url;
+    }
+
+    function removeFeed(di, fi) {
+      draft.domains[di].rss.feeds.splice(fi, 1);
+      renderSources();
+    }
+
+    async function addFeed(di) {
+      const inp = document.getElementById(`newFeed-${di}`);
+      const url = (inp.value || '').trim();
+      if (!url) return;
+      ensureRss(draft.domains[di]);
+      const v = await fetch(api + '/validate_feed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      }).then(r => r.json());
+      if (!v.valid) return alert('Invalid feed: ' + (v.error || 'unknown'));
+      draft.domains[di].rss.feeds.push({ url, title: v.title || url });
+      inp.value = '';
+      renderSources();
+    }
+
+    async function suggestFeeds(di) {
+      const d = draft.domains[di];
+      const r = await fetch(api + '/suggest_feeds', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ domain_key: d.domain_key, query: d.display_name }),
+      });
+      const data = await r.json();
+      ensureRss(d);
+      for (const f of (data.feeds || [])) {
+        if (!d.rss.feeds.some(x => x.url === f.url)) d.rss.feeds.push(f);
+      }
+      renderSources();
+    }
+
+    async function validateFeeds(di) {
+      const d = draft.domains[di];
+      const el = document.getElementById(`feedStatus-${di}`);
+      el.textContent = 'Validating…';
+      let ok = 0;
+      for (const f of (d.rss && d.rss.feeds) || []) {
+        const v = await fetch(api + '/validate_feed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: f.url }),
+        }).then(r => r.json());
+        if (v.valid) ok++;
+      }
+      el.textContent = `${ok} / ${(d.rss.feeds || []).length} feeds valid`;
+    }
+
+    async function importOpml(ev) {
+      const file = ev.target.files[0];
+      if (!file) return;
+      const text = await file.text();
+      const r = await fetch(api + '/import_opml', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ opml: text }),
+      });
+      const data = await r.json();
+      for (const f of (data.feeds || [])) {
+        const di = draft.domains.findIndex(d => d.domain_key === f.domain_key);
+        const idx = di >= 0 ? di : 0;
+        if (!draft.domains[idx]) continue;
+        ensureRss(draft.domains[idx]);
+        if (!draft.domains[idx].rss.feeds.some(x => x.url === f.url))
+          draft.domains[idx].rss.feeds.push({ url: f.url, title: f.title || f.url });
+      }
+      renderSources();
+      ev.target.value = '';
+    }
+
+    function renderReview() {
+      const domains = draft.domains.length;
+      const feeds = draft.domains.reduce((n, d) => n + ((d.rss && d.rss.feeds) || []).length, 0);
+      document.getElementById('reviewSummary').innerHTML = `
+        <table class="review">
+          <tr><th>Domains</th><td>${domains}</td></tr>
+          <tr><th>RSS feeds</th><td>${feeds}</td></tr>
+          <tr><th>Est. storage</th><td>~${Math.max(1, domains * 2)} GB first year (varies)</td></tr>
+        </table>
+        <details><summary>JSON plan</summary><pre>${esc(JSON.stringify(draft, null, 2))}</pre></details>`;
+    }
+
+    async function applySetup() {
+      const bar = document.getElementById('applyBar');
+      const status = document.getElementById('applyStatus');
+      bar.style.width = '20%';
+      await fetch(api + '/plan', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ domains: draft.domains }),
+      });
+      bar.style.width = '50%';
+      status.textContent = 'Creating silos and seeding feeds…';
+      const r = await fetch(api + '/apply', { method: 'POST' });
+      bar.style.width = '90%';
+      if (!r.ok) {
+        status.innerHTML = '<span class="error">Apply failed: ' + esc(await r.text()) + '</span>';
+        document.getElementById('applyBtn').style.display = 'inline-block';
+        return;
+      }
+      const result = await r.json();
+      bar.style.width = '100%';
+      status.textContent = `Provisioned ${(result.provisioned || []).length} domain(s).`;
+      document.getElementById('applyBtn').style.display = 'inline-block';
+    }
+
+    function esc(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+    }
+
+    renderNav();
+    loadStatus();
+  </script>
+</body>
+</html>

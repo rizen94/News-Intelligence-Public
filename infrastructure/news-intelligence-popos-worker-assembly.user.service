@@ -1,0 +1,35 @@
+# Split PopOS worker — storyline_assembly alone (long / memory-heavy).
+
+[Unit]
+Description=News Intelligence PopOS worker (storyline_assembly)
+After=network-online.target
+Wants=network-online.target
+PartOf=news-intelligence-popos-workers.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pete/ni-popos-worker
+Environment=PYTHONPATH=/home/pete/ni-popos-worker/api
+Environment=WORKER_EXECUTION_HOST=popos
+Environment=OLLAMA_HOST=http://127.0.0.1:11434
+Environment=OLLAMA_DUAL_HOST_ROUTING_ENABLED=false
+Environment=AUTOMATION_DUAL_LANE=false
+Environment=BULK_DUAL_LANE_CATCHUP=false
+# RAM hardening: one domain at a time; discovery matrix cap (see ai_storyline_discovery).
+Environment=STORYLINE_ASSEMBLY_DOMAIN_PARALLEL=1
+Environment=STORYLINE_ASSEMBLY_DISCOVERY_ARTICLE_CAP=2000
+Environment=STORYLINE_DISCOVERY_MAX_MATRIX_GB=1.5
+EnvironmentFile=-/home/pete/ni-popos-worker/.env
+EnvironmentFile=-/home/pete/ni-popos-worker/.env.popos_worker
+ExecStartPre=/bin/mkdir -p /home/pete/ni-popos-worker/logs
+ExecStart=/home/pete/ni-popos-worker/.venv/bin/python /home/pete/ni-popos-worker/scripts/run_popos_phase_worker.py --worker-id assembly --phases storyline_assembly --idle-sleep 30 --budget-seconds 1200
+Restart=always
+RestartSec=20
+TimeoutStartSec=120
+MemoryMax=20G
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ni-popos-worker-assembly
+
+[Install]
+WantedBy=default.target news-intelligence-popos-workers.target

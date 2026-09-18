@@ -5,9 +5,11 @@ Used by AutomationManager, optional cron heartbeat, and monitoring.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,24 @@ except Exception:
     _RETRYABLE_TYPES = ()
 
 
+def _split_run_history_fields(
+    error_message: str | None,
+    metadata: str | dict[str, Any] | None,
+) -> tuple[str | None, str | None]:
+    """Return (error_message, metadata_json) for automation_run_history insert."""
+    err = error_message
+    meta_json: str | None = None
+    if metadata is not None:
+        if isinstance(metadata, dict):
+            meta_json = json.dumps(metadata, separators=(",", ":"))
+        else:
+            meta_json = metadata
+    elif err and err.strip().startswith('{"batch":'):
+        meta_json = err
+        err = None
+    return err, meta_json
+
+
 def persist_automation_run_history(
     phase_name: str,
     started_at: datetime,
@@ -27,13 +47,18 @@ def persist_automation_run_history(
     success: bool,
     error_message: str | None = None,
     *,
+    metadata: str | dict[str, Any] | None = None,
     pool: str | None = None,
 ) -> None:
     """Insert one row into automation_run_history; retries transient DB errors, then pending_db_writes.
 
+    Batch/conductor throughput payloads belong in ``metadata`` (JSONB). ``error_message`` is for failures only.
+    Legacy callers that pass JSON batch payloads as the 5th positional arg are routed into ``metadata``.
+
     ``pool`` is ``worker`` | ``ui`` | ``health``. When omitted, ``health_check`` uses the **health** pool
     so history writes succeed when the worker pool is saturated.
     """
+    err, meta_json = _split_run_history_fields(error_message, metadata)
     if pool is None:
         pool = "health" if phase_name == "health_check" else "worker"
 
@@ -62,10 +87,12 @@ def persist_automation_run_history(
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        INSERT INTO automation_run_history (phase_name, started_at, finished_at, success, error_message)
-                        VALUES (%s, %s, %s, %s, %s)
+                        INSERT INTO automation_run_history (
+                            phase_name, started_at, finished_at, success, error_message, metadata
+                        )
+                        VALUES (%s, %s, %s, %s, %s, COALESCE(%s::jsonb, '{}'::jsonb))
                         """,
-                        (phase_name, started_at, finished_at, success, error_message),
+                        (phase_name, started_at, finished_at, success, err, meta_json),
                     )
                 conn.commit()
                 return
@@ -93,7 +120,8 @@ def persist_automation_run_history(
             started_at.isoformat() if started_at else "",
             finished_at.isoformat() if finished_at else "",
             success,
-            error_message,
+            err,
+            metadata=meta_json,
         )
     except Exception as qe:
         logger.warning("pending_db_writes enqueue also failed: %s", qe)

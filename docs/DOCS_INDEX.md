@@ -21,7 +21,9 @@ Use this index for **current** documentation. See **[../PROJECT_STATUS.md](../PR
 | Doc | Purpose |
 |-----|---------|
 | [CODEBASE_MAP.md](CODEBASE_MAP.md) | Directory map — API / web / scripts layout. |
+| [ASSEMBLY_MODEL.md](ASSEMBLY_MODEL.md) | **Operator SSOT** — timeline events → related-event chains → storyline → editorial packages; phase handoffs. |
 | [PIPELINE_AND_AUTOMATION.md](PIPELINE_AND_AUTOMATION.md) | Pipeline phases, automation, order of operations. |
+| [PIPELINE_EFFICIENCY_FOLLOWUPS.md](PIPELINE_EFFICIENCY_FOLLOWUPS.md) | Remaining RSS/intake efficiency work after 2026-07 quick wins. |
 | [WIDOW_BOOT_RESILIENCE.md](WIDOW_BOOT_RESILIENCE.md) | **Reboot / systemd runbook** — boot stack, verify, troubleshooting. |
 | [PIPELINE_OPERATIONS_WIDOW.md](PIPELINE_OPERATIONS_WIDOW.md) | **Widow operator checklist** — schedulers, full phase list, `.env`. |
 | [CODE_REVIEW_AND_RUN_CAVEATS.md](CODE_REVIEW_AND_RUN_CAVEATS.md) | Run requirements and ops caveats. |
@@ -81,6 +83,7 @@ Use this index for **current** documentation. See **[../PROJECT_STATUS.md](../PR
 |-----|---------|
 | [DB_PRODUCTION_MAINTENANCE_RUNBOOK.md](DB_PRODUCTION_MAINTENANCE_RUNBOOK.md) | Prod maintenance, migrations ledger. |
 | [DATABASE_BACKUP.md](DATABASE_BACKUP.md) | Backup policy and scripts. |
+| [ORPHANED_DB_SURFACES.md](ORPHANED_DB_SURFACES.md) | Tables no code reads, the readiness checks, and the guarded drop migration. |
 
 ---
 

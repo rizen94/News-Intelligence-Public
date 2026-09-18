@@ -67,6 +67,7 @@ import {
 } from '@mui/material';
 
 import apiService from '../../services/apiService';
+import { displayStorylineTitle } from '../../utils/sanitizeDisplayText';
 import StorylineManagementDialog from '../../components/StorylineManagementDialog';
 import { useDomainNavigation } from '../../hooks/useDomainNavigation';
 import { useDomainRoute } from '../../hooks/useDomainRoute';
@@ -76,6 +77,7 @@ import { getUserFriendlyError } from '../../utils/errorHandler';
 import { formatDomainLabel } from '../../utils/domainHelper';
 import LoadingState from '../../components/shared/LoadingState';
 import EmptyState from '../../components/shared/EmptyState';
+import { PageShell } from '@/components/ui';
 
 interface Storyline {
   id: number;
@@ -175,63 +177,6 @@ interface Stats {
   highPriority: number;
 }
 
-function DiscoverStorylinesButton({
-  domain,
-  onDone,
-}: {
-  domain: string;
-  onDone: () => void;
-}) {
-  const [discovering, setDiscovering] = useState(false);
-  const { showSuccess, showError, showInfo } = useNotification();
-
-  const handleDiscover = async () => {
-    setDiscovering(true);
-    try {
-      const result = await apiService.discoverStorylines({ save: true }, domain);
-      if (
-        result?.success &&
-        (result?.saved_storylines?.length || result?.summary?.storylines_saved)
-      ) {
-        const count =
-          result?.saved_storylines?.length ??
-          result?.summary?.storylines_saved ??
-          0;
-        showSuccess(`Discovery complete: ${count} new storyline(s) created.`);
-        onDone();
-      } else if (result?.success && result?.summary?.clusters_found === 0) {
-        showInfo(
-          'No article clusters found. Add more articles or try again later.'
-        );
-      } else if (result?.error) {
-        showError(result.error);
-      } else {
-        showSuccess('Discovery finished. Refreshing list.');
-        onDone();
-      }
-    } catch (e) {
-      showError(getUserFriendlyError(e as Error));
-    } finally {
-      setDiscovering(false);
-    }
-  };
-
-  return (
-    <Button
-      variant='contained'
-      startIcon={
-        discovering ? <CircularProgress size={18} /> : <AutoAwesomeIcon />
-      }
-      onClick={handleDiscover}
-      disabled={discovering}
-    >
-      {discovering
-        ? 'Discovering… (full backlog, may take a while)'
-        : 'Discover storylines now'}
-    </Button>
-  );
-}
-
 const Storylines: React.FC = () => {
   const navigate = useNavigate();
   const { navigateToDomain } = useDomainNavigation();
@@ -255,6 +200,8 @@ const Storylines: React.FC = () => {
     new Set()
   );
   const [reviewQueueCount, setReviewQueueCount] = useState(0);
+  const [storyKindLabel, setStoryKindLabel] = useState<string | null>(null);
+  const [storyKindKey, setStoryKindKey] = useState<string | null>(null);
   const [stats, setStats] = useState<Stats>({
     total: 0,
     active: 0,
@@ -392,6 +339,28 @@ const Storylines: React.FC = () => {
       const res = await apiService.getReviewQueueCount(domain);
       if (!cancelled && res?.success) {
         setReviewQueueCount(res.data?.count ?? 0);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [domain]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { storylinesApi } = await import('../../services/api/storylines');
+        const res = await storylinesApi.getDomainStoryKind(domain);
+        if (!cancelled && res.success && res.data) {
+          setStoryKindLabel(res.data.display_label || null);
+          setStoryKindKey(res.data.story_kind || null);
+        }
+      } catch {
+        if (!cancelled) {
+          setStoryKindLabel(null);
+          setStoryKindKey(null);
+        }
       }
     })();
     return () => {
@@ -597,7 +566,7 @@ const Storylines: React.FC = () => {
               overflow: 'hidden',
             }}
           >
-            {storyline.title || 'Untitled Storyline'}
+            {displayStorylineTitle(storyline, storyline.id)}
           </Typography>
           <IconButton
             size='small'
@@ -623,7 +592,9 @@ const Storylines: React.FC = () => {
             overflow: 'hidden',
           }}
         >
-          {truncateText(storyline.description || storyline.summary)}
+          {truncateText(
+            storyline.summary || storyline.description || 'No synopsis yet'
+          )}
         </Typography>
 
         <Box display='flex' flexWrap='wrap' gap={1} mb={2}>
@@ -676,7 +647,10 @@ const Storylines: React.FC = () => {
           <Box display='flex' alignItems='center' gap={1}>
             <Article fontSize='small' color='action' />
             <Typography variant='caption' color='text.secondary'>
-              {storyline.article_count || 0} articles
+              {storyline.article_count || 0}{' '}
+              {storyline.membership_source === 'eel'
+                ? 'members (EEL)'
+                : 'members (legacy)'}
               {(storyline.total_events ?? 0) > 0 &&
                 ` · ${storyline.total_events} events`}
             </Typography>
@@ -707,10 +681,11 @@ const Storylines: React.FC = () => {
       <CardActions sx={{ p: 2, pt: 0 }}>
         <Button
           size='small'
+          variant='contained'
           startIcon={<Visibility />}
           onClick={() => navigateToDomain(`/storylines/${storyline.id}`)}
         >
-          View Details
+          Open story
         </Button>
         <Button
           size='small'
@@ -723,7 +698,7 @@ const Storylines: React.FC = () => {
           Share
         </Button>
         <Box sx={{ flexGrow: 1 }} />
-        <Tooltip title='Edit Storyline'>
+        <Tooltip title='Edit episode'>
           <IconButton
             size='small'
             onClick={() => handleEditStoryline(storyline)}
@@ -760,7 +735,7 @@ const Storylines: React.FC = () => {
           primary={
             <Box display='flex' alignItems='center' gap={1} mb={1}>
               <Typography variant='h6' sx={{ flexGrow: 1 }}>
-                {storyline.title || 'Untitled Storyline'}
+                {displayStorylineTitle(storyline, storyline.id)}
               </Typography>
               <Box display='flex' gap={1}>
                 {isRecentArticleSignal(storyline.last_article_added_at) && (
@@ -807,13 +782,19 @@ const Storylines: React.FC = () => {
           secondary={
             <Box>
               <Typography variant='body2' color='text.secondary' sx={{ mb: 1 }}>
-                {truncateText(storyline.description || storyline.summary, 200)}
+                {truncateText(
+                  storyline.summary || storyline.description || 'No synopsis yet',
+                  200
+                )}
               </Typography>
               <Box display='flex' alignItems='center' gap={2}>
                 <Box display='flex' alignItems='center' gap={0.5}>
                   <Article fontSize='small' />
                   <Typography variant='caption'>
-                    {storyline.article_count || 0} articles
+                    {storyline.article_count || 0}{' '}
+              {storyline.membership_source === 'eel'
+                ? 'members'
+                : 'members (legacy)'}
                   </Typography>
                 </Box>
                 <Typography variant='caption'>
@@ -846,10 +827,11 @@ const Storylines: React.FC = () => {
             </IconButton>
             <Button
               size='small'
+              variant='contained'
               startIcon={<Visibility />}
               onClick={() => navigateToDomain(`/storylines/${storyline.id}`)}
             >
-              Details
+              Open story
             </Button>
             <Button
               size='small'
@@ -865,25 +847,27 @@ const Storylines: React.FC = () => {
   );
 
   return (
-    <Box>
-      <Box
-        display='flex'
-        justifyContent='space-between'
-        alignItems='center'
-        mb={3}
-      >
-        <Box display='flex' alignItems='center' gap={2}>
-          <Typography variant='h4' component='h1' sx={{ fontWeight: 'bold' }}>
-            Storylines
-          </Typography>
-          <Chip
-            label={formatDomainLabel(domain)}
-            size='small'
-            variant='outlined'
-            color='primary'
-          />
-        </Box>
-        <Box display='flex' gap={2} alignItems='center'>
+    <PageShell
+      title={storyKindLabel === 'Research thread' ? 'Research threads' : 'Episodes'}
+      subtitle={
+        storyKindKey === 'research_topic'
+          ? 'Problem / method / claim clusters — events attach via episode signature'
+          : storyKindKey === 'evidence_thread'
+            ? 'Condition / intervention / finding lineages'
+            : storyKindKey === 'matter_docket'
+              ? 'Case / bill / agency matters'
+              : 'Bounded arcs (episodes) — events attach via fixed signature; bag absorb off'
+      }
+      breadcrumbs={[
+        { label: 'Home', to: `/${domain}` },
+        { label: formatDomainLabel(domain) || domain, to: `/${domain}` },
+        { label: storyKindLabel || 'Episodes' },
+      ]}
+      actions={
+        <Box display='flex' gap={2} alignItems='center' flexWrap='wrap'>
+          {storyKindLabel ? (
+            <Chip size='small' label={storyKindLabel} variant='outlined' color='primary' />
+          ) : null}
           <Button
             variant='outlined'
             color={reviewQueueCount > 0 ? 'warning' : 'inherit'}
@@ -896,11 +880,10 @@ const Storylines: React.FC = () => {
             variant='contained'
             startIcon={<AddIcon />}
             onClick={handleCreateStoryline}
-            sx={{ mr: 2 }}
           >
-            Create Storyline
+            Create episode
           </Button>
-          <Tooltip title='Refresh Storylines'>
+          <Tooltip title='Refresh episodes'>
             <span>
               <IconButton onClick={handleRefresh} disabled={loading}>
                 <Refresh />
@@ -924,8 +907,8 @@ const Storylines: React.FC = () => {
             List
           </Button>
         </Box>
-      </Box>
-
+      }
+    >
       {/* Statistics Overview */}
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid item xs={12} sm={6} md={2}>
@@ -935,7 +918,7 @@ const Storylines: React.FC = () => {
                 {stats.total}
               </Typography>
               <Typography variant='body2' color='text.secondary'>
-                Total Storylines
+                Total episodes
               </Typography>
             </CardContent>
           </Card>
@@ -1135,7 +1118,7 @@ const Storylines: React.FC = () => {
           <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
             {searchQuery || filterStatus || filterCategory || filterPriority
               ? 'Try adjusting your search criteria or filters'
-              : 'Storylines are per domain. Get storylines in three ways:'}
+              : 'Episodes are per domain. Create one, then attach via the episode gate:'}
           </Typography>
           {!searchQuery &&
             !filterStatus &&
@@ -1153,24 +1136,22 @@ const Storylines: React.FC = () => {
                   }}
                 >
                   <li>
-                    <strong>Discover now</strong> — AI clusters articles from the
-                    full backlog (newest-first, capped) into storylines. Can take
-                    much longer than a quick weekly scan; Ollama must stay up.
+                    <strong>Create one</strong> — Add an episode, then attach
+                    events via the episode gate (suggestions / continuation).
+                    Automated bag absorb and discovery are retired in v12.
                   </li>
                   <li>
-                    <strong>Create one</strong> — Go to{' '}
-                    <strong>Story Management</strong> and add a storyline, then
-                    add articles or enable automation.
-                  </li>
-                  <li>
-                    <strong>Auto-discovery</strong> — Scheduled job uses the same
-                    full-backlog window per domain (not a 7-day slice).
+                    <strong>Editorial</strong> — Packages flow Research →
+                    Narrative → Reduction → Editor; thin packages are closed.
                   </li>
                 </Box>
-                <DiscoverStorylinesButton
-                  domain={domain}
-                  onDone={loadStorylines}
-                />
+                <Button
+                  variant='contained'
+                  startIcon={<AddIcon />}
+                  onClick={handleCreateStoryline}
+                >
+                  Create episode
+                </Button>
               </>
             )}
         </Paper>
@@ -1208,7 +1189,7 @@ const Storylines: React.FC = () => {
           {/* Results Summary */}
           <Box mt={2}>
             <Typography variant='body2' color='text.secondary'>
-              Showing {storylines.length} of {totalStorylines} storylines
+              Showing {storylines.length} of {totalStorylines} episodes
             </Typography>
           </Box>
         </>
@@ -1331,7 +1312,7 @@ const Storylines: React.FC = () => {
         domain={domain}
         onStorylineUpdated={handleStorylineUpdated}
       />
-    </Box>
+    </PageShell>
   );
 };
 

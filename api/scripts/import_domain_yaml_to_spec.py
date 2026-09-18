@@ -71,7 +71,7 @@ def _yaml_to_spec_dict(data: dict[str, Any]) -> dict[str, Any]:
         "display_order": int(data.get("display_order") or 99),
         "is_active": bool(data.get("is_active", True)),
         "database": {
-            "clone_from": "science_tech",
+            "clone_from": "politics",
             "include_article_topic_clusters": dk in _ARTICLE_TOPIC_CLUSTERS_KEYS,
             "migration_ref": _MIGRATION_REF_BY_KEY.get(dk),
         },

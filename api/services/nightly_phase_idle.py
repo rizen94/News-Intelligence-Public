@@ -2,7 +2,8 @@
 Nightly sequential drain — definitive idle detection per automation phase.
 
 * **Backlog-backed phases** — ``phase_has_pending_work`` reads ``get_all_pending_counts()`` (same
-  source as the daytime scheduler). When a phase’s raw count is 0, that phase is done for this drain.
+  source as PipelineController / daytime scheduling). When a phase’s raw count is 0, that phase is
+  done for this drain.
 * **Single-pass phases** — exploratory or best-effort work with no cheap global count (e.g.
   ``pattern_matching``). Exactly **one** invocation per sweep (see
   ``NIGHTLY_SEQUENTIAL_SINGLE_PASS_PHASES``); the drain does not spin waiting for a backlog metric.
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 _DEFAULT_SINGLE_PASS = (
     "pattern_recognition",
@@ -29,7 +31,7 @@ _DEFAULT_SINGLE_PASS = (
 
 
 def _single_pass_phases() -> frozenset[str]:
-    raw = os.environ.get(
+    raw = env_str(
         "NIGHTLY_SEQUENTIAL_SINGLE_PASS_PHASES",
         ",".join(_DEFAULT_SINGLE_PASS),
     )

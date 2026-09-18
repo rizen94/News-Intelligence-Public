@@ -1,0 +1,49 @@
+{
+  "$schema": "https://repomix.com/schemas/latest/schema.json",
+  "output": {
+    "filePath": "repomix-assembly-connection-output.md",
+    "style": "markdown",
+    "showLineNumbers": true,
+    "compress": true,
+    "topFilesLength": 22,
+    "headerText": "News Intelligence — storyline ASSEMBLY / CONNECTION logic pack (2026-07-24). Minimal sources for attach→summarize review. Companion: docs/reviews/assembly_connection_pack/"
+  },
+  "include": [
+    "docs/reviews/assembly_connection_pack/README.md",
+    "docs/reviews/assembly_connection_pack/ASSEMBLY_CONNECTION_LOGIC.md",
+    "docs/reviews/assembly_connection_pack/DB_EXAMPLES.md",
+    "docs/reviews/assembly_connection_pack/examples.json",
+    "docs/STORYLINE_CANONICAL_MODEL.md",
+    "api/services/storyline_assembly_service.py",
+    "api/services/storyline_automation_service.py",
+    "api/shared/storyline_attach_caps.py",
+    "api/config/domain_synthesis_config.yaml",
+    "api/services/domain_synthesis_config.py",
+    "api/services/storyline_core_prune_service.py",
+    "api/services/storyline_narrative_finisher_service.py",
+    "api/services/content_refinement_queue_service.py",
+    "api/services/storyline_rag_context_service.py",
+    "api/domains/storyline_management/services/rag_analysis_service.py",
+    "api/services/ai_storyline_discovery.py",
+    "api/services/embedding_link_candidate_service.py",
+    "api/shared/connection_inference.py",
+    "api/shared/assembly_phase_order.py",
+    "api/services/assembly_conductor_service.py",
+    "api/services/storyline_membership_review_service.py",
+    "api/services/storyline_hygiene_service.py",
+    "api/services/storyline_coherence_guardrails.py",
+    "api/services/narrative_first_linking_service.py",
+    "api/services/protein_harden_service.py",
+    "api/services/editorial_room_loop_service.py"
+  ],
+  "ignore": {
+    "useGitignore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      "repomix-assembly-connection-output.*",
+      "mount/**",
+      "node_modules/**",
+      ".cursor/**"
+    ]
+  }
+}

@@ -1,0 +1,103 @@
+{
+  "tools": [
+    {
+      "name": "list_graph_proposals",
+      "description": "List pending graph connection proposals from News Intelligence (read).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "limit": { "type": "integer", "default": 30 },
+          "min_confidence": { "type": "number", "default": 0.0 },
+          "proposal_kind": { "type": "string" }
+        }
+      },
+      "url": "http://192.168.93.101:8000/api/graph_connection/proposals",
+      "method": "GET"
+    },
+    {
+      "name": "accept_graph_proposal",
+      "description": "Editor: accept one pending graph connection proposal (requires DESK_AGENT_WRITEBACK_ENABLED on Widow).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "proposal_id": { "type": "integer" }
+        },
+        "required": ["proposal_id"]
+      },
+      "url": "http://192.168.93.101:8000/api/graph_connection/proposals/{proposal_id}/accept",
+      "method": "POST"
+    },
+    {
+      "name": "reject_graph_proposal",
+      "description": "Editor: reject one pending graph connection proposal.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "proposal_id": { "type": "integer" },
+          "reason": { "type": "string", "default": "desk_reject" }
+        },
+        "required": ["proposal_id"]
+      },
+      "url": "http://192.168.93.101:8000/api/graph_connection/proposals/{proposal_id}/reject",
+      "method": "POST"
+    },
+    {
+      "name": "patch_storyline_editorial",
+      "description": "Editor: write agent-authored editorial_document and/or canonical_narrative onto a domain storyline (no LLM regenerate).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "domain": { "type": "string" },
+          "storyline_id": { "type": "integer" },
+          "editorial_document": { "type": "object" },
+          "canonical_narrative": { "type": "string" },
+          "vault_path": { "type": "string" }
+        },
+        "required": ["domain", "storyline_id"]
+      },
+      "url": "http://192.168.93.101:8000/api/{domain}/storylines/{storyline_id}/editorial",
+      "method": "PATCH"
+    },
+    {
+      "name": "patch_tracked_event_narrative",
+      "description": "Editor: write global_narrative / editorial_briefing / narrative_lenses onto a tracked event (no LLM regenerate).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "event_id": { "type": "integer" },
+          "global_narrative": { "type": "string" },
+          "editorial_briefing": { "type": "string" },
+          "narrative_lenses": { "type": "object" },
+          "vault_path": { "type": "string" }
+        },
+        "required": ["event_id"]
+      },
+      "url": "http://192.168.93.101:8000/api/tracked_events/{event_id}/narrative",
+      "method": "PATCH"
+    },
+    {
+      "name": "promote_investigation",
+      "description": "Editor gate: promote a vault investigation note into storyline/tracked_event fields. Prefer status ready_to_promote or set editor_approved=true with editor_rationale.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "vault_path": { "type": "string" },
+          "editor_approved": { "type": "boolean", "default": false },
+          "editor_rationale": { "type": "string" },
+          "accept_proposal_ids": {
+            "type": "array",
+            "items": { "type": "integer" }
+          },
+          "reject_proposal_ids": {
+            "type": "array",
+            "items": { "type": "integer" }
+          }
+        },
+        "required": ["vault_path", "editor_rationale"]
+      },
+      "url": "http://192.168.93.101:8000/api/desk/promote_investigation",
+      "method": "POST"
+    }
+  ],
+  "notes": "Mirror of Homelab docs/open-webui/ni_desk_writeback_tools.json. Requires Widow DESK_AGENT_WRITEBACK_ENABLED=true."
+}

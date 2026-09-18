@@ -48,30 +48,65 @@ def _run_rss() -> int:
     return int(n)
 
 
-def _run_context_sync() -> None:
+def _run_context_sync() -> int:
+    from datetime import datetime, timezone
+
     from services.context_processor_service import sync_domain_articles_to_contexts
     from shared.domain_registry import get_active_domain_keys
 
+    total = 0
     for domain_key in get_active_domain_keys():
         try:
-            total = sync_domain_articles_to_contexts(domain_key, limit=100)
-            if total > 0:
-                logging.info("context_sync %s: %s contexts", domain_key, total)
+            n = sync_domain_articles_to_contexts(domain_key, limit=100)
+            total += int(n or 0)
+            if n > 0:
+                logging.info("context_sync %s: %s contexts", domain_key, n)
         except Exception as e:
             logging.warning("context_sync %s failed: %s", domain_key, e)
+    return total
 
 
-def _run_entity_profile_sync() -> None:
+def _run_entity_profile_sync() -> int:
     from services.entity_profile_sync_service import sync_domain_entity_profiles
     from shared.domain_registry import get_active_domain_keys
 
+    total = 0
     for domain_key in get_active_domain_keys():
         try:
-            total = sync_domain_entity_profiles(domain_key)
-            if total > 0:
-                logging.info("entity_profile_sync %s: %s mappings", domain_key, total)
+            n = sync_domain_entity_profiles(domain_key)
+            total += int(n or 0)
+            if n > 0:
+                logging.info("entity_profile_sync %s: %s mappings", domain_key, n)
         except Exception as e:
             logging.warning("entity_profile_sync %s failed: %s", domain_key, e)
+    return total
+
+
+def _persist_cron_phase_run(phase_name: str, started, finished, *, success: bool, detail: str | None = None) -> None:
+    try:
+        from shared.services.automation_run_history_writer import persist_automation_run_history
+
+        persist_automation_run_history(phase_name, started, finished, success, detail)
+    except Exception as e:
+        logging.warning("persist %s run history failed: %s", phase_name, e)
+
+
+def _run_timed_cron_phase(phase_name: str, runner) -> None:
+    from datetime import datetime, timezone
+
+    started = datetime.now(timezone.utc)
+    ok = True
+    detail: str | None = None
+    try:
+        result = runner()
+        if isinstance(result, int):
+            detail = f"cron rows={result}"
+    except Exception as e:
+        ok = False
+        detail = str(e)[:500]
+        logging.warning("%s cron failed: %s", phase_name, e)
+    finished = datetime.now(timezone.utc)
+    _persist_cron_phase_run(phase_name, started, finished, success=ok, detail=detail)
 
 
 def _run_pending_db_flush() -> None:
@@ -156,12 +191,12 @@ def main() -> int:
             logging.info("RSS skipped (pipeline quiet window)")
     if args.context_sync:
         if db_adjacent_sync_allowed():
-            _run_context_sync()
+            _run_timed_cron_phase("context_sync", _run_context_sync)
         else:
             logging.info("context_sync skipped (pipeline quiet window)")
     if args.entity_profile_sync:
         if db_adjacent_sync_allowed():
-            _run_entity_profile_sync()
+            _run_timed_cron_phase("entity_profile_sync", _run_entity_profile_sync)
         else:
             logging.info("entity_profile_sync skipped (pipeline quiet window)")
     if args.pending_db_flush:

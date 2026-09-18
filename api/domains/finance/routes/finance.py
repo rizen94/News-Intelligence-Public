@@ -63,19 +63,15 @@ def _get_recent_finance_articles(
 ) -> list[dict[str, Any]]:
     """Fetch recent articles for the URL domain (e.g. ``finance``)."""
     try:
-        from domains.news_aggregation.services.article_service import ArticleService
+        from shared.services.article_query_service import get_recent_domain_articles
 
-        svc = ArticleService(domain=domain_key)
         published_after = datetime.now(timezone.utc) - timedelta(days=days)
-        res = svc.get_articles(
+        return get_recent_domain_articles(
+            domain_key,
+            published_after=published_after,
             limit=limit,
-            offset=0,
             include_content=False,
-            filters={"published_after": published_after},
         )
-        data = res.get("data") or {}
-        articles = data.get("articles") or []
-        return [dict(a) for a in articles]
     except Exception as e:
         logger.warning("_get_recent_finance_articles failed domain=%s: %s", domain_key, e)
         return []
@@ -527,6 +523,39 @@ async def get_finance_market_data(
         }
     except Exception as e:
         logger.error(f"Error fetching market data: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{domain}/finance/credit-spread")
+async def get_credit_spread(
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+    days: int = Query(365, ge=1, le=3650, description="History window for FRED view"),
+    view: str = Query("fred", description="fred | etf"),
+):
+    """Credit spread dashboard: FRED HY/IG OAS + recession bands, or ETF yield spreads."""
+    _check_domain(domain)
+    view_norm = (view or "fred").strip().lower()
+    try:
+        if view_norm == "etf":
+            from domains.finance.credit_spread_service import build_etf_credit_spread_payload
+
+            data = build_etf_credit_spread_payload()
+        elif view_norm == "fred":
+            from domains.finance.credit_spread_service import build_fred_credit_spread_payload
+
+            data = build_fred_credit_spread_payload(days=days)
+        else:
+            raise HTTPException(status_code=400, detail="view must be 'fred' or 'etf'")
+        return {
+            "success": True,
+            "data": data,
+            "view": view_norm,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error fetching credit spread: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -2089,6 +2118,60 @@ async def get_market_patterns(
         raise
     except Exception as e:
         logger.error(f"Error fetching market patterns: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{domain}/finance/usd-purchasing-power-tracker")
+async def get_usd_purchasing_power_tracker(
+    request: Request,
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+):
+    """Get USD Purchasing Power Tracker data."""
+    _check_domain(domain)
+    try:
+        from services.usd_purchasing_power_tracker_service import (
+            USDPurchasingPowerTrackerService,
+        )
+
+        tracker_service = USDPurchasingPowerTrackerService()
+        data = tracker_service.load_data()
+        
+        # Format the data for the API response
+        formatted_data = {
+            "last_updated": data.get("last_updated"),
+            "series": {},
+            "historical_references": data.get("historical_references", {})
+        }
+        
+        # Format series data for frontend consumption
+        for key, value in data.get("series", {}).items():
+            formatted_data["series"][key] = {
+                "value": value.get("value"),
+                "date": value.get("date"),
+                "source": value.get("source"),
+                "label": {
+                    "PDOLLAR": "Purchasing Power of $1",
+                    "CPIAUCSL": "CPI All Items",
+                    "CORECPIAUCSL": "Core CPI",
+                    "DXY": "Dollar Strength",
+                    "GD1CIAMDG": "Gold Price (USD/oz)"
+                }.get(key, key),
+                "status": {
+                    "PDOLLAR": "🟢" if value.get("value", 0) >= 80.0 else "🔴",
+                    "CPIAUCSL": "🟢",  # Simplified - would need YoY calculation
+                    "CORECPIAUCSL": "🟢",  # Simplified - would need YoY calculation
+                    "DXY": "🟢" if 90.0 <= value.get("value", 100) <= 110.0 else "🔴",
+                    "GD1CIAMDG": "🟢" if 1500.0 <= value.get("value", 2000) <= 2500.0 else "🔴"
+                }.get(key, "⚪")
+            }
+        
+        return {
+            "success": True,
+            "data": formatted_data,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error fetching USD Purchasing Power Tracker: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -18,11 +18,64 @@ echo "Source: $PROJECT_DIR"
 echo "Target: ${WIDOW_USER}@${WIDOW_HOST}:${REMOTE_DIR}"
 echo ""
 
-# Ensure remote directory exists
-ssh "${WIDOW_USER}@${WIDOW_HOST}" "sudo mkdir -p ${REMOTE_DIR} && sudo chown ${WIDOW_USER}:${WIDOW_USER} ${REMOTE_DIR}"
+# ---------------------------------------------------------------------------
+# Pre-flight: refuse rsync if this tree would shrink the live FastAPI surface.
+# Production previously grew via dirty-tree deploys; a clean checkout that is
+# missing uncommitted route modules would delete live endpoints on rsync.
+# ---------------------------------------------------------------------------
+_count_routes() {
+  local root="$1"
+  local py="${2:-python3}"
+  ( cd "$root" && PYTHONPATH=api "$py" -c '
+import sys
+paths = {getattr(r, "path", None) for r in __import__("main").app.routes}
+paths = {p for p in paths if p}
+print(len(paths))
+' )
+}
+
+echo "Pre-flight: comparing FastAPI route counts (deploy tree vs live Widow)..."
+LOCAL_ROUTES="$(_count_routes "$PROJECT_DIR" python3)" || {
+  echo "FAIL: could not import main / count routes in deploy tree: $PROJECT_DIR"
+  exit 1
+}
+REMOTE_PY='python3'
+if ssh "${WIDOW_USER}@${WIDOW_HOST}" "test -x ${REMOTE_DIR}/.venv/bin/python"; then
+  REMOTE_PY="${REMOTE_DIR}/.venv/bin/python"
+fi
+WIDOW_ROUTES="$(ssh "${WIDOW_USER}@${WIDOW_HOST}" \
+  "cd ${REMOTE_DIR} && PYTHONPATH=api ${REMOTE_PY} -c '
+paths={getattr(r,\"path\",None) for r in __import__(\"main\").app.routes}
+paths={p for p in paths if p}
+print(len(paths))
+'")" || {
+  echo "FAIL: could not count routes on live Widow (${WIDOW_USER}@${WIDOW_HOST}:${REMOTE_DIR})"
+  exit 1
+}
+
+echo "  Deploy tree routes: ${LOCAL_ROUTES}"
+echo "  Live Widow routes:  ${WIDOW_ROUTES}"
+if ! [[ "$LOCAL_ROUTES" =~ ^[0-9]+$ && "$WIDOW_ROUTES" =~ ^[0-9]+$ ]]; then
+  echo "FAIL: non-numeric route counts (local='${LOCAL_ROUTES}' widow='${WIDOW_ROUTES}')"
+  exit 1
+fi
+if (( LOCAL_ROUTES < WIDOW_ROUTES )); then
+  echo "FAIL: deploy tree has fewer FastAPI routes than live Widow (${LOCAL_ROUTES} < ${WIDOW_ROUTES})."
+  echo "      Refusing rsync — commit missing route modules (or deploy from a tree ≥ live) first."
+  exit 1
+fi
+echo "✅ Pre-flight OK (${LOCAL_ROUTES} ≥ ${WIDOW_ROUTES})"
+echo ""
+
+# Ensure remote directory exists and is writable by the deploy user.
+# Root-owned leftovers (e.g. compose/) previously caused rsync code 23 and
+# aborted the script under set -e before API restart.
+ssh "${WIDOW_USER}@${WIDOW_HOST}" \
+  "sudo mkdir -p ${REMOTE_DIR} && sudo chown -R ${WIDOW_USER}:${WIDOW_USER} ${REMOTE_DIR}"
 
 # Rsync exclude patterns (match start_system.sh exclusions where relevant)
-rsync -avz --progress \
+set +e
+rsync -avz --progress --no-perms --no-owner --no-group \
   --exclude='.venv' \
   --exclude='.venv.backup' \
   --exclude='__pycache__' \
@@ -35,6 +88,16 @@ rsync -avz --progress \
   --exclude='chroma_data' \
   --exclude='News-Intelligence-Archive' \
   "${PROJECT_DIR}/" "${WIDOW_USER}@${WIDOW_HOST}:${REMOTE_DIR}/"
+RSYNC_RC=$?
+set -e
+# 0 = ok, 23 = partial (some attrs/files); abort on harder failures.
+if [[ "$RSYNC_RC" -ne 0 && "$RSYNC_RC" -ne 23 ]]; then
+  echo "FAIL: rsync exited ${RSYNC_RC}"
+  exit "$RSYNC_RC"
+fi
+if [[ "$RSYNC_RC" -eq 23 ]]; then
+  echo "⚠️  rsync reported partial transfer (code 23); continuing if API tree looks intact"
+fi
 
 # Copy DB password if present (for .env and .pgpass on Widow)
 if [ -f "$PROJECT_DIR/.db_password_widow" ]; then
@@ -61,7 +124,7 @@ export PYTHONPATH=api
 if [ -f .db_password_widow ]; then
   export PGPASSWORD="\$(cat .db_password_widow | tr -d '\\n')"
 elif [ -f .env.public_demo ]; then
-  export PGPASSWORD="\$(grep -E '^DB_PASSWORD=' .env.public_demo | cut -d= -f2- | tr -d '\"' | tr -d \"'\")"
+  export PGPASSWORD="\$(grep -E '^DB_PASSWORD=' .env.public_demo | cut -d= -f2- | tr -d '"' | tr -d "'")"
 fi
 
 echo "Schema audit (politics/finance)..."

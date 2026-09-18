@@ -68,7 +68,7 @@ async def post_process_urgent(
 
 @router.get("/streaming_status")
 def get_realtime_streaming_status() -> dict[str, Any]:
-    """Return active_streams, last_urgent_at, queue_depth."""
+    """Return active_streams, last_urgent_at, queue_depth (legacy), urgent_queue_depth (canonical)."""
     status = get_streaming_status()
     return {
         "success": True,
@@ -76,6 +76,9 @@ def get_realtime_streaming_status() -> dict[str, Any]:
             "active_streams": status.get("active_streams", 0),
             "last_urgent_at": status.get("last_urgent_at"),
             "queue_depth": status.get("queue_depth", 0),
+            "urgent_queue_depth": status.get(
+                "urgent_queue_depth", status.get("queue_depth", 0)
+            ),
         },
         "message": None,
     }

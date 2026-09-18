@@ -47,6 +47,7 @@ from services.storyline_coherence_guardrails import (
 )
 from shared.domain_registry import first_active_domain_key, resolve_domain_schema
 from shared.pipeline_pass_marker import bulk_record_article_phase_pass, phase_backlog_uses_pass_marker
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +60,10 @@ def _schema_from_domain_key(domain: str) -> str:
     return resolve_domain_schema(d)
 
 # Configuration
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_URL = env_str("OLLAMA_URL", "http://localhost:11434")
 # Use dedicated embedding model for better quality and speed
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
-ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "llama3.1:8b")
+EMBEDDING_MODEL = env_str("EMBEDDING_MODEL", "nomic-embed-text")
+ANALYSIS_MODEL = env_str("ANALYSIS_MODEL", "llama3.1:8b")
 
 # Thresholds
 SIMILARITY_THRESHOLD = 0.70  # Slightly lower to catch more connections
@@ -83,8 +84,11 @@ SAME_WEEK_HOURS = 168  # Within 7 days = same week
 MAX_EMBEDDING_WORKERS = 8  # Concurrent embedding requests
 
 # Articles loaded per discovery run (newest first). O(n²) similarity — increase only with RAM headroom.
-STORYLINE_DISCOVERY_ARTICLE_LIMIT = int(os.getenv("STORYLINE_DISCOVERY_ARTICLE_LIMIT", "10000"))
-STORYLINE_DISCOVERY_PDF_CONTEXT_LIMIT = int(os.getenv("STORYLINE_DISCOVERY_PDF_CONTEXT_LIMIT", "500"))
+STORYLINE_DISCOVERY_ARTICLE_LIMIT = int(env_str("STORYLINE_DISCOVERY_ARTICLE_LIMIT", "10000"))
+STORYLINE_DISCOVERY_PDF_CONTEXT_LIMIT = int(env_str("STORYLINE_DISCOVERY_PDF_CONTEXT_LIMIT", "500"))
+DISCOVERY_MAX_CLUSTER_ARTICLES = max(
+    10, int(env_str("DISCOVERY_MAX_CLUSTER_ARTICLES", "250"))
+)
 
 
 @dataclass
@@ -874,6 +878,29 @@ class AIStorylineDiscovery:
 
         for root, indices in cluster_map.items():
             if len(indices) >= min_sz:
+                if len(indices) > DISCOVERY_MAX_CLUSTER_ARTICLES:
+                    logger.info(
+                        "Trimming oversized union-find component: %s -> %s articles (threshold=%.2f)",
+                        len(indices),
+                        DISCOVERY_MAX_CLUSTER_ARTICLES,
+                        sim_thresh,
+                    )
+                    embeddings_for_rank = [
+                        (i, articles[i].embedding)
+                        for i in indices
+                        if articles[i].embedding is not None
+                    ]
+                    if embeddings_for_rank:
+                        centroid = np.mean([e for _, e in embeddings_for_rank], axis=0)
+                        ranked = sorted(
+                            embeddings_for_rank,
+                            key=lambda pair: self.cosine_similarity(pair[1], centroid),
+                            reverse=True,
+                        )
+                        indices = [i for i, _ in ranked[:DISCOVERY_MAX_CLUSTER_ARTICLES]]
+                    else:
+                        indices = indices[:DISCOVERY_MAX_CLUSTER_ARTICLES]
+
                 cluster_articles = [articles[i] for i in indices]
 
                 # Calculate cluster metrics
@@ -1361,18 +1388,57 @@ Reply with ONLY a JSON object:
             conn.close()
         return added
 
+    @staticmethod
+    def _clamp_storyline_quality_score(raw: float) -> float:
+        """``quality_score`` must satisfy ``chk_storyline_scores`` (0..1 on Widow prod)."""
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return 0.0
+        if value > 1.0 and value <= 10.0:
+            value = value / 10.0
+        return max(0.0, min(1.0, value))
+
     def save_storyline_suggestion(self, cluster: StorylineCluster, domain: str) -> int | None:
         """Save a storyline suggestion to the database (columns aligned to silo storylines DDL)."""
         from services.storyline_assembly_service import get_storyline_automation_mode
 
         automation_mode = get_storyline_automation_mode(domain)
+        quality_score = self._clamp_storyline_quality_score(cluster.importance_score)
+        positive_ids = [a.article_id for a in cluster.articles if a.article_id > 0]
+        unique_positive = len(set(positive_ids))
         conn = self.get_db_connection()
         try:
             schema = _schema_from_domain_key(domain)
+            try:
+                from services.episode_merge_service import merge_if_duplicate_before_create
+
+                existing_id = merge_if_duplicate_before_create(
+                    conn,
+                    domain_key=domain,
+                    proposed_title=cluster.suggested_title or "",
+                    article_ids=positive_ids,
+                )
+                if existing_id:
+                    conn.commit()
+                    logger.info(
+                        "[%s] episode_merge: discovery redirected %r -> episode %s",
+                        domain,
+                        (cluster.suggested_title or "")[:60],
+                        existing_id,
+                    )
+                    return int(existing_id)
+            except Exception as e:
+                logger.debug("[%s] episode_merge before save: %s", domain, e)
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
             meta = json.dumps(
                 {
                     "source": "storyline_discovery",
                     "importance_score": round(float(cluster.importance_score), 4),
+                    "quality_score": round(quality_score, 4),
                     "is_breaking_news": bool(cluster.is_breaking_news),
                 }
             )
@@ -1401,9 +1467,9 @@ Reply with ONLY a JSON object:
                         cluster.suggested_title,
                         cluster.suggested_description,
                         len(cluster.articles),
-                        len(cluster.articles),
+                        unique_positive,
                         cluster.is_breaking_news,
-                        float(cluster.importance_score),
+                        quality_score,
                         automation_mode,
                         meta,
                     ),
@@ -2103,6 +2169,37 @@ Reply with ONLY a JSON object:
                             domain,
                             existing_id,
                             added,
+                        )
+                    continue
+                narrative_match = None
+                try:
+                    from services.narrative_first_linking_service import (
+                        find_narrative_storyline_match,
+                        narrative_linking_enabled,
+                    )
+
+                    if narrative_linking_enabled():
+                        narrative_match = find_narrative_storyline_match(
+                            domain,
+                            article_ids=cluster_article_ids,
+                            entity_names=cluster.common_entities,
+                            title_hint=cluster.suggested_title,
+                        )
+                except Exception as e:
+                    logger.debug("[%s] narrative-first link: %s", domain, e)
+                if narrative_match is not None:
+                    added = self._add_cluster_articles_to_storyline(
+                        cluster, narrative_match.storyline_id, domain
+                    )
+                    if added:
+                        logger.info(
+                            "[%s] Narrative-first: linked cluster %r -> storyline %s "
+                            "(%s articles, %s)",
+                            domain,
+                            (cluster.suggested_title or "")[:60],
+                            narrative_match.storyline_id,
+                            added,
+                            narrative_match.match_source,
                         )
                     continue
                 storyline_id = self.save_storyline_suggestion(cluster, domain)

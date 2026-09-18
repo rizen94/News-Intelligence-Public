@@ -18,6 +18,7 @@ from config.settings import MODELS, OLLAMA_HOST, OLLAMA_TIMEOUT
 from shared.services.llm_service import LLMService, ModelType, llm_service
 from shared.services.optional_llm_redis_cache import cache_get, cache_set
 from shared.services.ollama_model_policy import InvocationKind, resolve_model_for_invocation
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,19 @@ class OllamaModelCaller:
     @staticmethod
     def _execution_lane_for_kind(kind: InvocationKind) -> str:
         """Default lane policy by invocation purpose."""
+        import os
+
+        from shared.services.llm_service import _llm_execution_lane
+
+        ctx_lane = _llm_execution_lane.get()
+        if ctx_lane in ("cpu", "gpu"):
+            return ctx_lane
+
+        if (
+            kind == InvocationKind.STRUCTURED_EXTRACTION
+            and env_str("BULK_USE_POPOS_EXTRACTION", "").lower() in ("1", "true", "yes")
+        ):
+            return "gpu"
         gpu_kinds = {
             InvocationKind.LONG_SYNTHESIS,
             InvocationKind.STORYLINE_NARRATIVE_FINISH,
@@ -67,11 +81,13 @@ class OllamaModelCaller:
         kind: InvocationKind,
         urgency: str = "standard",
         approx_prompt_chars: Optional[int] = None,
+        batch_size: Optional[int] = None,
     ) -> GenerationResult:
         """
         Run /api/generate with the model chosen by policy.
 
         approx_prompt_chars: defaults to len(prompt) for batch thresholding.
+        batch_size: number of items in the batch (for structured extraction token scaling).
         """
         chars = approx_prompt_chars if approx_prompt_chars is not None else len(prompt or "")
         model = self.resolve_text_model(kind, urgency, chars)
@@ -90,6 +106,7 @@ class OllamaModelCaller:
             prompt,
             execution_lane=self._execution_lane_for_kind(kind),
             invocation_kind=kind,
+            batch_size=batch_size,
         )
         out = text or ""
         # Do not cache empty responses — allows retry after transient failures
@@ -137,3 +154,9 @@ def get_ollama_model_caller() -> OllamaModelCaller:
     if _caller is None:
         _caller = OllamaModelCaller()
     return _caller
+
+
+def reset_ollama_model_caller() -> None:
+    """Recreate caller after bulk env routing changes (PopOS GPU offload)."""
+    global _caller
+    _caller = OllamaModelCaller()

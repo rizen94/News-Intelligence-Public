@@ -80,13 +80,16 @@ def test_pipeline_url_schema_pairs_matches_full_when_exclude_empty(monkeypatch):
 def test_pipeline_excludes_legacy_domain_keys(monkeypatch):
     monkeypatch.delenv("PIPELINE_INCLUDE_DOMAIN_KEYS", raising=False)
     monkeypatch.setenv("PIPELINE_EXCLUDE_DOMAIN_KEYS", "politics,finance")
+    full = dict(url_schema_pairs())
     pipe = dict(pipeline_url_schema_pairs())
     assert "politics" not in pipe
     assert "finance" not in pipe
-    if "politics" in dict(url_schema_pairs()):
-        assert pipe.get("politics") == "politics"
-    if "finance" in dict(url_schema_pairs()):
-        assert pipe.get("finance") == "finance"
+    # Excluding two keys must not disturb the rest of the registry. This previously asserted the
+    # excluded keys were still present, contradicting the two asserts above; it only passed while
+    # url_schema_pairs() came back empty because the registry could not be read.
+    assert set(pipe) == set(full) - {"politics", "finance"}
+    for key, schema in pipe.items():
+        assert full[key] == schema
 
 
 def test_pipeline_include_allowlist(monkeypatch):

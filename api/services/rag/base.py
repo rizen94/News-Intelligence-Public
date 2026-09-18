@@ -16,6 +16,7 @@ import requests
 from psycopg2.extras import RealDictCursor
 from shared.database.connection import get_db_connection
 from shared.domain_registry import normalize_domain_key, resolve_domain_schema
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +51,9 @@ class BaseRAGService:
         # Wikipedia API configuration (optional Kiwix local mirror — Phase 2)
         import os
 
-        _kiwix_rest = (os.environ.get("KIWIX_WIKIPEDIA_REST_URL") or "").strip().rstrip("/")
+        _kiwix_rest = (env_str("KIWIX_WIKIPEDIA_REST_URL") or "").strip().rstrip("/")
         self.wikipedia_api_url = _kiwix_rest or "https://en.wikipedia.org/api/rest_v1"
-        self.wikipedia_vintage_date = (os.environ.get("KIWIX_ZIM_VINTAGE_DATE") or "").strip() or None
+        self.wikipedia_vintage_date = (env_str("KIWIX_ZIM_VINTAGE_DATE") or "").strip() or None
 
         # GDELT API configuration (using free tier)
         self.gdelt_api_url = "https://api.gdeltproject.org/api/v2"

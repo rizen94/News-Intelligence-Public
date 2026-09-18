@@ -204,10 +204,17 @@ class PipelineMonitoringService:
         
         # Get current health
         health = self.check_pipeline_health()
+
+        # Empty in-memory quality counters default to 0.0 — do not alert on no samples.
+        total_processed = int(health.quality_metrics.get("total_processed") or 0)
         
         # Check quality degradation
-        if (health.quality_metrics["average_quality_score"] < self.alert_thresholds["quality_degradation_threshold"] and
-            not self._is_alert_active(AlertType.QUALITY_DEGRADATION)):
+        if (
+            total_processed > 0
+            and health.quality_metrics["average_quality_score"]
+            < self.alert_thresholds["quality_degradation_threshold"]
+            and not self._is_alert_active(AlertType.QUALITY_DEGRADATION)
+        ):
             alert = Alert(
                 alert_id=f"quality_degradation_{datetime.now().timestamp()}",
                 alert_type=AlertType.QUALITY_DEGRADATION,
@@ -218,15 +225,19 @@ class PipelineMonitoringService:
                 severity_score=70,
                 metadata={
                     "quality_score": health.quality_metrics["average_quality_score"],
-                    "threshold": self.alert_thresholds["quality_degradation_threshold"]
+                    "threshold": self.alert_thresholds["quality_degradation_threshold"],
+                    "total_processed": total_processed,
                 }
             )
             new_alerts.append(alert)
             self._add_alert(alert)
             
-        # Check failure rate
-        if (health.quality_metrics["success_rate"] < 70 and
-            not self._is_alert_active(AlertType.PROCESS_FAILURE)):
+        # Check failure rate (message historically printed success_rate)
+        if (
+            total_processed > 0
+            and health.quality_metrics["success_rate"] < 70
+            and not self._is_alert_active(AlertType.PROCESS_FAILURE)
+        ):
             alert = Alert(
                 alert_id=f"failure_rate_{datetime.now().timestamp()}",
                 alert_type=AlertType.PROCESS_FAILURE,
@@ -237,7 +248,8 @@ class PipelineMonitoringService:
                 severity_score=80,
                 metadata={
                     "success_rate": health.quality_metrics["success_rate"],
-                    "failure_rate": 100 - health.quality_metrics["success_rate"]
+                    "failure_rate": 100 - health.quality_metrics["success_rate"],
+                    "total_processed": total_processed,
                 }
             )
             new_alerts.append(alert)

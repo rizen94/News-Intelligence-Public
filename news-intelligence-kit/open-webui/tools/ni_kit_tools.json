@@ -1,0 +1,85 @@
+{
+  "tools": [
+    {
+      "name": "search_entities",
+      "description": "Search canonical entities in a domain",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "domain": { "type": "string" },
+          "search": { "type": "string" },
+          "limit": { "type": "integer", "default": 20 }
+        },
+        "required": ["domain", "search"]
+      },
+      "url": "http://api:8000/api/{domain}/context_centric/entities",
+      "method": "GET"
+    },
+    {
+      "name": "search_events",
+      "description": "Search chronological events in a domain",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "domain": { "type": "string" },
+          "q": { "type": "string" },
+          "limit": { "type": "integer", "default": 20 }
+        },
+        "required": ["domain"]
+      },
+      "url": "http://api:8000/api/{domain}/context_centric/search",
+      "method": "GET"
+    },
+    {
+      "name": "vault_write_note",
+      "description": "Write or append an Obsidian markdown note in the kit vault",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" },
+          "content": { "type": "string" },
+          "append": { "type": "boolean", "default": false }
+        },
+        "required": ["path", "content"]
+      },
+      "url": "http://api:8000/api/vault/notes",
+      "method": "POST"
+    },
+    {
+      "name": "vault_read_note",
+      "description": "Read a vault note by path",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" }
+        },
+        "required": ["path"]
+      },
+      "url": "http://api:8000/api/vault/notes/{path}",
+      "method": "GET"
+    },
+    {
+      "name": "trigger_investigation",
+      "description": "Run structured investigation loop and write vault thread",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string" },
+          "domain_key": { "type": "string" },
+          "entity_id": { "type": "integer" },
+          "event_id": { "type": "integer" }
+        },
+        "required": ["query"]
+      },
+      "url": "http://api:8000/api/agent/investigate",
+      "method": "POST"
+    },
+    {
+      "name": "kit_status",
+      "description": "Health: setup, ollama, db, vault",
+      "parameters": { "type": "object", "properties": {} },
+      "url": "http://api:8000/api/system_monitoring/kit_status",
+      "method": "GET"
+    }
+  ]
+}

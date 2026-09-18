@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from config.runtime import env_str
 import logging
 import os
 from typing import Any
@@ -16,7 +17,7 @@ def _ollama_local_status() -> str:
     try:
         import urllib.request
 
-        host = os.getenv("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+        host = env_str("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
         req = urllib.request.Request(f"{host}/api/tags", method="GET")
         with urllib.request.urlopen(req, timeout=3) as resp:
             if resp.status == 200:
@@ -27,7 +28,7 @@ def _ollama_local_status() -> str:
 
 
 def _disabled_schedules() -> list[str]:
-    raw = os.getenv("AUTOMATION_DISABLED_SCHEDULES", "").strip()
+    raw = env_str("AUTOMATION_DISABLED_SCHEDULES", "").strip()
     if not raw:
         return []
     return sorted({x.strip() for x in raw.split(",") if x.strip()})

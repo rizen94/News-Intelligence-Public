@@ -7,7 +7,7 @@
   "display_order": 1,
   "is_active": true,
   "database": {
-    "clone_from": "science_tech",
+        "clone_from": "politics",
     "include_article_topic_clusters": true,
     "migration_ref": "219_consolidate_politics_finance_schemas.sql"
   },
@@ -19,18 +19,23 @@
       { "feed_url": "https://www.foreignaffairs.com/rss.xml", "feed_name": "Foreign Affairs", "arc_relevance": ["political_tensions_multipolar", "resource_geopolitics"] },
       { "feed_url": "https://foreignpolicy.com/feed/", "feed_name": "Foreign Policy", "arc_relevance": ["political_tensions_multipolar", "resource_geopolitics"] },
       { "feed_url": "https://www.lawfaremedia.org/rss.xml", "feed_name": "Lawfare", "arc_relevance": ["political_tensions_multipolar"] },
-      { "feed_url": "https://www.csis.org/analysis/feed", "feed_name": "CSIS Analysis", "arc_relevance": ["political_tensions_multipolar", "resource_geopolitics"] },
+      { "feed_url": "https://www.csis.org/rss.xml", "feed_name": "CSIS Analysis", "arc_relevance": ["political_tensions_multipolar", "resource_geopolitics"] },
       { "feed_url": "https://www.crisisgroup.org/rss", "feed_name": "International Crisis Group", "arc_relevance": ["political_tensions_multipolar"] },
       { "feed_url": "https://www.chathamhouse.org/rss.xml", "feed_name": "Chatham House", "arc_relevance": ["political_tensions_multipolar"] },
       { "feed_url": "https://www.atlanticcouncil.org/feed/", "feed_name": "Atlantic Council", "arc_relevance": ["political_tensions_multipolar", "resource_geopolitics"] },
       { "feed_url": "https://warontherocks.com/feed/", "feed_name": "War on the Rocks", "arc_relevance": ["political_tensions_multipolar"] },
-      { "feed_url": "https://www.politico.com/rss/politics08.xml", "feed_name": "Politico", "arc_relevance": ["political_tensions_multipolar"] },
+      { "feed_url": "https://rss.politico.com/politics-news.xml", "feed_name": "Politico", "arc_relevance": ["political_tensions_multipolar"] },
       { "feed_url": "https://feeds.bbci.co.uk/news/world/rss.xml", "feed_name": "BBC World", "arc_relevance": ["political_tensions_multipolar"] },
       { "feed_url": "https://www.theguardian.com/world/rss", "feed_name": "Guardian World", "arc_relevance": ["political_tensions_multipolar"] },
       { "feed_url": "https://www.ft.com/world?format=rss", "feed_name": "FT World", "arc_relevance": ["resource_geopolitics", "political_tensions_multipolar"] },
       { "feed_url": "https://www.economist.com/the-world-this-week/rss.xml", "feed_name": "Economist World", "arc_relevance": ["resource_geopolitics", "political_tensions_multipolar"] },
       { "feed_url": "https://www.aljazeera.com/xml/rss/all.xml", "feed_name": "Al Jazeera", "arc_relevance": ["political_tensions_multipolar"] },
-      { "feed_url": "https://carnegieendowment.org/rss/solr/?fa=topics", "feed_name": "Carnegie Endowment", "arc_relevance": ["political_tensions_multipolar"] }
+      { "feed_url": "https://carnegieendowment.org/rss/solr/?fa=topics", "feed_name": "Carnegie Endowment", "arc_relevance": ["political_tensions_multipolar"] },
+      { "feed_url": "https://www.carbonbrief.org/feed", "feed_name": "Carbon Brief", "arc_relevance": ["resource_geopolitics"] },
+      { "feed_url": "https://www.climate.gov/rss.xml", "feed_name": "Climate.gov", "arc_relevance": ["resource_geopolitics"] },
+      { "feed_url": "https://www.eenews.net/articles/feed/", "feed_name": "E&E News", "arc_relevance": ["resource_geopolitics"] },
+      { "feed_url": "https://www.theguardian.com/environment/rss", "feed_name": "Guardian Environment", "arc_relevance": ["resource_geopolitics"] },
+      { "feed_url": "https://www.nature.com/nclimate.rss", "feed_name": "Nature Climate", "arc_relevance": ["resource_geopolitics"] }
     ]
   },
   "focus_areas": [
@@ -39,7 +44,7 @@
   ],
   "llm_prompt_guidance": "Align with institutional politics, diplomacy, and structural geopolitical analysis — not breaking sports or entertainment.",
   "workload_assumptions": {
-    "expected_active_feeds": 17,
+    "expected_active_feeds": 22,
     "rough_new_articles_per_day": 120,
     "llm_heavy_phases_enabled": true
   }

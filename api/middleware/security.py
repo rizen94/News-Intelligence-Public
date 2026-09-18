@@ -3,38 +3,62 @@ Security Middleware for News Intelligence System v3.0
 Provides rate limiting, security headers, and request validation
 """
 
+import ipaddress
 import time
 from collections.abc import Callable
 
-from fastapi import HTTPException, Request, Response
+from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 
 
 class SecurityMiddleware(BaseHTTPMiddleware):
     """Middleware for security features including rate limiting"""
 
-    def __init__(self, app, rate_limit_per_minute: int = 100):
+    def __init__(
+        self,
+        app,
+        rate_limit_per_minute: int = 100,
+        *,
+        exempt_private_lan: bool = True,
+    ):
         super().__init__(app)
         self.rate_limit_per_minute = rate_limit_per_minute
+        self.exempt_private_lan = exempt_private_lan
         self.rate_limit_storage: dict[str, list] = {}
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        # Get client IP
         client_ip = self._get_client_ip(request)
 
-        # Apply rate limiting
-        if not self._check_rate_limit(client_ip):
-            raise HTTPException(
-                status_code=429, detail="Rate limit exceeded. Please try again later."
-            )
+        if not self._is_rate_limit_exempt(client_ip):
+            if not self._check_rate_limit(client_ip):
+                # BaseHTTPMiddleware + HTTPException surfaces as 500; return 429 explicitly.
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "success": False,
+                        "error": "Rate limit exceeded. Please try again later.",
+                    },
+                )
 
-        # Process request
         response = await call_next(request)
-
-        # Add security headers
         self._add_security_headers(response)
-
         return response
+
+    def _is_rate_limit_exempt(self, client_ip: str) -> bool:
+        if self.exempt_private_lan and self._is_private_or_loopback(client_ip):
+            return True
+        return False
+
+    @staticmethod
+    def _is_private_or_loopback(ip: str) -> bool:
+        if not ip or ip == "unknown":
+            return False
+        try:
+            addr = ipaddress.ip_address(ip.strip())
+        except ValueError:
+            return False
+        return bool(addr.is_loopback or addr.is_private or addr.is_link_local)
 
     def _get_client_ip(self, request: Request) -> str:
         """Extract client IP address from request"""

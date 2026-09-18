@@ -5,11 +5,11 @@ Manages consistency between routes, monitors database connections, and logs brea
 """
 
 import asyncio
-
+import os
+import time
 # Max response time (ms) above which a route is considered slow; used in health checks
 DEFAULT_MAX_RESPONSE_TIME_MS = 5000
 import logging
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
@@ -106,7 +106,11 @@ class RouteSupervisor:
     """
 
     def __init__(self, check_interval_seconds: int = 60):
-        self.check_interval = check_interval_seconds
+        self.enabled = os.environ.get("ROUTE_SUPERVISOR_ENABLED", "false").lower() == "true"
+        if self.enabled:
+            self.check_interval = int(os.environ.get("ROUTE_SUPERVISOR_CHECK_INTERVAL", "900"))
+        else:
+            self.check_interval = 0
         self.route_health: dict[str, RouteHealth] = {}
         self.db_connections: dict[str, DatabaseConnectionHealth] = {}
         self.frontend_health: FrontendHealth | None = None
@@ -119,6 +123,22 @@ class RouteSupervisor:
         self.max_response_time_ms = DEFAULT_MAX_RESPONSE_TIME_MS
         self.max_consecutive_failures = 3
         self.db_timeout_seconds = 5
+
+        # Cache for domain validation to avoid repeated DB hits
+        self._domain_validation_cache: dict[str, tuple[bool, float]] = {}
+        self._cache_ttl_seconds = 60  # 60 seconds TTL for cache
+
+    def is_domain_valid_cached(self, domain: str) -> bool:
+        """Check if a domain is valid, using a cache to avoid repeated DB hits."""
+        now = time.time()
+        if domain in self._domain_validation_cache:
+            is_valid, timestamp = self._domain_validation_cache[domain]
+            if now - timestamp < self._cache_ttl_seconds:
+                return is_valid
+        # If not in cache or expired, compute and store
+        is_valid = validate_domain(domain)
+        self._domain_validation_cache[domain] = (is_valid, now)
+        return is_valid
 
     async def check_database_connection(
         self, domain: str | None = None
@@ -562,6 +582,9 @@ class RouteSupervisor:
 
     async def start_monitoring(self):
         """Start continuous monitoring"""
+        if not self.enabled:
+            logger.info("Route Supervisor is disabled via ROUTE_SUPERVISOR_ENABLED=false")
+            return
         self.is_running = True
         logger.info("Route Supervisor started monitoring")
 

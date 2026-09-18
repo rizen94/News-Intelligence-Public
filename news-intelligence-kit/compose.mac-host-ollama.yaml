@@ -1,0 +1,6 @@
+services:
+  ollama:
+    profiles: ["disabled"]
+  api:
+    environment:
+      OLLAMA_HOST: http://host.docker.internal:11434

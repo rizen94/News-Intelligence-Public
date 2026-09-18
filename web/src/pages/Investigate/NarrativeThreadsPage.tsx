@@ -119,9 +119,17 @@ export default function NarrativeThreadsPage() {
           mb: 2,
         }}
       >
-        <Typography variant='h5' sx={{ fontWeight: 600 }}>
-          Narrative threads
-        </Typography>
+        <Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography variant='h5' sx={{ fontWeight: 600 }}>
+              Narrative threads
+            </Typography>
+            <Chip label='Derived' size='small' variant='outlined' color='info' />
+          </Box>
+          <Typography variant='body2' color='text.secondary'>
+            Long-form synthesis built from storylines
+          </Typography>
+        </Box>
         <Box sx={{ display: 'flex', gap: 1 }}>
           <Button
             variant='outlined'

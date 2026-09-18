@@ -323,13 +323,14 @@ export const intelligenceApi = {
     }
   },
 
-  async getRecentDigests(count: number = 5, domain?: string) {
+  // Weekly digests are global products, not domain-scoped: the live routes are
+  // GET/POST /api/products/weekly_digest[/generate] backed by digest_automation_service. These
+  // two used to post to /api/{domain}/intelligence/digests[/weekly], which no route has ever served.
+  async getRecentDigests(count: number = 5) {
     try {
-      const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(
-        `/api/${domainKey}/intelligence/digests`,
-        { params: { limit: count } }
-      );
+      const response = await getApi().get('/api/products/weekly_digest', {
+        params: { limit: count },
+      });
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to get recent digests', error as Error);
@@ -337,11 +338,10 @@ export const intelligenceApi = {
     }
   },
 
-  async generateWeeklyDigest(domain?: string) {
+  async generateWeeklyDigest() {
     try {
-      const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/${domainKey}/intelligence/digests/weekly`
+        '/api/products/weekly_digest/generate'
       );
       return response.data;
     } catch (error) {
@@ -396,6 +396,20 @@ export const intelligenceApi = {
     } catch (error) {
       Logger.apiError('Failed to get story dossier', error as Error);
       return { success: false, error: (error as any).message };
+    }
+  },
+
+      /** Daily report — moved episodes, published stories, quiet watch. */
+  async getDaily(domain?: string, date?: string) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(`/api/${domainKey}/daily`, {
+        params: date ? { date } : {},
+      });
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to get daily report', error as Error);
+      return { success: false, error: (error as Error).message };
     }
   },
 
@@ -469,6 +483,50 @@ export const intelligenceApi = {
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to submit content feedback', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  /** Latest cross-domain bridge snapshots (one per domain pair). */
+  async getCrossDomainBridges(limit: number = 20) {
+    try {
+      const response = await getApi().get('/api/intelligence/cross_domain_bridges', {
+        params: { limit },
+      });
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to get cross-domain bridges', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  async getCrossDomainBridgeTrend(domain1: string, domain2: string, days: number = 90) {
+    try {
+      const response = await getApi().get(
+        `/api/intelligence/cross_domain_bridges/${encodeURIComponent(domain1)}/${encodeURIComponent(domain2)}/trend`,
+        { params: { days } }
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to get cross-domain bridge trend', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  async getCrossDomainBridgeEntities(
+    domain1: string,
+    domain2: string,
+    limit: number = 20,
+    lookbackDays: number = 90
+  ) {
+    try {
+      const response = await getApi().get(
+        `/api/intelligence/cross_domain_bridges/${encodeURIComponent(domain1)}/${encodeURIComponent(domain2)}/entities`,
+        { params: { limit, lookback_days: lookbackDays } }
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to get cross-domain bridge entities', error as Error);
       return { success: false, error: (error as any).message };
     }
   },

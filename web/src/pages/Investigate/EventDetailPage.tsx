@@ -28,6 +28,7 @@ import {
 } from '@mui/material';
 import ArrowBack from '@mui/icons-material/ArrowBack';
 import Article from '@mui/icons-material/Article';
+import ReasoningPanel from '@/components/ReasoningPanel';
 import Refresh from '@mui/icons-material/Refresh';
 import Edit from '@mui/icons-material/Edit';
 import ReactMarkdown from 'react-markdown';
@@ -35,6 +36,8 @@ import remarkGfm from 'remark-gfm';
 import {
   contextCentricApi,
   type TrackedEvent,
+  type EventArticleMembership,
+  type TrackedEventFacet,
 } from '@/services/api/contextCentric';
 import { useDomain } from '@/contexts/DomainContext';
 
@@ -50,14 +53,190 @@ const EVENT_TYPES = [
   'market_event',
 ];
 
+interface Development {
+  context_id?: number;
+  storyline_id?: number;
+  type?: string;
+  title?: string;
+  domain_key?: string;
+}
+
 interface Chronicle {
   id: number;
   update_date?: string | null;
-  developments?: { context_id?: number; type?: string }[] | null;
+  developments?: Development[] | null;
   analysis?: { summary?: string; context_count?: number } | null;
   predictions?: unknown[] | null;
   momentum_score?: number | null;
   created_at?: string | null;
+}
+
+const CHRONICLE_STOPWORDS = new Set([
+  'about',
+  'after',
+  'against',
+  'amid',
+  'among',
+  'around',
+  'before',
+  'between',
+  'during',
+  'from',
+  'into',
+  'large',
+  'latest',
+  'major',
+  'model',
+  'models',
+  'news',
+  'other',
+  'over',
+  'research',
+  'says',
+  'than',
+  'that',
+  'their',
+  'there',
+  'these',
+  'this',
+  'through',
+  'under',
+  'update',
+  'updates',
+  'with',
+  'world',
+  'would',
+]);
+
+function significantEventTokens(eventName: string): string[] {
+  const raw = (eventName || '').split(/\W+/).filter(Boolean);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const w of raw) {
+    const low = w.toLowerCase();
+    if (low.length < 4 || CHRONICLE_STOPWORDS.has(low) || seen.has(low)) continue;
+    seen.add(low);
+    out.push(low);
+    if (out.length >= 6) break;
+  }
+  return out;
+}
+
+function significantEventPhrases(eventName: string): string[] {
+  const raw = (eventName || '').split(/\W+/).filter(w => w.length >= 4);
+  const phrases: string[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < raw.length - 1; i++) {
+    const a = raw[i].toLowerCase();
+    const b = raw[i + 1].toLowerCase();
+    if (CHRONICLE_STOPWORDS.has(a) && CHRONICLE_STOPWORDS.has(b)) continue;
+    const phrase = `${raw[i]} ${raw[i + 1]}`.toLowerCase();
+    if (seen.has(phrase)) continue;
+    seen.add(phrase);
+    phrases.push(phrase);
+    if (phrases.length >= 4) break;
+  }
+  return phrases;
+}
+
+/** Title-first relevance for Related contexts (mirrors API filter). */
+function developmentTitleMatchesEvent(
+  eventName: string,
+  title?: string | null
+): boolean {
+  const titleL = (title || '').toLowerCase().trim();
+  if (!titleL) return false;
+  const phrases = significantEventPhrases(eventName);
+  if (phrases.some(p => titleL.includes(p))) return true;
+  const tokenHit = (token: string) =>
+    new RegExp(`(?<![\\w-])${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`).test(
+      titleL
+    );
+  const tokens = significantEventTokens(eventName);
+  if (!tokens.length) {
+    const frag = (eventName || '').trim().toLowerCase().slice(0, 40);
+    return Boolean(frag) && titleL.includes(frag);
+  }
+  const hits = tokens.filter(t => tokenHit(t)).length;
+  const need = tokens.length >= 2 ? 2 : 1;
+  if (hits >= need) return true;
+  return tokens.some(t => t.length >= 8 && tokenHit(t));
+}
+
+/** One chronicle card per calendar day; keep newest id. */
+function dedupeChroniclesByDate(chronicles: Chronicle[]): Chronicle[] {
+  const byDay = new Map<string, Chronicle>();
+  for (const chr of chronicles) {
+    const day = (chr.update_date || chr.created_at || '').slice(0, 10) || `id-${chr.id}`;
+    const prev = byDay.get(day);
+    if (!prev || chr.id > prev.id) byDay.set(day, chr);
+  }
+  return Array.from(byDay.values()).sort((a, b) => {
+    const da = a.update_date || '';
+    const db = b.update_date || '';
+    if (da !== db) return db.localeCompare(da);
+    return b.id - a.id;
+  });
+}
+
+function filterChronicleDevelopments(
+  eventName: string,
+  developments: Development[] | null | undefined
+): Development[] {
+  const raw = developments ?? [];
+  const seen = new Set<string>();
+  const out: Development[] = [];
+  for (const d of raw) {
+    if (!developmentTitleMatchesEvent(eventName, d.title)) continue;
+    const key =
+      d.context_id != null
+        ? `c:${d.context_id}`
+        : d.storyline_id != null
+          ? `s:${d.domain_key || ''}:${d.storyline_id}`
+          : `t:${(d.title || '').slice(0, 80)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(d);
+  }
+  return out;
+}
+
+/**
+ * Drop empty day shells that only repeat the same summary with no on-topic contexts.
+ * Keeps every card that still has related contexts; otherwise one latest summary card.
+ */
+function prepareChroniclesForDisplay(
+  eventName: string,
+  chronicles: Chronicle[] | null | undefined
+): Array<Chronicle & { developments: Development[] }> {
+  const enriched = dedupeChroniclesByDate(chronicles ?? []).map(chr => ({
+    ...chr,
+    developments: filterChronicleDevelopments(eventName, chr.developments),
+  }));
+  const withDevs = enriched.filter(c => c.developments.length > 0);
+  if (withDevs.length > 0) {
+    return withDevs.map(c => ({
+      ...c,
+      momentum_score:
+        c.developments.length > 0
+          ? Math.min(1, c.developments.length * 0.1)
+          : null,
+    }));
+  }
+  const latest = enriched[0];
+  if (!latest) return [];
+  return [
+    {
+      ...latest,
+      momentum_score: null,
+      analysis: latest.analysis
+        ? {
+            ...latest.analysis,
+            // Do not surface polluted attachment lists in the empty state.
+          }
+        : latest.analysis,
+    },
+  ];
 }
 
 type EventWithChronicles = TrackedEvent & { chronicles?: Chronicle[] };
@@ -72,9 +251,13 @@ export default function EventDetailPage() {
     report_md: string;
     generated_at: string | null;
     context_count: number;
+    contexts_total?: number;
+    contexts_included?: number;
   } | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
+  const [reportJobStatus, setReportJobStatus] = useState<string | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
+  const [reportSavedNote, setReportSavedNote] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editForm, setEditForm] = useState<{
     event_type: string;
@@ -94,7 +277,19 @@ export default function EventDetailPage() {
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [chronicleRefreshing, setChronicleRefreshing] = useState(false);
+  const [reconciliation, setReconciliation] = useState<{
+    chronological_events?: Array<{
+      chronological_event_id: number;
+      event_title?: string | null;
+      event_date?: string | null;
+    }>;
+    storyline_refs?: Array<{ domain: string; storyline_id: number }>;
+    entity_overlap_score?: number;
+    confidence?: string;
+  } | null>(null);
   const [linkedEvents, setLinkedEvents] = useState<TrackedEvent[]>([]);
+  const [membership, setMembership] = useState<EventArticleMembership[]>([]);
+  const [facets, setFacets] = useState<TrackedEventFacet[]>([]);
 
   const numId = id ? parseInt(id, 10) : NaN;
 
@@ -119,6 +314,14 @@ export default function EventDetailPage() {
         setReportError((err as Error)?.message ?? 'Failed to load event');
       })
       .finally(() => setLoading(false));
+    contextCentricApi
+      .getEventReconciliationForTracked(numId)
+      .then(r => {
+        if (r && (r as { found?: boolean }).found !== false) {
+          setReconciliation(r as typeof reconciliation);
+        }
+      })
+      .catch(() => setReconciliation(null));
   }, [id, numId]);
 
   const loadReport = useCallback(() => {
@@ -126,13 +329,24 @@ export default function EventDetailPage() {
     contextCentricApi
       .getTrackedEventReport(numId)
       .then(r => {
-        if (r)
+        if (r?.report_md) {
           setReport({
             report_md: r.report_md,
             generated_at: r.generated_at,
             context_count: r.context_count,
+            contexts_total: r.contexts_total,
+            contexts_included: r.contexts_included ?? r.context_count,
           });
-        else setReport(null);
+          const st = String(r.status || 'ready').toLowerCase();
+          setReportJobStatus(
+            st === 'queued' || st === 'running' ? st : null,
+          );
+        } else if (r && (r.status === 'queued' || r.status === 'running')) {
+          setReportJobStatus(String(r.status));
+        } else {
+          setReport(null);
+          setReportJobStatus(null);
+        }
       })
       .catch(() => setReport(null));
   }, [numId]);
@@ -148,12 +362,22 @@ export default function EventDetailPage() {
   useEffect(() => {
     if (Number.isNaN(numId)) {
       setLinkedEvents([]);
+      setMembership([]);
+      setFacets([]);
       return;
     }
     contextCentricApi
       .getTrackedEventLinkedEvents(numId, 12)
       .then(r => setLinkedEvents(r.items ?? []))
       .catch(() => setLinkedEvents([]));
+    contextCentricApi
+      .getTrackedEventMembership(numId, 80)
+      .then(r => setMembership(r.items ?? []))
+      .catch(() => setMembership([]));
+    contextCentricApi
+      .getTrackedEventFacets(numId)
+      .then(r => setFacets(r.items ?? []))
+      .catch(() => setFacets([]));
   }, [numId]);
 
   const handleEditOpen = useCallback(() => {
@@ -198,15 +422,49 @@ export default function EventDetailPage() {
     if (Number.isNaN(numId)) return;
     setReportLoading(true);
     setReportError(null);
+    setReportSavedNote(false);
+    setReportJobStatus(null);
     contextCentricApi
       .generateTrackedEventReport(numId)
-      .then(r => {
+      .then(async r => {
+        const st = String(r.status || '').toLowerCase();
+        if (r.async || st === 'queued' || st === 'running') {
+          setReportJobStatus(st || 'queued');
+          const finished = await contextCentricApi.waitForTrackedEventReport(numId);
+          if (finished?.report_md) {
+            setReport({
+              report_md: finished.report_md,
+              generated_at: finished.generated_at ?? null,
+              context_count:
+                finished.contexts_included ?? finished.context_count ?? 0,
+              contexts_total: finished.contexts_total,
+              contexts_included:
+                finished.contexts_included ?? finished.context_count,
+            });
+            setReportSavedNote(true);
+            setReportJobStatus(null);
+          } else if (String(finished?.status || '').toLowerCase() === 'failed') {
+            setReportError(
+              finished?.error || 'Background report generation failed',
+            );
+            setReportJobStatus(null);
+          } else {
+            setReportError(
+              'Report is still generating. Refresh this page in a minute.',
+            );
+            setReportJobStatus(finished?.status || 'running');
+          }
+          return;
+        }
         if (r.success && r.report_md) {
           setReport({
             report_md: r.report_md,
             generated_at: r.generated_at ?? null,
-            context_count: r.context_count ?? 0,
+            context_count: r.context_count ?? r.contexts_included ?? 0,
+            contexts_total: r.contexts_total,
+            contexts_included: r.contexts_included ?? r.context_count,
           });
+          setReportSavedNote(true);
         } else {
           setReportError(r.error ?? 'Generation failed');
         }
@@ -224,14 +482,21 @@ export default function EventDetailPage() {
 
   if (!domain) return null;
 
-  const formatDate = (d: string | null | undefined) =>
-    d
-      ? new Date(d).toLocaleDateString(undefined, {
-          month: 'short',
-          day: 'numeric',
-          year: 'numeric',
-        })
-      : null;
+  const formatDate = (d: string | null | undefined) => {
+    if (!d) return null;
+    // Date-only strings must use local calendar parts — `new Date('YYYY-MM-DD')`
+    // is UTC midnight and shifts back a day in US timezones.
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d);
+    const dt = m
+      ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+      : new Date(d);
+    if (Number.isNaN(dt.getTime())) return null;
+    return dt.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  };
 
   return (
     <Box>
@@ -416,6 +681,13 @@ export default function EventDetailPage() {
                     color='primary'
                     variant='outlined'
                   />
+                  {event.arc_state && (
+                    <Chip
+                      label={`arc: ${event.arc_state}`}
+                      size='small'
+                      variant='outlined'
+                    />
+                  )}
                   {event.geographic_scope && (
                     <Chip
                       label={event.geographic_scope}
@@ -423,6 +695,15 @@ export default function EventDetailPage() {
                       variant='outlined'
                     />
                   )}
+                  {(event.anchors || []).slice(0, 6).map((a, i) => (
+                    <Chip
+                      key={`${a.value || i}-${a.kind || 'a'}`}
+                      label={`${a.kind || 'anchor'}: ${a.value || '—'}`}
+                      size='small'
+                      color='secondary'
+                      variant='outlined'
+                    />
+                  ))}
                 </Box>
               }
             />
@@ -437,6 +718,131 @@ export default function EventDetailPage() {
                   </Typography>
                 )}
               </Box>
+            </CardContent>
+          </Card>
+
+          {(facets.length > 0 || membership.length > 0) && (
+            <Card variant='outlined'>
+              <CardHeader
+                title='Event-core evidence'
+                subheader='Container index + episode facets (containers never own articles)'
+                titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
+              />
+              <CardContent sx={{ pt: 0 }}>
+                {facets.length > 0 && (
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant='body2' fontWeight={600} sx={{ mb: 0.75 }}>
+                      Facets ({facets.length})
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
+                      {facets.map(f => (
+                        <Chip
+                          key={`${f.domain_key}-${f.storyline_id}`}
+                          label={`${f.domain_key} · ${f.facet || 'facet'} #${f.storyline_id}`}
+                          size='small'
+                          onClick={() =>
+                            navigate(
+                              `/${f.domain_key}/storylines/${f.storyline_id}`,
+                            )
+                          }
+                        />
+                      ))}
+                    </Box>
+                  </Box>
+                )}
+                {membership.length > 0 ? (
+                  <>
+                    <Typography variant='body2' fontWeight={600} sx={{ mb: 0.75 }}>
+                      Typed members ({membership.length})
+                    </Typography>
+                    <List dense disablePadding>
+                      {membership.slice(0, 40).map(m => (
+                        <ListItemButton
+                          key={`${m.domain_key}-${m.article_id}-${m.membership_type}`}
+                          onClick={() =>
+                            navigate(
+                              `/${m.domain_key}/articles/${m.article_id}`,
+                            )
+                          }
+                        >
+                          <ListItemText
+                            primary={`${m.domain_key} article #${m.article_id}`}
+                            secondary={`${m.membership_type}${
+                              m.anchor_ref ? ` · ${m.anchor_ref}` : ''
+                            }${m.facet ? ` · ${m.facet}` : ''}`}
+                          />
+                        </ListItemButton>
+                      ))}
+                    </List>
+                    {membership.length > 40 && (
+                      <Typography variant='caption' color='text.secondary'>
+                        Showing 40 of {membership.length}
+                      </Typography>
+                    )}
+                  </>
+                ) : (
+                  <Typography variant='body2' color='text.secondary'>
+                    No typed membership rows yet for this event.
+                  </Typography>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {reconciliation && (
+            <Card variant='outlined'>
+              <CardHeader
+                title='Event reconciliation'
+                subheader='Topic ↔ events ↔ episodes'
+                titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
+              />
+              <CardContent sx={{ pt: 0 }}>
+                {(reconciliation.storyline_refs?.length ?? 0) > 0 && (
+                  <Typography variant='body2' sx={{ mb: 1 }}>
+                    Linked episodes:{' '}
+                    {reconciliation.storyline_refs?.map(r => (
+                      <Chip
+                        key={`${r.domain}-${r.storyline_id}`}
+                        label={`${r.domain} #${r.storyline_id}`}
+                        size='small'
+                        sx={{ mr: 0.5 }}
+                        onClick={() =>
+                          navigate(`/${r.domain}/storylines/${r.storyline_id}`)
+                        }
+                      />
+                    ))}
+                  </Typography>
+                )}
+                {(reconciliation.chronological_events?.length ?? 0) > 0 ? (
+                  <List dense disablePadding>
+                    {reconciliation.chronological_events?.map(ce => (
+                      <ListItemButton key={ce.chronological_event_id} disabled>
+                        <ListItemText
+                          primary={ce.event_title || `Atom #${ce.chronological_event_id}`}
+                          secondary={ce.event_date ?? undefined}
+                        />
+                      </ListItemButton>
+                    ))}
+                  </List>
+                ) : (
+                  <Typography variant='body2' color='text.secondary'>
+                    No related events in this window.
+                  </Typography>
+                )}
+                {reconciliation.confidence && (
+                  <Typography variant='caption' color='text.secondary' display='block' sx={{ mt: 1 }}>
+                    Confidence: {reconciliation.confidence}
+                    {reconciliation.entity_overlap_score != null &&
+                      ` · entity overlap ${reconciliation.entity_overlap_score}`}
+                  </Typography>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          <Card variant='outlined'>
+            <CardContent>
+              <ReasoningPanel trackedEventId={Number(id)} />
             </CardContent>
           </Card>
 
@@ -475,15 +881,15 @@ export default function EventDetailPage() {
                 titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
               />
               <Divider />
-              {event.chronicles.map((chr, idx) => {
+              {prepareChroniclesForDisplay(
+                event.event_name || '',
+                event.chronicles
+              ).map((chr, idx) => {
                 const analysis = chr.analysis as {
                   summary?: string;
                   context_count?: number;
                 } | null;
-                const devs = (chr.developments ?? []) as {
-                  context_id?: number;
-                  type?: string;
-                }[];
+                const devs = chr.developments;
                 return (
                   <React.Fragment key={chr.id}>
                     {idx > 0 && <Divider />}
@@ -532,7 +938,7 @@ export default function EventDetailPage() {
                         </Box>
                       )}
 
-                      {devs.length > 0 && (
+                      {devs.length > 0 ? (
                         <Box>
                           <Typography
                             variant='caption'
@@ -542,29 +948,45 @@ export default function EventDetailPage() {
                             Related contexts ({devs.length})
                           </Typography>
                           <List dense disablePadding>
-                            {devs.map(
-                              d =>
-                                d.context_id != null && (
-                                  <ListItemButton
-                                    key={d.context_id}
-                                    onClick={() =>
-                                      navigate(
-                                        `/${domain}/discover/contexts/${d.context_id}`
-                                      )
-                                    }
-                                    sx={{ py: 0.5 }}
-                                  >
-                                    <ListItemText
-                                      primary={`Context #${d.context_id}`}
-                                      primaryTypographyProps={{
-                                        variant: 'body2',
-                                      }}
-                                    />
-                                  </ListItemButton>
-                                )
-                            )}
+                            {devs.map((d, dIdx) => {
+                              const devKey =
+                                d.context_id ?? d.storyline_id ?? `dev-${dIdx}`;
+                              const label =
+                                d.title ||
+                                (d.context_id != null
+                                  ? `Context #${d.context_id}`
+                                  : d.storyline_id != null
+                                    ? `Episode #${d.storyline_id}`
+                                    : 'Related item');
+                              const devDomain = d.domain_key || domain;
+                              const href =
+                                d.context_id != null
+                                  ? `/${devDomain}/discover/contexts/${d.context_id}`
+                                  : d.storyline_id != null
+                                    ? `/${devDomain}/storylines/${d.storyline_id}`
+                                    : null;
+                              if (!href) return null;
+                              return (
+                                <ListItemButton
+                                  key={devKey}
+                                  onClick={() => navigate(href)}
+                                  sx={{ py: 0.5 }}
+                                >
+                                  <ListItemText
+                                    primary={label}
+                                    primaryTypographyProps={{
+                                      variant: 'body2',
+                                    }}
+                                  />
+                                </ListItemButton>
+                              );
+                            })}
                           </List>
                         </Box>
+                      ) : (
+                        <Typography variant='body2' color='text.secondary'>
+                          No on-topic related contexts for this update.
+                        </Typography>
                       )}
                     </CardContent>
                   </React.Fragment>
@@ -582,7 +1004,13 @@ export default function EventDetailPage() {
                       report.generated_at
                         ? new Date(report.generated_at).toLocaleString()
                         : ''
-                    } from ${report.context_count} contexts`
+                    } from ${report.contexts_included ?? report.context_count} contexts${
+                      report.contexts_total != null &&
+                      report.contexts_total >
+                        (report.contexts_included ?? report.context_count)
+                        ? ` (of ${report.contexts_total} linked)`
+                        : ''
+                    }`
                   : 'Journalism-style dossier from chronicles and contexts'
               }
               action={
@@ -607,12 +1035,32 @@ export default function EventDetailPage() {
                   {reportError}
                 </Alert>
               )}
+              {reportSavedNote && (
+                <Alert severity='success' sx={{ mb: 2 }}>
+                  Saved to reading history
+                </Alert>
+              )}
               {reportLoading && (
-                <Skeleton
-                  variant='rectangular'
-                  height={120}
-                  sx={{ borderRadius: 1 }}
-                />
+                <Box>
+                  <Skeleton
+                    variant='rectangular'
+                    height={120}
+                    sx={{ borderRadius: 1 }}
+                  />
+                  {reportJobStatus && (
+                    <Typography
+                      variant='body2'
+                      color='text.secondary'
+                      sx={{ mt: 1 }}
+                    >
+                      Background job {reportJobStatus}…
+                      {reportJobStatus === 'queued' ||
+                      reportJobStatus === 'running'
+                        ? ' Large containers generate asynchronously; this page will update when ready.'
+                        : null}
+                    </Typography>
+                  )}
+                </Box>
               )}
               {!reportLoading && report && (
                 <Box
@@ -633,8 +1081,9 @@ export default function EventDetailPage() {
                 <Typography color='text.secondary'>
                   Generate a dossier that summarises this investigation with an
                   executive summary, timeline, key entities, sources, and what
-                  we know vs what&apos;s uncertain. Regenerate after new
-                  contexts are added to refresh the report.
+                  we know vs what&apos;s uncertain. Generation can take up to a
+                  couple of minutes (LLM). Regenerate after new contexts are
+                  added to refresh the report.
                 </Typography>
               )}
             </CardContent>

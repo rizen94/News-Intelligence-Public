@@ -6,6 +6,7 @@
 import { getApi } from './client';
 import { getApiOrigin } from '../../config/apiConfig';
 import Logger from '../../utils/logger';
+import { investigationApi } from './investigationApi';
 
 /** Context-centric routes: always use full path /api/... so the request hits the backend correctly. */
 function apiPath(absolutePath: string): string {
@@ -13,10 +14,27 @@ function apiPath(absolutePath: string): string {
 }
 
 /** Use server origin (no path) so /api/tracked_events/... etc. resolve correctly when API base URL has a path. */
-function contextCentricConfig(): { baseURL?: string } {
+function contextCentricConfig(extra?: {
+  timeout?: number;
+  validateStatus?: (status: number) => boolean;
+}): {
+  baseURL?: string;
+  timeout?: number;
+  validateStatus?: (status: number) => boolean;
+} {
   const origin = getApiOrigin();
-  return origin ? { baseURL: origin } : {};
+  return {
+    ...(origin ? { baseURL: origin } : {}),
+    ...(extra?.timeout != null ? { timeout: extra.timeout } : {}),
+    ...(extra?.validateStatus ? { validateStatus: extra.validateStatus } : {}),
+  };
 }
+
+/** Match api/main.py resolve_request_timeout_seconds for POST /tracked_events/{id}/report (180s). */
+const INVESTIGATION_REPORT_TIMEOUT_MS = 180_000;
+/** Poll interval while an async dossier job is queued/running. */
+const INVESTIGATION_REPORT_POLL_MS = 2_500;
+const INVESTIGATION_REPORT_POLL_MAX_MS = 180_000;
 
 export interface EntityProfile {
   id: number;
@@ -73,7 +91,27 @@ export interface TrackedEvent {
   created_at: string | null;
   updated_at: string | null;
   domain_keys: string[];
+  anchors?: Array<{ value?: string; kind?: string; owned?: boolean }> | null;
+  particulars?: Record<string, unknown> | null;
+  arc_state?: string | null;
   chronicles?: EventChronicle[];
+}
+
+export interface EventArticleMembership {
+  tracked_event_id: number;
+  domain_key: string;
+  article_id: number;
+  membership_type: string;
+  anchor_ref?: string | null;
+  facet?: string | null;
+  added_by?: string | null;
+}
+
+export interface TrackedEventFacet {
+  tracked_event_id: number;
+  domain_key: string;
+  storyline_id: number;
+  facet: string | null;
 }
 
 export interface EventChronicle {
@@ -104,6 +142,8 @@ export interface PatternDiscovery {
   domain_key: string | null;
   context_ids: number[];
   entity_profile_ids: number[];
+  /** Optional display names enriched by API for briefing / search snippets. */
+  entity_names?: string[];
   confidence: number | null;
   data: unknown;
   created_at: string | null;
@@ -255,6 +295,46 @@ export interface NriEntityBridge {
   schema_name: string | null;
   dataset: string | null;
   anchors: Record<string, string> | null;
+  ni_canonical_name?: string | null;
+  qa_status?: 'ok' | 'suspect' | 'mismatch' | 'unknown' | null;
+  name_similarity?: number | null;
+  qa_flags?: string[] | null;
+}
+
+export interface NriEntityClaimRow {
+  id: number;
+  context_id: number;
+  subject_text: string | null;
+  predicate_text: string | null;
+  object_text: string | null;
+  confidence: number | null;
+  created_at: string | null;
+  mention_text?: string | null;
+  ftm_caption?: string | null;
+}
+
+export interface NriContextIntelMention {
+  id: number;
+  mention_text: string;
+  entity_profile_id: number | null;
+  ftm_id: string | null;
+  match_score: number | null;
+  status: string;
+  resolved_at: string | null;
+  canonical_name: string | null;
+  entity_type: string | null;
+  ftm_caption: string | null;
+  qa_status?: string | null;
+  name_similarity?: number | null;
+  qa_flags?: string[] | null;
+}
+
+export interface NriParkedCrossDomain {
+  mention_text: string;
+  domains: number;
+  parked_contexts: number;
+  domain_list: string[];
+  sample_context_id: number | null;
 }
 
 export interface NriHypothesis {
@@ -265,11 +345,71 @@ export interface NriHypothesis {
   test_status?: string | null;
   subject_ftm_id?: string | null;
   iteration_introduced?: number | null;
+  vault_branch?: string | null;
 }
 
 export interface NriHypothesisDetail extends NriHypothesis {
   body?: string;
   path?: string;
+  frontmatter?: Record<string, unknown>;
+}
+
+export interface NriResolutionStats {
+  success: boolean;
+  by_status?: Record<string, number>;
+  entity_bridge_count?: number;
+  auto_link_rate?: number;
+  park_rate?: number;
+  watermark?: number;
+  max_mention_id?: number;
+  watermark_lag?: number;
+  total_context_entity_mentions?: number;
+  resolved_mentions?: number;
+  backfill_pct?: number;
+  watermark_pct?: number;
+  error?: string;
+}
+
+export interface NriLoopRun {
+  id: number;
+  iteration: number | null;
+  shadow_branch: string | null;
+  killed_count: number | null;
+  demoted_count: number | null;
+  dormant_count: number | null;
+  added_count: number | null;
+  ran_at: string | null;
+}
+
+export interface NriSpineEntity {
+  ftm_id?: string;
+  caption?: string;
+  schema_name?: string;
+  dataset?: string;
+  score?: number;
+}
+
+export interface ArcSummary {
+  arc_id: string;
+  display_name?: string;
+  description?: string;
+  start_date?: string | null;
+  end_date?: string | null;
+  is_active?: boolean;
+}
+
+export interface ArcReport {
+  id: number;
+  arc_id: string;
+  generated_at?: string | null;
+  living_cutoff_date?: string | null;
+  report_type?: string;
+  title?: string;
+  content_markdown?: string;
+  sections?: unknown;
+  citations?: unknown;
+  validation?: unknown;
+  metadata?: unknown;
 }
 
 /** Entity position / stance on a topic. */
@@ -527,6 +667,40 @@ export const contextCentricApi = {
     }
   },
 
+  async getTrackedEventMembership(
+    eventId: number,
+    limit = 100,
+  ): Promise<{ success: boolean; items: EventArticleMembership[]; count: number }> {
+    try {
+      const response = await getApi().get<{
+        success: boolean;
+        items: EventArticleMembership[];
+        count: number;
+      }>(apiPath(`/api/tracked_events/${eventId}/membership`), {
+        ...contextCentricConfig(),
+        params: { limit },
+      });
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to fetch event membership', error);
+    }
+  },
+
+  async getTrackedEventFacets(
+    eventId: number,
+  ): Promise<{ success: boolean; items: TrackedEventFacet[]; count: number }> {
+    try {
+      const response = await getApi().get<{
+        success: boolean;
+        items: TrackedEventFacet[];
+        count: number;
+      }>(apiPath(`/api/tracked_events/${eventId}/facets`), contextCentricConfig());
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to fetch event facets', error);
+    }
+  },
+
   async getTrackedEventLinkedEvents(
     eventId: number,
     limit = 12,
@@ -612,14 +786,23 @@ export const contextCentricApi = {
 
   async getTrackedEventReport(eventId: number): Promise<{
     event_id: number;
-    report_md: string;
+    status?: 'queued' | 'running' | 'ready' | 'failed' | string;
+    report_md: string | null;
     generated_at: string | null;
     context_ids_included: number[];
     chronicle_count: number;
     context_count: number;
+    contexts_total?: number;
+    contexts_included?: number;
+    async?: boolean;
+    error?: string | null;
+    last_error?: string | null;
   } | null> {
     try {
-      const response = await getApi().get(apiPath(`/api/tracked_events/${eventId}/report`), contextCentricConfig());
+      const response = await getApi().get(
+        apiPath(`/api/tracked_events/${eventId}/report`),
+        contextCentricConfig({ timeout: 30_000 }),
+      );
       return response.data;
     } catch (error: unknown) {
       if (error && typeof error === 'object' && 'response' in error) {
@@ -632,6 +815,7 @@ export const contextCentricApi = {
 
   async generateTrackedEventReport(eventId: number): Promise<{
     success: boolean;
+    status?: 'queued' | 'running' | 'ready' | 'failed' | string;
     event_id?: number;
     event_name?: string;
     report_md?: string;
@@ -639,21 +823,98 @@ export const contextCentricApi = {
     context_ids_included?: number[];
     chronicle_count?: number;
     context_count?: number;
+    contexts_total?: number;
+    contexts_included?: number;
+    coherence?: Record<string, unknown>;
+    async?: boolean;
+    already_queued?: boolean;
     error?: string;
   }> {
     try {
-      const response = await getApi().post(apiPath(`/api/tracked_events/${eventId}/report`), undefined, contextCentricConfig());
-      return response.data;
+      const response = await getApi().post(
+        apiPath(`/api/tracked_events/${eventId}/report`),
+        undefined,
+        contextCentricConfig({
+          timeout: INVESTIGATION_REPORT_TIMEOUT_MS,
+          // Treat 202 Accepted (async enqueue) as success.
+          validateStatus: (status: number) =>
+            (status >= 200 && status < 300) || status === 202,
+        }),
+      );
+      const data = response.data || {};
+      const status = String(data.status || '').toLowerCase();
+      if (
+        response.status === 202 ||
+        status === 'queued' ||
+        status === 'running'
+      ) {
+        return {
+          success: true,
+          status: status || 'queued',
+          async: true,
+          event_id: data.event_id ?? eventId,
+          contexts_total: data.contexts_total,
+          already_queued: Boolean(data.already_queued),
+          error: data.error,
+        };
+      }
+      return data;
     } catch (error: unknown) {
-      const status = (error as { response?: { status?: number } })?.response?.status;
+      const ax = error as {
+        response?: { status?: number; data?: { message?: string; detail?: string } };
+        code?: string;
+        message?: string;
+      };
+      const status = ax?.response?.status;
       if (status === 404) {
         Logger.apiError('Report endpoint not found (404)', error as Error);
         throw new Error(
           'Report endpoint not found. Use the API server root as base URL (e.g. http://localhost:8000) and ensure context-centric routes are enabled.',
         );
       }
+      if (status === 504) {
+        const msg =
+          ax.response?.data?.message ||
+          ax.response?.data?.detail ||
+          'Report generation timed out. Try again, or wait for a cached report to appear.';
+        throw new Error(msg);
+      }
       return handleError('Failed to generate report', error) as never;
     }
+  },
+
+  /**
+   * Poll GET /tracked_events/{id}/report until status is ready|failed or timeout.
+   * Used after a 202 async enqueue for large containers.
+   */
+  async waitForTrackedEventReport(
+    eventId: number,
+    opts?: { intervalMs?: number; maxWaitMs?: number },
+  ): Promise<{
+    event_id: number;
+    status?: string;
+    report_md: string | null;
+    generated_at: string | null;
+    context_count: number;
+    contexts_total?: number;
+    contexts_included?: number;
+    error?: string | null;
+  } | null> {
+    const intervalMs = opts?.intervalMs ?? INVESTIGATION_REPORT_POLL_MS;
+    const maxWaitMs = opts?.maxWaitMs ?? INVESTIGATION_REPORT_POLL_MAX_MS;
+    const started = Date.now();
+    while (Date.now() - started < maxWaitMs) {
+      const report = await this.getTrackedEventReport(eventId);
+      if (!report) {
+        await new Promise(r => setTimeout(r, intervalMs));
+        continue;
+      }
+      const st = String(report.status || 'ready').toLowerCase();
+      if (st === 'ready' && report.report_md) return report;
+      if (st === 'failed') return report;
+      await new Promise(r => setTimeout(r, intervalMs));
+    }
+    return this.getTrackedEventReport(eventId);
   },
 
   async getClaims(params?: { context_id?: number; limit?: number; offset?: number }) {
@@ -673,12 +934,16 @@ export const contextCentricApi = {
     domain_key?: string;
     limit?: number;
     offset?: number;
+    min_context_count?: number;
+    briefing?: boolean;
   }) {
     try {
       const response = await getApi().get<{
         items: PatternDiscovery[];
         limit: number;
         offset: number;
+        briefing?: boolean;
+        min_context_count?: number | null;
       }>(apiPath('/api/pattern_discoveries'), { ...contextCentricConfig(), params: params ?? {} });
       return response.data;
     } catch (error) {
@@ -1052,14 +1317,9 @@ export const contextCentricApi = {
     }
   },
 
-  // NRI integration
+  // Investigation integration (delegates to investigationApi; Nri* names kept for compatibility)
   async getNriHealth(): Promise<Record<string, unknown>> {
-    try {
-      const response = await getApi().get<Record<string, unknown>>(apiPath('/api/nri/health'), contextCentricConfig());
-      return response.data;
-    } catch (error) {
-      return handleError('Failed to fetch NRI health', error);
-    }
+    return investigationApi.getHealth();
   },
 
   async getNriResolvedMentions(params?: {
@@ -1068,15 +1328,7 @@ export const contextCentricApi = {
     limit?: number;
     offset?: number;
   }): Promise<{ success: boolean; items: NriResolvedMention[]; limit: number; offset: number }> {
-    try {
-      const response = await getApi().get<{ success: boolean; items: NriResolvedMention[]; limit: number; offset: number }>(
-        apiPath('/api/nri/resolved_mentions'),
-        { ...contextCentricConfig(), params: params ?? {} },
-      );
-      return response.data;
-    } catch (error) {
-      return handleError('Failed to fetch NRI resolved mentions', error);
-    }
+    return investigationApi.getResolvedMentions(params);
   },
 
   async getNriParked(params?: {
@@ -1085,43 +1337,18 @@ export const contextCentricApi = {
     limit?: number;
     offset?: number;
   }): Promise<{ success: boolean; items: NriParkedResolution[]; limit: number; offset: number }> {
-    try {
-      const response = await getApi().get<{ success: boolean; items: NriParkedResolution[]; limit: number; offset: number }>(
-        apiPath('/api/nri/parked'),
-        { ...contextCentricConfig(), params: params ?? {} },
-      );
-      return response.data;
-    } catch (error) {
-      return handleError('Failed to fetch NRI parked mentions', error);
-    }
+    return investigationApi.getParked(params);
   },
 
   async reviewNriParked(
     parkedId: number,
     body: { review_status: string; candidate_ftm_id?: string },
   ): Promise<Record<string, unknown>> {
-    try {
-      const response = await getApi().patch<Record<string, unknown>>(
-        apiPath(`/api/nri/parked/${parkedId}`),
-        body,
-        contextCentricConfig(),
-      );
-      return response.data;
-    } catch (error) {
-      return handleError('Failed to review parked mention', error);
-    }
+    return investigationApi.reviewParked(parkedId, body);
   },
 
   async getNriEntityBridge(entityProfileId: number): Promise<{ success: boolean; bridge: NriEntityBridge | null }> {
-    try {
-      const response = await getApi().get<{ success: boolean; bridge: NriEntityBridge | null }>(
-        apiPath(`/api/nri/entity_bridge/${entityProfileId}`),
-        contextCentricConfig(),
-      );
-      return response.data;
-    } catch (error) {
-      return handleError('Failed to fetch NRI entity bridge', error);
-    }
+    return investigationApi.getEntityBridge(entityProfileId);
   },
 
   async getNriHypotheses(params?: {
@@ -1130,26 +1357,205 @@ export const contextCentricApi = {
     limit?: number;
     offset?: number;
   }): Promise<{ items: NriHypothesis[]; total: number; limit: number; offset: number }> {
-    try {
-      const response = await getApi().get<{ items: NriHypothesis[]; total: number; limit: number; offset: number }>(
-        apiPath('/api/nri/hypotheses'),
-        { ...contextCentricConfig(), params: params ?? {} },
-      );
-      return response.data;
-    } catch (error) {
-      return handleError('Failed to fetch NRI hypotheses', error);
-    }
+    return investigationApi.getHypotheses(params);
   },
 
   async getNriHypothesis(hypId: string): Promise<NriHypothesisDetail> {
+    return investigationApi.getHypothesis(hypId);
+  },
+
+  async getNriSpineEntities(params?: {
+    dataset?: string;
+    limit?: number;
+  }): Promise<{ success?: boolean; items: NriSpineEntity[] }> {
+    return investigationApi.getSpineEntities(params);
+  },
+
+  async matchNriSpine(text: string, schemaName?: string): Promise<Record<string, unknown>> {
+    return investigationApi.matchSpine(text, schemaName);
+  },
+
+  async getNriResolutionStats(domainKey?: string): Promise<NriResolutionStats> {
+    return investigationApi.getResolutionStats(domainKey);
+  },
+
+  async getNriLoopRuns(limit = 20): Promise<{ success?: boolean; items: NriLoopRun[] }> {
+    return investigationApi.getLoopRuns(limit);
+  },
+
+  async getNriFtMCacheStats(): Promise<{ success?: boolean; bridged_by_dataset?: Record<string, number> }> {
+    return investigationApi.getFtMCacheStats();
+  },
+
+  async getNriBridgeQaAudit(params?: {
+    domain_key?: string;
+    qa_status?: 'suspect' | 'mismatch';
+    limit?: number;
+    offset?: number;
+  }): Promise<{ success: boolean; items: NriEntityBridge[]; total_filtered?: number }> {
+    return investigationApi.getBridgeQaAudit(params);
+  },
+
+  async getNriEntityClaims(params: {
+    entity_profile_id: number;
+    context_id?: number;
+    limit?: number;
+  }): Promise<{ success: boolean; items: NriEntityClaimRow[] }> {
+    return investigationApi.getEntityClaims(params);
+  },
+
+  async getNriContextIntel(contextId: number, claimsLimit = 100): Promise<{
+    success: boolean;
+    context_id: number;
+    mentions: NriContextIntelMention[];
+    claims: ExtractedClaim[];
+    status_counts: Record<string, number>;
+  }> {
+    return investigationApi.getContextIntel(contextId, claimsLimit);
+  },
+
+  async getNriParkedCrossDomain(params?: {
+    exclude_generic?: boolean;
+    min_domains?: number;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ success: boolean; items: NriParkedCrossDomain[]; total_filtered?: number }> {
+    return investigationApi.getParkedCrossDomain(params);
+  },
+
+  async listArcs(): Promise<ArcSummary[]> {
     try {
-      const response = await getApi().get<NriHypothesisDetail>(
-        apiPath(`/api/nri/hypotheses/${hypId}`),
+      const response = await getApi().get<{ success: boolean; data: ArcSummary[] }>(
+        apiPath('/api/intelligence/arcs'),
+        contextCentricConfig(),
+      );
+      return response.data?.data ?? [];
+    } catch (error) {
+      return handleError('Failed to fetch arcs', error);
+    }
+  },
+
+  async getArcChronicle(arcId: string): Promise<Record<string, unknown>> {
+    try {
+      const response = await getApi().get<{ success: boolean; data: Record<string, unknown> }>(
+        apiPath(`/api/intelligence/arcs/${encodeURIComponent(arcId)}/chronicle`),
+        contextCentricConfig(),
+      );
+      return response.data?.data ?? {};
+    } catch (error) {
+      return handleError('Failed to fetch arc chronicle', error);
+    }
+  },
+
+  async getArcSpine(arcId: string): Promise<Record<string, unknown>> {
+    try {
+      const response = await getApi().get<{ success: boolean; data: Record<string, unknown> }>(
+        apiPath(`/api/intelligence/arcs/${encodeURIComponent(arcId)}/spine`),
+        contextCentricConfig(),
+      );
+      return response.data?.data ?? {};
+    } catch (error) {
+      return handleError('Failed to fetch arc spine', error);
+    }
+  },
+
+  async getResearchSubject(
+    domainKey: string,
+    opts?: { entityId?: number; entityName?: string },
+  ): Promise<Record<string, unknown>> {
+    try {
+      const response = await getApi().get<{ success: boolean; data: Record<string, unknown> }>(
+        apiPath(`/api/intelligence/research_subjects/${encodeURIComponent(domainKey)}`),
+        {
+          ...contextCentricConfig(),
+          params: {
+            entity_id: opts?.entityId,
+            entity_name: opts?.entityName,
+          },
+        },
+      );
+      return response.data?.data ?? {};
+    } catch (error) {
+      return handleError('Failed to fetch research subject', error);
+    }
+  },
+
+  async getMatterDocket(
+    storylineId: number,
+    domainKey = 'legal',
+  ): Promise<Record<string, unknown>> {
+    try {
+      const response = await getApi().get<{ success: boolean; data: Record<string, unknown> }>(
+        apiPath(`/api/intelligence/matter_dockets/${storylineId}`),
+        { ...contextCentricConfig(), params: { domain_key: domainKey } },
+      );
+      return response.data?.data ?? {};
+    } catch (error) {
+      return handleError('Failed to fetch matter docket', error);
+    }
+  },
+
+  async getArcHeatmap(arcId: string, months = 24): Promise<Record<string, unknown>> {
+    try {
+      const response = await getApi().get<{ success: boolean; data: Record<string, unknown> }>(
+        apiPath(`/api/intelligence/arcs/${encodeURIComponent(arcId)}/heatmap`),
+        { ...contextCentricConfig(), params: { months } },
+      );
+      return response.data?.data ?? {};
+    } catch (error) {
+      return handleError('Failed to fetch arc heatmap', error);
+    }
+  },
+
+  async getArcAnalogues(arcId: string, limit = 4): Promise<Record<string, unknown>> {
+    try {
+      const response = await getApi().get<{ success: boolean; data: Record<string, unknown> }>(
+        apiPath(`/api/intelligence/analogues/${encodeURIComponent(arcId)}`),
+        { ...contextCentricConfig(), params: { limit } },
+      );
+      return response.data?.data ?? {};
+    } catch (error) {
+      return handleError('Failed to fetch arc analogues', error);
+    }
+  },
+
+  async getLatestArcReport(arcId: string): Promise<ArcReport | null> {
+    try {
+      const response = await getApi().get<{ success: boolean; data: ArcReport }>(
+        apiPath(`/api/intelligence/arc_report/${encodeURIComponent(arcId)}/latest`),
+        contextCentricConfig(),
+      );
+      return response.data?.data ?? null;
+    } catch (error: unknown) {
+      if (error && typeof error === 'object' && 'response' in error) {
+        const ax = (error as { response?: { status?: number } }).response;
+        if (ax?.status === 404) return null;
+      }
+      return handleError('Failed to fetch arc report', error) as never;
+    }
+  },
+
+  async getEventReconciliationForTracked(trackedEventId: number) {
+    try {
+      const response = await getApi().get<Record<string, unknown>>(
+        apiPath(`/api/event_reconciliation/tracked_events/${trackedEventId}`),
         contextCentricConfig(),
       );
       return response.data;
     } catch (error) {
-      return handleError('Failed to fetch NRI hypothesis', error);
+      return handleError('Failed to fetch event reconciliation', error);
+    }
+  },
+
+  async getEventReconciliationForStoryline(domainKey: string, storylineId: number) {
+    try {
+      const response = await getApi().get<Record<string, unknown>>(
+        apiPath(`/api/event_reconciliation/storylines/${domainKey}/${storylineId}`),
+        contextCentricConfig(),
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to fetch storyline reconciliation', error);
     }
   },
 };

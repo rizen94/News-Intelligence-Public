@@ -1,0 +1,114 @@
+{
+  "snapshot_date": "2026-07-24",
+  "excluded_operator_example": {
+    "domain": "politics",
+    "id": 3775,
+    "title": "Trump's Foreign Policy Backfires as Oil Prices Soar Amid Global Conflict Escalation",
+    "n_links": 123,
+    "note": "Do not fix; symptom reference only"
+  },
+  "domain_counts_active": {
+    "politics": {"n": 6, "max_links": 123},
+    "finance": {"n": 14, "max_links": 37},
+    "legal": {"n": 18, "max_links": 108},
+    "medicine": {"n": 5, "max_links": 276},
+    "artificial-intelligence": {"n": 0, "note": "no active storylines in snapshot aggregate"}
+  },
+  "examples": [
+    {
+      "label": "bad",
+      "id": "B1",
+      "domain": "medicine",
+      "storyline_id": 3758,
+      "title": "Medtronic's 780G Insulin Pump Shows Promise in Latino Patients, But Effectiveness of New Psoriasis Treatment Unclear",
+      "n_links": 242,
+      "avg_rel": 0.95,
+      "relationship_types": {"related": 242},
+      "on_theme_approx": {"insulin_medtronic": 0, "psoriasis": 1},
+      "analysis_len": 1279,
+      "chars_per_link": 5.3,
+      "failure": "kitchen_sink_membership_plus_title_hallucinated_summary"
+    },
+    {
+      "label": "bad",
+      "id": "B2",
+      "domain": "medicine",
+      "storyline_id": 3750,
+      "title": "Ongoing: Hotspot Stereotactic Ablative Radiotherapy Versus Traditional Stereotactic Ablative Radiotherapy",
+      "n_links": 63,
+      "on_theme_approx": {"sabr_stereotactic": 2},
+      "analysis_len": 834,
+      "failure": "shell_title_clinical_trial_soup_summary_admits_mismatch"
+    },
+    {
+      "label": "bad",
+      "id": "B3",
+      "domain": "legal",
+      "storyline_id": 3791,
+      "title": "Courts Split on Conviction Appeals as Daycare Head and Trump Adviser Face Different Outcomes",
+      "n_links": 108,
+      "avg_rel": 0.75,
+      "analysis_len": 0,
+      "failure": "title_specific_membership_is_wire_dump"
+    },
+    {
+      "label": "bad",
+      "id": "B4",
+      "domain": "finance",
+      "storyline_id": 3790,
+      "title": "Malaysia's Formula One Return May Boost Shipping Industry as Japan Banks Merge",
+      "n_links": 29,
+      "analysis_len": 0,
+      "failure": "compound_title_theme_less_bag"
+    },
+    {
+      "label": "bad",
+      "id": "B5",
+      "domain": "finance",
+      "storyline_id": 3774,
+      "title": "Global Investors Flee Indian Bonds as Japan Insurers Take on Record Super-Long Debt",
+      "n_links": 21,
+      "avg_rel": 0.35,
+      "analysis_len": 990,
+      "failure": "summary_admits_mismatch_then_infers_thread"
+    },
+    {
+      "label": "bad",
+      "id": "B6",
+      "domain": "politics",
+      "storyline_id": 3754,
+      "title": "Trump's Foreign Policy Agenda Under Fire as Global Tensions Rise",
+      "n_links": 29,
+      "avg_rel": 0.35,
+      "analysis_len": 209,
+      "failure": "stub_summary_after_low_rel_bag"
+    },
+    {
+      "label": "mixed",
+      "id": "M1",
+      "domain": "finance",
+      "storyline_id": 3762,
+      "title": "Oil Rebound Triggers Record Bearish Bets on Kiwi Amid Iran Conflict and China Tax Crackdown",
+      "n_links": 37,
+      "on_theme_loose": 19,
+      "on_theme_strict_oil_iran": 6,
+      "analysis_len": 2363,
+      "chars_per_link": 63.9,
+      "note": "Best mixed: real oil/Iran core plus market wrap noise"
+    },
+    {
+      "label": "mixed",
+      "id": "M2",
+      "domain": "legal",
+      "storyline_id": 3776,
+      "title": "Heller and Bruen gun laws here to stay after court rulings",
+      "n_links": 4,
+      "avg_rel": 0.76,
+      "analysis_len": 1171,
+      "on_theme_strict": 1,
+      "note": "Small N but lawsuit-token glue; not labeled good"
+    }
+  ],
+  "good_examples": [],
+  "good_note": "No storyline met >=70% title-token purity with non-disclaiming summary in this rebuild window"
+}

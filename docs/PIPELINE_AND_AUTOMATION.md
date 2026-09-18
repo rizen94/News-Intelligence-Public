@@ -10,7 +10,13 @@
 |---------|----------|
 | Task names, `depends_on`, phase numbers, default intervals | `api/services/automation_manager.py` → `self.schedules` |
 | Per-task implementation | Same file → `async def _execute_<task_name>` (grep `_execute_`) |
-| Pending / backlog counts (what "has work" means) | `api/services/backlog_metrics.py` → `_count_*` helpers, `BATCH_SIZE_PER_TASK`, `SKIP_WHEN_EMPTY` |
+| Pending / backlog counts (what "has work" means) | `api/services/backlog_metrics.py` → `_count_*` helpers, `BATCH_SIZE_PER_TASK`, `SKIP_WHEN_EMPTY`; **queue_depth SSOT** also `api/shared/pipeline_queue_counts.py` |
+| Unified intake backlog (actionable vs legacy backfill) | `api/shared/unified_intake_backlog.py` → `get_unified_intake_backlog_stats()`, `sql_actionable_unified_intake()` |
+| Unified intake automation drain | `api/shared/unified_intake_extraction_runner.py` |
+| Dual-lane PopOS + Widow extraction routing | `api/shared/bulk_catchup_llm_routing.py`, `api/shared/pipeline_resource_policy.py` |
+| Fast NER pre-pass (spaCy + GLiNER) | `api/shared/fast_ner_lane.py` |
+| Semantic context chunking | `api/shared/context_chunking.py` |
+| Signal-first article lanes | `api/shared/article_signal_gate.py` |
 | Orchestrator budgets / collection interval overrides | `api/config/orchestrator_governance.yaml` |
 | Domain silos — **processing / backlog** | `shared.domain_registry` → `pipeline_url_schema_pairs()`, `get_pipeline_schema_names_active()`, `get_pipeline_active_domain_keys()` (`PIPELINE_INCLUDE` / `PIPELINE_EXCLUDE`) |
 | Domain silos — **RSS** (default full registry) | `collect_rss_feeds` → `url_schema_pairs()` unless `RSS_INGEST_MIRROR_PIPELINE=true` (then pipeline pairs); minus `RSS_INGEST_EXCLUDE_DOMAIN_KEYS` |
@@ -85,13 +91,13 @@ This section states **what "good" means per layer**, **what we deliberately igno
 | Mechanism | Role |
 |-----------|------|
 | **`SKIP_WHEN_EMPTY`** (`backlog_metrics.py`) | Phases in this set **do not enqueue** when pending count is 0 — avoids empty LLM/DB cycles. Omitted phases (e.g. `document_processing`, `content_refinement_queue`) still tick on interval so stuck work or "idle completion" is visible. |
-| **Workload-driven scheduling** (`automation_manager`) | If a phase has pending work (`get_all_pending_counts`), it becomes eligible every tick (subject to cooldown + `depends_on`), not only on its idle interval. |
+| **Workload-driven scheduling** (`automation_manager`) | If a phase has `queue_depth > 0` (`get_all_phase_queue_depths`), it becomes eligible every tick (subject to cooldown + `depends_on`), not only on its idle interval. |
 | **`depends_on`** | **Scheduling order only**: a task is not eligible until dependencies have run at least once in the manager's history window; it does *not* mean "upstream must be empty." Downstream backlog counts are the real "is there work?" signal. |
 | **Collection throttle** | When the configured downstream pending sum exceeds `COLLECTION_THROTTLE_PENDING_THRESHOLD`, **`collection_cycle` is not scheduled** (entire cycle) so quality-sensitive steps can drain — **quality before volume**. Standalone enrichment and nightly drain still run. |
 | **Pipeline domain scope** | Per-domain automation loops use **`get_pipeline_active_domain_keys()`** / **`pipeline_url_schema_pairs()`** so paused legacy silos are not enriched, synced, or story-processed. |
 | **`BATCH_SIZE_PER_TASK`** | Defines "normal" batch per run; pending **above** this is treated as backlog (shorter effective interval in backlog mode). |
 | **`BATCH_PHASES_CONTINUOUS`** + `MAX_REQUEUE_PER_WINDOW` | After `collection_cycle`, some phases may re-enqueue in the same analysis window up to a cap so one pass does not starve others. |
-| **Nightly unified window** | When `in_nightly_pipeline_window_est()` is true, `content_enrichment` / `context_sync` standalone tasks defer to **`nightly_enrichment_context`** (single orchestrated drain). When `NIGHTLY_UNIFIED_PIPELINE_ENABLED=false`, the normal `collection_cycle` + interval phases own enrichment again. |
+| **Nightly unified / heavy band** | When `in_nightly_pipeline_window_est()` is true (default **01:00–06:00** local heavy band), standalone `content_enrichment` / `context_sync` defer to **`nightly_enrichment_context`**. Outside heavy, morning (06:00–10:00) runs full GPU drains; desk_light (10:00–01:00) keeps Widow busy but defers PopOS GPU phases. When `NIGHTLY_UNIFIED_PIPELINE_ENABLED=false`, interval automation owns enrichment again. |
 
 ### Tier A — Ingestion (Reject Early)
 
@@ -122,11 +128,164 @@ For each run, **success** means: *the phase consumed a bounded batch of eligible
 | **`entity_profile_sync`** | Canonical / profile drift per pipeline domain. | Inactive domains (not in pipeline). | Profiles for resolver, RAG, claims. |
 | **`metadata_enrichment`** | Articles with content length > 50 and metadata not marked done. | Below threshold; domain not in pipeline counts. | `quality_score`, categories, `metadata.enrichment_done`. |
 | **`ml_processing`** | Same readiness as ML gate; `ml_processed` false. | Fails gate; missing columns handled gracefully. | Summaries / features for storylines and UI. |
-| **`entity_extraction`** | Articles without `article_entities` rows, with sufficient content and enrichment timing rules (`automation_manager` SQL). | **Strict domains** (`ENTITY_EXTRACTION_RESOLVE_STRICT_DOMAIN_KEYS`): mentions that do not resolve to existing `entity_canonical` are skipped (no new canonical from extraction). | `article_entities` → context mentions / entity graph. |
-| **`claim_extraction` / `claims_to_facts`** | Contexts without claims; high-confidence claims for promotion. | Low confidence, missing subjects; batch limits. | `versioned_facts` after resolution. |
+| **`unified_intake_extraction`** | When **`UNIFIED_INTAKE_EXTRACTION_ENABLED=true`** (Widow prod default): **actionable** articles still needing unified LLM (`UNIFIED_INTAKE_LEGACY_AWARE_BACKLOG=true` excludes legacy-complete rows). | Legacy-complete articles (entities + events + scores present) → marker backfill only, not LLM. When unified **off**: phase does not schedule. | Fan-out to extract tables + pass markers. |
+| **`entity_extraction` / `event_extraction` / `sentiment_analysis` / `quality_scoring`** | Legacy intake when unified is **off**. | When unified is **on**: Monitor pending **0** (phases suppressed). | Per-phase extract tables / scores. |
+| **`claim_extraction` / `claims_to_facts`** | **Actionable** contexts without claims (min text length, no `claim_extraction` pass marker). | Pass-markered empty outcomes (`parsed_empty`, `no_claims_after_filters`), text too short, batch limits. ~23k **terminal** no-claim rows are inventory, not backlog — see `get_context_claim_backlog_stats()`. | `versioned_facts` after resolution. |
 | **`event_tracking` / v5 event stack** | Unlinked contexts or articles for event pipeline; schema from pipeline list. | Domains outside pipeline; rows failing extraction heuristics. | Tracked events → briefings, cross-domain, watchlist. |
 | **Storyline family** (`discovery`, `proactive_detection`, `processing`, `automation`, `enrichment`, `rag_enhancement`) | Per-phase SQL/backlog (see `_count_*`); **only pipeline domains** in batch loops. | Inactive storylines, automation off, cooldowns, caps per domain. | Richer storylines → editorial, digest, refinement queue. |
 | **`legislative_references`** | Unscanned articles in configured **legislative** domain keys; Congress.gov configured. | No bill mentions; API key missing; rate limits (`SLEEP_BETWEEN_*`). | `legislative_references` snapshots. |
+
+#### Unified intake extraction (`UNIFIED_INTAKE_EXTRACTION_ENABLED=true`)
+
+When enabled, **`unified_intake_extraction`** replaces scheduled **`entity_extraction`**, **`event_extraction`**, **`sentiment_analysis`**, and **`quality_scoring`** (legacy executors remain for catch-up rollback). One batched PopOS GPU call per 2–3 articles fans out to:
+
+- `{schema}.article_entities` (+ dates/times/countries/keywords)
+- `intelligence.extracted_claims` (via inline `article_to_context` from enrich)
+- `public.chronological_events`
+- `articles.sentiment_score` / `quality_score`
+- Pass markers for all legacy phases + `unified_intake_extraction`
+
+**Inline context on enrich:** `content_enrichment` calls `sync_context_from_article_after_content_change` so new rows get `intelligence.contexts` without waiting for `context_sync`.
+
+**`entity_profile_build` gating:** runs only in nightly window or when extract bulk pending ≤ `PIPELINE_REFINEMENT_BULK_CLEAR_THRESHOLD` (default 50), and only for profiles with upstream-cleared article + context mentions (`ENTITY_PROFILE_BUILD_UPSTREAM_GATE`).
+
+| Env | Default | Role |
+|-----|---------|------|
+| `UNIFIED_INTAKE_EXTRACTION_ENABLED` | `true` | Opt-out: set `false` or `LEGACY_INTAKE_EXTRACTION_ENABLED=true` for per-phase intake |
+| `FAST_NER_ENABLED` | `true` | spaCy + GLiNER pre-pass before LLM entity fan-out |
+| `FAST_NER_BACKEND` | `spacy` | `spacy`, `gliner`, `both`, or `auto` |
+| `CONTEXT_CHUNKING_ENABLED` | `false` | When true, split long articles into `article` + `article_chunk` contexts. Default off — one full-body context per article (`text` columns already unbounded). |
+| `UNIFIED_INTAKE_EXTRACTION_BATCH_SIZE` | `6` | Articles per LLM call (`scripts/run_baseline_catchup.sh` mirrors this default) |
+| `UNIFIED_INTAKE_EXTRACTION_PARALLEL` | `6` | Concurrent batch lanes |
+| `UNIFIED_INTAKE_EXTRACTION_RUN_BUDGET_SECONDS` | `0` | **0 = unlimited** drain until idle or stall; positive = circuit breaker only |
+| `PIPELINE_DRAIN_STALL_ROUNDS` | `3` | Consecutive zero-progress rounds before yield |
+| `INTAKE_FUSION_ENABLED` | `true` | Extended schema (`topic_tags`, `storyline_hints`) + SQL tail |
+| `SPINE_PIPELINE_MODE` | `legacy` | `ordered`/`shadow` retained for drain-helper compatibility; **scheduling loop retired** — `pipeline_controller` owns enqueue |
+| `SPINE_SQL_TAIL_BATCH_LIMIT` | `200` | Pass 2 SQL batch size (claims_to_facts, profile link, fast topic) |
+| `UNIFIED_INTAKE_LEGACY_AWARE_BACKLOG` | `true` | Count/schedule only articles needing unified LLM; legacy-complete → pass-marker backfill |
+| `UNIFIED_INTAKE_BACKLOG_STATS_TTL_SECONDS` | `300` | Cache TTL for heavy unified backlog stats query |
+| `BACKLOG_CACHE_TTL_SECONDS` | `90` | Cache TTL for `get_all_phase_queue_depths()` / `get_all_pending_counts()` (single-flight lock prevents thundering herd) |
+| `ENTITY_PROFILE_BUILD_ANYTIME` | unset | Bypass profile build gating |
+| `ENTITY_PROFILE_BUILD_UPSTREAM_GATE` | `true` | Per-profile upstream SQL filter |
+
+**Legacy-aware backlog (June 2026):** Tens of thousands of articles may lack a `unified_intake_extraction` pass marker after cutover from legacy per-phase intake. Most already have entities, events, and scores — re-running unified LLM on them is wasteful. When `UNIFIED_INTAKE_LEGACY_AWARE_BACKLOG=true`:
+
+| Metric | Meaning |
+|--------|---------|
+| `inventory_missing_pass` | Inventory — any eligible article without unified pass marker (`total_missing_unified_pass` legacy alias) |
+| `legacy_backfill_eligible` | Marker-only backfill (no GPU) |
+| `actionable_unified_intake` | **Monitor `queue_depth` and automation selection** |
+
+**Queue depth SSOT:** `api/shared/pipeline_queue_counts.py` (`get_phase_queue_depth`, `get_all_phase_queue_depths`). Vocabulary: `api/shared/pipeline_queue_vocabulary.py`. Regression: `scripts/verify_pipeline_queue_alignment.py`. Do not use spine queue table depth as operator ETA.
+
+Bulk marker backfill: `PYTHONPATH=api python3 api/scripts/backfill_unified_intake_pass_from_legacy.py`. Diagnostic: `api/scripts/diagnose_unified_intake_backlog_detail.py`.
+
+**DB connection discipline:** Unified runner uses **one short-lived connection per domain** for article selection, then releases before LLM batches. Fan-out uses **one connection per article** with a single commit. Do not hold worker pool connections across Ollama calls.
+
+#### Intake Fusion (2-pass spine, June 2026)
+
+When `INTAKE_FUSION_ENABLED=true` (default with unified intake):
+
+| Pass | Step | LLM |
+|------|------|-----|
+| 0 | `content_enrichment` + inline `context_sync` | No |
+| 1 | `unified_intake_extraction` — entities, claims, events, scores, `topic_tags` | One batched call per group |
+| 2 | `spine_sql_tail` — `claims_to_facts`, profile links, fast topic match, event context markers | No |
+
+Drains use **stall detection** (`PIPELINE_DRAIN_STALL_ROUNDS`) instead of wall-clock budgets. Steady-state `*_RUN_BUDGET_SECONDS=0` means drain until pending floor.
+
+`SPINE_PIPELINE_MODE=ordered` runs enrich → fuse → sql tail via spine **drain helpers** (`spine_pipeline_conductor._drain_*`); **PipelineController** schedules phases — not the retired `run_spine_conductor_cycle` loop. Rollback: `INTAKE_FUSION_ENABLED=false`, `SPINE_PIPELINE_MODE=legacy`.
+
+**Flat scheduler (default):** ``PIPELINE_FLAT_SCHEDULER=true`` selects mode → priority → ``admit_phase`` (`api/shared/pipeline_admission.py`). Modes: ``mode_pressure`` (light Widow only), ``mode_preprocess`` (intake band + MR/EPB co-schedule), ``mode_postprocess`` (structure-first when preprocess stable), ``mode_maintenance`` (collection/residual). Rollback: ``PIPELINE_FLAT_SCHEDULER=false`` restores the legacy catchup/OOM/residual tree. Thresholds live under ``pipeline_controller.modes`` in `orchestrator_governance.yaml`.
+
+**Intake-first catchup (legacy / still used inside flat preprocess):** Article batches stay **FIFO** (`PIPELINE_ARTICLE_SELECTION_ORDER=fifo`) so old rows inside a phase are not starved. Separately, catchup **desired** phases prioritize the spine preprocess band while the sum of core preprocess pending exceeds `modes.intake_clear` / `intake_preprocess_clear_threshold` (default 50). When preprocess-stable phases sum ≤ `modes.preprocess_stable` (default 5) while structure-band backlog remains, flat branch is `mode_postprocess` (Widow-local structure before PopOS peers; collection deferred mid-interval). Kill-switch: `PIPELINE_POST_PROCESS_PREFERRED=false`. See `post_process_preferred` / `admit_phase` in `api/shared/pipeline_resource_policy.py` and `api/shared/pipeline_admission.py`.
+
+#### Post-spine assembly (link graph + editorial room, June 2026)
+
+After spine completes, three passes replace ~25 competing automation phases:
+
+| Pass | Owner | LLM |
+|------|--------|-----|
+| 0 | `link_indexer_service` (hooked from `spine_sql_tail`) | No — entity edges, proposals, `story_entity_index` |
+| 1 | `assembly_conductor_service` drain helpers (`ASSEMBLY_PIPELINE_MODE=ordered`) | Rare — distillation, event tail, continuation, assembly, automation, ambiguous entity resolve; **scheduling via PipelineController** |
+| 2 | `editorial_room_loop_service` | Yes — iterative Ollama + vault `25_Connections/` |
+
+Env defaults (Widow rollout): `ASSEMBLY_PIPELINE_MODE=shadow` → `ordered`, `EDITORIAL_ROOM_LOOP_ENABLED=true`.
+Storyline deep analysis: set `CONTENT_REFINEMENT_AUTO_ENQUEUE=true` to let automation enqueue `comprehensive_rag` for active storylines with ≥ `CONTENT_REFINEMENT_AUTO_ENQUEUE_MIN_ARTICLES` (default 3) linked articles and `ml_processing_status` pending. Default remains off (`CONTENT_REFINEMENT_API_ENQUEUE_ONLY=true` blocks legacy auto-enqueue unless the new flag is set). Drain via `content_refinement_queue` phase / nightly GPU window.
+
+When the refinement queue has pending durable jobs, admission allows `content_refinement_queue` even if structure catchup is hot, and the phase is in both `mode_postprocess` and `mode_maintenance` priority lists. Quiet/desk windows admit it when pending ≥ `CONTENT_REFINEMENT_QUIET_MIN_PENDING` (default 5).
+
+#### Event-identity-first assembly (politics pilot)
+
+Opt-in flag **`EVENT_IDENTITY_STORYLINE_SEED=politics`** (rollback: unset / `off`). When on:
+
+1. **`event_tracking`** / assembly call `promote_storylines_from_tracked_events` — for politics `tracked_events` with no `storyline_id`, create `politics.storylines` from `event_name`, link articles via `article_to_context` → `storyline_articles`, set `tracked_events.storyline_id` + `automation_enabled=true`. Gated by `storyline_coherence_guardrails` (generic title + cluster coherence).
+2. **`storyline_assembly`** for politics skips AI discovery (`reason=event_identity_seed`) so event-named shells own bundling; automation still attaches further members under existing quality gates.
+3. **Finance (and other domains) unchanged** — flag is hard-scoped to politics.
+
+Feature registry key: `event_identity_storyline_seed`. Optional YAML: `storyline_development.event_identity_seed` under politics (env remains the one-switch rollback).
+
+#### Storyline membership review (decoupling)
+
+Phase `storyline_membership_review` audits **existing** mega-thread membership (not suggestion intake). It scores linked articles against storyline core (title/narrative + SEI entities), then:
+
+- high offtopic → hard unlink (existing `storyline_articles` DELETE + count sync)
+- demote band → lower `relevance_score`
+- mid-band / dry-run → queue `intelligence.storyline_membership_actions` for human approve/reject
+- same pass soft-deprioritizes weak graph links (quarantine), SEI `is_core_entity=false`, and weak `tracked_events.storyline_id`
+
+**Not the same as** `storyline_review_agent` / suggestion review queue. Enable with `STORYLINE_MEMBERSHIP_REVIEW_ENABLED=true` (default **false**). Live mode keeps `STORYLINE_MEMBERSHIP_REVIEW_DRY_RUN=false` and queues proposals as `pending` unless `STORYLINE_MEMBERSHIP_AUTO_APPLY=true`. Each mega is marked in `intelligence.storyline_membership_review_state` with a membership fingerprint so unchanged storylines are not re-scanned; member add/remove re-queues. Optional LLM mid-band: `STORYLINE_MEMBERSHIP_LLM_ENABLED`. Operator UI: Stories → Review Queue → **Membership** tab.
+
+#### Postgres self-reviewing graph (embedding + drift)
+
+No Neo4j — link candidates and drift review run on Postgres:
+
+| Phase | Flag (default) | Role |
+|-------|----------------|------|
+| `embedding_link_candidates` | `EMBEDDING_LINK_CANDIDATES_ENABLED=false` | Cosine over `embedding_chunks` → `graph_connection_proposals` (`candidate`) |
+| `collision_sampling` | `COLLISION_SAMPLING_ENABLED=false` | Random out-of-prior pairs → `hypothesized` proposals |
+| `stimulus_rag` | `RAG_EVIDENCE_PULL_ENABLED=false` | Selective RAG / arXiv PDF pull when bonds need evidence |
+| `protein_harden` | `PROTEIN_HARDEN_ENABLED=false` | Promote hypothesized→candidate; enqueue refinement from established links |
+| `graph_connection_distillation` | on | Materialize proposals → `graph_connection_links` (`established`); merge gated by `story_kind` |
+| `graph_link_drift_review` | `GRAPH_LINK_DRIFT_REVIEW_ENABLED=false` | Re-score stale/weak active links; quarantine below floor. Enable: set env true + restart API, or `api/scripts/run_graph_link_drift_dry_run.py [--apply]`. Temporal decay: `GRAPH_LINK_DRIFT_TEMPORAL_HALF_LIFE_DAYS` (default 21). |
+
+Domain protein shapes (`story_kind` + `link_score_profile`) live in `api/config/domain_synthesis_config.yaml`. See [STORYLINE_CANONICAL_MODEL.md](STORYLINE_CANONICAL_MODEL.md).
+
+Cross-domain associates use `endpoints.left` / `endpoints.right` and materialize as `associated_cross_domain` with domain-qualified endpoint kinds. Link provenance: migration 270 + [GRAPH_EDGE_PROVENANCE.md](GRAPH_EDGE_PROVENANCE.md).
+
+**Post-RSS beaker kickoff:** After `collection_cycle` RSS (and after each `unified_intake_extraction` batch), when enrichment+UIE pending ≤ `catchup_clear_threshold`, AutomationManager may still request `post_intake_beaker_phases` (`CHEMISTRY_BEAKER_ENABLED`, default on). Treat as **legacy matching support**, not the critical path. See `api/shared/chemistry_beaker.py`.
+
+**Critical-path handoffs (2026-07):** After each successful batch on the event/editorial rail, AutomationManager also `request_phase`s the next owner via `api/shared/pipeline_handoffs.py` (does not wait solely on interval). Operator model: [ASSEMBLY_MODEL.md](ASSEMBLY_MODEL.md).
+
+| After batch | Requests |
+|---|---|
+| `unified_intake_extraction` | `chronological_events_catchup` (if CE watchdog &gt; 0) → `event_deduplication` |
+| `chronological_events_catchup` | `event_deduplication` |
+| `event_deduplication` | `story_continuation` |
+| `story_continuation` | `editorial_research_pass` (+ `ensure_package_from_storyline` on each link) |
+| `editorial_research_pass` / `editorial_narrative_pass` | `editorial_reduction_pass` |
+| `editorial_reduction_pass` | `editorial_research_pass` + `editorial_narrative_pass` |
+
+These phases are also in `RAW_PENDING_COUNT_KEYS` / flat postprocess+maintenance priority / structure band / `_CATCHUP_DRIVER_PHASES`, so they schedule when backlog &gt; 0.
+
+#### Storyline status and entity columns (explorer guidance)
+
+| Column / table | Meaning |
+|----------------|---------|
+| `ml_processing_status` | **SSOT for deep analysis.** UI uses this (`COALESCE` NULL → completed). Set to `completed` by successful `comprehensive_rag`. |
+| `processing_status` | Set to `pending` on discovery/proactive create; mirrored to `completed` when RAG finishes. **Do not treat all-pending as a broken pipeline** without checking `ml_processing_status`. |
+| `key_entities` | Discovery keyword seed — often generic. |
+| `{schema}.story_entity_index` + `article_entities` | Proper NER / entity audit path. |
+| `public.chronological_events` | Timeline SSOT (legacy `timeline_events` writes off by default). |
+
+**Post-flush CE restore:** After `chronological_events` was truncated while UIE pass markers remained, run automation phase `chronological_events_catchup` (or `api/scripts/backfill_chronological_events_from_uie.py`). Requires unique index `ux_chronological_events_event_fingerprint_source_article_id` (migration 257). Env: `CHRONOLOGICAL_EVENTS_CATCHUP_ENABLED`, `CHRONOLOGICAL_EVENTS_CATCHUP_BATCH`, `CHRONOLOGICAL_EVENTS_CATCHUP_LOOKBACK_DAYS`.
+| `quality_score` | Discovery may set importance; RAG uses `COALESCE(quality_score, 0.90)` so non-null discovery scores are preserved. |
+
+Retired schedulers: `POST_SPINE_RETIRED_PHASES` in `api/shared/assembly_phase_order.py` + `AUTOMATION_DISABLED_SCHEDULES`. Monitor zeros retired phase pending via `apply_intake_mode_pending_mask()`.
+
+Investigate shell graph expansion: `GET /api/investigation/graph_neighbors?seed_kind=entity&seed_id=…`.
+
+Quality gate: `api/scripts/verify_intake_fusion_quality.py --limit 100 --dry-run`.
 
 ### Operator Validation
 
@@ -153,7 +312,7 @@ Phases **not** in `OLLAMA_AUTOMATION_PHASES` (e.g. `collection_cycle`, `context_
 
 Implemented in `_execute_collection_cycle`. Typical **ordered** sub-steps (exact branches depend on env and nightly window):
 
-1. **RSS** — `_execute_rss_processing` → `collectors.rss_collector.collect_rss_feeds()` unless `AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE`. Reads all active `{schema}.rss_feeds` (via `url_schema_pairs()`), inserts/updates `{schema}.articles` with deduplication, filtering (quality, clickbait, ads, etc.). **Body text:** `_extract_rss_entry_body` picks the **longest plaintext** among `entry.content` blocks (content:encoded) and summary/description so snippets do not win over full feed HTML when both exist. **Inline full-text fetch:** if visible text is shorter than **`RSS_FULLTEXT_FETCH_THRESHOLD_CHARS`** (default 900), trafilatura fetches the article URL at ingest (and on same-URL updates when content changes); set **`RSS_ALWAYS_FETCH_FULLTEXT=true`** to always fetch. Secondary helper **`collect_rss_feed`** uses the same extraction path as the main collector.
+1. **RSS** — `_execute_rss_processing` → `collectors.rss_collector.collect_rss_feeds()` unless `AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE`. Reads all active `{schema}.rss_feeds` (via `url_schema_pairs()`), inserts/updates `{schema}.articles` with deduplication, filtering (quality, clickbait, ads, etc.). **Body text:** `_extract_rss_entry_body` picks the **longest plaintext** among `entry.content` blocks (content:encoded) and summary/description so snippets do not win over full feed HTML when both exist. **Inline full-text fetch:** if visible text is shorter than **`RSS_FULLTEXT_FETCH_THRESHOLD_CHARS`** (default 900), trafilatura fetches the article URL at ingest (and on same-URL updates when content changes); set **`RSS_ALWAYS_FETCH_FULLTEXT=true`** to always fetch.
 2. **Content enrichment drain** — Loops `content_enrichment` batches until cap or empty (skipped in nightly window when `nightly_enrichment_context` owns the drain). Uses `article_content_enrichment_service` / trafilatura-style fetch for URLs with thin RSS body (`enrichment_status` pending/failed, attempts < cap).
 3. **Document collection / processing** — PDFs and `intelligence.processed_documents` pipeline as configured.
 4. **Pending collection queue** — Any URL queue drained after RSS.
@@ -174,7 +333,7 @@ Single source of truth: `api/shared/article_processing_gates.py`.
 
 ## Phase Reference: Automation Tasks
 
-Below: **Task** = scheduler key in `schedules`. **Backlog key** = name in `backlog_metrics` / `get_all_pending_counts` when applicable. **"Selection logic"** is a short summary — see `_execute_*` and linked services for exact SQL.
+Below: **Task** = scheduler key in `schedules`. **Backlog key** = name in `pipeline_queue_counts` / `get_all_phase_queue_depths` when applicable. **"Selection logic"** is a short summary — see `_execute_*` and linked services for exact SQL.
 
 ### Phase 0 — Ingestion and Drains
 
@@ -219,7 +378,7 @@ Below: **Task** = scheduler key in `schedules`. **Backlog key** = name in `backl
 | `entity_extraction` | 300s | `collection_cycle` | `_execute_entity_extraction` | Articles pending entity phase | `{schema}.article_entities`, `articles.entities` JSONB |
 | `quality_scoring` | 300s | `collection_cycle` | `_execute_quality_scoring` | Same content-readiness gate as ML | `quality_score` |
 | `sentiment_analysis` | 300s | `collection_cycle` | `_execute_sentiment_analysis` | Same content-readiness gate as ML | Sentiment fields |
-| `topic_clustering` | 300s | `collection_cycle` | `_execute_topic_clustering` | Articles for clustering / topic backlog | `topics`, assignments, clusters |
+| `topic_clustering` | 300s | `collection_cycle` | `_execute_topic_clustering` | Articles for clustering / topic backlog | `topic_clusters`, `article_topic_clusters`, `topic_keywords` (fast lane) |
 
 ### Phase 6–8 — Storylines and RAG
 
@@ -237,24 +396,38 @@ Below: **Task** = scheduler key in `schedules`. **Backlog key** = name in `backl
 
 | Task | Default interval | depends_on | Primary implementation | Inputs / selection | Outputs |
 |------|------------------|------------|------------------------|--------------------|---------|
-| `event_extraction` | 300s | `entity_extraction` | `_execute_event_extraction_v5` | Articles / entities for events | Domain + global event tables |
-| `event_deduplication` | 600s | `event_extraction` | `_execute_event_deduplication_v5` | Duplicate event candidates | Deduplicated events |
-| `story_continuation` | 600s | `event_deduplication` | `_execute_story_continuation_v5` | Events + storylines | Continuation links |
+| `event_extraction` | 300s | `entity_extraction` | `_execute_event_extraction_v5` | Legacy path only (`LEGACY_INTAKE_EXTRACTION_ENABLED`) | Domain + global event tables |
+| `chronological_events_catchup` | 1800s | `unified_intake_extraction` | `_execute_chronological_events_catchup` | UIE-complete articles missing CE rows | Restored `chronological_events` |
+| `event_deduplication` | 600s | `unified_intake_extraction`, `chronological_events_catchup` | `_execute_event_deduplication_v5` | Unmerged / soft-link CE candidates | Coreference merges + `event_coreference_links` |
+| `story_continuation` | 600s | `event_deduplication` | `_execute_story_continuation_v5` | Unlinked CE due for a match attempt (see recheck backoff below) | Event→storyline attach + package seed |
 | `timeline_generation` | 300s | `rag_enhancement` | `_execute_timeline_generation` | Storylines / events for chronological_events | `chronological_events` |
 | `entity_enrichment` | 1800s | `entity_profile_sync` | `_execute_entity_enrichment` | Profile IDs to enrich (e.g. Wikipedia) | `entity_profiles` external fields |
 | `story_enhancement` | 300s | — | `_execute_story_enhancement` | Story update queues | Story enhancement records |
 | `content_refinement_queue` | 120s | — | `_execute_content_refinement_queue` | `intelligence.content_refinement_queue` | Deep storyline narratives / finisher jobs |
 
+**Story continuation recheck backoff.** Most unlinked `public.chronological_events` rows have
+no viable storyline, and re-scanning the newest rows every cycle re-verified the same events
+indefinitely (overnight: ~87k checks for ~360 links). Each attempt that does not auto-link
+now bumps `continuation_attempts` and `continuation_checked_at` (migration 293), and both
+the drain and the idle probe only consider events whose backoff has elapsed:
+`CONTINUATION_RECHECK_BASE_HOURS` (default 2) doubled per attempt up to
+`CONTINUATION_RECHECK_MAX_DOUBLINGS` (default 6 → ~5 days max). Never-checked events sort
+first, so fresh extractions are always matched before old rechecks. A drain reports
+`backed_off` alongside `checked` / `linked` / `flagged`.
+
 ### Phase 10–12 — Editorial, Digests, Watchlist
 
 | Task | Default interval | depends_on | Primary implementation | Inputs / selection | Outputs |
 |------|------------------|------------|------------------------|--------------------|---------|
-| `editorial_document_generation` | 1800s | `storyline_processing` | `_execute_editorial_document_generation` | Storylines missing editorial doc | `editorial_document` JSONB |
-| `editorial_briefing_generation` | 1800s | `event_tracking` | `_execute_editorial_briefing_generation` | Tracked events | `editorial_briefing` on events |
-| `storyline_synthesis` | 3600s | `storyline_processing` | `_execute_storyline_synthesis` | Storylines for long-form synthesis | Synthesis artifacts |
-| `digest_generation` | 3600s | `editorial_document_generation` | `_execute_digest_generation` | Digest inputs | Digest records |
-| `daily_briefing_synthesis` | 14400s | `storyline_synthesis` | `_execute_daily_briefing_synthesis` | Breaking / domain briefings | Briefing content |
-| `narrative_thread_build` | 7200s | `storyline_processing`, `editorial_document_generation` | `_execute_narrative_thread_build` | Cross-storyline arcs | Narrative threads |
+| `editorial_research_pass` | 1800s | `story_continuation` | `_execute_editorial_research_pass` | `in_research` packages | Package members/links; routes → Reduction/Editor |
+| `editorial_narrative_pass` | 1800s | `story_continuation` | `_execute_editorial_narrative_pass` | `in_narrative` packages | Package assembly; routes → Reduction/Editor |
+| `editorial_reduction_pass` | 1800s | research/narrative | `_execute_editorial_reduction_pass` | `in_reduction` packages | Uncouple members; routes back |
+| `editorial_document_generation` | — | — | **FULLY RETIRED** | — | Use `content_refinement_queue` / desk promote |
+| `editorial_briefing_generation` | — | — | **FULLY RETIRED** | — | Use desk promote / `narrative_stack` |
+| `digest_generation` | — | — | **FULLY RETIRED** | — | Briefings = `GET /api/{domain}/report` |
+| `daily_briefing_synthesis` | — | — | **FULLY RETIRED** | — | Briefings = report API + storyline editorial |
+| `storyline_synthesis` | 3600s | `storyline_processing` | `_execute_storyline_synthesis` | Storylines for long-form synthesis | Synthesis artifacts (scheduling suppressed under ordered) |
+| `narrative_thread_build` | 7200s | `storyline_processing` | `_execute_narrative_thread_build` | Cross-storyline arcs | Narrative threads (on-demand preferred) |
 | `watchlist_alerts` | 1200s | `story_continuation` | `_execute_watchlist_alerts_v5` | Pattern / watch rules | Alerts |
 | `pattern_matching` | 1800s | — | `_execute_pattern_matching` | Watch patterns vs new content | `pattern_matches` |
 

@@ -1,0 +1,5 @@
+# Widow tracking discovery loop — Mon/Thu 06:00 UTC
+# Install: crontab -e (merge with existing Widow cron)
+# Requires NEWS_INTEL_VAULT_PATH mount and NI API env on Widow.
+
+0 6 * * 1,4 cd /opt/news-intelligence && set -a && . ./.env && set +a && PYTHONPATH=api /opt/news-intelligence/.venv/bin/python3 api/scripts/run_tracking_discovery_loop.py >> /var/log/news-intel-tracking-discovery.log 2>&1

@@ -4,6 +4,7 @@ RSS Feed Collector for News Intelligence System v5.0
 Collects articles from RSS feeds with advanced deduplication.
 Excludes sports, entertainment, and pop culture content.
 """
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 import hashlib
 import json
@@ -12,6 +13,7 @@ import os
 import re
 import sys
 from datetime import datetime, timezone
+from typing import Any
 from urllib.parse import urljoin
 
 import feedparser
@@ -20,6 +22,12 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import psycopg2
 import psycopg2.errors
+
+from shared.article_text_metrics import compute_word_count
+
+
+def _rss_ingest_min_quality_score() -> float:
+    return max(0.0, min(1.0, env_float("RSS_INGEST_MIN_QUALITY_SCORE", 0.38)))
 
 
 def _utc_aware(dt):
@@ -31,16 +39,37 @@ def _utc_aware(dt):
     return dt.astimezone(timezone.utc)
 
 
-def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=None):
+def _enqueue_spine_enrichment_queue(schema_name: str, article_id: int | None) -> None:
+    if article_id is None:
+        return
+    try:
+        from services.spine_work_queue_service import enqueue_article, spine_work_queues_enabled
+
+        if spine_work_queues_enabled():
+            enqueue_article(schema_name, int(article_id), "content_enrichment")
+    except Exception:
+        pass
+
+
+def _insert_domain_article(
+    cur, schema_name: str, insert_vals: tuple, cred_meta=None, feed_id: int | None = None
+) -> int | None:
     """
     Insert into {schema}.articles with provenance columns when present.
     insert_vals: title, url, content, summary, published_at, created_at, source_domain,
                  quality_score, bias_score, enrichment_status, enrichment_attempts
+    Returns new article id (or None).
     """
     published_at = insert_vals[4]
     created_at = insert_vals[5]
     event_date = published_at or created_at
     ingestion_date = created_at
+    word_count = compute_word_count(insert_vals[2])
+    feed_cols = ""
+    feed_vals: tuple = ()
+    if feed_id is not None:
+        feed_cols = ", rss_feed_id, feed_id"
+        feed_vals = (feed_id, feed_id)
 
     if cred_meta:
         try:
@@ -49,30 +78,25 @@ def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=
                 INSERT INTO {schema_name}.articles
                 (title, url, content, summary, published_at, created_at, source_domain,
                  quality_score, bias_score, enrichment_status, enrichment_attempts, metadata,
-                 event_date, ingestion_date)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+                 word_count, event_date, ingestion_date{feed_cols})
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s{', %s, %s' if feed_id is not None else ''})
                 RETURNING id
                 """,
                 (
                     *insert_vals,
                     json.dumps({"source_credibility": cred_meta}),
+                    word_count,
                     event_date,
                     ingestion_date,
+                    *feed_vals,
                 ),
             )
-            return
+            row = cur.fetchone()
+            aid = int(row[0]) if row else None
+            _enqueue_spine_enrichment_queue(schema_name, aid)
+            return aid
         except psycopg2.errors.UndefinedColumn:
-            cur.execute(
-                f"""
-                INSERT INTO {schema_name}.articles
-                (title, url, content, summary, published_at, created_at, source_domain,
-                 quality_score, bias_score, enrichment_status, enrichment_attempts, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
-                RETURNING id
-                """,
-                (*insert_vals, json.dumps({"source_credibility": cred_meta})),
-            )
-            return
+            pass
 
     try:
         cur.execute(
@@ -80,11 +104,11 @@ def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=
             INSERT INTO {schema_name}.articles
             (title, url, content, summary, published_at, created_at, source_domain,
              quality_score, bias_score, enrichment_status, enrichment_attempts,
-             event_date, ingestion_date)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             word_count, event_date, ingestion_date{feed_cols})
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s{', %s, %s' if feed_id is not None else ''})
             RETURNING id
             """,
-            (*insert_vals, event_date, ingestion_date),
+            (*insert_vals, word_count, event_date, ingestion_date, *feed_vals),
         )
     except psycopg2.errors.UndefinedColumn:
         cur.execute(
@@ -97,19 +121,162 @@ def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=
             """,
             insert_vals,
         )
+    row = cur.fetchone()
+    aid = int(row[0]) if row else None
+    _enqueue_spine_enrichment_queue(schema_name, aid)
+    return aid
+
+
+def _rss_feed_interval_bounds() -> tuple[float, float, float]:
+    """min_interval, max_interval, empty_fetch_penalty from collection governance."""
+    min_s, max_s, penalty = 1800.0, 7200.0, 2.0
+    try:
+        from pathlib import Path
+
+        import yaml
+
+        path = Path(__file__).resolve().parents[1] / "config" / "orchestrator_governance.yaml"
+        if path.is_file():
+            data = yaml.safe_load(path.read_text()) or {}
+            collection = data.get("collection") or {}
+            min_s = float(collection.get("min_fetch_interval_seconds", min_s))
+            max_s = float(collection.get("max_fetch_interval_seconds", max_s))
+            penalty = float(collection.get("empty_fetch_penalty", penalty))
+    except Exception:
+        pass
+    return min_s, max_s, penalty
+
+
+def _update_feed_fetch_stats(
+    cur,
+    schema_name: str,
+    feed_id: int,
+    *,
+    success: bool,
+    articles_saved: int = 0,
+    error_message: str | None = None,
+    http_etag: str | None = None,
+    http_last_modified: str | None = None,
+) -> None:
+    """Update rss_feeds reliability columns after a fetch attempt."""
+    cache_set = ""
+    cache_vals: tuple = ()
+    if http_etag is not None or http_last_modified is not None:
+        # Only overwrite validators when the caller supplies them (incl. empty clear).
+        cache_set = ", http_etag = %s, http_last_modified = %s"
+        cache_vals = (http_etag, http_last_modified)
+
+    min_s, max_s, penalty = _rss_feed_interval_bounds()
+
+    if success:
+        empty_inc = 0 if articles_saved > 0 else 1
+        # Empty fetch: raise fetch_interval_seconds toward max; non-empty: ease toward min.
+        interval_set = """,
+                fetch_interval_seconds = CASE
+                    WHEN %s > 0 THEN GREATEST(
+                        %s::int,
+                        (COALESCE(fetch_interval_seconds, %s)::float / %s)::int
+                    )
+                    ELSE LEAST(
+                        %s::int,
+                        GREATEST(
+                            %s::int,
+                            (COALESCE(fetch_interval_seconds, %s)::float * %s)::int
+                        )
+                    )
+                END"""
+        interval_vals = (
+            articles_saved,
+            int(min_s),
+            int(min_s),
+            float(penalty),
+            int(max_s),
+            int(min_s),
+            int(min_s),
+            float(penalty),
+        )
+        cur.execute(
+            f"""
+            UPDATE {schema_name}.rss_feeds
+            SET last_fetched_at = NOW(),
+                last_success = NOW(),
+                last_error_message = NULL,
+                status = CASE WHEN status = 'warning' THEN status ELSE 'active' END,
+                success_rate = LEAST(1.0, COALESCE(success_rate, 0.5) * 0.85 + 0.15),
+                reliability_score = LEAST(1.0, COALESCE(reliability_score, 0.5) * 0.9 + 0.1),
+                filters = COALESCE(filters, '{{}}'::jsonb)
+                    || jsonb_build_object(
+                        'last_fetch_articles_saved', %s,
+                        'consecutive_empty_fetches',
+                        CASE WHEN %s > 0 THEN 0
+                             ELSE COALESCE((filters->>'consecutive_empty_fetches')::int, 0) + %s
+                        END
+                    ),
+                updated_at = NOW()
+                {interval_set}
+                {cache_set}
+            WHERE id = %s
+            """,
+            (
+                articles_saved,
+                articles_saved,
+                empty_inc,
+                *interval_vals,
+                *cache_vals,
+                feed_id,
+            ),
+        )
+    else:
+        err = (error_message or "fetch failed")[:500]
+        cur.execute(
+            f"""
+            UPDATE {schema_name}.rss_feeds
+            SET last_fetched_at = NOW(),
+                last_error_message = %s,
+                status = CASE WHEN is_active THEN 'warning' ELSE status END,
+                success_rate = GREATEST(0.0, COALESCE(success_rate, 0.5) * 0.7),
+                reliability_score = GREATEST(0.0, COALESCE(reliability_score, 0.5) * 0.8),
+                filters = COALESCE(filters, '{{}}'::jsonb)
+                    || jsonb_build_object(
+                        'consecutive_empty_fetches',
+                        COALESCE((filters->>'consecutive_empty_fetches')::int, 0) + 1,
+                        'last_fetch_error', %s
+                    ),
+                fetch_interval_seconds = LEAST(
+                    %s::int,
+                    GREATEST(
+                        %s::int,
+                        (COALESCE(fetch_interval_seconds, %s::int)::float * %s)::int
+                    )
+                ),
+                updated_at = NOW()
+                {cache_set}
+            WHERE id = %s
+            """,
+            (
+                err,
+                err,
+                int(max_s),
+                int(min_s),
+                int(min_s),
+                float(penalty),
+                *cache_vals,
+                feed_id,
+            ),
+        )
 
 
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 
-# Add parent directory to path for service imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from shared.article_processing_gates import (
+# Add project root to path for service imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
+from api.shared.article_processing_gates import (
     article_eligible_for_context,
     finalize_rss_enrichment_after_inline,
     rss_item_passes_ingest_gates,
 )
-from services.bias_detection_service import calculate_domain_bias_score
+from api.services.bias_detection_service import calculate_domain_bias_score
 
 # Credit-card / banking product native ads and CNN commerce verticals (Underscored, etc.).
 # Used by is_advertisement and quality scoring — not hard news.
@@ -340,7 +507,12 @@ def _title_looks_like_credit_card_product_roundup(title: str) -> bool:
 def _post_credibility_quality_cap_native_ads(
     quality_score: float, title: str, content: str, url: str
 ) -> float:
-    """Source-credibility tier multipliers can push a capped score back above 0.3."""
+    """Source-credibility tier multipliers can push a capped score back above 0.3.
+
+    Paywall teaser caps are applied separately at store time via
+    ``_apply_paywall_teaser_quality_cap`` so short Bloomberg/FT bodies still
+    pass ``RSS_INGEST_MIN_QUALITY_SCORE`` and land as ``pending``.
+    """
     combined = f"{title} {content} {url}".lower()
     if _commerce_or_finance_vertical_url(url) or any(
         p in combined for p in _FINANCIAL_NATIVE_AD_PHRASES
@@ -350,6 +522,24 @@ def _post_credibility_quality_cap_native_ads(
         return min(float(quality_score), 0.28)
     if _title_looks_like_credit_card_product_roundup(title):
         return min(float(quality_score), 0.28)
+    return float(quality_score)
+
+
+def _apply_paywall_teaser_quality_cap(
+    quality_score: float, content: str, url: str | None
+) -> float:
+    """Cap stored quality for known paywall hosts when the body is still a teaser."""
+    try:
+        from shared.article_processing_gates import body_is_fulltext
+        from services.article_content_enrichment_service import (
+            HEADLINE_ONLY_QUALITY_CAP,
+            is_known_paywall_host,
+        )
+
+        if is_known_paywall_host(url) and not body_is_fulltext(content):
+            return min(float(quality_score), HEADLINE_ONLY_QUALITY_CAP)
+    except Exception:
+        pass
     return float(quality_score)
 
 
@@ -372,7 +562,7 @@ _rss_http_session: requests.Session | None = None
 
 
 def _rss_http_user_agent() -> str:
-    return os.environ.get(
+    return env_str(
         "RSS_HTTP_USER_AGENT",
         "NewsIntelligence/1.0 (+https://github.com/news-intelligence)",
     )
@@ -400,7 +590,7 @@ def _get_rss_http_session() -> requests.Session:
 
 def _rss_fetch_timeout() -> int:
     try:
-        return max(5, int(os.environ.get("RSS_TIMEOUT", "30").strip() or "30"))
+        return max(5, int(env_str("RSS_TIMEOUT", "30").strip() or "30"))
     except ValueError:
         return 30
 
@@ -417,21 +607,76 @@ def _rss_plain_text_len(html_or_text: str | None) -> int:
 def _rss_fulltext_fetch_threshold() -> int:
     """
     If RSS body plaintext is shorter than this, try trafilatura on the article URL at ingest.
-    Default 900 — catches most headline+teaser feeds while avoiding redundant fetches when
-    the feed already carries content:encoded. Override: RSS_FULLTEXT_FETCH_THRESHOLD_CHARS.
+    SSOT: shared.article_processing_gates.fulltext_min_chars (FULLTEXT_MIN_CHARS or
+    RSS_FULLTEXT_FETCH_THRESHOLD_CHARS, default 900).
     """
-    try:
-        return max(200, int(os.environ.get("RSS_FULLTEXT_FETCH_THRESHOLD_CHARS", "900")))
-    except ValueError:
-        return 900
+    from shared.article_processing_gates import fulltext_min_chars
+
+    return fulltext_min_chars()
 
 
 def _rss_should_fetch_fulltext(body: str | None, url: str | None) -> bool:
+    """
+    Inline fulltext at RSS ingest is off by default — content_enrichment owns body
+    fetches (avoids holding DB connections across HTTP). Opt in with
+    RSS_INLINE_FULLTEXT_ENABLED=true or RSS_ALWAYS_FETCH_FULLTEXT=true.
+    """
     if not url or not str(url).strip():
         return False
-    if os.environ.get("RSS_ALWAYS_FETCH_FULLTEXT", "").strip().lower() in ("1", "true", "yes"):
+    always = env_str("RSS_ALWAYS_FETCH_FULLTEXT", "").strip().lower() in ("1", "true", "yes")
+    enabled = env_str("RSS_INLINE_FULLTEXT_ENABLED", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if not always and not enabled:
+        return False
+    if always:
         return True
     return _rss_plain_text_len(body) < _rss_fulltext_fetch_threshold()
+
+
+def _rss_existing_body_skips_inline_fetch(
+    existing_content: str | None,
+    existing_enrichment: str | None,
+) -> bool:
+    """True when DB already has a fulltext-enriched body — avoid re-fetch on URL refresh."""
+    from shared.article_processing_gates import body_is_fulltext
+
+    status = (existing_enrichment or "").strip().lower()
+    if status == "enriched" and body_is_fulltext(existing_content):
+        return True
+    return _rss_plain_text_len(existing_content) >= _rss_fulltext_fetch_threshold()
+
+
+def _rss_prefer_store_body_on_update(
+    feed_body: str | None,
+    existing_content: str | None,
+    existing_enrichment: str | None,
+    url: str | None,
+) -> tuple[str, bool, bool]:
+    """
+    Choose body for same-URL updates without redundant trafilatura.
+    Never replace a long/enriched DB body with a shorter feed snippet or failed fetch.
+    Skip inline fulltext when existing content is enriched or long enough.
+    Returns (store_body, trafilatura_attempted, trafilatura_ok).
+    """
+    feed = feed_body or ""
+    existing = existing_content or ""
+    if _rss_existing_body_skips_inline_fetch(existing, existing_enrichment):
+        # Skip inline fetch; only use feed body if it's meaningfully longer than existing.
+        feed_len = _rss_plain_text_len(feed)
+        db_len = _rss_plain_text_len(existing)
+        if feed_len >= _rss_fulltext_fetch_threshold() and feed_len > int(db_len * 1.1):
+            return feed, False, False
+        return existing, False, False
+    # Otherwise, attempt inline fetch and use result if successful, else keep existing if longer.
+    store, attempted, ok = _maybe_inline_fetch_article_body(feed, url)
+    if not ok and _rss_plain_text_len(existing) > _rss_plain_text_len(store):
+        chosen = existing
+    else:
+        chosen = store
+    return chosen, attempted, ok
 
 
 def _rss_entry_savepoint_release(feed_cur) -> None:
@@ -508,15 +753,41 @@ def _maybe_inline_fetch_article_body(rss_body: str, url: str | None) -> tuple[st
         return rss_body, True, False
 
 
-def fetch_and_parse_rss(feed_url: str):
+def fetch_and_parse_rss(
+    feed_url: str,
+    *,
+    etag: str | None = None,
+    last_modified: str | None = None,
+) -> tuple[Any | None, dict[str, Any]]:
     """
     Fetch feed with retries and parse via feedparser.
-    If RSS_HTML_FEED_DISCOVERY=true and the URL returns HTML with no entries, try <link rel=alternate> RSS/Atom.
+
+    Sends If-None-Match / If-Modified-Since when validators are known. On HTTP 304,
+    returns ``(None, {"not_modified": True, ...})`` so callers skip parse/entry work.
+
+    If RSS_HTML_FEED_DISCOVERY=true and the URL returns HTML with no entries, try
+    ``<link rel=alternate>`` RSS/Atom.
     """
     timeout = _rss_fetch_timeout()
     session = _get_rss_http_session()
-    r = session.get(feed_url, timeout=timeout)
+    headers: dict[str, str] = {}
+    if etag:
+        headers["If-None-Match"] = etag
+    if last_modified:
+        headers["If-Modified-Since"] = last_modified
+    r = session.get(feed_url, timeout=timeout, headers=headers or None)
+    if r.status_code == 304:
+        return None, {
+            "not_modified": True,
+            "etag": etag,
+            "last_modified": last_modified,
+        }
     r.raise_for_status()
+    meta = {
+        "not_modified": False,
+        "etag": (r.headers.get("ETag") or "").strip() or None,
+        "last_modified": (r.headers.get("Last-Modified") or "").strip() or None,
+    }
     content = r.content
     ct = (r.headers.get("Content-Type") or "").lower()
     parsed = feedparser.parse(content)
@@ -524,7 +795,7 @@ def fetch_and_parse_rss(feed_url: str):
     if (
         len(entries) == 0
         and "html" in ct
-        and os.environ.get("RSS_HTML_FEED_DISCOVERY", "").lower() in ("1", "true", "yes")
+        and env_str("RSS_HTML_FEED_DISCOVERY", "").lower() in ("1", "true", "yes")
     ):
         try:
             text = r.text
@@ -548,15 +819,19 @@ def fetch_and_parse_rss(feed_url: str):
                 r2 = session.get(alt, timeout=timeout)
                 r2.raise_for_status()
                 parsed = feedparser.parse(r2.content)
+                meta["etag"] = (r2.headers.get("ETag") or "").strip() or meta.get("etag")
+                meta["last_modified"] = (
+                    (r2.headers.get("Last-Modified") or "").strip() or meta.get("last_modified")
+                )
         except Exception as e:
             logger.debug("RSS HTML feed discovery failed: %s", e)
-    return parsed
+    return parsed, meta
 
 
 def _rss_max_entries_per_feed() -> int:
     """Cap items processed per feed per run (env RSS_MAX_ENTRIES_PER_FEED, default 100, clamped 1–500)."""
     try:
-        n = int(os.environ.get("RSS_MAX_ENTRIES_PER_FEED", "100").strip() or "100")
+        n = int(env_str("RSS_MAX_ENTRIES_PER_FEED", "100").strip() or "100")
     except ValueError:
         n = 100
     return max(1, min(n, 500))
@@ -1636,17 +1911,63 @@ def collect_rss_feeds() -> int:
 
         for domain_key, schema_name in domains:
             try:
+                min_s, max_s, penalty = _rss_feed_interval_bounds()
                 cur.execute(
                     f"""
-                    SELECT id, feed_name, feed_url, %s::text AS domain_key, %s::text AS schema_name
+                    SELECT id, feed_name, feed_url, %s::text AS domain_key, %s::text AS schema_name,
+                           http_etag, http_last_modified
                     FROM {schema_name}.rss_feeds
                     WHERE is_active = true
+                      AND (
+                        last_fetched_at IS NULL
+                        OR last_fetched_at <= NOW() - (
+                          LEAST(
+                            %s::float,
+                            GREATEST(
+                              %s::float,
+                              COALESCE(fetch_interval_seconds, %s)::float
+                                * POWER(
+                                    %s::float,
+                                    LEAST(
+                                      COALESCE((filters->>'consecutive_empty_fetches')::int, 0),
+                                      10
+                                    )
+                                  )
+                            )
+                          ) * INTERVAL '1 second'
+                        )
+                      )
+                    ORDER BY COALESCE(priority, 5) ASC,
+                             COALESCE(tier, 2) ASC,
+                             last_fetched_at NULLS FIRST
                 """,
-                    (domain_key, schema_name),
+                    (domain_key, schema_name, max_s, min_s, int(min_s), penalty),
                 )
                 domain_feeds = cur.fetchall()
                 feeds.extend(domain_feeds)
-                logger.info(f"Found {len(domain_feeds)} active feeds in {domain_key} domain")
+                logger.info(
+                    "Found %s due feeds in %s domain (active cadence filter)",
+                    len(domain_feeds),
+                    domain_key,
+                )
+            except psycopg2.errors.UndefinedColumn:
+                # Pre-migration / missing interval columns: fall back to all active.
+                try:
+                    cur.execute(
+                        f"""
+                        SELECT id, feed_name, feed_url, %s::text AS domain_key, %s::text AS schema_name,
+                               NULL::text AS http_etag, NULL::text AS http_last_modified
+                        FROM {schema_name}.rss_feeds
+                        WHERE is_active = true
+                    """,
+                        (domain_key, schema_name),
+                    )
+                    domain_feeds = cur.fetchall()
+                    feeds.extend(domain_feeds)
+                    logger.info(f"Found {len(domain_feeds)} active feeds in {domain_key} domain")
+                except Exception as e:
+                    logger.warning(f"Error querying feeds from {schema_name} schema: {e}")
+                    continue
             except Exception as e:
                 logger.warning(f"Error querying feeds from {schema_name} schema: {e}")
                 continue
@@ -1666,7 +1987,19 @@ def collect_rss_feeds() -> int:
             import time as _time
 
             feed_start = _time.time()
-            feed_id, feed_name, feed_url, domain_key, schema_name = feed_data
+            if len(feed_data) >= 7:
+                (
+                    feed_id,
+                    feed_name,
+                    feed_url,
+                    domain_key,
+                    schema_name,
+                    feed_etag,
+                    feed_last_modified,
+                ) = feed_data[:7]
+            else:
+                feed_id, feed_name, feed_url, domain_key, schema_name = feed_data[:5]
+                feed_etag, feed_last_modified = None, None
             if not schema_name:
                 from shared.domain_registry import first_active_domain_key, resolve_domain_schema
 
@@ -1714,24 +2047,119 @@ def collect_rss_feeds() -> int:
                 filtered_impact = 0
 
                 try:
-                    # Parse RSS feed with timeout (HTTP retries + UA in fetch_and_parse_rss)
+                    # Parse RSS feed with timeout (HTTP retries + UA + conditional GET)
                     def parse_feed():
-                        return fetch_and_parse_rss(feed_url)
+                        return fetch_and_parse_rss(
+                            feed_url,
+                            etag=feed_etag,
+                            last_modified=feed_last_modified,
+                        )
 
                     with ThreadPoolExecutor(max_workers=1) as executor:
                         future = executor.submit(parse_feed)
                         try:
-                            feed = future.result(timeout=30)
+                            feed, fetch_meta = future.result(timeout=30)
                         except FutureTimeoutError:
                             raise TimeoutError("RSS parsing timeout")
 
+                    if fetch_meta.get("not_modified") or feed is None:
+                        try:
+                            _update_feed_fetch_stats(
+                                feed_cur,
+                                schema_name,
+                                feed_id,
+                                success=True,
+                                articles_saved=0,
+                                http_etag=fetch_meta.get("etag") or feed_etag,
+                                http_last_modified=fetch_meta.get("last_modified")
+                                or feed_last_modified,
+                            )
+                            feed_conn.commit()
+                        except psycopg2.errors.UndefinedColumn:
+                            feed_conn.rollback()
+                            _update_feed_fetch_stats(
+                                feed_cur,
+                                schema_name,
+                                feed_id,
+                                success=True,
+                                articles_saved=0,
+                            )
+                            feed_conn.commit()
+                        logger.info(f"✅ {feed_name}: not modified (HTTP 304)")
+                        _rss_log("success", fetched=0, saved=0)
+                        return {
+                            "articles_added": 0,
+                            "articles_updated": 0,
+                            "duplicates": 0,
+                            "excluded": 0,
+                            "filtered_clickbait": 0,
+                            "filtered_ads": 0,
+                            "filtered_quality": 0,
+                            "filtered_impact": 0,
+                            "error": None,
+                            "not_modified": True,
+                        }
+
                     _cap = _rss_max_entries_per_feed()
-                    for entry in feed.entries[:_cap]:
+                    entries = list(feed.entries[:_cap])
+                    # One batched URL lookup instead of per-entry SELECTs.
+                    entry_urls = [
+                        (e.get("link") or "")[:500]
+                        for e in entries
+                        if (e.get("link") or "").strip()
+                    ]
+                    existing_by_url: dict[str, tuple] = {}
+                    if entry_urls:
+                        feed_cur.execute(
+                            f"""
+                            SELECT id, url, content, published_at, updated_at,
+                                   enrichment_status, created_at
+                            FROM {schema_name}.articles
+                            WHERE url = ANY(%s)
+                            """,
+                            (entry_urls,),
+                        )
+                        for row in feed_cur.fetchall():
+                            existing_by_url[str(row[1])] = (
+                                row[0],
+                                row[2],
+                                row[3],
+                                row[4],
+                                row[5],
+                                row[6],
+                            )
+
+                    for entry in entries:
                         try:
                             feed_cur.execute("SAVEPOINT sp_article")
                             title = entry.get("title", "")[:500]
                             url = entry.get("link", "")[:500]
                             content = _extract_rss_entry_body(entry)
+
+                            # Fast path: known URL with enriched/long body and snippet feed → skip
+                            # before expensive keyword/regex scoring.
+                            existing_by_url_row = existing_by_url.get(url) if url else None
+                            if existing_by_url_row:
+                                (
+                                    _ex_id,
+                                    _ex_content,
+                                    _ex_pub,
+                                    _ex_updated,
+                                    _ex_enrichment,
+                                    _ex_created,
+                                ) = existing_by_url_row
+                                if _rss_existing_body_skips_inline_fetch(
+                                    _ex_content, _ex_enrichment
+                                ):
+                                    feed_len = _rss_plain_text_len(content or "")
+                                    db_len = _rss_plain_text_len(_ex_content)
+                                    if not (
+                                        feed_len >= _rss_fulltext_fetch_threshold()
+                                        and feed_len > int(db_len * 1.1)
+                                    ):
+                                        duplicates_rejected += 1
+                                        _rss_entry_savepoint_release(feed_cur)
+                                        continue
 
                             # Filter excluded content (sports/entertainment/pop culture + domain-specific)
                             if is_excluded_content(
@@ -1770,11 +2198,12 @@ def collect_rss_feeds() -> int:
                             )
 
                             # Filter by minimum quality score
-                            if quality_score < 0.3:
+                            min_quality = _rss_ingest_min_quality_score()
+                            if quality_score < min_quality:
                                 filtered_quality += 1
                                 excluded_count += 1
                                 logger.debug(
-                                    f"Article excluded (quality score {quality_score:.2f} < 0.3): {title[:60]}..."
+                                    f"Article excluded (quality score {quality_score:.2f} < {min_quality}): {title[:60]}..."
                                 )
                                 _rss_entry_savepoint_release(feed_cur)
                                 continue
@@ -1809,16 +2238,9 @@ def collect_rss_feeds() -> int:
                             if hasattr(entry, "updated_parsed") and entry.updated_parsed:
                                 feed_updated_dt = _utc_aware(datetime(*entry.updated_parsed[:6]))
 
-                            # Check for existing article by URL (update-aware)
-                            feed_cur.execute(
-                                f"""
-                                SELECT id, content, published_at, updated_at, enrichment_status, created_at
-                                FROM {schema_name}.articles WHERE url = %s
-                            """,
-                                (url,),
-                            )
-                            existing_by_url = feed_cur.fetchone()
-                            if existing_by_url:
+                            # Check for existing article by URL (from batched prefetch)
+                            existing_by_url_hit = existing_by_url.get(url) if url else None
+                            if existing_by_url_hit:
                                 (
                                     existing_id,
                                     existing_content,
@@ -1826,7 +2248,19 @@ def collect_rss_feeds() -> int:
                                     existing_updated,
                                     existing_enrichment,
                                     existing_created_at,
-                                ) = existing_by_url
+                                ) = existing_by_url_hit
+                                # PRIORITY 1 FIX: Skip update entirely if DB already has enriched/long body
+                                # and feed body is just a snippet. Never overwrite enriched content with snippets.
+                                if _rss_existing_body_skips_inline_fetch(existing_content, existing_enrichment):
+                                    # Only update if feed provides meaningfully longer content (not just snippet vs enriched)
+                                    feed_len = _rss_plain_text_len(content or "")
+                                    db_len = _rss_plain_text_len(existing_content)
+                                    if not (feed_len >= _rss_fulltext_fetch_threshold() and feed_len > int(db_len * 1.1)):
+                                        # DB body is already enriched/long; feed body is snippet → skip update entirely
+                                        duplicates_rejected += 1
+                                        _rss_entry_savepoint_release(feed_cur)
+                                        continue
+                                
                                 new_content_hash = hashlib.md5((content or "").encode()).hexdigest()
                                 existing_content_hash = (
                                     hashlib.md5((existing_content or "").encode()).hexdigest()
@@ -1846,15 +2280,41 @@ def collect_rss_feeds() -> int:
                                     or not (existing_content or "").strip()
                                 )
                                 if should_update:
-                                    store_content, _, _ = _maybe_inline_fetch_article_body(
-                                        content, url
+                                    store_content, upd_attempted, upd_ok = (
+                                        _rss_prefer_store_body_on_update(
+                                            content,
+                                            existing_content,
+                                            existing_enrichment,
+                                            url,
+                                        )
                                     )
+                                    # Skip update if content is essentially unchanged to avoid unnecessary work
+                                    if store_content.strip() == existing_content.strip():
+                                        duplicates_rejected += 1
+                                        _rss_entry_savepoint_release(feed_cur)
+                                        continue
+
+                                    new_enrichment_status, new_enrichment_attempts = (
+                                        finalize_rss_enrichment_after_inline(
+                                            store_content,
+                                            created_at=existing_created_at
+                                            or datetime.now(timezone.utc),
+                                            url=url,
+                                            trafilatura_attempted=upd_attempted,
+                                            trafilatura_ok=upd_ok,
+                                        )
+                                    )
+                                    quality_score = _apply_paywall_teaser_quality_cap(
+                                        quality_score, store_content, url
+                                    )
+
                                     raw_bias = calculate_domain_bias_score(
                                         domain_key, title, store_content, feed_name
                                     )
                                     bias_score = (raw_bias + 1) / 2 if raw_bias is not None else 0.5
                                     bias_score = max(0.0, min(1.0, bias_score))
                                     quality_score = max(0.0, min(1.0, quality_score))
+                                    store_wc = compute_word_count(store_content)
                                     if cred_meta:
                                         try:
                                             feed_cur.execute(
@@ -1862,6 +2322,9 @@ def collect_rss_feeds() -> int:
                                                 UPDATE {schema_name}.articles SET
                                                 title = %s, content = %s, summary = %s, published_at = %s,
                                                 source_domain = %s, quality_score = %s, bias_score = %s,
+                                                word_count = %s,
+                                                enrichment_status = %s,
+                                                enrichment_attempts = %s,
                                                 metadata = COALESCE(metadata, '{{}}'::jsonb) || %s::jsonb,
                                                 updated_at = NOW()
                                                 WHERE id = %s
@@ -1874,6 +2337,9 @@ def collect_rss_feeds() -> int:
                                                     feed_name,
                                                     quality_score,
                                                     bias_score,
+                                                    store_wc,
+                                                    new_enrichment_status,
+                                                    new_enrichment_attempts,
                                                     json.dumps({"source_credibility": cred_meta}),
                                                     existing_id,
                                                 ),
@@ -1883,7 +2349,11 @@ def collect_rss_feeds() -> int:
                                                 f"""
                                                 UPDATE {schema_name}.articles SET
                                                 title = %s, content = %s, summary = %s, published_at = %s,
-                                                source_domain = %s, quality_score = %s, bias_score = %s, updated_at = NOW()
+                                                source_domain = %s, quality_score = %s, bias_score = %s,
+                                                word_count = %s,
+                                                enrichment_status = %s,
+                                                enrichment_attempts = %s,
+                                                updated_at = NOW()
                                                 WHERE id = %s
                                                 """,
                                                 (
@@ -1894,6 +2364,9 @@ def collect_rss_feeds() -> int:
                                                     feed_name,
                                                     quality_score,
                                                     bias_score,
+                                                    store_wc,
+                                                    new_enrichment_status,
+                                                    new_enrichment_attempts,
                                                     existing_id,
                                                 ),
                                             )
@@ -1902,7 +2375,11 @@ def collect_rss_feeds() -> int:
                                             f"""
                                             UPDATE {schema_name}.articles SET
                                             title = %s, content = %s, summary = %s, published_at = %s,
-                                            source_domain = %s, quality_score = %s, bias_score = %s, updated_at = NOW()
+                                            source_domain = %s, quality_score = %s, bias_score = %s,
+                                            word_count = %s,
+                                            enrichment_status = %s,
+                                            enrichment_attempts = %s,
+                                            updated_at = NOW()
                                             WHERE id = %s
                                             """,
                                             (
@@ -1913,6 +2390,9 @@ def collect_rss_feeds() -> int:
                                                 feed_name,
                                                 quality_score,
                                                 bias_score,
+                                                store_wc,
+                                                new_enrichment_status,
+                                                new_enrichment_attempts,
                                                 existing_id,
                                             ),
                                         )
@@ -1925,7 +2405,7 @@ def collect_rss_feeds() -> int:
                                             INSERT INTO {schema_name}.topic_extraction_queue
                                             (article_id, status, priority, created_at)
                                             VALUES (%s, 'pending', 2, NOW())
-                                            ON CONFLICT (article_id) DO UPDATE SET status = 'pending', priority = 2, created_at = NOW()
+                                            ON CONFLICT (article_id) DO NOTHING
                                         """,
                                             (existing_id,),
                                         )
@@ -1935,7 +2415,7 @@ def collect_rss_feeds() -> int:
 
                                         if article_eligible_for_context(
                                             store_content,
-                                            existing_enrichment,
+                                            new_enrichment_status,
                                             existing_created_at,
                                         ):
                                             ensure_context_for_article(domain_key, existing_id)
@@ -1950,10 +2430,8 @@ def collect_rss_feeds() -> int:
                                             feed_cur.execute("ROLLBACK TO SAVEPOINT sp_aux")
                                         except Exception:
                                             pass
-                                else:
-                                    duplicates_rejected += 1
-                                _rss_entry_savepoint_release(feed_cur)
-                                continue
+                                    _rss_entry_savepoint_release(feed_cur)
+                                    continue
                             # Check for duplicate by title + source (different URL = different article, skip)
                             feed_cur.execute(
                                 f"""
@@ -2009,6 +2487,10 @@ def collect_rss_feeds() -> int:
                                     trafilatura_ok=trafilatura_ok,
                                 )
                             )
+                            quality_score = _apply_paywall_teaser_quality_cap(
+                                quality_score, insert_content, url
+                            )
+                            quality_score = max(0.0, min(1.0, quality_score))
 
                             # Insert article (scores already calculated above); optional metadata for source_credibility
                             insert_vals = (
@@ -2024,13 +2506,15 @@ def collect_rss_feeds() -> int:
                                 enrichment_status,
                                 enrichment_attempts,
                             )
-                            _insert_domain_article(
-                                feed_cur, schema_name, insert_vals, cred_meta=cred_meta or None
+                            article_id = _insert_domain_article(
+                                feed_cur,
+                                schema_name,
+                                insert_vals,
+                                cred_meta=cred_meta or None,
+                                feed_id=feed_id,
                             )
 
-                            result = feed_cur.fetchone()
-                            if result and feed_cur.rowcount > 0:
-                                article_id = result[0]
+                            if article_id:
                                 articles_added += 1
 
                                 # Nested savepoint: queue/context failures must not poison sp_article.
@@ -2066,7 +2550,7 @@ def collect_rss_feeds() -> int:
                                         feed_cur.execute("ROLLBACK TO SAVEPOINT sp_aux")
                                     except Exception:
                                         pass
-                                feed_conn.commit()
+                                # Defer commit to end-of-feed (C5) — one transaction per feed
                             else:
                                 # INSERT returned no row (unexpected); clear savepoint for next entry
                                 _rss_entry_savepoint_release(feed_cur)
@@ -2076,17 +2560,28 @@ def collect_rss_feeds() -> int:
                             _rss_entry_savepoint_rollback(feed_cur, feed_conn)
                             continue
 
-                    # Update feed timestamp
-                    feed_cur.execute(
-                        f"""
-                        UPDATE {schema_name}.rss_feeds
-                        SET last_fetched_at = NOW()
-                        WHERE id = %s
-                    """,
-                        (feed_id,),
-                    )
-
-                    feed_conn.commit()
+                    # Update feed fetch stats (+ HTTP cache validators when columns exist)
+                    try:
+                        _update_feed_fetch_stats(
+                            feed_cur,
+                            schema_name,
+                            feed_id,
+                            success=True,
+                            articles_saved=articles_added + articles_updated,
+                            http_etag=fetch_meta.get("etag"),
+                            http_last_modified=fetch_meta.get("last_modified"),
+                        )
+                        feed_conn.commit()
+                    except psycopg2.errors.UndefinedColumn:
+                        feed_conn.rollback()
+                        _update_feed_fetch_stats(
+                            feed_cur,
+                            schema_name,
+                            feed_id,
+                            success=True,
+                            articles_saved=articles_added + articles_updated,
+                        )
+                        feed_conn.commit()
 
                     # Log detailed stats for this feed
                     filter_summary = []
@@ -2129,7 +2624,17 @@ def collect_rss_feeds() -> int:
 
                 except TimeoutError:
                     logger.error(f"⏱️ Timeout processing feed: {feed_name}")
-                    feed_conn.rollback()
+                    try:
+                        _update_feed_fetch_stats(
+                            feed_cur,
+                            schema_name,
+                            feed_id,
+                            success=False,
+                            error_message="Timeout",
+                        )
+                        feed_conn.commit()
+                    except Exception:
+                        feed_conn.rollback()
                     _rss_log("error", err="Timeout")
                     return {
                         "articles_added": 0,
@@ -2140,7 +2645,17 @@ def collect_rss_feeds() -> int:
                     }
                 except Exception as e:
                     logger.error(f"❌ Error processing feed {feed_name}: {e}")
-                    feed_conn.rollback()
+                    try:
+                        _update_feed_fetch_stats(
+                            feed_cur,
+                            schema_name,
+                            feed_id,
+                            success=False,
+                            error_message=str(e),
+                        )
+                        feed_conn.commit()
+                    except Exception:
+                        feed_conn.rollback()
                     _rss_log("error", err=str(e))
                     return {
                         "articles_added": 0,
@@ -2188,7 +2703,7 @@ def collect_rss_feeds() -> int:
             if total_filtered_ads > 0:
                 logger.info(f"     - Advertisements: {total_filtered_ads}")
             if total_filtered_quality > 0:
-                logger.info(f"     - Low quality score (<0.3): {total_filtered_quality}")
+                logger.info(f"     - Low quality score (<{_rss_ingest_min_quality_score()}): {total_filtered_quality}")
             if total_filtered_impact > 0:
                 logger.info(f"     - Low impact score (<0.25): {total_filtered_impact}")
             # Content exclusion (sports/entertainment) is the remainder
@@ -2207,259 +2722,6 @@ def collect_rss_feeds() -> int:
 
     except Exception as e:
         logger.error(f"Error during RSS collection: {e}")
-        conn.rollback()
-        return 0
-    finally:
-        if conn:
-            conn.close()
-
-
-def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
-    """
-    Collect articles from a specific RSS feed
-    Args:
-        feed_url: URL of the RSS feed
-        feed_name: Name of the feed for logging
-    Returns:
-        Number of articles added
-    """
-    logger.info(f"Collecting from single feed: {feed_name}")
-
-    conn = get_db_connection()
-    if not conn:
-        return 0
-
-    try:
-        cur = conn.cursor()
-
-        # Parse RSS feed with thread-based timeout (works in background threads)
-        def parse_feed():
-            return fetch_and_parse_rss(feed_url)
-
-        # Use ThreadPoolExecutor for timeout (works in any thread)
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(parse_feed)
-            try:
-                feed = future.result(timeout=30)  # 30 second timeout
-            except FutureTimeoutError:
-                raise TimeoutError("RSS parsing timeout")
-
-        articles_added = 0
-
-        # Resolve schema from registry (all domain rss_feeds tables), not only built-in three.
-        from shared.domain_registry import (
-            rss_feed_lookup_param_count,
-            rss_feed_lookup_union_sql,
-            schema_to_primary_domain_key,
-        )
-
-        schema_name = ""
-        domain_key_single = ""
-        _sql = rss_feed_lookup_union_sql()
-        _n = rss_feed_lookup_param_count()
-        cur.execute(_sql, (feed_url,) * _n)
-        r = cur.fetchone()
-        if not r:
-            logger.error(
-                "collect_rss_feed: feed_url not found in any domain rss_feeds (register feed first): %s",
-                feed_url[:120],
-            )
-            return 0
-        schema_name = r[0]
-        try:
-            domain_key_single = schema_to_primary_domain_key(schema_name)
-        except KeyError:
-            domain_key_single = (schema_name or "").replace("_", "-")
-
-        for entry in feed.entries[: _rss_max_entries_per_feed()]:
-            try:
-                cur.execute("SAVEPOINT sp_article")
-                title = entry.get("title", "")[:500]
-                url = entry.get("link", "")[:500]
-                content = _extract_rss_entry_body(entry)
-
-                # Filter out sports, entertainment, and pop culture content (domain-specific tech filters)
-                if is_excluded_content(
-                    title, content, feed_name, feed_url, domain=domain_key_single
-                ):
-                    logger.debug(f"Skipping excluded article: {title[:60]}...")
-                    _rss_entry_savepoint_release(cur)
-                    continue
-
-                # Filter clickbait titles (but allow press releases/official filings)
-                if is_clickbait_title(title):
-                    logger.debug(f"Skipping clickbait article: {title[:60]}...")
-                    _rss_entry_savepoint_release(cur)
-                    continue
-
-                # Filter advertisements (but allow press releases/official filings)
-                if is_advertisement(title, content, url):
-                    logger.debug(f"Skipping advertisement: {title[:60]}...")
-                    _rss_entry_savepoint_release(cur)
-                    continue
-
-                impact_score = calculate_article_impact_score(title, content)
-                quality_score = calculate_article_quality_score(title, content, feed_name, url)
-                quality_score, cred_meta = _apply_rss_source_credibility(
-                    feed_url, feed_name, quality_score
-                )
-                quality_score = _post_credibility_quality_cap_native_ads(
-                    quality_score, title, content, url
-                )
-
-                if quality_score < 0.3:
-                    logger.debug(
-                        f"Skipping article (quality score {quality_score:.2f} < 0.3): {title[:60]}..."
-                    )
-                    _rss_entry_savepoint_release(cur)
-                    continue
-
-                if impact_score < 0.25:
-                    logger.debug(
-                        f"Skipping article (impact score {impact_score:.2f} < 0.25): {title[:60]}..."
-                    )
-                    _rss_entry_savepoint_release(cur)
-                    continue
-
-                ok_ingest, _ingest_reason = rss_item_passes_ingest_gates(title, content, url)
-                if not ok_ingest:
-                    _rss_entry_savepoint_release(cur)
-                    continue
-
-                published_date = None
-                if hasattr(entry, "published_parsed") and entry.published_parsed:
-                    published_date = _utc_aware(datetime(*entry.published_parsed[:6]))
-                elif hasattr(entry, "updated_parsed") and entry.updated_parsed:
-                    published_date = _utc_aware(datetime(*entry.updated_parsed[:6]))
-                else:
-                    published_date = datetime.now(timezone.utc)
-
-                # URL domain key from registry (used for duplicate-link tracking + bias)
-                try:
-                    domain_key = schema_to_primary_domain_key(schema_name)
-                except KeyError:
-                    domain_key = (schema_name or "").replace("_", "-")
-
-                # Check for duplicates before inserting (in domain schema; schema_name set before loop)
-                cur.execute(
-                    f"""
-                    SELECT id FROM {schema_name}.articles
-                    WHERE url = %s OR (title = %s AND source_domain = %s)
-                """,
-                    (url, title, feed_name),
-                )
-                existing_duplicate = cur.fetchone()
-                if existing_duplicate:
-                    existing_id = int(existing_duplicate[0])
-                    try:
-                        from services.article_duplicate_source_service import (
-                            record_duplicate_source_link,
-                        )
-
-                        record_duplicate_source_link(
-                            domain_key=domain_key,
-                            schema_name=schema_name,
-                            canonical_article_id=existing_id,
-                            duplicate_url=url,
-                            duplicate_source_domain=feed_name,
-                            duplicate_title=title,
-                            duplicate_published_at=published_date,
-                            match_method="url_or_title_source",
-                        )
-                    except Exception:
-                        pass
-                    # Article already exists, skip it
-                    logger.debug(f"Skipping duplicate article: {title[:60]}...")
-                    _rss_entry_savepoint_release(cur)
-                    continue
-
-                # Calculate domain-specific bias score
-                raw_bias = calculate_domain_bias_score(domain_key, title, content, feed_name)
-                # chk_quality_scores requires bias_score in [0, 1]; raw bias is [-1, 1] -> normalize
-                bias_score = (raw_bias + 1) / 2 if raw_bias is not None else 0.5
-                bias_score = max(0.0, min(1.0, bias_score))
-                # Ensure quality_score stays in [0, 1] (impact_score already clamped)
-                quality_score = max(0.0, min(1.0, quality_score))
-
-                created_at_ins = datetime.now(timezone.utc)
-                insert_content, trafilatura_attempted, trafilatura_ok = (
-                    _maybe_inline_fetch_article_body(content or "", url)
-                )
-                enrichment_status, enrichment_attempts = finalize_rss_enrichment_after_inline(
-                    insert_content,
-                    created_at=created_at_ins,
-                    url=url,
-                    trafilatura_attempted=trafilatura_attempted,
-                    trafilatura_ok=trafilatura_ok,
-                )
-
-                # Insert article into domain schema (v5.0) with quality score and bias score
-                insert_vals = (
-                    title,
-                    url,
-                    insert_content,
-                    None,
-                    published_date,
-                    created_at_ins,
-                    feed_name,
-                    quality_score,
-                    bias_score,
-                    enrichment_status,
-                    enrichment_attempts,
-                )
-                _insert_domain_article(cur, schema_name, insert_vals, cred_meta=cred_meta or None)
-
-                result = cur.fetchone()
-                if result and cur.rowcount > 0:
-                    article_id = result[0]
-                    articles_added += 1
-
-                    cur.execute("SAVEPOINT sp_aux")
-                    try:
-                        cur.execute(
-                            f"""
-                            INSERT INTO {schema_name}.topic_extraction_queue
-                            (article_id, status, priority, created_at)
-                            VALUES (%s, 'pending', 2, NOW())
-                            ON CONFLICT (article_id) DO NOTHING
-                        """,
-                            (article_id,),
-                        )
-                        from services.context_processor_service import ensure_context_for_article
-
-                        if article_eligible_for_context(
-                            insert_content, enrichment_status, created_at_ins
-                        ):
-                            ensure_context_for_article(domain_key, article_id)
-                        cur.execute("RELEASE SAVEPOINT sp_aux")
-                    except Exception as aux_err:
-                        logger.debug(
-                            "Queue/context skip (single-feed article %s): %s",
-                            article_id,
-                            aux_err,
-                        )
-                        try:
-                            cur.execute("ROLLBACK TO SAVEPOINT sp_aux")
-                        except Exception:
-                            pass
-                    conn.commit()
-                else:
-                    _rss_entry_savepoint_release(cur)
-
-            except Exception as e:
-                logger.warning(f"Error processing article: {e}")
-                _rss_entry_savepoint_rollback(cur, conn)
-                continue
-
-        conn.commit()
-        logger.info(f"Added {articles_added} articles from {feed_name}")
-        return articles_added
-
-    except TimeoutError:
-        logger.error(f"Timeout processing feed: {feed_name}")
-        return 0
-    except Exception as e:
-        logger.error(f"Error processing feed {feed_name}: {e}")
         conn.rollback()
         return 0
     finally:

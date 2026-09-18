@@ -3,7 +3,9 @@ Load orchestrator governance config from orchestrator_governance.yaml.
 Single source of truth for coordinator and governors. Keys snake_case.
 """
 
+import copy
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -14,13 +16,33 @@ try:
 except Exception:
     logger = logging.getLogger(__name__)
 
+# Parsing the YAML and rebuilding the defaults costs ~8.5 ms. Scheduling helpers read one key at a
+# time — pipeline_controller alone has 26 such reads and pipeline_admission 14 — so a single
+# admission or replan pass used to re-read the file once per key. Cached on (mtime_ns, size) so an
+# operator editing the YAML is still picked up on the next call, with no staleness window.
+_CACHE_LOCK = threading.Lock()
+_cache_key: tuple[Any, ...] | None = None
+_cache_value: dict[str, Any] | None = None
+
+
+def invalidate_orchestrator_governance_cache() -> None:
+    """Drop the parsed config — the file stat check makes this rarely necessary."""
+    global _cache_key, _cache_value
+    with _CACHE_LOCK:
+        _cache_key = None
+        _cache_value = None
+
 
 def get_orchestrator_governance_config() -> dict[str, Any]:
     """
     Load orchestrator_governance.yaml. Returns nested dict with keys
     orchestrator, collection, processing, learning, resources.
     Missing file or key returns defaults for that section.
+
+    Callers get their own copy, so mutating the result cannot leak between them.
     """
+    global _cache_key, _cache_value
+
     try:
         from config.paths import ORCHESTRATOR_GOVERNANCE_YAML
 
@@ -29,10 +51,28 @@ def get_orchestrator_governance_config() -> dict[str, Any]:
         logger.warning("Orchestrator config path unavailable: %s", e)
         return _default_config()
 
-    if not yaml_path.exists():
+    try:
+        stat = yaml_path.stat()
+        key: tuple[Any, ...] = (str(yaml_path), stat.st_mtime_ns, stat.st_size)
+    except OSError:
         logger.info("Orchestrator governance YAML not found, using defaults: %s", yaml_path)
         return _default_config()
 
+    with _CACHE_LOCK:
+        if _cache_key == key and _cache_value is not None:
+            return copy.deepcopy(_cache_value)
+
+    cfg = _load_and_merge(yaml_path)
+    if cfg is None:
+        return _default_config()
+
+    with _CACHE_LOCK:
+        _cache_key = key
+        _cache_value = cfg
+    return copy.deepcopy(cfg)
+
+
+def _load_and_merge(yaml_path: Path) -> dict[str, Any] | None:
     try:
         import yaml
 
@@ -40,7 +80,7 @@ def get_orchestrator_governance_config() -> dict[str, Any]:
             cfg = yaml.safe_load(f) or {}
     except Exception as e:
         logger.warning("Failed to load orchestrator_governance.yaml: %s — using defaults", e)
-        return _default_config()
+        return None
 
     # Merge with defaults so missing keys are filled
     defaults = _default_config()
@@ -92,9 +132,6 @@ def _default_config() -> dict[str, Any]:
             ],
         },
         "processing": {
-            "batch_size": 10,
-            "max_concurrent": 3,
-            "context_window_days": 7,
             "phases": {},
         },
         "learning": {
@@ -113,7 +150,7 @@ def _default_config() -> dict[str, Any]:
             "max_events_per_cycle": 3,
         },
         "entity_tracking": {
-            "enabled": True,
+            "enabled": False,
             "dossier_compile_interval_seconds": 86400,
             "max_dossiers_per_cycle": 2,
         },
@@ -158,5 +195,20 @@ def _default_config() -> dict[str, Any]:
             "source_priorities": ["government", "think_tank", "research"],
             "document_types": ["report", "analysis", "briefing"],
             "ingest_urls": [],
+        },
+        "pipeline_conductor": {
+            "automation_primary": True,
+            "orchestrator_post_collection_kickoff_enabled": True,
+            "post_collection_phases": ["content_enrichment", "context_sync"],
+            "orchestrator_collection_enabled": True,
+            "external_schedulers": [
+                {
+                    "name": "nri_mention_resolve",
+                    "host": "widow",
+                    "interval_seconds": 300,
+                    "budget_env": "NRI_MENTION_RESOLVE_BUDGET_SECONDS",
+                    "note": "CEM mention resolution — in-process via api/nri_core (mention_resolution phase)",
+                },
+            ],
         },
     }

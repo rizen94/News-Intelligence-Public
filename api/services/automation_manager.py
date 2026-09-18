@@ -7,18 +7,13 @@ Set ``lifo`` to restore newest-first selection. **Backfill:** ``PIPELINE_BACKFIL
 ``PIPELINE_BACKFILL_COLLECTION_RESUME_AT`` (or default 48h state file) pauses RSS + document discovery while
 existing rows are processed.
 
-Workload-driven scheduling (USE_WORKLOAD_DRIVEN_ORDER=True): the scheduler checks every process every tick.
-Order and run eligibility are determined by current workload, not fixed intervals. When a phase has pending
-work it is eligible every WORKLOAD_MIN_COOLDOWN seconds; when idle, intervals apply. Collection is throttled
-when downstream backlog (enrichment + context_sync + document_processing) exceeds
-COLLECTION_THROTTLE_PENDING_THRESHOLD so the sequence collection → processing → synthesis completes before
-adding more RSS. No process is left behind because of fast RSS; phases with no work are skipped or deprioritized.
+Workload-driven scheduling: ``PipelineController`` enqueues phases when backlog counters show
+pending work — not via cron, fixed intervals, or the retired 5s scheduler tick.
 
 When ``AUTOMATION_QUEUE_SOFT_CAP`` > 0 and combined queue depth (scheduled + requested) reaches the cap,
-new scheduled enqueues, continuous batch re-queues, and dependency-chain ``request_phase`` calls are skipped
-except phases in ``AUTOMATION_QUEUE_PAUSE_ALLOW``. Default **0** = disabled (no artificial queue-depth cap;
+new scheduled enqueues are skipped except phases in ``AUTOMATION_QUEUE_PAUSE_ALLOW``. Default **0** = disabled (no artificial queue-depth cap;
 throughput is limited by ``AUTOMATION_MAX_CONCURRENT_TASKS``, ``MAX_CONCURRENT_OLLAMA_TASKS``, DB pools, and
-cooldowns). Set a positive value only as a safety valve if the asyncio queue grows without bound.
+PipelineController replan). Set a positive value only as a safety valve if the asyncio queue grows without bound.
 **nightly_enrichment_context** is not allowlisted: one drain run is enough; it was previously allowlisted and
 could stack hundreds of redundant queued sweeps while workers were busy.
 **AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED** caps scheduled+requested+running nightly tasks (default 1; 0=unlimited).
@@ -26,16 +21,21 @@ could stack hundreds of redundant queued sweeps while workers were busy.
 With **CLAIM_EXTRACTION_DRAIN** (default on), **claim_extraction** also skips new scheduler/chain enqueues when running+queued depth already reaches the per-phase concurrent cap (``_should_skip_redundant_phase_request``), so context_sync completion cannot pile hundreds of duplicate tasks on ``_requested_task_queue``.
 If a duplicate still reaches a worker under the cap, ``_discard_redundant_claim_extraction_when_at_cap`` completes it without re-queueing (per-phase defer used ``bypass_schedule_depth_cap`` and recycled the same backlog forever).
 **AUTOMATION_PER_PHASE_CONCURRENT_CAP** caps how many workers may execute the same phase at once (default 2; 0=unlimited); **nightly_sequential_drain** bypasses; nightly window multiplies cap via **AUTOMATION_PER_PHASE_CONCURRENT_NIGHTLY_MULT** for catch-up when those phases are scheduled.
-**AUTOMATION_DB_POOL_PRESSURE_GATE_ENABLED** (default true): while worker psycopg2 pool utilization ≥ **AUTOMATION_DB_WORKER_UTILIZATION_SKIP_THRESHOLD** (default 0.82), defer *new* scheduled enqueues and continuous batch re-queues except **AUTOMATION_DB_POOL_GATE_EXEMPT_PHASES** (default: health_check, pending_db_flush). Manual Monitor phase requests still run (**requested_activity_id** bypasses request_phase deferral).
+**AUTOMATION_DB_POOL_PRESSURE_GATE_ENABLED** (default true): while worker psycopg2 pool utilization ≥ **AUTOMATION_DB_WORKER_UTILIZATION_SKIP_THRESHOLD** (default 0.82), PipelineController may defer replans when the worker pool is hot. Manual Monitor phase requests still run (**requested_activity_id** bypasses deferral).
 
-**Offload to Widow (DB host):** set ``AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE=true`` on the GPU/main API host when
-RSS runs on Widow; set ``AUTOMATION_DISABLED_SCHEDULES=context_sync,entity_profile_sync,pending_db_flush`` (comma-separated)
-for phases moved to ``api/scripts/run_widow_db_adjacent.py`` cron — dependents' ``depends_on`` lists are adjusted automatically.
+**Widow DB-adjacent sync (v10.1):** ``context_sync``, ``entity_profile_sync``, and ``pending_db_flush`` are scheduled by
+``PipelineController`` when backlog counters show pending work — not via cron and not on fixed intervals when idle.
+Do **not** list them in ``AUTOMATION_DISABLED_SCHEDULES``. Cron on Widow is only for idle-tx cleanup and weekly reconcile
+(``infrastructure/widow-db-adjacent.cron``).
 Widow only writes ``{domain}.articles``; there is no message queue. The **content_enrichment** scheduled task (plus the
 enrichment loop inside ``collection_cycle``) drains pending rows from the DB so ingestion is not blocked when
 ``collection_cycle`` is throttled or skips RSS on the main host.
 Dependency settle time after a phase completes is capped by AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC (default 180s)
 so long estimated_duration values (e.g. collection_cycle) do not block dependents such as storyline_discovery.
+
+**Phase 2 spine-first (storyline audit):** demote ``proactive_detection``, standalone ``storyline_discovery``,
+and ``narrative_thread_build`` via ``AUTOMATION_DISABLED_SCHEDULES``; scheduled bulk creation is
+``storyline_assembly`` only. See ``docs/STORYLINE_CANONICAL_MODEL.md``.
 
 Reader's guide:
   - For a **ordered map** of phases (v8 collect-then-analyze), start at
@@ -55,10 +55,11 @@ import logging
 import os
 import queue
 import time
+from pathlib import Path
 from uuid import uuid4
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
@@ -81,6 +82,25 @@ from shared.domain_registry import (
     resolve_domain_schema,
     schema_to_primary_domain_key,
 )
+
+
+def _domains_for_phase(phase: str) -> list[str]:
+    """Pipeline domains allowed to execute ``phase`` (corpus / research gate)."""
+    from shared.domain_processing_mode import filter_domains_for_phase
+
+    return filter_domains_for_phase(get_pipeline_active_domain_keys(), phase)
+
+
+def _schemas_for_phase(phase: str) -> list[str]:
+    """Schemas for domains allowed to execute ``phase``."""
+    from shared.domain_processing_mode import domain_runs_phase
+
+    return [
+        sch
+        for dk, sch in pipeline_url_schema_pairs()
+        if domain_runs_phase(dk, phase)
+    ]
+
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -108,38 +128,16 @@ except ImportError:
 from shared.services.automation_run_history_writer import (
     persist_automation_run_history as _persist_automation_run,
 )
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 
-# Legacy enrichment-backlog-first flag — removed in v8.1.
-# The pipeline cycle now handles sequencing; no need for per-backlog gating.
-ENRICHMENT_BACKLOG_FIRST_ENABLED = False
-ENRICHMENT_BACKLOG_FIRST_WHITELIST = frozenset()
-
-# Phases that process batches; re-enqueue when pending work remains (v8: capped per analysis window)
-BATCH_PHASES_CONTINUOUS = {
-    "content_enrichment",
-    "ml_processing",
-    "entity_extraction",
-    "sentiment_analysis",
-    "quality_scoring",
-    "storyline_processing",
-    "rag_enhancement",
-    "storyline_automation",
-    "entity_profile_build",
-    "timeline_generation",
-    "topic_clustering",
-    "event_extraction",
-    "content_refinement_queue",
-}
-# Default when governance YAML omits key: 0 = unlimited (see __init__ for env override).
-MAX_REQUEUE_PER_WINDOW = 0
-
-# Phases that enter the Ollama yield / GPU throttle / semaphore path in ``_execute_task``.
-OLLAMA_AUTOMATION_PHASES = frozenset(
+# Legacy enrichment-backlog-first flag — removed in v8.1 (PipelineController owns sequencing).
+_OLLAMA_AUTOMATION_PHASES_FULL = frozenset(
     {
         "topic_clustering",
         "ml_processing",
         "entity_extraction",
+        "unified_intake_extraction",
         "sentiment_analysis",
         "storyline_processing",
         "rag_enhancement",
@@ -160,6 +158,13 @@ OLLAMA_AUTOMATION_PHASES = frozenset(
         "content_refinement_queue",
         "nightly_enrichment_context",
         "storyline_synthesis",
+        "storyline_review_agent",
+        "storyline_membership_review",
+        "embedding_link_candidates",
+        "collision_sampling",
+        "stimulus_rag",
+        "protein_harden",
+        "graph_link_drift_review",
         "daily_briefing_synthesis",
         "document_processing",
         "storyline_discovery",
@@ -174,130 +179,39 @@ OLLAMA_AUTOMATION_PHASES = frozenset(
         "storyline_enrichment",
     }
 )
-# Phases whose main LLM path uses ``OllamaModelCaller`` with ``STRUCTURED_EXTRACTION`` → ``_call_ollama(..., execution_lane="cpu")``.
-# They are excluded from ``GPU_LANE_PHASES`` so automation ``ContextVar`` lane, dynamic router defaults, and Monitor
-# match the CPU host + CPU semaphore (see ``shared/services/ollama_model_caller.py``).
-STRUCTURED_LLM_CPU_LANE_PHASES = frozenset(
-    {
-        "claim_extraction",
-        "entity_extraction",
-        "event_extraction",
-    }
-)
+
+
+def _build_ollama_automation_phases() -> frozenset[str]:
+    from shared.legacy_intake_rollback import legacy_intake_rollback_active
+    from shared.pipeline_resource_policy import unified_superseded_automation_phases
+
+    if legacy_intake_rollback_active():
+        return _OLLAMA_AUTOMATION_PHASES_FULL
+    return frozenset(_OLLAMA_AUTOMATION_PHASES_FULL - unified_superseded_automation_phases())
+
+
+OLLAMA_AUTOMATION_PHASES = _build_ollama_automation_phases()
+# Phases whose main LLM path uses Widow CPU (rate-limited HTTP / light models).
+from shared.pipeline_resource_policy import cpu_structured_extraction_phases, db_heavy_phases as policy_db_heavy
+
+STRUCTURED_LLM_CPU_LANE_PHASES = cpu_structured_extraction_phases()
 # Default execution lane "gpu" for Ollama phases that are not structured-extraction-on-CPU above.
 GPU_LANE_PHASES = frozenset(x for x in OLLAMA_AUTOMATION_PHASES if x not in STRUCTURED_LLM_CPU_LANE_PHASES)
-DB_HEAVY_PHASES = frozenset(
-    {
-        "context_sync",
-        "entity_profile_sync",
-        "claims_to_facts",
-        "claim_subject_gap_refresh",
-        "extracted_claims_dedupe",
-        "pending_db_flush",
-        "entity_organizer",
-        "graph_connection_distillation",
-        "collection_cycle",
-        "content_enrichment",
-        # Churn-heavy automation phases (worker pool + LLM); used for router cooldowns / resource class
-        "timeline_generation",
-        "event_deduplication",
-        "event_extraction",
-        "watchlist_alerts",
-        "story_continuation",
-        "ml_processing",
-        "topic_clustering",
-        "sentiment_analysis",
-        "entity_extraction",
-        "quality_scoring",
-    }
-)
-
-
-def _automation_db_pool_pressure_gate_enabled() -> bool:
-    """When True, defer new scheduled work if worker psycopg2 pool utilization is above threshold."""
-    return os.getenv("AUTOMATION_DB_POOL_PRESSURE_GATE_ENABLED", "true").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-
-
-def _db_pool_gate_exempt_phases() -> frozenset[str]:
-    """Phases that may still schedule when the worker pool is hot (liveness + spill replay)."""
-    base = frozenset({"health_check", "pending_db_flush"})
-    raw = os.environ.get("AUTOMATION_DB_POOL_GATE_EXEMPT_PHASES", "").strip()
-    if not raw:
-        return base
-    return base | frozenset(x.strip() for x in raw.split(",") if x.strip())
-
-
-def automation_db_pool_should_defer_phase(phase_name: str) -> bool:
-    """
-    Return True if this phase should not be *newly* scheduled while worker DB pool is under pressure.
-
-    Does not apply to tasks already queued. Manual Monitor requests (requested_activity_id) bypass
-    in request_phase. Defer/retry paths that re-queue the same Task use the same enqueue APIs but
-    typically run when pressure drops; exempt phases always pass.
-    """
-    if phase_name in _db_pool_gate_exempt_phases():
-        return False
-    if not _automation_db_pool_pressure_gate_enabled():
-        return False
-    try:
-        from shared.database.connection import get_db_pool_snapshot
-
-        snap = get_db_pool_snapshot()
-        w = float((snap.get("worker") or {}).get("utilization") or 0.0)
-    except Exception:
-        return False
-    try:
-        thr = float(os.getenv("AUTOMATION_DB_WORKER_UTILIZATION_SKIP_THRESHOLD", "0.82"))
-    except ValueError:
-        thr = 0.82
-    return w >= thr
+DB_HEAVY_PHASES = policy_db_heavy()
 
 
 def _env_bool(name: str, default: bool) -> bool:
-    raw = os.environ.get(name)
+    raw = env_str(name)
     if raw is None:
         return default
     return raw.lower() in ("1", "true", "yes", "on")
 
 
-AUTOMATION_DYNAMIC_RESOURCE_ROUTING_ENABLED = _env_bool(
-    "AUTOMATION_DYNAMIC_RESOURCE_ROUTING_ENABLED", True
-)
-# Dynamic router gateway thresholds (headroom values are 0..1).
-ROUTER_GPU_SATURATED_HEADROOM = float(
-    os.environ.get("AUTOMATION_ROUTER_GPU_SATURATED_HEADROOM", "0.15")
-)
-ROUTER_GPU_EXTRA_HEADROOM = float(
-    os.environ.get("AUTOMATION_ROUTER_GPU_EXTRA_HEADROOM", "0.55")
-)
-ROUTER_CPU_HOT_HEADROOM = float(os.environ.get("AUTOMATION_ROUTER_CPU_HOT_HEADROOM", "0.20"))
-ROUTER_CPU_EXTRA_HEADROOM = float(
-    os.environ.get("AUTOMATION_ROUTER_CPU_EXTRA_HEADROOM", "0.55")
-)
-ROUTER_DB_PRESSURE_HEADROOM = float(
-    os.environ.get("AUTOMATION_ROUTER_DB_PRESSURE_HEADROOM", "0.20")
-)
-ROUTER_DB_EXTRA_HEADROOM = float(os.environ.get("AUTOMATION_ROUTER_DB_EXTRA_HEADROOM", "0.65"))
-# Cooldown multipliers (resource-router). Lower = less artificial backoff when "hot".
-ROUTER_MULT_DB_PRESSURE = float(os.environ.get("AUTOMATION_ROUTER_COOLDOWN_MULT_DB_PRESSURE", "2.0"))
-ROUTER_MULT_GPU_SATURATED = float(
-    os.environ.get("AUTOMATION_ROUTER_COOLDOWN_MULT_GPU_SATURATED", "1.5")
-)
-ROUTER_MULT_CPU_HOT = float(os.environ.get("AUTOMATION_ROUTER_COOLDOWN_MULT_CPU_HOT", "1.3"))
-ROUTER_MULT_HEADROOM_BONUS = float(
-    os.environ.get("AUTOMATION_ROUTER_COOLDOWN_MULT_HEADROOM", "0.85")
-)
-
-# Workload-driven scheduling: WORKLOAD_MIN_COOLDOWN set after AUTOMATION_MAX_CONCURRENT_TASKS (see below).
 # Don't run collection_cycle when downstream pending exceeds this.
 # Default sum: content_enrichment + context_sync + document_processing (minus COLLECTION_THROTTLE_EXCLUDE_PHASES).
 # Optional: comma-separated phase names in COLLECTION_THROTTLE_EXTRA_PHASES (e.g. ml_processing,entity_extraction).
 COLLECTION_THROTTLE_PENDING_THRESHOLD = int(
-    os.environ.get("COLLECTION_THROTTLE_PENDING_THRESHOLD", "1200")
+    env_str("COLLECTION_THROTTLE_PENDING_THRESHOLD", "1200")
 )
 _COLLECTION_THROTTLE_BASE = (
     "content_enrichment",
@@ -310,26 +224,60 @@ def _collection_throttle_pending_total(pending: dict[str, int] | None) -> tuple[
     """Return (total, per-phase counts) used to gate collection_cycle when workload-driven."""
     p = pending or {}
     keys = list(_COLLECTION_THROTTLE_BASE)
-    extra = os.environ.get("COLLECTION_THROTTLE_EXTRA_PHASES", "").strip()
+    extra = env_str("COLLECTION_THROTTLE_EXTRA_PHASES", "").strip()
     if extra:
         for part in extra.split(","):
             k = part.strip()
             if k and k not in keys:
                 keys.append(k)
-    exclude_raw = os.environ.get("COLLECTION_THROTTLE_EXCLUDE_PHASES", "document_processing")
+    exclude_raw = env_str("COLLECTION_THROTTLE_EXCLUDE_PHASES", "document_processing")
     exclude = frozenset(x.strip() for x in exclude_raw.split(",") if x.strip())
     keys = [k for k in keys if k not in exclude]
     breakdown = {k: int(p.get(k, 0) or 0) for k in keys}
     return sum(breakdown.values()), breakdown
-# When True, scheduler ignores analysis-window step lock; workload + pipeline order determine what runs.
-USE_WORKLOAD_DRIVEN_ORDER = True
+
+
+def collection_cycle_has_pending_work(
+    pending_counts: dict[str, int] | None,
+    *,
+    pending_collection_queue_len: int = 0,
+) -> bool:
+    """
+    True when collection_cycle has at least one sub-step with work.
+
+    On hosts with AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE, skip the whole cycle when
+    enrichment, document processing, and the pending URL queue are all empty.
+    """
+    p = pending_counts or {}
+    if int(p.get("content_enrichment") or 0) > 0:
+        return True
+    if int(p.get("document_processing") or 0) > 0:
+        return True
+    if int(pending_collection_queue_len or 0) > 0:
+        return True
+    try:
+        from shared.pipeline_article_selection import pipeline_backfill_collection_should_pause
+
+        if pipeline_backfill_collection_should_pause():
+            return False
+    except Exception:
+        pass
+    skip_rss = env_str("AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if not skip_rss:
+        return True
+    return False
+
 
 # When combined queue depth (main + requested) >= this, stop enqueueing scheduled work except allowlist.
 # 0 = disabled (recommended). Use workers + Ollama semaphores + DB pool for real limits.
-AUTOMATION_QUEUE_SOFT_CAP = int(os.environ.get("AUTOMATION_QUEUE_SOFT_CAP", "0"))
+AUTOMATION_QUEUE_SOFT_CAP = env_int("AUTOMATION_QUEUE_SOFT_CAP", 0)
 QUEUE_PAUSE_ALLOW_SCHEDULED = frozenset(
     x.strip()
-    for x in os.environ.get(
+    for x in env_str(
         "AUTOMATION_QUEUE_PAUSE_ALLOW",
         "collection_cycle,content_enrichment,health_check,pending_db_flush,content_refinement_queue",
     ).split(",")
@@ -338,14 +286,14 @@ QUEUE_PAUSE_ALLOW_SCHEDULED = frozenset(
 # Max nightly_enrichment_context tasks at once: running + scheduled queue + requested queue.
 # Each run is a full unified drain; default 1 avoids stacked sweeps and duplicate Monitor activity lines. 0 = no cap.
 AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED = int(
-    os.environ.get("AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED", "1")
+    env_str("AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED", "1")
 )
 # Per-phase cap on scheduled Task objects waiting in the asyncio queue. Workload-driven scheduling
 # otherwise enqueues another run every cooldown while DB pending remains, even if prior copies are
 # still queued — Monitor "Queued" explodes and wastes memory. Defer/retry paths pass
 # bypass_schedule_depth_cap so yield/nightly/GPU gates and retries never drop work. 0 = unlimited (legacy).
 AUTOMATION_MAX_SCHEDULED_DEPTH_PER_PHASE = int(
-    os.environ.get("AUTOMATION_MAX_SCHEDULED_DEPTH_PER_PHASE", "1")
+    env_str("AUTOMATION_MAX_SCHEDULED_DEPTH_PER_PHASE", "1")
 )
 # Max automation workers executing the same phase at once (regular / daytime). Spreads load across
 # phases instead of N workers all running claim_extraction (or other LLM-heavy work). Tasks with
@@ -353,10 +301,11 @@ AUTOMATION_MAX_SCHEDULED_DEPTH_PER_PHASE = int(
 # AUTOMATION_PER_PHASE_CONCURRENT_NIGHTLY_MULT (scheduled phases are usually exclusive anyway).
 # 0 = unlimited (legacy).
 AUTOMATION_PER_PHASE_CONCURRENT_CAP = int(
-    os.environ.get("AUTOMATION_PER_PHASE_CONCURRENT_CAP", "2")
+    env_str("AUTOMATION_PER_PHASE_CONCURRENT_CAP", "2")
 )
 DEFAULT_AUTOMATION_PER_PHASE_CONCURRENT_CAP_PHASES = frozenset(
     {
+        "collection_cycle",  # hard guard: one ingest cycle (RSS/docs/queue) at a time
         "claim_extraction",
         "claims_to_facts",
         "event_extraction",
@@ -374,10 +323,19 @@ DEFAULT_AUTOMATION_PER_PHASE_CONCURRENT_CAP_PHASES = frozenset(
         "event_deduplication",
         "watchlist_alerts",
         "story_continuation",
+        "episode_assembly_maintenance",
         "ml_processing",
         "research_topic_refinement",
         "narrative_thread_build",
         "storyline_automation",
+        "storyline_review_agent",
+        "storyline_membership_review",
+        "storyline_hygiene",
+        "embedding_link_candidates",
+        "collision_sampling",
+        "stimulus_rag",
+        "protein_harden",
+        "graph_link_drift_review",
         "content_enrichment",
         "proactive_detection",
         "fact_verification",
@@ -393,12 +351,21 @@ DEFAULT_AUTOMATION_PER_PHASE_CONCURRENT_CAP_PHASES = frozenset(
         "data_cleanup",
         "cache_cleanup",
         "quality_scoring",
+        # Wikidata lazy-mint: parallel drains double 429s and race the CEM watermark.
+        "mention_resolution",
     }
 )
 
+# Built-in per-phase caps (env AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES merges on top).
+# collection_cycle stays at 1 even when the global cap is higher — avoid parallel RSS/doc sweeps.
+DEFAULT_AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES: dict[str, int] = {
+    "collection_cycle": 1,
+    "mention_resolution": 2,
+}
+
 
 def _per_phase_concurrent_cap_phase_names() -> frozenset[str]:
-    raw = os.environ.get("AUTOMATION_PER_PHASE_CONCURRENT_CAP_PHASES", "").strip()
+    raw = env_str("AUTOMATION_PER_PHASE_CONCURRENT_CAP_PHASES", "").strip()
     if raw:
         return frozenset(x.strip() for x in raw.split(",") if x.strip())
     return DEFAULT_AUTOMATION_PER_PHASE_CONCURRENT_CAP_PHASES
@@ -408,11 +375,12 @@ def _per_phase_concurrent_cap_overrides() -> dict[str, int]:
     """
     Optional per-phase caps: AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES=claim_extraction:1,claims_to_facts:2
     Values are max concurrent workers for that phase (clamped to max_concurrent_tasks at use site). 0 = unlimited.
+    Built-in defaults (e.g. collection_cycle:1) apply unless overridden by env.
     """
-    raw = os.environ.get("AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES", "").strip()
+    out = dict(DEFAULT_AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES)
+    raw = env_str("AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES", "").strip()
     if not raw:
-        return {}
-    out: dict[str, int] = {}
+        return out
     for part in raw.split(","):
         part = part.strip()
         if ":" not in part:
@@ -434,19 +402,19 @@ def _per_phase_nightly_cap_mult_exclude() -> frozenset[str]:
     AUTOMATION_PER_PHASE_CONCURRENT_NIGHTLY_MULT during the unified nightly window.
 
     Default excludes claim_extraction so nightly catch-up does not spawn e.g. 8× huge LLM batches
-    that stall for hours and stack the asyncio queue.
+    that stall for hours and stack the asyncio queue. collection_cycle stays at 1 (no parallel cycles).
     """
-    raw = os.environ.get("AUTOMATION_PER_PHASE_NIGHTLY_MULT_EXCLUDE", "").strip()
+    raw = env_str("AUTOMATION_PER_PHASE_NIGHTLY_MULT_EXCLUDE", "").strip()
     if raw:
         return frozenset(x.strip() for x in raw.split(",") if x.strip())
-    return frozenset({"claim_extraction"})
+    return frozenset({"claim_extraction", "collection_cycle"})
 
 
 # Ollama tasks normally yield when a non-polling browser request hit the API recently; storyline
 # deep analysis must still run or the UI shows "processing" forever while users read those pages.
 _OLLAMA_YIELD_EXEMPT = frozenset(
     x.strip()
-    for x in os.environ.get(
+    for x in env_str(
         "OLLAMA_YIELD_EXEMPT_TASKS",
         "content_refinement_queue",
     ).split(",")
@@ -456,9 +424,7 @@ _OLLAMA_YIELD_EXEMPT = frozenset(
 # Cap how long we wait after a dependency completes before a dependent may run. Without this,
 # collection_cycle's large estimated_duration (~1800s) kept dependents (e.g. storyline_discovery)
 # permanently ineligible while collection runs often.
-AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC = int(
-    os.environ.get("AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC", "180")
-)
+AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC = env_int("AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC", 180)
 
 # Phases that constitute "data load"; when none have run recently, downtime loop runs entity organizer
 DATA_LOAD_PHASES = (
@@ -473,7 +439,7 @@ DOWNTIME_POLL_SLEEP = 30  # Seconds to sleep when data load is active (before re
 # v8: Pipeline-ordered analysis (run after each collection_cycle)
 # Events moved to Step 1 (Extraction) — foundational entities should feed intelligence phases
 # Fact verification moved to Step 1 — verification precedes intelligence synthesis
-ANALYSIS_PIPELINE_STEPS: tuple[tuple[str, ...], ...] = (
+_ANALYSIS_PIPELINE_STEPS_FULL: tuple[tuple[str, ...], ...] = (
     # Step 0: Foundation
     (
         "nightly_enrichment_context",
@@ -481,6 +447,7 @@ ANALYSIS_PIPELINE_STEPS: tuple[tuple[str, ...], ...] = (
         "entity_profile_sync",
         "ml_processing",
         "entity_extraction",
+        "unified_intake_extraction",
         "metadata_enrichment",
     ),
     # Step 1: Extraction (events elevated to foundational level)
@@ -497,56 +464,57 @@ ANALYSIS_PIPELINE_STEPS: tuple[tuple[str, ...], ...] = (
         "sentiment_analysis",
         "fact_verification",  # Moved from Step 2 — verify before synthesis
     ),
-    # Step 2: Intelligence
+    # Step 2: Structure + chemistry beaker (loose bonds → stimuli → harden)
     (
-        "entity_profile_build",
         "entity_organizer",
         "graph_connection_distillation",
-        "pattern_recognition",
+        "embedding_link_candidates",
+        "collision_sampling",
+        "stimulus_rag",
+        "protein_harden",
         "cross_domain_synthesis",
-        "storyline_discovery",
-        "proactive_detection",
         "storyline_assembly",
-        "event_coherence_review",
-        "entity_enrichment",
-        "story_enhancement",
-        "pattern_matching",
-        "research_topic_refinement",
-        "investigation_report_refresh",
-    ),
-    # Step 3: Output (remaining time until next collection)
-    (
-        "storyline_processing",
-        "rag_enhancement",
-        "storyline_automation",
-        "storyline_enrichment",
+        "event_tracking",
         "story_continuation",
-        "event_deduplication",
-        "timeline_generation",
-        "editorial_document_generation",
-        "editorial_briefing_generation",
+        "entity_enrichment",
         "entity_dossier_compile",
-        "entity_position_tracker",
-        "storyline_synthesis",
-        "daily_briefing_synthesis",
-        "digest_generation",
-        "narrative_thread_build",
-        "watchlist_alerts",
+    ),
+    # Step 3: Minimal output (narrative products retired; vault = editorial room)
+    (
+        "storyline_automation",
+        "storyline_review_agent",
+        "storyline_membership_review",
+        "storyline_hygiene",
+        "graph_link_drift_review",
+        "event_deduplication",
+        "mention_resolution",
         "content_refinement_queue",
+        "watchlist_alerts",
         "cache_cleanup",
         "data_cleanup",
     ),
 )
-STEP_TIME_BUDGETS: tuple[int | None, ...] = (
-    1800,
-    1200,
-    1200,
-    None,
-)  # seconds; None = no limit (step 3)
+
+
+def _build_analysis_pipeline_steps() -> tuple[tuple[str, ...], ...]:
+    from shared.legacy_intake_rollback import legacy_intake_rollback_active
+    from shared.pipeline_resource_policy import unified_superseded_automation_phases
+
+    if legacy_intake_rollback_active():
+        return _ANALYSIS_PIPELINE_STEPS_FULL
+    skip = unified_superseded_automation_phases()
+    return tuple(
+        tuple(p for p in step if p not in skip)
+        for step in _ANALYSIS_PIPELINE_STEPS_FULL
+        if any(p not in skip for p in step)
+    )
+
+
+ANALYSIS_PIPELINE_STEPS = _build_analysis_pipeline_steps()
 
 def _env_int(name: str, default: int, minimum: int = 1) -> int:
     """Parse int env var with safe fallback and floor."""
-    raw = os.environ.get(name)
+    raw = env_str(name)
     if raw is None:
         return default
     try:
@@ -559,17 +527,6 @@ def _env_int(name: str, default: int, minimum: int = 1) -> int:
 MAX_CONCURRENT_OLLAMA_TASKS = _env_int("MAX_CONCURRENT_OLLAMA_TASKS", 6)
 AUTOMATION_MAX_CONCURRENT_TASKS = _env_int("AUTOMATION_MAX_CONCURRENT_TASKS", 12)
 AUTOMATION_EXECUTOR_MAX_WORKERS = _env_int("AUTOMATION_EXECUTOR_MAX_WORKERS", 6)
-
-# Seconds between scheduler ticks; min cooldown between re-enqueue of same phase when backlog exists.
-WORKLOAD_MIN_COOLDOWN = max(1, int(os.environ.get("AUTOMATION_WORKLOAD_MIN_COOLDOWN_SECONDS", "10")))
-AUTOMATION_SCHEDULER_TICK_SECONDS = max(1, int(os.environ.get("AUTOMATION_SCHEDULER_TICK_SECONDS", "5")))
-# When true (default), skip dynamic_resource_service ±1 scaling; floor max_concurrent_tasks with env below.
-_AUTOMATION_DISABLE_DYNAMIC_TASK_SCALING = os.environ.get(
-    "AUTOMATION_DISABLE_DYNAMIC_TASK_SCALING", "true"
-).lower() in ("1", "true", "yes")
-
-# Collection-cycle watchdog: 60 min after cycle starts, check if any phase should be added to the queue.
-WATCHDOG_SECONDS = int(os.environ.get("COLLECTION_PHASE_WATCHDOG_SECONDS", "3600"))
 
 
 class TaskStatus(Enum):
@@ -605,34 +562,55 @@ class Task:
     retry_count: int = 0
     max_retries: int = 3
     error_message: str | None = None
-    metadata: dict[str, Any] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+def _phase_max_retries(phase_name: str) -> int:
+    try:
+        from services.phase_retry_silence_service import max_retries_for_phase
+
+        return max_retries_for_phase(phase_name)
+    except Exception:
+        return 3
 
 
 # Estimated duration in seconds per phase (single place to tune)
 PHASE_ESTIMATED_DURATION_SECONDS = {
     "rss_processing": 120,
-    "ml_processing": 240,
+    "ml_processing": 900,  # queue drain + background workers; was 240
     "topic_clustering": 400,  # observed ~396s avg when backlog; was 180
-    "entity_extraction": 260,  # observed ~257s avg; was 120
+    "entity_extraction": 1800,  # GPU LLM batches; measured runs often 1–4h without drain budget
+    "unified_intake_extraction": 3600,
+    "spine_sql_tail": 300,
+    "mention_resolution": 1800,
     "quality_scoring": 90,
-    "sentiment_analysis": 120,
+    "sentiment_analysis": 900,  # inline LLM per article; drain budget default 900s
     "storyline_processing": 300,
     "rag_enhancement": 600,
     "event_extraction": 300,
     "event_deduplication": 120,
     "story_continuation": 300,
+    "episode_assembly_maintenance": 600,
     "timeline_generation": 300,
     "cache_cleanup": 60,
     "digest_generation": 180,
     "watchlist_alerts": 60,
     "data_cleanup": 300,
     "health_check": 10,
+    "rss_feed_health": 120,
+    "rolling_arc_refresh": 180,
     "pending_db_flush": 30,
     "context_sync": 60,  # ~5-10s per 100 contexts (production batch)
     "entity_profile_sync": 225,  # observed ~223s avg; was 120
     "claim_extraction": 600,  # env CLAIM_EXTRACTION_BATCH_LIMIT × CLAIM_EXTRACTION_PARALLEL (LLM-bound)
     "legislative_references": 120,  # Congress.gov HTTP + rate-limit sleep per bill mention
     "claims_to_facts": 180,  # env CLAIMS_TO_FACTS_BATCH_LIMIT; resolver + INSERTs (DB-bound)
+    "claim_evidence_appraisal": 600,  # LLM paper appraisal; CLAIM_EVIDENCE_APPRAISAL_ENABLED
+    "editorial_reduction_pass": 600,  # LLM package prune; EDITORIAL_REDUCTION_ENABLED
+    "editorial_narrative_pass": 600,  # LLM package assembly; EDITORIAL_NARRATIVE_ENABLED
+    "editorial_evidence_expand_pass": 600,  # DB/Wiki/web → brief; EDITORIAL_EVIDENCE_EXPAND_ENABLED
+    "editorial_research_pass": 600,  # LLM research assembly; EDITORIAL_RESEARCH_ENABLED
+    "chronological_events_catchup": 600,  # CE restore; CHRONOLOGICAL_EVENTS_CATCHUP_ENABLED
     "claim_subject_gap_refresh": 120,  # catalog upsert per active domain (DB-bound)
     "extracted_claims_dedupe": 180,  # batched DELETE; see EXTRACTED_CLAIMS_DEDUPE_* env
     "event_tracking": 200,  # observed ~196s avg; was 120
@@ -647,6 +625,15 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "arc_report_generation": 900,
     "longitudinal_matview_refresh": 60,
     "storyline_automation": 180,
+    "storyline_review_agent": 120,
+    "storyline_membership_review": 180,
+    "storyline_hygiene": 300,
+    "embedding_link_candidates": 120,
+    "collision_sampling": 60,
+    "stimulus_rag": 180,
+    "protein_harden": 120,
+    "graph_link_drift_review": 90,
+    "graph_link_drift_review": 120,
     "storyline_enrichment": 600,  # full-history pass: ~10 min
     "story_enhancement": 300,
     "entity_enrichment": 180,
@@ -681,6 +668,12 @@ class AutomationManager:
 
     def __init__(self, db_config: dict[str, str]):
         self.db_config = db_config
+        try:
+            from shared.pipeline_resource_policy import configure_pipeline_resources
+
+            configure_pipeline_resources()
+        except Exception as e:
+            logger.debug("pipeline resource policy: %s", e)
         self.is_running = False
         self.tasks: dict[str, Task] = {}
         self.executor = ThreadPoolExecutor(max_workers=AUTOMATION_EXECUTOR_MAX_WORKERS)
@@ -704,23 +697,18 @@ class AutomationManager:
         # Optional: callable() -> finance orchestrator, set by main after app.state.finance_orchestrator exists
         self._get_finance_orchestrator = None
         self.health_check_interval = 30  # seconds
-        self.task_timeout = 300  # 5 minutes
+        try:
+            self.task_timeout = max(
+                60, env_int("AUTOMATION_TASK_WALL_TIMEOUT_SECONDS", 300)
+            )
+        except ValueError:
+            self.task_timeout = 300
         self.max_concurrent_tasks = (
             AUTOMATION_MAX_CONCURRENT_TASKS
         )  # Phase workers; scale up when you have CPU/GPU headroom
 
-        # Dynamic resource allocation
-        self.dynamic_resource_service = None
-        self.resource_allocation = None
-
         # v8: Pending collection queue — RAG/synthesis add URLs here; drained each collection_cycle
         self._pending_collection_queue: list[dict[str, Any]] = []
-        # v8: Pipeline-ordered analysis state (set when collection_cycle completes, cleared when next collection starts)
-        self._analysis_window_start: datetime | None = None
-        self._active_step: int = 0
-        self._step_started_at: datetime | None = None
-        # v8: Re-enqueue count per task in current analysis window (reset when window starts)
-        self._requeue_counts: dict[str, int] = {}
 
         # Monitor metrics for phase timeline:
         # - queued_tasks_by_phase: computed from in-memory asyncio queues
@@ -734,40 +722,21 @@ class AutomationManager:
         self._phase_run_times_last_60m: dict[str, deque[datetime]] = defaultdict(deque)
         self._running_tasks_by_lane: dict[str, int] = defaultdict(int)
         self._lane_run_times_last_60m: dict[str, deque[datetime]] = defaultdict(deque)
-        self._resource_headroom: dict[str, Any] = {}
+        self._measurable_runs_60m_sql_cache: dict[str, Any] = {"at": 0.0, "counts": {}}
 
-        # Collection-cycle watchdog: when current cycle started; per-phase last completion (for "has it run since start?")
-        self._collection_cycle_started_at: datetime | None = None
-        self._last_completed_at_by_phase: dict[str, datetime] = {}
+        self.pipeline_controller = None
 
-        # v8: Optional config from orchestrator_governance.yaml (analysis_pipeline, collection_cycle)
+        # v8: Optional config from orchestrator_governance.yaml (collection_cycle interval)
         try:
             from config.orchestrator_governance import get_orchestrator_governance_config
 
             gov = get_orchestrator_governance_config()
-            ap = gov.get("analysis_pipeline") or {}
             cc = gov.get("collection_cycle") or {}
         except Exception:
-            ap, cc = {}, {}
-        budgets = ap.get("step_budgets_seconds")
-        self._step_time_budgets: tuple[int | None, ...] = (
-            tuple(budgets) if budgets else STEP_TIME_BUDGETS
-        )
-        _env_mrq = os.environ.get("AUTOMATION_MAX_REQUEUE_PER_WINDOW", "").strip()
-        if _env_mrq != "":
-            try:
-                self._max_requeue_per_window = max(0, int(_env_mrq))
-            except ValueError:
-                self._max_requeue_per_window = max(
-                    0, int(ap.get("max_requeue_per_window", MAX_REQUEUE_PER_WINDOW))
-                )
-        else:
-            self._max_requeue_per_window = max(
-                0, int(ap.get("max_requeue_per_window", MAX_REQUEUE_PER_WINDOW))
-            )
+            cc = {}
         collection_interval = None
         if hasattr(os, "environ"):
-            raw = os.environ.get("COLLECTION_CYCLE_INTERVAL_SECONDS")
+            raw = env_str("COLLECTION_CYCLE_INTERVAL_SECONDS")
             if raw is not None:
                 try:
                     collection_interval = int(raw)
@@ -822,6 +791,24 @@ class AutomationManager:
                 "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["content_enrichment"],
             },
+            "rss_feed_health": {
+                "interval": 604800,  # weekly quality cull (lowest failing feed)
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.LOW,
+                "phase": 0,
+                "depends_on": ["collection_cycle"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["rss_feed_health"],
+            },
+            "rolling_arc_refresh": {
+                "interval": 86400,  # Phase B nightly rolling 12m arcs
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.LOW,
+                "phase": 0,
+                "depends_on": [],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["rolling_arc_refresh"],
+            },
             # PHASE 1b: Context-centric sync (incremental: articles -> intelligence.contexts)
             "context_sync": {
                 "interval": 900,  # 15 minutes - incremental sync, 100 contexts/batch, ~30-60s
@@ -871,6 +858,70 @@ class AutomationManager:
                 "phase": 2,
                 "depends_on": ["claim_extraction"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["claims_to_facts"],
+            },
+            # v11 corpus: evidence appraisal (feature-flagged; schedule enabled=False by default)
+            "claim_evidence_appraisal": {
+                "interval": 7200,
+                "last_run": None,
+                "enabled": False,
+                "priority": TaskPriority.LOW,
+                "phase": 2,
+                "depends_on": ["claims_to_facts"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
+                    "claim_evidence_appraisal"
+                ],
+            },
+            # v11 Reduction modality: drain in_reduction packages (LLM prune → route back)
+            "editorial_reduction_pass": {
+                "interval": 1800,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 3,
+                "depends_on": [
+                    "editorial_narrative_pass",
+                    "editorial_evidence_expand_pass",
+                    "editorial_research_pass",
+                ],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
+                    "editorial_reduction_pass"
+                ],
+            },
+            # v11 Narrative modality: drain in_narrative packages (assemble → Reduction/Editor)
+            "editorial_narrative_pass": {
+                "interval": 1800,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 3,
+                "depends_on": ["story_continuation"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
+                    "editorial_narrative_pass"
+                ],
+            },
+            # v11 Narrative evidence-expand: DB/Wiki/web → package_evidence_briefs → Reduction
+            "editorial_evidence_expand_pass": {
+                "interval": 1800,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 3,
+                "depends_on": ["editorial_narrative_pass"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS.get(
+                    "editorial_evidence_expand_pass", 600
+                ),
+            },
+            # v11 Research modality: drain in_research packages (spine + assemble → Reduction/Editor)
+            "editorial_research_pass": {
+                "interval": 1800,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 3,
+                "depends_on": ["story_continuation"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
+                    "editorial_research_pass"
+                ],
             },
             # PHASE 2a.2: Rebuild claim_subject_gap_catalog (operators + claims_to_facts ignore list)
             "claim_subject_gap_refresh": {
@@ -926,7 +977,7 @@ class AutomationManager:
                     "investigation_report_refresh"
                 ],
             },
-            # PHASE 2.5: Cross-domain synthesis (correlate events across politics/finance/science-tech)
+            # PHASE 2.5: Cross-domain synthesis (correlate events across active pipeline domains)
             "cross_domain_synthesis": {
                 "interval": 1800,  # 30 minutes
                 "last_run": None,
@@ -946,17 +997,8 @@ class AutomationManager:
                 "depends_on": ["context_sync", "entity_profile_sync"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["entity_profile_build"],
             },
-            # PHASE 2.2: Pattern recognition (network, temporal, behavioral, event)
-            "pattern_recognition": {
-                "interval": 7200,  # 2 hours
-                "last_run": None,
-                "enabled": True,
-                "priority": TaskPriority.NORMAL,
-                "phase": 2,
-                "depends_on": ["context_sync", "entity_profile_sync"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["pattern_recognition"],
-            },
             # Longitudinal intelligence (Phases 1–4): nightly-heavy; yields to ingest
+            # Hard-retired (no schedule): pattern_recognition — see retired_phase_registry
             "embeddings_worker": {
                 "interval": 3600,
                 "last_run": None,
@@ -993,24 +1035,7 @@ class AutomationManager:
                 "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["sanctions_refresh"],
             },
-            "arc_report_generation": {
-                "interval": 604800,
-                "last_run": None,
-                "enabled": True,
-                "priority": TaskPriority.LOW,
-                "phase": 3,
-                "depends_on": ["macro_series_refresh", "embeddings_worker"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["arc_report_generation"],
-            },
-            "longitudinal_matview_refresh": {
-                "interval": 21600,
-                "last_run": None,
-                "enabled": True,
-                "priority": TaskPriority.LOW,
-                "phase": 2,
-                "depends_on": ["external_events_sync"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["longitudinal_matview_refresh"],
-            },
+            # Hard-retired (no schedule): arc_report_generation, longitudinal_matview_refresh
             # PHASE 2.6: Entity dossier compile (articles + storylines + relationships -> entity_dossiers)
             "entity_dossier_compile": {
                 "interval": 3600,  # 1 hour - compile dossiers for entities missing or stale
@@ -1031,16 +1056,7 @@ class AutomationManager:
                 "depends_on": ["entity_profile_sync"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["entity_position_tracker"],
             },
-            # Metadata enrichment (language, categories, sentiment, quality) for domain articles
-            "metadata_enrichment": {
-                "interval": 900,  # 15 minutes
-                "last_run": None,
-                "enabled": True,
-                "priority": TaskPriority.NORMAL,
-                "phase": 2,
-                "depends_on": ["collection_cycle"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["metadata_enrichment"],
-            },
+            # Hard-retired (no schedule): metadata_enrichment — superseded by unified intake
             # Entity organizer: cleanup (merge/prune/cap) + relationship extraction; also runs in downtime loop
             "entity_organizer": {
                 "interval": 600,  # 10 minutes - run after we have entities
@@ -1062,16 +1078,57 @@ class AutomationManager:
                     "graph_connection_distillation"
                 ],
             },
-            # PHASE 3: ML Processing (Runs frequently on processed articles)
-            "ml_processing": {
-                "interval": 300,  # 5 minutes - run often, re-enqueue until empty
+            "embedding_link_candidates": {
+                "interval": 1800,
                 "last_run": None,
                 "enabled": True,
-                "priority": TaskPriority.HIGH,
-                "phase": 3,
-                "depends_on": ["collection_cycle"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["ml_processing"],
+                "priority": TaskPriority.NORMAL,
+                "phase": 2,
+                # After RSS intake chain (collection → enrich/UIE) — beaker stir
+                "depends_on": ["collection_cycle", "unified_intake_extraction"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
+                    "embedding_link_candidates"
+                ],
             },
+            "collision_sampling": {
+                "interval": 1800,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 2,
+                "depends_on": ["collection_cycle", "unified_intake_extraction"],
+                "estimated_duration": 60,
+            },
+            "stimulus_rag": {
+                "interval": 900,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 2,
+                "depends_on": ["collision_sampling", "embedding_link_candidates"],
+                "estimated_duration": 180,
+            },
+            "protein_harden": {
+                "interval": 1200,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 2,
+                "depends_on": ["stimulus_rag", "graph_connection_distillation"],
+                "estimated_duration": 120,
+            },
+            "graph_link_drift_review": {
+                "interval": 3600,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.LOW,
+                "phase": 2,
+                "depends_on": ["graph_connection_distillation"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
+                    "graph_link_drift_review"
+                ],
+            },
+            # Hard-retired (no schedule): ml_processing — superseded by unified intake
             # PHASE 5: Topic Clustering (Continuous iterative refinement)
             "topic_clustering": {
                 "interval": 300,  # 5 minutes - run often, drain backlog
@@ -1082,39 +1139,37 @@ class AutomationManager:
                 "depends_on": ["collection_cycle"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["topic_clustering"],
             },
-            # PHASE 4: Parallel ML & Entity Processing (Runs frequently)
-            "entity_extraction": {
-                "interval": 300,  # 5 minutes - run often, re-enqueue until empty
+            # Hard-retired (no schedule): entity_extraction — superseded by unified intake
+            "unified_intake_extraction": {
+                "interval": 300,
                 "last_run": None,
                 "enabled": True,
                 "priority": TaskPriority.NORMAL,
                 "phase": 4,
-                "depends_on": ["collection_cycle"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["entity_extraction"],
-                "parallel_group": "ml_entity_processing",  # Can run in parallel with ML
+                "depends_on": ["content_enrichment"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["unified_intake_extraction"],
+                "parallel_group": "ml_entity_processing",
             },
-            # PHASE 4: Parallel ML & Entity Processing (Runs frequently)
-            "quality_scoring": {
-                "interval": 300,  # 5 minutes - run often
+            "spine_sql_tail": {
+                "interval": 300,
                 "last_run": None,
                 "enabled": True,
                 "priority": TaskPriority.NORMAL,
                 "phase": 4,
-                "depends_on": ["collection_cycle"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["quality_scoring"],
-                "parallel_group": "ml_entity_processing",  # Can run in parallel with ML
+                "depends_on": ["unified_intake_extraction"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["spine_sql_tail"],
             },
-            # PHASE 4: Parallel ML & Entity Processing (Runs frequently)
-            "sentiment_analysis": {
-                "interval": 300,  # 5 minutes - run often, re-enqueue until empty
+            "mention_resolution": {
+                "interval": 300,
                 "last_run": None,
                 "enabled": True,
                 "priority": TaskPriority.NORMAL,
                 "phase": 4,
-                "depends_on": ["collection_cycle"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["sentiment_analysis"],
-                "parallel_group": "ml_entity_processing",  # Can run in parallel with ML
+                "depends_on": ["unified_intake_extraction"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["mention_resolution"],
+                "parallel_group": "ml_entity_processing",
             },
+            # Hard-retired (no schedule): quality_scoring, sentiment_analysis — unified intake
             # PHASE 6: Storyline Discovery (AI auto-creates storylines from article clusters)
             "storyline_discovery": {
                 "interval": 14400,  # 4 hours — discover new storylines from recent articles
@@ -1159,7 +1214,7 @@ class AutomationManager:
                 "enabled": True,
                 "priority": TaskPriority.HIGH,
                 "phase": 7,
-                "depends_on": ["ml_processing", "sentiment_analysis"],
+                "depends_on": ["unified_intake_extraction"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["storyline_processing"],
             },
             # Scheduled batch + governor requests: match incoming articles to automation-enabled storylines
@@ -1171,6 +1226,35 @@ class AutomationManager:
                 "phase": 7,
                 "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["storyline_automation"],
+            },
+            "storyline_review_agent": {
+                "interval": 300,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 7,
+                "depends_on": ["storyline_automation"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["storyline_review_agent"],
+            },
+            "storyline_membership_review": {
+                "interval": 900,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.LOW,
+                "phase": 7,
+                "depends_on": ["storyline_automation"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
+                    "storyline_membership_review"
+                ],
+            },
+            "storyline_hygiene": {
+                "interval": 1800,  # 30m — freeze→prune→near-dup merge
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.LOW,
+                "phase": 7,
+                "depends_on": ["storyline_automation"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["storyline_hygiene"],
             },
             # v8: Enrich existing storylines/dossiers with full-history search (past articles/contexts)
             "storyline_enrichment": {
@@ -1192,27 +1276,29 @@ class AutomationManager:
                 "depends_on": ["storyline_processing"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["rag_enhancement"],
             },
-            # PHASE 9a: Event Extraction (v5.0 - runs after entity extraction)
-            "event_extraction": {
-                "interval": 300,  # 5 minutes - run often, re-enqueue until empty
-                "last_run": None,
-                "enabled": True,
-                "priority": TaskPriority.NORMAL,
-                "phase": 9,
-                "depends_on": ["entity_extraction"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["event_extraction"],
-                "parallel_group": "event_processing",
-            },
-            # PHASE 9b: Event Deduplication (v5.0 - runs after event extraction)
+            # Hard-retired (no schedule): event_extraction — superseded by unified intake
+            # PHASE 9b: Event Deduplication (v5.0 — after unified intake events)
             "event_deduplication": {
                 "interval": 600,  # 10 minutes
                 "last_run": None,
                 "enabled": True,
                 "priority": TaskPriority.NORMAL,
                 "phase": 9,
-                "depends_on": ["event_extraction"],
+                "depends_on": ["unified_intake_extraction", "chronological_events_catchup"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["event_deduplication"],
                 "parallel_group": "event_processing",
+            },
+            # PHASE 9b2: Restore chronological_events for UIE-complete articles missing CE
+            "chronological_events_catchup": {
+                "interval": 1800,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 9,
+                "depends_on": ["unified_intake_extraction"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
+                    "chronological_events_catchup"
+                ],
             },
             # PHASE 9c: Story Continuation Matching (v5.0)
             "story_continuation": {
@@ -1224,6 +1310,18 @@ class AutomationManager:
                 "depends_on": ["event_deduplication"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["story_continuation"],
             },
+            # PHASE 9c2: Orphan event→episode assembly (backfill + cluster link + TE bridge)
+            "episode_assembly_maintenance": {
+                "interval": 1800,  # 30 minutes — drains orphan clusters / unlinked CE
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 9,
+                "depends_on": ["story_continuation"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
+                    "episode_assembly_maintenance"
+                ],
+            },
             # PHASE 9d: Timeline Generation (continuous until empty)
             "timeline_generation": {
                 "interval": 300,  # 5 minutes - run often, re-enqueue until empty
@@ -1231,7 +1329,7 @@ class AutomationManager:
                 "enabled": True,
                 "priority": TaskPriority.NORMAL,
                 "phase": 9,
-                "depends_on": ["rag_enhancement"],
+                "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["timeline_generation"],
             },
             # Phase 3 RAG: Entity enrichment (Wikipedia -> entity_profiles; LLM limits)
@@ -1274,39 +1372,7 @@ class AutomationManager:
                 "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["cache_cleanup"],
             },
-            # PHASE 10.5: Editorial document generation — build/refine storyline editorial_document (see editorial_briefing_generation for events)
-            "editorial_document_generation": {
-                "interval": 1800,  # 30 minutes
-                "last_run": None,
-                "enabled": True,
-                "priority": TaskPriority.NORMAL,
-                "phase": 10,
-                "depends_on": ["storyline_processing"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
-                    "editorial_document_generation"
-                ],
-            },
-            "editorial_briefing_generation": {
-                "interval": 1800,  # 30 minutes
-                "last_run": None,
-                "enabled": True,
-                "priority": TaskPriority.NORMAL,
-                "phase": 10,
-                "depends_on": ["event_tracking"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
-                    "editorial_briefing_generation"
-                ],
-            },
-            # PHASE 11: Digest Generation (Every hour)
-            "digest_generation": {
-                "interval": 3600,  # 1 hour
-                "last_run": None,
-                "enabled": True,
-                "priority": TaskPriority.NORMAL,
-                "phase": 11,
-                "depends_on": ["editorial_document_generation"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["digest_generation"],
-            },
+            # Hard-retired (no schedule): editorial_document/briefing, digest_generation
             # Auto storyline synthesis (Wikipedia-style articles)
             "storyline_synthesis": {
                 "interval": 3600,  # 60 minutes
@@ -1317,16 +1383,7 @@ class AutomationManager:
                 "depends_on": ["storyline_processing"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["storyline_synthesis"],
             },
-            # Auto daily briefing synthesis (breaking news)
-            "daily_briefing_synthesis": {
-                "interval": 14400,  # 4 hours
-                "last_run": None,
-                "enabled": True,
-                "priority": TaskPriority.LOW,
-                "phase": 11,
-                "depends_on": ["storyline_synthesis"],
-                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["daily_briefing_synthesis"],
-            },
+            # Hard-retired (no schedule): daily_briefing_synthesis
             # PHASE 12: Watchlist Alert Generation (v5.0)
             "watchlist_alerts": {
                 "interval": 1200,  # 20 minutes - Relaxed from 15 min
@@ -1365,7 +1422,7 @@ class AutomationManager:
                 "enabled": True,
                 "priority": TaskPriority.LOW,
                 "phase": 11,
-                "depends_on": ["storyline_processing", "editorial_document_generation"],
+                "depends_on": ["storyline_processing"],
                 "estimated_duration": 120,
             },
             # MAINTENANCE: Data Cleanup (Daily)
@@ -1400,7 +1457,21 @@ class AutomationManager:
             },
         }
 
+        # Pristine dependency edges, captured before any suppression strips them,
+        # so an auto-silenced phase can be re-wired when its silence lifts.
+        self._pristine_depends_on: dict[str, list[str]] = {
+            name: list(sched.get("depends_on") or []) for name, sched in self.schedules.items()
+        }
+        # Phases this manager disabled specifically because of auto-silence — the
+        # only ones eligible for re-enable (never resurrect retired/superseded phases).
+        self._auto_silence_disabled: set[str] = set()
+
         self._apply_automation_disabled_schedules()
+        self._apply_legacy_intake_schedule_suppression()
+        from shared.retired_phase_registry import apply_retired_schedule_suppression
+
+        apply_retired_schedule_suppression(self.schedules)
+        self._apply_entity_enrichment_schedule_dedupe()
 
         # Performance metrics
         self.metrics = {
@@ -1409,9 +1480,8 @@ class AutomationManager:
             "avg_processing_time": 0,
             "system_uptime": 0,
             "last_health_check": None,
-            "adaptive_timing": True,
-            "load_factor": 1.0,  # Multiplier for intervals based on load
-            "processing_history": {},  # Track actual vs estimated durations
+            "adaptive_timing": False,
+            "processing_history": {},  # Track actual vs estimated durations (Monitor)
         }
 
         try:
@@ -1429,29 +1499,71 @@ class AutomationManager:
             pass
 
     def get_disabled_schedule_names(self) -> list[str]:
-        """Phases disabled via AUTOMATION_DISABLED_SCHEDULES (e.g. Widow cron offload)."""
-        raw = os.environ.get("AUTOMATION_DISABLED_SCHEDULES", "").strip()
-        if not raw:
-            return []
-        return sorted({x.strip() for x in raw.split(",") if x.strip()})
+        """Phases disabled via AUTOMATION_DISABLED_SCHEDULES, remote worker ownership, and auto-silence."""
+        raw = env_str("AUTOMATION_DISABLED_SCHEDULES", "").strip()
+        names = {x.strip() for x in raw.split(",") if x.strip()} if raw else set()
+        try:
+            from shared.remote_phase_worker import remote_owned_phases
+
+            names |= set(remote_owned_phases())
+        except Exception:
+            pass
+        try:
+            from services.phase_retry_silence_service import list_auto_silenced_phases
+
+            names |= list_auto_silenced_phases()
+        except Exception:
+            pass
+        return sorted(names)
 
     def is_schedule_disabled(self, phase_name: str) -> bool:
         return phase_name.strip() in set(self.get_disabled_schedule_names())
 
     def _apply_automation_disabled_schedules(self) -> None:
-        """Disable named schedules and strip them from depends_on so dependents still run (Widow cron offload)."""
+        """
+        Reconcile schedule enablement against the current disable set.
+
+        Disables named schedules and strips them from depends_on so dependents still
+        run (Widow cron / PopOS worker). Also re-enables phases whose *auto-silence*
+        has since lifted — silence is a backoff, so it must not survive as a
+        permanent disable until the next API restart. Safe to call repeatedly.
+        """
         disabled = set(self.get_disabled_schedule_names())
+        remote_owned: set[str] = set()
+        try:
+            from shared.remote_phase_worker import remote_owned_phases
+
+            remote_owned = set(remote_owned_phases())
+        except Exception:
+            pass
+        auto_silenced: set[str] = set()
+        try:
+            from services.phase_retry_silence_service import list_auto_silenced_phases
+
+            auto_silenced = list_auto_silenced_phases()
+        except Exception:
+            pass
+
+        self._reenable_lifted_silence_schedules(disabled)
+
         if not disabled:
             return
         for name in disabled:
             if name in self.schedules:
+                was_enabled = bool(self.schedules[name].get("enabled", True))
                 self.schedules[name]["enabled"] = False
-                logger.info(
-                    "Automation schedule %s disabled (AUTOMATION_DISABLED_SCHEDULES)",
-                    name,
-                )
+                if name in remote_owned:
+                    reason = "REMOTE_PHASE_WORKER_OWNED_PHASES"
+                elif name in auto_silenced:
+                    reason = "PHASE_AUTO_SILENCE"
+                    self._auto_silence_disabled.add(name)
+                else:
+                    reason = "AUTOMATION_DISABLED_SCHEDULES"
+                # Reconciler runs every controller cycle — only log real transitions.
+                if was_enabled:
+                    logger.info("Automation schedule %s disabled (%s)", name, reason)
             else:
-                logger.warning("AUTOMATION_DISABLED_SCHEDULES: unknown phase %s", name)
+                logger.warning("disabled schedule unknown phase %s", name)
         for sched_name, sched in self.schedules.items():
             deps = list(sched.get("depends_on") or [])
             if not deps:
@@ -1464,6 +1576,120 @@ class AutomationManager:
                     sched_name,
                     new_deps,
                 )
+
+    def _reenable_lifted_silence_schedules(self, disabled: set[str]) -> list[str]:
+        """
+        Re-enable phases that were disabled by auto-silence which has since lifted.
+
+        Only phases this manager muted for PHASE_AUTO_SILENCE are eligible, so
+        retired / superseded / remote-owned schedules are never resurrected.
+        Dependency edges stripped when the phase was muted are restored from the
+        pristine snapshot (skipping any edge that is still disabled).
+        """
+        eligible = {
+            name
+            for name in getattr(self, "_auto_silence_disabled", set())
+            if name not in disabled and name in self.schedules
+        }
+        if not eligible:
+            return []
+        restored: list[str] = []
+        for name in sorted(eligible):
+            self.schedules[name]["enabled"] = True
+            self.schedules[name]["last_run"] = None  # eligible on the next tick
+            self._auto_silence_disabled.discard(name)
+            restored.append(name)
+            logger.info(
+                "Automation schedule %s re-enabled (auto-silence lifted — retrying phase)",
+                name,
+            )
+        pristine = getattr(self, "_pristine_depends_on", {}) or {}
+        for sched_name, sched in self.schedules.items():
+            original = pristine.get(sched_name)
+            if not original:
+                continue
+            deps = list(sched.get("depends_on") or [])
+            missing = [
+                d for d in original if d in restored and d not in deps and d not in disabled
+            ]
+            if missing:
+                sched["depends_on"] = [d for d in original if d not in disabled]
+                logger.info(
+                    "Automation: %s depends_on restored after silence lift: %s",
+                    sched_name,
+                    sched["depends_on"],
+                )
+        return restored
+
+    def _apply_legacy_intake_schedule_suppression(self) -> None:
+        """Disable legacy per-phase intake schedules superseded by unified_intake_extraction."""
+        from shared.legacy_intake_rollback import legacy_intake_rollback_active
+        from shared.pipeline_resource_policy import unified_superseded_automation_phases
+
+        if legacy_intake_rollback_active():
+            return
+        disabled = unified_superseded_automation_phases()
+        for name in disabled:
+            if name in self.schedules:
+                self.schedules[name]["enabled"] = False
+                logger.info(
+                    "Automation schedule %s disabled (superseded by unified_intake_extraction)",
+                    name,
+                )
+        for sched_name, sched in self.schedules.items():
+            deps = list(sched.get("depends_on") or [])
+            new_deps = [d for d in deps if d not in disabled]
+            if new_deps != deps:
+                sched["depends_on"] = new_deps
+                logger.debug(
+                    "Automation: %s depends_on stripped legacy intake phases: %s",
+                    sched_name,
+                    new_deps,
+                )
+
+    def _apply_retired_phase_schedule_suppression(self) -> None:
+        """Disable schedules for features.yaml retired phases (enabled:false with phase_name)."""
+        from shared.retired_phase_registry import retired_automation_phases
+
+        disabled = retired_automation_phases()
+        if not disabled:
+            return
+        for name in disabled:
+            if name in self.schedules and self.schedules[name].get("enabled", True):
+                self.schedules[name]["enabled"] = False
+                logger.info(
+                    "Automation schedule %s disabled (features.yaml retired phase)",
+                    name,
+                )
+        for sched_name, sched in self.schedules.items():
+            deps = list(sched.get("depends_on") or [])
+            new_deps = [d for d in deps if d not in disabled]
+            if new_deps != deps:
+                sched["depends_on"] = new_deps
+                logger.debug(
+                    "Automation: %s depends_on stripped retired phases: %s",
+                    sched_name,
+                    new_deps,
+                )
+
+    def _apply_entity_enrichment_schedule_dedupe(self) -> None:
+        """story_enhancement orchestrator already runs entity enrichment batches."""
+        se = self.schedules.get("story_enhancement") or {}
+        ee = self.schedules.get("entity_enrichment")
+        if ee and se.get("enabled", True):
+            ee["enabled"] = False
+            logger.info(
+                "Automation schedule entity_enrichment disabled (owned by story_enhancement)"
+            )
+            for sched_name, sched in self.schedules.items():
+                deps = list(sched.get("depends_on") or [])
+                if "entity_enrichment" in deps:
+                    sched["depends_on"] = [d for d in deps if d != "entity_enrichment"]
+                    logger.debug(
+                        "Automation: %s depends_on stripped entity_enrichment: %s",
+                        sched_name,
+                        sched["depends_on"],
+                    )
 
     def _automation_queue_depth(self) -> int:
         """Approximate pending tasks in worker queues (scheduled + governor-requested)."""
@@ -1501,41 +1727,59 @@ class AutomationManager:
         """
         if allow_operator_bypass:
             return False
-        if phase_name != "claim_extraction":
-            return False
         try:
-            from services.claim_extraction_service import claim_extraction_drain_enabled
+            from services.pipeline_controller import LONG_DRAIN_PHASES
 
-            if not claim_extraction_drain_enabled():
+            if phase_name not in LONG_DRAIN_PHASES:
                 return False
         except Exception:
-            return False
+            if phase_name != "claim_extraction":
+                return False
+        if phase_name == "claim_extraction":
+            try:
+                from services.claim_extraction_service import claim_extraction_drain_enabled
+
+                if not claim_extraction_drain_enabled():
+                    return False
+            except Exception:
+                return False
         cap = self._per_phase_scheduler_concurrent_cap(phase_name)
         if cap <= 0:
             cap = min(int(self.max_concurrent_tasks), 6)
         return self._phase_pipeline_inflight(phase_name) >= cap
 
-    def _discard_redundant_claim_extraction_when_at_cap(self, task: Task, exec_cap: int) -> bool:
+    def _discard_redundant_drain_when_at_cap(self, task: Task, exec_cap: int) -> bool:
         """
-        When the concurrent cap is already satisfied by other workers, a duplicate claim_extraction
-        task must not re-enter the asyncio queue (bypass_schedule_depth_cap). Otherwise thousands of
-        copies accumulate while a few long drain runs hold the slots.
+        When the concurrent cap is already satisfied by other workers, duplicate long-drain tasks
+        must not re-enter the asyncio queue. Otherwise copies accumulate while drains hold slots.
         """
-        if task.name != "claim_extraction" or exec_cap <= 0:
+        if exec_cap <= 0:
             return False
         if (task.metadata or {}).get("nightly_sequential_drain"):
             return False
         if (task.metadata or {}).get("requested_activity_id"):
             return False
         try:
-            from services.claim_extraction_service import claim_extraction_drain_enabled
+            from services.pipeline_controller import LONG_DRAIN_PHASES
 
-            if not claim_extraction_drain_enabled():
+            if task.name not in LONG_DRAIN_PHASES:
                 return False
         except Exception:
-            return False
-        # After the failed slot attempt we reverted our +1; count is workers already executing.
+            if task.name != "claim_extraction":
+                return False
+        if task.name == "claim_extraction":
+            try:
+                from services.claim_extraction_service import claim_extraction_drain_enabled
+
+                if not claim_extraction_drain_enabled():
+                    return False
+            except Exception:
+                return False
         return int(self._running_tasks_by_phase.get(task.name, 0) or 0) >= exec_cap
+
+    def _discard_redundant_claim_extraction_when_at_cap(self, task: Task, exec_cap: int) -> bool:
+        """Backward-compatible alias."""
+        return self._discard_redundant_drain_when_at_cap(task, exec_cap)
 
     def _can_enqueue_nightly_enrichment(self) -> bool:
         if AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED <= 0:
@@ -1626,6 +1870,257 @@ class AutomationManager:
         self._scheduled_queue_depth_by_phase[task.name] += 1
         return True
 
+    async def drain_phase_requests_to_queue(self) -> None:
+        """Drain thread-safe phase requests (Monitor / orchestrator) into requested queue."""
+        try:
+            while True:
+                item = self._phase_request_queue.get_nowait()
+                force_nightly_unified_pipeline = False
+                if isinstance(item, dict):
+                    phase_name = item.get("phase")
+                    domain = item.get("domain")
+                    storyline_id = item.get("storyline_id")
+                    requested_activity_id = item.get("requested_activity_id")
+                    force_nightly_unified_pipeline = bool(
+                        item.get("force_nightly_unified_pipeline")
+                    )
+                elif len(item) == 4:
+                    phase_name, domain, storyline_id, requested_activity_id = item
+                else:
+                    phase_name, domain, storyline_id = item[0], item[1], item[2]
+                    requested_activity_id = None
+                if not phase_name or phase_name not in self.schedules:
+                    continue
+                if self._should_skip_redundant_phase_request(
+                    phase_name,
+                    allow_operator_bypass=bool(requested_activity_id),
+                ):
+                    continue
+                schedule = self.schedules[phase_name]
+                if not schedule.get("enabled", True):
+                    continue
+                task = Task(
+                    id=f"{phase_name}_{int(datetime.now(timezone.utc).timestamp())}_req",
+                    name=phase_name,
+                    priority=TaskPriority.CRITICAL,
+                    status=TaskStatus.PENDING,
+                    created_at=datetime.now(timezone.utc),
+                    max_retries=_phase_max_retries(phase_name),
+                    metadata={
+                        "domain": domain,
+                        "storyline_id": storyline_id,
+                        "requested_activity_id": requested_activity_id,
+                        "force_nightly_unified_pipeline": force_nightly_unified_pipeline,
+                        "operator_request": True,
+                        "lane_default": self._phase_default_lane(phase_name),
+                        "resource_class": self._phase_resource_class(phase_name),
+                    },
+                )
+                await self._requested_task_queue.put(task)
+                self._requested_queue_depth_by_phase[phase_name] += 1
+                logger.info(
+                    "Governor requested phase: %s (domain=%s, storyline_id=%s)",
+                    phase_name,
+                    domain,
+                    storyline_id,
+                )
+        except queue.Empty:
+            pass
+
+    def _drain_priority_queue_tasks(self) -> list[Task]:
+        tasks: list[Task] = []
+        while True:
+            try:
+                item = self.task_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            t = item[2] if isinstance(item, tuple) and len(item) >= 3 else item
+            if hasattr(t, "name"):
+                tasks.append(t)
+                self._scheduled_queue_depth_by_phase[t.name] = max(
+                    0, int(self._scheduled_queue_depth_by_phase.get(t.name, 0) or 0) - 1
+                )
+        return tasks
+
+    def _rebuild_priority_queue(self, tasks: list[Task]) -> None:
+        for idx, task in enumerate(tasks):
+            p = TaskPriority.CRITICAL.value if (task.metadata or {}).get("operator_request") else TaskPriority.NORMAL.value
+            if isinstance(task.priority, TaskPriority):
+                p = min(p, task.priority.value)
+            self.task_queue.put_nowait((p, idx, task))
+            self._scheduled_queue_depth_by_phase[task.name] += 1
+
+    async def reconcile_and_enqueue(
+        self,
+        *,
+        desired_phases: list[str],
+        plan_generation: int,
+        stall_holds: dict[str, int],
+        controller: Any,
+        pending: dict[str, int] | None = None,
+    ) -> None:
+        """Drop duplicates / stale plans, reorder, enqueue gaps to prefetch target."""
+        from services.pipeline_controller import (
+            host_lane_at_cap,
+            prefetch_multiplier,
+        )
+
+        if pending is None:
+            pending = {}
+            try:
+                from services.backlog_metrics import get_all_pending_counts
+
+                pending = await asyncio.to_thread(get_all_pending_counts)
+            except Exception:
+                pending = {}
+        else:
+            pending = dict(pending)
+
+        existing = self._drain_priority_queue_tasks()
+        kept: list[Task] = []
+        actions: list[str] = []
+        phase_counts: dict[str, int] = defaultdict(int)
+        controller_hosts = getattr(controller, "hosts", None) or {}
+
+        for task in existing:
+            meta = task.metadata or {}
+            if meta.get("requested_activity_id") or meta.get("operator_request"):
+                kept.append(task)
+                phase_counts[task.name] += 1
+                continue
+            gen = meta.get("plan_generation")
+            if gen is not None and int(gen) < plan_generation:
+                actions.append(f"drop_stale:{task.name}")
+                continue
+            if stall_holds.get(task.name, 0) > 0:
+                actions.append(f"drop_stall_hold:{task.name}")
+                continue
+            from shared.bulk_catchup_pause import bulk_catchup_pause_defers_phase
+
+            if bulk_catchup_pause_defers_phase(task.name) and not meta.get("operator_request"):
+                actions.append(f"drop_bulk_pause:{task.name}")
+                continue
+            if int(pending.get(task.name, 0) or 0) <= 0 and task.name != "spine_sql_tail":
+                actions.append(f"drop_empty:{task.name}")
+                continue
+            cap = self._per_phase_scheduler_concurrent_cap(task.name)
+            inflight = self._phase_pipeline_inflight(task.name)
+            if cap > 0 and inflight >= cap:
+                actions.append(f"drop_saturated:{task.name}")
+                continue
+            if host_lane_at_cap(self, task.name, hosts=controller_hosts):
+                actions.append(f"drop_lane_cap:{task.name}")
+                continue
+            if AUTOMATION_MAX_SCHEDULED_DEPTH_PER_PHASE > 0:
+                if phase_counts[task.name] >= AUTOMATION_MAX_SCHEDULED_DEPTH_PER_PHASE:
+                    actions.append(f"drop_dup:{task.name}")
+                    continue
+            phase_counts[task.name] += 1
+            meta["plan_generation"] = plan_generation
+            task.metadata = meta
+            kept.append(task)
+
+        desired_set = []
+        seen: set[str] = set()
+        for phase in desired_phases:
+            if phase in seen:
+                continue
+            seen.add(phase)
+            desired_set.append(phase)
+
+        # Reserve Widow-local structure slots so intake cannot consume the whole
+        # prefetch budget while MR/EPB have actionable backlog.
+        _widow_structure_reserve = ("mention_resolution", "entity_profile_build")
+        reserved: list[str] = []
+        for phase in _widow_structure_reserve:
+            if phase in seen and int(pending.get(phase, 0) or 0) > 0:
+                reserved.append(phase)
+        enqueue_order = reserved + [p for p in desired_set if p not in reserved]
+
+        ordered: list[Task] = []
+        kept_by_phase: dict[str, list[Task]] = defaultdict(list)
+        for t in kept:
+            kept_by_phase[t.name].append(t)
+
+        for phase in enqueue_order:
+            ordered.extend(kept_by_phase.pop(phase, []))
+
+        for phase, tasks in kept_by_phase.items():
+            ordered.extend(tasks)
+
+        self._rebuild_priority_queue(ordered)
+
+        target = min(
+            self.max_concurrent_tasks * prefetch_multiplier(),
+            AUTOMATION_QUEUE_SOFT_CAP if AUTOMATION_QUEUE_SOFT_CAP > 0 else self.max_concurrent_tasks * prefetch_multiplier(),
+        )
+        if target <= 0:
+            target = self.max_concurrent_tasks * prefetch_multiplier()
+
+        # Heal ghost scheduled-depth counters when the asyncio queue is empty.
+        # Superseded-task skips historically leaked depth and permanently blocked
+        # AUTOMATION_MAX_SCHEDULED_DEPTH_PER_PHASE enqueues (queue_actions=[]).
+        if self.task_queue.qsize() == 0:
+            for _ph, _depth in list(self._scheduled_queue_depth_by_phase.items()):
+                if int(_depth or 0) > 0:
+                    actions.append(f"heal_sched_depth:{_ph}:{int(_depth)}")
+                    self._scheduled_queue_depth_by_phase[_ph] = 0
+
+        for phase in enqueue_order:
+            if self._automation_queue_depth() >= target:
+                break
+            if stall_holds.get(phase, 0) > 0:
+                actions.append(f"skip_stall:{phase}")
+                continue
+            if self._should_skip_redundant_phase_request(phase):
+                actions.append(f"skip_redundant:{phase}")
+                continue
+            from shared.bulk_catchup_pause import bulk_catchup_pause_defers_phase
+
+            if bulk_catchup_pause_defers_phase(phase):
+                actions.append(f"drop_bulk_pause:{phase}")
+                continue
+            inflight = self._phase_pipeline_inflight(phase)
+            cap = self._per_phase_scheduler_concurrent_cap(phase)
+            if cap > 0 and inflight >= cap:
+                actions.append(f"skip_cap:{phase}")
+                continue
+            if host_lane_at_cap(self, phase, hosts=controller_hosts):
+                actions.append(f"skip_lane_cap:{phase}")
+                continue
+            if AUTOMATION_MAX_SCHEDULED_DEPTH_PER_PHASE > 0:
+                queued = int(self._scheduled_queue_depth_by_phase.get(phase, 0) or 0)
+                if queued >= AUTOMATION_MAX_SCHEDULED_DEPTH_PER_PHASE:
+                    actions.append(f"skip_sched_depth:{phase}")
+                    continue
+            if phase not in self.schedules:
+                actions.append(f"skip_no_schedule:{phase}")
+                continue
+            schedule = self.schedules[phase]
+            task = Task(
+                id=f"{phase}_{plan_generation}_{int(datetime.now(timezone.utc).timestamp())}",
+                name=phase,
+                priority=schedule.get("priority", TaskPriority.NORMAL),
+                status=TaskStatus.PENDING,
+                created_at=datetime.now(timezone.utc),
+                max_retries=_phase_max_retries(phase),
+                metadata={
+                    "scheduled": True,
+                    "controller": True,
+                    "plan_generation": plan_generation,
+                    "phase": schedule.get("phase", 0),
+                    "lane_default": self._phase_default_lane(phase),
+                    "resource_class": self._phase_resource_class(phase),
+                },
+            )
+            if await self._enqueue_scheduled_task(task):
+                actions.append(f"enqueue:{phase}")
+                phase_counts[phase] += 1
+            else:
+                actions.append(f"enqueue_false:{phase}")
+
+        controller.queue_actions_last_replan = actions
+
     def _scheduled_enqueue_paused(self) -> bool:
         """When True, skip adding new scheduled / chained / continuous tasks (allowlist still runs)."""
         if AUTOMATION_QUEUE_SOFT_CAP <= 0:
@@ -1648,10 +2143,9 @@ class AutomationManager:
     def _load_pending_collection_queue(self) -> None:
         """v8: Load pending collection queue from DB (call on start)."""
         try:
-            conn = self._get_db_connection_sync()
-            if not conn:
-                return
-            try:
+            from shared.database.connection import get_db_connection_context
+
+            with get_db_connection_context() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         "SELECT value FROM public.automation_state WHERE key = %s",
@@ -1664,24 +2158,15 @@ class AutomationManager:
                         "Loaded %s pending collection request(s) from DB",
                         len(self._pending_collection_queue),
                     )
-            finally:
-                conn.close()
         except Exception as e:
             logger.debug("Load pending_collection_queue: %s (table may not exist yet)", e)
-
-    def _get_db_connection_sync(self):
-        """Synchronous DB connection for use from sync code (e.g. load/save queue)."""
-        from shared.database.connection import get_db_connection
-
-        return get_db_connection()
 
     def persist_pending_collection_queue(self) -> None:
         """v8: Persist pending collection queue to DB (call on shutdown)."""
         try:
-            conn = self._get_db_connection_sync()
-            if not conn:
-                return
-            try:
+            from shared.database.connection import get_db_connection_context
+
+            with get_db_connection_context() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
@@ -1708,8 +2193,6 @@ class AutomationManager:
                         "Persisted %s pending collection request(s) to DB",
                         len(self._pending_collection_queue),
                     )
-            finally:
-                conn.close()
         except Exception as e:
             logger.debug("Persist pending_collection_queue: %s", e)
 
@@ -1718,7 +2201,7 @@ class AutomationManager:
         Before workers: confirm PostgreSQL is reachable via the **worker** pool (phases use it)
         and the **health** pool (standalone health_check). Retries a few times for transient startup.
         """
-        if os.getenv("AUTOMATION_SKIP_STARTUP_PREFLIGHT", "").lower() in ("1", "true", "yes"):
+        if env_str("AUTOMATION_SKIP_STARTUP_PREFLIGHT", "").lower() in ("1", "true", "yes"):
             logger.warning(
                 "AUTOMATION_SKIP_STARTUP_PREFLIGHT set — skipping startup DB preflight"
             )
@@ -1731,11 +2214,11 @@ class AutomationManager:
 
         loop = asyncio.get_event_loop()
         try:
-            attempts = max(1, int(os.getenv("AUTOMATION_STARTUP_HEALTH_CHECK_ATTEMPTS", "3")))
+            attempts = max(1, env_int("AUTOMATION_STARTUP_HEALTH_CHECK_ATTEMPTS", 3))
         except ValueError:
             attempts = 3
         try:
-            delay_sec = float(os.getenv("AUTOMATION_STARTUP_HEALTH_CHECK_DELAY_SEC", "2"))
+            delay_sec = float(env_str("AUTOMATION_STARTUP_HEALTH_CHECK_DELAY_SEC", "2"))
         except ValueError:
             delay_sec = 2.0
 
@@ -1812,13 +2295,17 @@ class AutomationManager:
 
         await self._sync_phase_worker_tasks()
 
-        scheduler = asyncio.create_task(self._scheduler())
+        from services.pipeline_controller import PipelineController, set_pipeline_controller
+
+        controller = PipelineController()
+        set_pipeline_controller(controller)
+        controller_task = asyncio.create_task(controller.run(self))
         standalone_health = asyncio.create_task(self._standalone_health_check_loop())
         health_monitor = asyncio.create_task(self._health_monitor())
         metrics_collector = asyncio.create_task(self._metrics_collector())
         entity_organizer_loop = asyncio.create_task(self._entity_organizer_downtime_loop())
         self._background_automation_tasks = [
-            scheduler,
+            controller_task,
             standalone_health,
             health_monitor,
             metrics_collector,
@@ -1827,7 +2314,7 @@ class AutomationManager:
         self._rebuild_automation_task_list()
 
         logger.info(
-            "Automation Manager started with %s phase dequeue workers (+ background tasks)",
+            "Automation Manager started with PipelineController + %s phase dequeue workers",
             len(self._phase_worker_tasks),
         )
 
@@ -1885,6 +2372,9 @@ class AutomationManager:
                     "force_nightly_unified_pipeline": bool(force_nightly_unified_pipeline),
                 }
             )
+            ctrl = getattr(self, "pipeline_controller", None)
+            if ctrl is not None:
+                ctrl.request_replan()
         except Exception as e:
             logger.warning("AutomationManager request_phase failed: %s", e)
 
@@ -1914,9 +2404,8 @@ class AutomationManager:
                 unsatisfied.append(f"{dep} (never run)")
                 continue
             time_since = (now - dep_schedule["last_run"]).total_seconds()
-            need = dep_schedule.get("estimated_duration", 60) * max(
-                0.5, self.metrics.get("load_factor", 1.0)
-            )
+            need = float(dep_schedule.get("estimated_duration", 60) or 60) * 0.5
+            need = min(need, float(AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC))
             if time_since < need:
                 unsatisfied.append(f"{dep} (run {int(time_since)}s ago)")
         if not unsatisfied:
@@ -1940,6 +2429,37 @@ class AutomationManager:
                     task = _pq_item[2]
 
                 if task:
+                    meta = task.metadata or {}
+                    ctrl = getattr(self, "pipeline_controller", None)
+                    gen = meta.get("plan_generation")
+                    if (
+                        ctrl
+                        and gen is not None
+                        and not meta.get("requested_activity_id")
+                        and not meta.get("operator_request")
+                        and int(gen) < ctrl.plan_generation
+                    ):
+                        logger.debug(
+                            "Skip superseded task %s (gen=%s < %s)",
+                            task.name,
+                            gen,
+                            ctrl.plan_generation,
+                        )
+                        # Depth was bumped at enqueue; skipping must release it or
+                        # reconcile permanently hits AUTOMATION_MAX_SCHEDULED_DEPTH.
+                        if from_requested:
+                            self._requested_queue_depth_by_phase[task.name] = max(
+                                0,
+                                int(self._requested_queue_depth_by_phase[task.name]) - 1,
+                            )
+                            self._requested_task_queue.task_done()
+                        else:
+                            self._scheduled_queue_depth_by_phase[task.name] = max(
+                                0,
+                                int(self._scheduled_queue_depth_by_phase[task.name]) - 1,
+                            )
+                            self.task_queue.task_done()
+                        continue
                     if from_requested:
                         self._requested_queue_depth_by_phase[task.name] = max(
                             0,
@@ -1969,409 +2489,28 @@ class AutomationManager:
 
     @staticmethod
     def _phase_default_lane(phase_name: str) -> str:
+        from shared.pipeline_resource_policy import get_phase_policy
+
+        pol = get_phase_policy(phase_name)
+        if pol and pol.requires_llm:
+            return pol.execution_lane
         return "gpu" if phase_name in GPU_LANE_PHASES else "cpu"
 
     @staticmethod
     def _phase_resource_class(phase_name: str) -> str:
+        from shared.pipeline_resource_policy import get_phase_policy, phase_resource_class
+
+        if get_phase_policy(phase_name):
+            return phase_resource_class(phase_name)
         if phase_name in GPU_LANE_PHASES:
             return "gpu_heavy"
         if phase_name in DB_HEAVY_PHASES:
             return "db_heavy"
         return "cpu_light"
 
-    def _resource_headroom_snapshot(self) -> dict[str, Any]:
-        """
-        Compute CPU/GPU/DB headroom in [0,1] for dynamic routing/cooldowns.
-        1.0 means plenty of room, 0.0 means saturated.
-        """
-        cpu_percent = None
-        gpu_percent = None
-        try:
-            import psutil
-
-            cpu_percent = float(psutil.cpu_percent(interval=0.0))
-        except Exception:
-            cpu_percent = None
-        try:
-            from shared.gpu_metrics import get_gpu_metrics
-
-            gpu_percent = get_gpu_metrics().get("gpu_utilization_percent")
-            if gpu_percent is not None:
-                gpu_percent = float(gpu_percent)
-        except Exception:
-            gpu_percent = None
-        db_snapshot = {}
-        worker_util = 0.0
-        try:
-            from shared.database.connection import get_db_pool_snapshot
-
-            db_snapshot = get_db_pool_snapshot()
-            worker_util = float((db_snapshot.get("worker") or {}).get("utilization") or 0.0)
-        except Exception:
-            db_snapshot = {}
-            worker_util = 0.0
-
-        cpu_headroom = max(0.0, min(1.0, 1.0 - ((cpu_percent or 0.0) / 100.0)))
-        gpu_headroom = (
-            max(0.0, min(1.0, 1.0 - (gpu_percent / 100.0)))
-            if gpu_percent is not None
-            else 0.5
-        )
-        db_headroom = max(0.0, min(1.0, 1.0 - worker_util))
-        return {
-            "cpu_percent": cpu_percent,
-            "gpu_percent": gpu_percent,
-            "db_pool": db_snapshot,
-            "cpu_headroom": round(cpu_headroom, 3),
-            "gpu_headroom": round(gpu_headroom, 3),
-            "db_headroom": round(db_headroom, 3),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-
     def _resolve_effective_lane(self, phase_name: str, resource_class: str) -> tuple[str, str]:
-        """
-        Lane policy: phase default + guarded dynamic adjustment by current headroom.
-        Returns (lane, reason).
-        """
-        default_lane = self._phase_default_lane(phase_name)
-        if not AUTOMATION_DYNAMIC_RESOURCE_ROUTING_ENABLED:
-            return default_lane, "static_phase_policy"
-
-        hr = self._resource_headroom or {}
-        cpu_h = float(hr.get("cpu_headroom") or 0.0)
-        gpu_h = float(hr.get("gpu_headroom") or 0.0)
-        db_h = float(hr.get("db_headroom") or 0.0)
-
-        if (
-            default_lane == "gpu"
-            and gpu_h < ROUTER_GPU_SATURATED_HEADROOM
-            and cpu_h > ROUTER_CPU_HOT_HEADROOM
-            and resource_class != "gpu_heavy"
-        ):
-            return "cpu", "dynamic_gpu_saturated_cpu_available"
-        if (
-            default_lane == "cpu"
-            and resource_class == "cpu_light"
-            and gpu_h > ROUTER_GPU_EXTRA_HEADROOM
-            and cpu_h < ROUTER_CPU_HOT_HEADROOM
-        ):
-            return "gpu", "dynamic_cpu_hot_gpu_available"
-        if resource_class == "db_heavy" and db_h < ROUTER_DB_PRESSURE_HEADROOM:
-            return "cpu", "db_pressure_cpu_lane_only"
-        return default_lane, "phase_default"
-
-    def _dynamic_cooldown_multiplier(self, resource_class: str) -> tuple[float, str]:
-        if not AUTOMATION_DYNAMIC_RESOURCE_ROUTING_ENABLED:
-            return 1.0, "static"
-        hr = self._resource_headroom or {}
-        cpu_h = float(hr.get("cpu_headroom") or 0.0)
-        gpu_h = float(hr.get("gpu_headroom") or 0.0)
-        db_h = float(hr.get("db_headroom") or 0.0)
-        if resource_class == "db_heavy":
-            if db_h < ROUTER_DB_PRESSURE_HEADROOM:
-                return ROUTER_MULT_DB_PRESSURE, "db_pool_pressure"
-            if db_h > ROUTER_DB_EXTRA_HEADROOM:
-                return ROUTER_MULT_HEADROOM_BONUS, "db_pool_headroom"
-            return 1.0, "db_balanced"
-        if resource_class == "gpu_heavy":
-            if gpu_h < ROUTER_GPU_SATURATED_HEADROOM:
-                return ROUTER_MULT_GPU_SATURATED, "gpu_saturated"
-            if gpu_h > ROUTER_GPU_EXTRA_HEADROOM:
-                return ROUTER_MULT_HEADROOM_BONUS, "gpu_headroom"
-            return 1.0, "gpu_balanced"
-        if cpu_h < ROUTER_CPU_HOT_HEADROOM:
-            return ROUTER_MULT_CPU_HOT, "cpu_hot"
-        if cpu_h > ROUTER_CPU_EXTRA_HEADROOM:
-            return ROUTER_MULT_HEADROOM_BONUS, "cpu_headroom"
-        return 1.0, "cpu_balanced"
-
-    def _bootstrap_initial_tasks(self):
-        """Queue key phases immediately on startup so work starts without waiting for first interval."""
-        now = datetime.now(timezone.utc)
-        # Phases that should run once as soon as we start (no deps, or bootstrap allows)
-        for task_name in ("collection_cycle",):
-            schedule = self.schedules.get(task_name)
-            if not schedule or not schedule.get("enabled", True):
-                continue
-            if schedule.get("last_run") is not None:
-                continue
-            task = Task(
-                id=f"{task_name}_bootstrap_{int(now.timestamp())}",
-                name=task_name,
-                priority=schedule.get("priority", TaskPriority.NORMAL),
-                status=TaskStatus.PENDING,
-                created_at=now,
-                metadata={
-                    "scheduled": True,
-                    "phase": schedule.get("phase", 0),
-                    "bootstrap": True,
-                    "lane_default": self._phase_default_lane(task_name),
-                    "resource_class": self._phase_resource_class(task_name),
-                },
-            )
-            try:
-                if self._enqueue_scheduled_task_nowait(task):
-                    schedule["last_run"] = now
-                    logger.info("Startup: queued %s so processing begins immediately", task_name)
-            except asyncio.QueueFull:
-                logger.warning("Startup: task queue full, skipped bootstrap %s", task_name)
-
-    async def _scheduler(self):
-        """Task scheduler with dependency management"""
-        logger.info("Scheduler started")
-        # Kick off work immediately on startup (don't wait for first 5s tick)
-        self._bootstrap_initial_tasks()
-
-        while self.is_running:
-            try:
-                current_time = datetime.now(timezone.utc)
-                backlog_counts: dict[str, int] = {}
-                self._pending_counts: dict[str, int] = {}
-                if get_all_backlog_counts:
-                    try:
-                        backlog_counts = get_all_backlog_counts()
-                    except Exception as e:
-                        logger.debug("Backlog counts unavailable: %s", e)
-                if get_all_pending_counts:
-                    try:
-                        self._pending_counts = get_all_pending_counts()
-                    except Exception as e:
-                        logger.debug("Pending counts unavailable: %s", e)
-                self._resource_headroom = self._resource_headroom_snapshot()
-
-                try:
-                    from services.content_refinement_queue_service import (
-                        maybe_auto_enqueue_comprehensive_rag_from_scheduler,
-                    )
-
-                    maybe_auto_enqueue_comprehensive_rag_from_scheduler()
-                except Exception as e:
-                    logger.debug("scheduler auto_enqueue comprehensive_rag: %s", e)
-
-                # Drain coordinator-driven phase requests (thread-safe); respect enrichment-backlog-first
-                try:
-                    while True:
-                        item = self._phase_request_queue.get_nowait()
-                        force_nightly_unified_pipeline = False
-                        if isinstance(item, dict):
-                            phase_name = item.get("phase")
-                            domain = item.get("domain")
-                            storyline_id = item.get("storyline_id")
-                            requested_activity_id = item.get("requested_activity_id")
-                            force_nightly_unified_pipeline = bool(
-                                item.get("force_nightly_unified_pipeline")
-                            )
-                        elif len(item) == 4:
-                            phase_name, domain, storyline_id, requested_activity_id = item
-                        else:
-                            phase_name, domain, storyline_id = item[0], item[1], item[2]
-                            requested_activity_id = None
-                        if phase_name not in self.schedules:
-                            logger.debug("request_phase: unknown phase %s, skipping", phase_name)
-                            continue
-                        schedule = self.schedules[phase_name]
-                        if not schedule.get("enabled", True):
-                            logger.debug(
-                                "request_phase: phase %s is disabled, skipping", phase_name
-                            )
-                            continue
-                        if (
-                            ENRICHMENT_BACKLOG_FIRST_ENABLED
-                            and backlog_counts.get("content_enrichment", 0) > 0
-                            and phase_name not in ENRICHMENT_BACKLOG_FIRST_WHITELIST
-                        ):
-                            logger.info(
-                                "request_phase: skipping %s (enrichment backlog first, %s articles pending)",
-                                phase_name,
-                                backlog_counts.get("content_enrichment", 0),
-                            )
-                            continue
-                        if (
-                            phase_name == "nightly_enrichment_context"
-                            and not self._can_enqueue_nightly_enrichment()
-                        ):
-                            logger.info(
-                                "request_phase: skipping nightly_enrichment_context (in_flight=%s cap=%s)",
-                                self._nightly_enrichment_in_flight_count(),
-                                AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED,
-                            )
-                            continue
-                        if self._should_skip_redundant_phase_request(
-                            phase_name,
-                            allow_operator_bypass=bool(requested_activity_id),
-                        ):
-                            logger.debug(
-                                "request_phase: skipping %s (drain pipeline saturated, inflight=%s)",
-                                phase_name,
-                                self._phase_pipeline_inflight(phase_name),
-                            )
-                            continue
-                        if automation_db_pool_should_defer_phase(phase_name) and not (
-                            requested_activity_id
-                        ):
-                            logger.debug(
-                                "request_phase: defer %s (DB worker pool pressure)",
-                                phase_name,
-                            )
-                            continue
-                        task = Task(
-                            id=f"{phase_name}_{int(datetime.now(timezone.utc).timestamp())}",
-                            name=phase_name,
-                            priority=schedule.get("priority", TaskPriority.NORMAL),
-                            status=TaskStatus.PENDING,
-                            created_at=datetime.now(timezone.utc),
-                            metadata={
-                                "domain": domain,
-                                "storyline_id": storyline_id,
-                                "requested_activity_id": requested_activity_id,
-                                "force_nightly_unified_pipeline": force_nightly_unified_pipeline,
-                                "lane_default": self._phase_default_lane(phase_name),
-                                "resource_class": self._phase_resource_class(phase_name),
-                            },
-                        )
-                        await self._requested_task_queue.put(task)
-                        self._requested_queue_depth_by_phase[phase_name] += 1
-                        logger.info(
-                            "Governor requested phase: %s (domain=%s, storyline_id=%s)",
-                            phase_name,
-                            domain,
-                            storyline_id,
-                        )
-                except queue.Empty:
-                    pass
-
-                # Sort tasks by phase for proper sequencing
-                sorted_tasks = sorted(self.schedules.items(), key=lambda x: x[1].get("phase", 0))
-
-                # Group tasks by phase and parallel groups
-                phase_groups = {}
-                for task_name, schedule in sorted_tasks:
-                    if not schedule["enabled"]:
-                        continue
-
-                    phase = schedule.get("phase", 0)
-                    parallel_group = schedule.get("parallel_group")
-
-                    if parallel_group:
-                        # Add to parallel group
-                        if phase not in phase_groups:
-                            phase_groups[phase] = {"parallel_groups": {}, "sequential_tasks": []}
-                        if "parallel_groups" not in phase_groups[phase]:
-                            phase_groups[phase]["parallel_groups"] = {}
-                        if parallel_group not in phase_groups[phase]["parallel_groups"]:
-                            phase_groups[phase]["parallel_groups"][parallel_group] = []
-                        phase_groups[phase]["parallel_groups"][parallel_group].append(
-                            (task_name, schedule)
-                        )
-                    else:
-                        # Sequential task
-                        if phase not in phase_groups:
-                            phase_groups[phase] = {"parallel_groups": {}, "sequential_tasks": []}
-                        phase_groups[phase]["sequential_tasks"].append((task_name, schedule))
-
-                # Update resource allocation periodically
-                if current_time.second % 60 == 0:  # Every minute
-                    await self._update_resource_allocation()
-
-                if not _AUTOMATION_DISABLE_DYNAMIC_TASK_SCALING:
-                    if await self._should_scale_down():
-                        logger.warning("High system load detected - scaling down processing")
-                        self.max_concurrent_tasks = max(1, self.max_concurrent_tasks - 1)
-                        await self._sync_phase_worker_tasks()
-                    elif await self._should_scale_up():
-                        logger.info("Low system load detected - scaling up processing")
-                        cap = max(12, int(AUTOMATION_MAX_CONCURRENT_TASKS))
-                        self.max_concurrent_tasks = min(cap, self.max_concurrent_tasks + 1)
-                        await self._sync_phase_worker_tasks()
-
-                # Parallel groups: enqueue each eligible phase through the same queue as sequential work
-                # (avoids blocking the scheduler coroutine on asyncio.gather of long-running phases).
-                for phase in sorted(phase_groups.keys()):
-                    phase_data = phase_groups[phase]
-                    for parallel_group, group_tasks in phase_data["parallel_groups"].items():
-                        if not self._should_run_parallel_group(
-                            parallel_group, group_tasks, current_time, backlog_counts
-                        ):
-                            continue
-                        for task_name, schedule in group_tasks:
-                            if self._should_run_task(
-                                task_name, schedule, current_time, backlog_counts
-                            ):
-                                await self._create_and_queue_task(
-                                    task_name, schedule, current_time
-                                )
-
-                # Sequential tasks: collect all runnable across phases, then queue by work-driven priority.
-                # Select processes intelligently: effective priority (boost when backlog high), then most work first, then phase order.
-                all_runnable: list[tuple[str, dict[str, Any]]] = []
-                for phase in sorted(phase_groups.keys()):
-                    phase_data = phase_groups[phase]
-                    runnable = [
-                        (task_name, schedule)
-                        for task_name, schedule in phase_data["sequential_tasks"]
-                        if self._should_run_task(task_name, schedule, current_time, backlog_counts)
-                    ]
-                    all_runnable.extend(runnable)
-
-                def _work_driven_sort_key(item):
-                    task_name, schedule = item
-                    p = schedule.get(
-                        "priority", TaskPriority.NORMAL
-                    ).value  # lower = higher priority
-                    backlog = int(backlog_counts.get(task_name, 0) or 0)
-                    pending_raw = int((self._pending_counts or {}).get(task_name, 0) or 0)
-                    work_score = max(backlog, pending_raw)
-                    resource_class = self._phase_resource_class(task_name)
-                    lane, _ = self._resolve_effective_lane(task_name, resource_class)
-                    if (
-                        ENRICHMENT_BACKLOG_FIRST_ENABLED
-                        and task_name == "content_enrichment"
-                        and backlog > 0
-                    ):
-                        p = TaskPriority.CRITICAL.value
-                    elif work_score > BACKLOG_HIGH_THRESHOLD:
-                        # Boost priority by one level when this task has a lot of work (prioritize work that needs doing)
-                        p = max(TaskPriority.CRITICAL.value, p - 1)
-                    try:
-                        severe = int(
-                            os.environ.get("AUTOMATION_BACKLOG_SEVERE_THRESHOLD", "25000")
-                        )
-                    except ValueError:
-                        severe = 25000
-                    if work_score >= severe and task_name in (
-                        "story_enhancement",
-                        "entity_extraction",
-                        "topic_clustering",
-                        "metadata_enrichment",
-                    ):
-                        p = TaskPriority.CRITICAL.value
-                    # Prefer queueing tasks that fit current free resources.
-                    if AUTOMATION_DYNAMIC_RESOURCE_ROUTING_ENABLED:
-                        hr = self._resource_headroom or {}
-                        if (
-                            lane == "gpu"
-                            and float(hr.get("gpu_headroom") or 0.0) > ROUTER_GPU_EXTRA_HEADROOM
-                        ):
-                            p = max(TaskPriority.CRITICAL.value, p - 1)
-                        if (
-                            lane == "cpu"
-                            and float(hr.get("cpu_headroom") or 0.0) > ROUTER_CPU_EXTRA_HEADROOM
-                        ):
-                            p = max(TaskPriority.CRITICAL.value, p - 1)
-                    phase = schedule.get("phase", 0)
-                    # Sort: higher priority first (lower p), then more work first (-work_score), then earlier phase
-                    return (p, -work_score, phase)
-
-                for task_name, schedule in sorted(all_runnable, key=_work_driven_sort_key):
-                    await self._create_and_queue_task(task_name, schedule, current_time)
-
-                await asyncio.sleep(float(AUTOMATION_SCHEDULER_TICK_SECONDS))
-
-            except Exception as e:
-                logger.error(f"Scheduler error: {e}")
-                await asyncio.sleep(float(AUTOMATION_SCHEDULER_TICK_SECONDS))
-
-        logger.info("Scheduler stopped")
+        """Lane policy from phase registry (PipelineController owns scheduling)."""
+        return self._phase_default_lane(phase_name), "phase_policy"
 
     def _per_phase_scheduler_concurrent_cap(self, task_name: str) -> int:
         """Max workers that may run this phase at once (scheduler gate). 0 = unlimited."""
@@ -2393,7 +2532,7 @@ class AutomationManager:
             if in_nightly_pipeline_window_est():
                 if task_name in _per_phase_nightly_cap_mult_exclude():
                     return min(self.max_concurrent_tasks, base)
-                mult = int(os.environ.get("AUTOMATION_PER_PHASE_CONCURRENT_NIGHTLY_MULT", "4"))
+                mult = env_int("AUTOMATION_PER_PHASE_CONCURRENT_NIGHTLY_MULT", 4)
                 return min(self.max_concurrent_tasks, base * max(1, mult))
         except Exception:
             pass
@@ -2404,395 +2543,6 @@ class AutomationManager:
         if (task.metadata or {}).get("nightly_sequential_drain"):
             return 0
         return self._per_phase_scheduler_concurrent_cap(task.name)
-
-    def _should_run_parallel_group(
-        self,
-        parallel_group: str,
-        tasks: list[tuple[str, dict]],
-        current_time: datetime,
-        backlog_counts: dict[str, int] | None = None,
-    ) -> bool:
-        """Check if parallel group should run"""
-        if not tasks:
-            return False
-        backlog_counts = backlog_counts or {}
-        for task_name, schedule in tasks:
-            if self._should_run_task(task_name, schedule, current_time, backlog_counts):
-                return True
-        return False
-
-    def _should_run_task(
-        self,
-        task_name: str,
-        schedule: dict[str, Any],
-        current_time: datetime,
-        backlog_counts: dict[str, int] | None = None,
-    ) -> bool:
-        """Check if individual task should run.
-
-        Two separate concepts:
-        - **pending**: raw count of items waiting (even 1).  Used for SKIP_WHEN_EMPTY
-          so tasks with any work still run on their normal interval.
-        - **backlog**: pending minus one batch size.  Only positive when there is more
-          work than a single run can handle.  Used to shorten the interval so the
-          scheduler drains the excess faster.
-
-        v8: When in analysis window (after collection_cycle), only tasks in the current
-        pipeline step are allowed; step advances when time budget expires.
-        """
-        # v8: Pipeline-agnostic tasks always use normal logic (e.g. document_processing drains PDF backlog)
-        if task_name in ("collection_cycle", "health_check", "document_processing", "content_enrichment"):
-            pass
-        elif not USE_WORKLOAD_DRIVEN_ORDER and self._analysis_window_start is not None:
-            # Legacy: only run tasks in current pipeline step when step budget is enforced
-            if (
-                self._active_step < len(self._step_time_budgets)
-                and self._step_started_at is not None
-            ):
-                budget = self._step_time_budgets[self._active_step]
-                if (
-                    budget is not None
-                    and (current_time - self._step_started_at).total_seconds() >= budget
-                ):
-                    self._active_step = min(self._active_step + 1, len(ANALYSIS_PIPELINE_STEPS) - 1)
-                    self._step_started_at = current_time
-            if self._active_step < len(ANALYSIS_PIPELINE_STEPS):
-                if task_name not in ANALYSIS_PIPELINE_STEPS[self._active_step]:
-                    return False
-        elif USE_WORKLOAD_DRIVEN_ORDER and self._analysis_window_start is not None:
-            # Advance step for reporting only; do not gate tasks — workload order decides
-            if (
-                self._active_step < len(self._step_time_budgets)
-                and self._step_started_at is not None
-            ):
-                budget = self._step_time_budgets[self._active_step]
-                if (
-                    budget is not None
-                    and (current_time - self._step_started_at).total_seconds() >= budget
-                ):
-                    self._active_step = min(self._active_step + 1, len(ANALYSIS_PIPELINE_STEPS) - 1)
-                    self._step_started_at = current_time
-
-        if not self._check_dependencies(task_name, schedule):
-            return False
-
-        try:
-            from services.pipeline_schedule_service import automation_phase_allowed
-
-            if not automation_phase_allowed(task_name):
-                return False
-        except Exception:
-            pass
-
-        # When PostgreSQL is down, do not schedule new phases (avoids LLM/CPU waste). Flush runs when DB is back.
-        try:
-            if os.getenv("AUTOMATION_PAUSE_WHEN_DB_DOWN", "true").lower() in ("1", "true", "yes"):
-                from shared.database.db_availability import is_automation_db_ready
-
-                if not is_automation_db_ready():
-                    return False
-        except Exception:
-            pass
-
-        # Workload-driven: don't run collection_cycle when downstream backlog is high — complete
-        # collection → processing → synthesis sequence before adding more RSS.
-        if USE_WORKLOAD_DRIVEN_ORDER and task_name == "collection_cycle":
-            pc = self._pending_counts if hasattr(self, "_pending_counts") else {}
-            downstream, throttle_br = _collection_throttle_pending_total(pc)
-            if downstream > COLLECTION_THROTTLE_PENDING_THRESHOLD:
-                logger.debug(
-                    "collection_cycle throttled: pending_total=%s threshold=%s breakdown=%s",
-                    downstream,
-                    COLLECTION_THROTTLE_PENDING_THRESHOLD,
-                    throttle_br,
-                )
-                return False
-
-        if schedule.get("idle_only") and not self._is_system_idle():
-            return False
-
-        # Nightly unified pipeline [NIGHTLY_PIPELINE_START, END): nightly_enrichment_context owns the long drain;
-        # NIGHTLY_PIPELINE_EXCLUSIVE (default on) blocks other scheduled phases until 07:00 local.
-        try:
-            from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
-
-            _nightly_pipe = in_nightly_pipeline_window_est()
-        except Exception:
-            _nightly_pipe = False
-        if task_name == "context_sync" and _nightly_pipe:
-            return False
-        if task_name == "content_refinement_queue" and _nightly_pipe:
-            return False
-        if task_name == "nightly_enrichment_context" and not _nightly_pipe:
-            return False
-
-        # During the unified nightly window, only run the long drain + essentials unless disabled.
-        if _nightly_pipe:
-            raw_exc = os.environ.get("NIGHTLY_PIPELINE_EXCLUSIVE", "1").lower()
-            if raw_exc in ("1", "true", "yes"):
-                allowed = frozenset(
-                    x.strip()
-                    for x in os.environ.get(
-                        "NIGHTLY_PIPELINE_ALLOWED_SCHEDULED_PHASES",
-                        "nightly_enrichment_context,health_check,pending_db_flush",
-                    ).split(",")
-                    if x.strip()
-                )
-                if task_name not in allowed:
-                    return False
-
-        backlog_counts = backlog_counts or {}
-        if (
-            ENRICHMENT_BACKLOG_FIRST_ENABLED
-            and backlog_counts.get("content_enrichment", 0) > 0
-            and task_name not in ENRICHMENT_BACKLOG_FIRST_WHITELIST
-        ):
-            return False
-
-        backlog = backlog_counts.get(task_name, 0)
-
-        # SKIP_WHEN_EMPTY: skip when no work (so we don't run empty cycles).
-        pending = (
-            self._pending_counts.get(task_name, 0) if hasattr(self, "_pending_counts") else backlog
-        )
-        if task_name in SKIP_WHEN_EMPTY and pending == 0:
-            return False
-
-        has_work = pending > 0 or backlog > 0
-
-        # Avoid N workers all executing the same LLM-heavy phase while others sit idle.
-        ppc = self._per_phase_scheduler_concurrent_cap(task_name)
-        if ppc > 0:
-            running_same = int(self._running_tasks_by_phase.get(task_name, 0) or 0)
-            if running_same >= ppc:
-                return False
-
-        # Workload-driven: when there is work, eligibility is based on cooldown + deps only (no interval).
-        # Each tick we check every process; if it has work and deps are satisfied, we add it to the candidate
-        # list; sort order (priority, -backlog, phase) then decides what gets queued first.
-        if USE_WORKLOAD_DRIVEN_ORDER and has_work:
-            time_since = (
-                (current_time - schedule["last_run"]).total_seconds()
-                if schedule.get("last_run")
-                else 9999
-            )
-            cooldown_sec = WORKLOAD_MIN_COOLDOWN
-            resource_class = self._phase_resource_class(task_name)
-            try:
-                from services.backlog_metrics import BATCH_SIZE_PER_TASK
-                from services.workload_balancer import (
-                    effective_workload_cooldown_seconds,
-                    workload_balancer_enabled,
-                    workload_balancer_phase_names,
-                )
-
-                if workload_balancer_enabled() and task_name in workload_balancer_phase_names():
-                    _bs = BATCH_SIZE_PER_TASK.get(task_name, 30)
-                    cooldown_sec = effective_workload_cooldown_seconds(
-                        task_name,
-                        pending,
-                        base_cooldown=WORKLOAD_MIN_COOLDOWN,
-                        batch_size=int(_bs),
-                    )
-            except Exception:
-                pass
-            mult, _ = self._dynamic_cooldown_multiplier(resource_class)
-            cooldown_sec = max(3, int(round(float(cooldown_sec) * float(mult))))
-            if time_since >= cooldown_sec and self._are_dependencies_satisfied(
-                task_name, schedule, current_time
-            ):
-                if automation_db_pool_should_defer_phase(task_name):
-                    return False
-                return True
-            return False
-
-        # No work (or legacy mode): use interval so we don't run e.g. collection_cycle every tick when idle.
-        base_interval = schedule["interval"]
-        adaptive_interval = self._calculate_adaptive_interval(task_name, base_interval)
-        if backlog > BACKLOG_HIGH_THRESHOLD:
-            effective_interval = min(adaptive_interval, BACKLOG_MODE_INTERVAL)
-        elif backlog > 0:
-            effective_interval = min(adaptive_interval, BACKLOG_ANY_INTERVAL)
-        else:
-            effective_interval = adaptive_interval
-
-        if (
-            schedule["last_run"] is None
-            or (current_time - schedule["last_run"]).total_seconds() >= effective_interval
-        ):
-            if self._are_dependencies_satisfied(task_name, schedule, current_time):
-                if automation_db_pool_should_defer_phase(task_name):
-                    return False
-                return True
-        return False
-
-    async def _create_and_queue_task(
-        self, task_name: str, schedule: dict[str, Any], current_time: datetime
-    ):
-        """Create and queue a task"""
-        if task_name == "health_check":
-            return
-        if self._should_skip_redundant_phase_request(task_name):
-            return
-        if self._scheduled_enqueue_paused() and task_name not in QUEUE_PAUSE_ALLOW_SCHEDULED:
-            logger.info(
-                "Queue soft cap: skipping scheduled enqueue for %s (depth=%s cap=%s)",
-                task_name,
-                self._automation_queue_depth(),
-                AUTOMATION_QUEUE_SOFT_CAP,
-            )
-            return
-        if automation_db_pool_should_defer_phase(task_name):
-            logger.debug(
-                "DB worker pool pressure — skip scheduled create/queue for %s",
-                task_name,
-            )
-            return
-        # Create task
-        task = Task(
-            id=f"{task_name}_{int(current_time.timestamp())}",
-            name=task_name,
-            priority=schedule["priority"],
-            status=TaskStatus.PENDING,
-            created_at=current_time,
-            metadata={
-                "scheduled": True,
-                "phase": schedule.get("phase", 0),
-                "estimated_duration": schedule.get("estimated_duration", 60),
-                "lane_default": self._phase_default_lane(task_name),
-                "resource_class": self._phase_resource_class(task_name),
-            },
-        )
-
-        # Add to queue (do not advance last_run if nightly cap or queue cap skipped enqueue)
-        if await self._enqueue_scheduled_task(task):
-            schedule["last_run"] = current_time
-            logger.info(f"Scheduled task: {task_name} (Phase {schedule.get('phase', 0)})")
-
-    def _check_dependencies(self, task_name: str, schedule: dict[str, Any]) -> bool:
-        """Check if task has dependencies"""
-        depends_on = schedule.get("depends_on", [])
-        return len(depends_on) == 0 or all(
-            dep_task in self.schedules and self.schedules[dep_task]["enabled"]
-            for dep_task in depends_on
-        )
-
-    def _are_dependencies_satisfied(
-        self, task_name: str, schedule: dict[str, Any], current_time: datetime
-    ) -> bool:
-        """Check if all dependencies have been satisfied recently.
-        When this task has never run, treat 'dependency never run' as satisfied so we queue
-        both (phase order ensures the dependency runs first); otherwise nothing would ever
-        call the dependent.
-        """
-        depends_on = schedule.get("depends_on", [])
-        this_never_run = schedule.get("last_run") is None
-
-        for dep_task in depends_on:
-            if dep_task not in self.schedules:
-                continue
-
-            dep_schedule = self.schedules[dep_task]
-            dep_never_run = dep_schedule["last_run"] is None
-
-            # Bootstrap: if both this task and the dependency have never run, allow queuing
-            # so the scheduler queues both; phase order queues the dependency first.
-            if this_never_run and dep_never_run:
-                continue
-
-            if dep_never_run:
-                return False
-
-            # Require a short settle window after dependency completed (DB / pipeline visibility).
-            # Cap by AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC so long phases (e.g. collection_cycle ~30m
-            # estimated) do not block dependents indefinitely while collection runs often.
-            time_since_dep = (current_time - dep_schedule["last_run"]).total_seconds()
-            dep_duration = dep_schedule.get("estimated_duration", 60)
-            adjusted_duration = dep_duration * self.metrics["load_factor"]
-            settle = min(max(adjusted_duration, 15.0), float(AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC))
-            if time_since_dep < settle:
-                return False
-
-        return True
-
-    def _get_dynamic_resource_service(self):
-        """Get dynamic resource service instance"""
-        if self.dynamic_resource_service is None:
-            from services.dynamic_resource_service import get_dynamic_resource_service
-
-            self.dynamic_resource_service = get_dynamic_resource_service()
-        return self.dynamic_resource_service
-
-    async def _update_resource_allocation(self):
-        """Update resource allocation based on current system load"""
-        try:
-            resource_service = self._get_dynamic_resource_service()
-            self.resource_allocation = await resource_service.allocate_resources_dynamically()
-
-            # Never shrink below configured automation floor (env AUTOMATION_MAX_CONCURRENT_TASKS).
-            allocated = int(self.resource_allocation.max_parallel_tasks)
-            self.max_concurrent_tasks = max(allocated, int(AUTOMATION_MAX_CONCURRENT_TASKS))
-
-            logger.info(
-                f"Resource allocation updated: {self.max_concurrent_tasks} max parallel tasks "
-                f"(floor={AUTOMATION_MAX_CONCURRENT_TASKS}, allocated={allocated})"
-            )
-            if self.is_running:
-                await self._sync_phase_worker_tasks()
-
-        except Exception as e:
-            logger.error(f"Error updating resource allocation: {e}")
-
-    async def _should_scale_down(self) -> bool:
-        """Check if system should scale down due to high load"""
-        try:
-            resource_service = self._get_dynamic_resource_service()
-            return await resource_service.should_scale_down()
-        except Exception as e:
-            logger.error(f"Error checking scale down conditions: {e}")
-            return False
-
-    async def _should_scale_up(self) -> bool:
-        """Check if system should scale up due to low load"""
-        try:
-            resource_service = self._get_dynamic_resource_service()
-            return await resource_service.should_scale_up()
-        except Exception as e:
-            logger.error(f"Error checking scale up conditions: {e}")
-            return False
-
-    def _calculate_adaptive_interval(self, task_name: str, base_interval: int) -> int:
-        """Calculate adaptive interval based on processing load and history"""
-        if not self.metrics["adaptive_timing"]:
-            return base_interval
-
-        # Get processing history for this task
-        history = self.metrics["processing_history"].get(task_name, [])
-        if len(history) < 3:  # Need at least 3 data points
-            return base_interval
-
-        # Calculate average processing time vs estimated
-        recent_times = history[-5:]  # Last 5 runs
-        avg_actual = sum(recent_times) / len(recent_times)
-        estimated = self.schedules[task_name].get("estimated_duration", 60)
-
-        # Calculate load factor
-        load_ratio = avg_actual / estimated if estimated > 0 else 1.0
-
-        # Adjust interval based on load
-        if load_ratio > 1.5:  # Processing taking 50% longer than estimated
-            self.metrics["load_factor"] = min(2.0, self.metrics["load_factor"] * 1.1)
-        elif load_ratio < 0.8:  # Processing faster than estimated
-            self.metrics["load_factor"] = max(0.5, self.metrics["load_factor"] * 0.95)
-
-        # Apply load factor to interval
-        adjusted_interval = int(base_interval * self.metrics["load_factor"])
-
-        # Ensure minimum interval (at least 2x estimated duration)
-        min_interval = max(60, estimated * 2)
-        # Cap at 1.5x base so we don't slow down too much during full-time runs
-        max_interval = int(base_interval * 1.5)
-        return min(max(adjusted_interval, min_interval), max_interval)
 
     def _update_processing_history(self, task_name: str, actual_duration: float):
         """Update processing history for adaptive timing"""
@@ -2810,20 +2560,17 @@ class AutomationManager:
     def _get_input_volume_factor(self) -> float:
         """Calculate input volume factor based on recent article counts"""
         try:
-            conn = self._get_db_connection_sync()
-            if not conn:
-                return 1.0
-            try:
+            from shared.database.connection import get_db_connection_context
+
+            recent_count = 0
+            with get_db_connection_context() as conn:
                 with conn.cursor() as cursor:
-                    recent_count = 0
                     for schema in get_pipeline_schema_names_active():
                         cursor.execute(f"""
                             SELECT COUNT(*) FROM {schema}.articles
                             WHERE created_at > NOW() - INTERVAL '1 hour'
                         """)
                         recent_count += int(cursor.fetchone()[0] or 0)
-            finally:
-                conn.close()
 
             # Normalize to expected volume (100 articles per hour)
             expected_volume = 100
@@ -2855,6 +2602,22 @@ class AutomationManager:
             lane_token = push_llm_execution_lane(effective_lane)
         except Exception:
             lane_token = None
+
+        try:
+            from shared.retired_phase_registry import is_hard_retired_schedule_phase
+
+            if is_hard_retired_schedule_phase(task.name):
+                logger.warning(
+                    "Refusing hard-retired phase %s — not scheduled; "
+                    "archived runners only via LEGACY_INTAKE_EXTRACTION_ENABLED / scripts",
+                    task.name,
+                )
+                task.status = TaskStatus.COMPLETED
+                task.completed_at = datetime.now(timezone.utc)
+                task.metadata["retired_refuse"] = True
+                return
+        except Exception:
+            pass
 
         try:
             from services.nightly_ingest_window_service import (
@@ -2921,6 +2684,60 @@ class AutomationManager:
                     self._running_tasks_by_phase[task.name] -= 1
                 per_phase_slot_held = False
 
+        # Global process-RSS circuit breaker: one drain can grow from ~200MB to multi-GB
+        # mid-run; never start non-exempt work once we are already over the pause floor.
+        try:
+            from shared.process_memory import process_rss_mb
+
+            from config.runtime import env_str
+
+            rss_now = process_rss_mb()
+            pause_mb = float(env_str("AUTOMATION_RSS_PAUSE_MB", "1800") or "1800")
+            from shared.process_memory import AUTOMATION_RSS_PAUSE_EXEMPT_PHASES
+
+            _rss_exempt = AUTOMATION_RSS_PAUSE_EXEMPT_PHASES
+            raw_block = (env_str("AUTOMATION_BLOCK_PHASES", "") or "").strip()
+            _blocked = {x.strip() for x in raw_block.split(",") if x.strip()}
+            if task.name in _blocked and not (task.metadata or {}).get(
+                "nightly_sequential_drain"
+            ):
+                logger.warning(
+                    "Deferring %s — listed in AUTOMATION_BLOCK_PHASES (UI memory protection)",
+                    task.name,
+                )
+                _release_per_phase_slot_if_held()
+                task.status = TaskStatus.PENDING
+                await self._enqueue_scheduled_task(
+                    task,
+                    bypass_nightly_cap=True,
+                    bypass_schedule_depth_cap=True,
+                )
+                await asyncio.sleep(30)
+                return
+            if (
+                rss_now is not None
+                and rss_now >= pause_mb
+                and task.name not in _rss_exempt
+                and not (task.metadata or {}).get("nightly_sequential_drain")
+            ):
+                logger.warning(
+                    "Deferring %s — process RSS %.0f MB (pause gate %.0f)",
+                    task.name,
+                    rss_now,
+                    pause_mb,
+                )
+                _release_per_phase_slot_if_held()
+                task.status = TaskStatus.PENDING
+                await self._enqueue_scheduled_task(
+                    task,
+                    bypass_nightly_cap=True,
+                    bypass_schedule_depth_cap=True,
+                )
+                await asyncio.sleep(10)
+                return
+        except Exception:
+            pass
+
         # Phases that call Ollama / shared LLM paths (or heavy GPU); yield to API + share ollama_semaphore.
         if task.name in OLLAMA_AUTOMATION_PHASES:
             try:
@@ -2949,21 +2766,21 @@ class AutomationManager:
             try:
                 from shared.gpu_metrics import (
                     GPU_THROTTLE_SLEEP_SECONDS,
-                    get_gpu_metrics,
-                    should_throttle_ollama,
+                    should_throttle_ollama_for_lane,
                 )
 
-                if should_throttle_ollama():
-                    metrics = get_gpu_metrics()
-                    temp = metrics.get("gpu_temperature_c")
+                effective_lane = (task.metadata or {}).get("execution_lane") or (
+                    task.metadata or {}
+                ).get("lane_default")
+                if should_throttle_ollama_for_lane(effective_lane):
                     logger.warning(
-                        "GPU temp %s C >= 82 C — pausing Ollama task %s for %ss to cool",
-                        temp,
+                        "GPU temp high on %s lane — pausing Ollama task %s for %ss",
+                        effective_lane or "gpu",
                         task.name,
                         GPU_THROTTLE_SLEEP_SECONDS,
                     )
                     await asyncio.sleep(GPU_THROTTLE_SLEEP_SECONDS)
-                    if should_throttle_ollama():
+                    if should_throttle_ollama_for_lane(effective_lane):
                         logger.warning("GPU still hot after pause — deferring %s", task.name)
                         _release_per_phase_slot_if_held()
                         task.status = TaskStatus.PENDING
@@ -2988,7 +2805,7 @@ class AutomationManager:
                 ):
                     _nightly_ollama_allow = frozenset(
                         x.strip()
-                        for x in os.environ.get(
+                        for x in env_str(
                             "NIGHTLY_GPU_REFINEMENT_OLLAMA_ALLOW",
                             "nightly_enrichment_context",
                         ).split(",")
@@ -3020,32 +2837,35 @@ class AutomationManager:
             lane_reason,
             resource_class,
         )
-        if not per_phase_slot_held:
-            self._running_tasks_by_phase[task.name] += 1
-        self._running_tasks_by_lane[effective_lane] += 1
         try:
-            from services.activity_feed_service import get_activity_feed
+            # Increment worker counters and register the activity-feed row INSIDE this try so
+            # the finally below always reverts them. Previously these ran before the try, so a
+            # cancellation in this window (replan/shutdown storm) leaked the per-phase counter
+            # and left an orphaned "running" row that the monitor showed forever.
+            if not per_phase_slot_held:
+                self._running_tasks_by_phase[task.name] += 1
+            self._running_tasks_by_lane[effective_lane] += 1
+            try:
+                from services.activity_feed_service import get_activity_feed
 
-            feed = get_activity_feed()
-            requested_id = (task.metadata or {}).get("requested_activity_id")
-            if requested_id:
-                feed.complete(requested_id, success=True)
-            message = self._activity_message(task)
-            feed.add_current(
-                self._activity_feed_activity_id(task),
-                message,
-                task_name=task.name,
-                domain=task.metadata.get("domain"),
-                storyline_id=task.metadata.get("storyline_id"),
-            )
-        except Exception as e:
-            logger.debug("Activity feed add_current: %s", e)
+                feed = get_activity_feed()
+                requested_id = (task.metadata or {}).get("requested_activity_id")
+                if requested_id:
+                    feed.complete(requested_id, success=True)
+                message = self._activity_message(task)
+                feed.add_current(
+                    self._activity_feed_activity_id(task),
+                    message,
+                    task_name=task.name,
+                    domain=task.metadata.get("domain"),
+                    storyline_id=task.metadata.get("storyline_id"),
+                    loops_processed=0,
+                )
+            except Exception as e:
+                logger.debug("Activity feed add_current: %s", e)
 
-        try:
             # Execute task based on type
             if task.name == "collection_cycle":
-                self._collection_cycle_started_at = task.started_at
-                asyncio.create_task(self._run_collection_watchdog(task.started_at))
                 await self._execute_collection_cycle(task)
             elif task.name == "document_processing":
                 await self._execute_document_processing(task)
@@ -3067,6 +2887,16 @@ class AutomationManager:
                 await self._execute_legislative_references(task)
             elif task.name == "claims_to_facts":
                 await self._execute_claims_to_facts(task)
+            elif task.name == "claim_evidence_appraisal":
+                await self._execute_claim_evidence_appraisal(task)
+            elif task.name == "editorial_reduction_pass":
+                await self._execute_editorial_reduction_pass(task)
+            elif task.name == "editorial_narrative_pass":
+                await self._execute_editorial_narrative_pass(task)
+            elif task.name == "editorial_evidence_expand_pass":
+                await self._execute_editorial_evidence_expand_pass(task)
+            elif task.name == "editorial_research_pass":
+                await self._execute_editorial_research_pass(task)
             elif task.name == "claim_subject_gap_refresh":
                 await self._execute_claim_subject_gap_refresh(task)
             elif task.name == "extracted_claims_dedupe":
@@ -3105,12 +2935,26 @@ class AutomationManager:
                 await self._execute_entity_organizer(task)
             elif task.name == "graph_connection_distillation":
                 await self._execute_graph_connection_distillation(task)
+            elif task.name == "embedding_link_candidates":
+                await self._execute_embedding_link_candidates(task)
+            elif task.name == "collision_sampling":
+                await self._execute_collision_sampling(task)
+            elif task.name == "stimulus_rag":
+                await self._execute_stimulus_rag(task)
+            elif task.name == "protein_harden":
+                await self._execute_protein_harden(task)
+            elif task.name == "graph_link_drift_review":
+                await self._execute_graph_link_drift_review(task)
             elif task.name == "digest_generation":
                 await self._execute_digest_generation(task)
             elif task.name == "data_cleanup":
                 await self._execute_data_cleanup(task)
             elif task.name == "health_check":
                 await self._execute_health_check(task)
+            elif task.name == "rss_feed_health":
+                await self._execute_rss_feed_health(task)
+            elif task.name == "rolling_arc_refresh":
+                await self._execute_rolling_arc_refresh(task)
             elif task.name == "pending_db_flush":
                 await self._execute_pending_db_flush(task)
             elif task.name == "rag_enhancement":
@@ -3125,10 +2969,22 @@ class AutomationManager:
                 await self._execute_storyline_processing(task)
             elif task.name == "storyline_automation":
                 await self._execute_storyline_automation(task)
+            elif task.name == "storyline_review_agent":
+                await self._execute_storyline_review_agent(task)
+            elif task.name == "storyline_membership_review":
+                await self._execute_storyline_membership_review(task)
+            elif task.name == "storyline_hygiene":
+                await self._execute_storyline_hygiene(task)
             elif task.name == "storyline_enrichment":
                 await self._execute_storyline_enrichment(task)
             elif task.name == "entity_extraction":
                 await self._execute_entity_extraction(task)
+            elif task.name == "unified_intake_extraction":
+                await self._execute_unified_intake_extraction(task)
+            elif task.name == "spine_sql_tail":
+                await self._execute_spine_sql_tail(task)
+            elif task.name == "mention_resolution":
+                await self._execute_mention_resolution(task)
             elif task.name == "quality_scoring":
                 await self._execute_quality_scoring(task)
             elif task.name == "timeline_generation":
@@ -3139,8 +2995,12 @@ class AutomationManager:
                 await self._execute_event_extraction_v5(task)
             elif task.name == "event_deduplication":
                 await self._execute_event_deduplication_v5(task)
+            elif task.name == "chronological_events_catchup":
+                await self._execute_chronological_events_catchup(task)
             elif task.name == "story_continuation":
                 await self._execute_story_continuation_v5(task)
+            elif task.name == "episode_assembly_maintenance":
+                await self._execute_episode_assembly_maintenance(task)
             elif task.name == "watchlist_alerts":
                 await self._execute_watchlist_alerts_v5(task)
             elif task.name == "story_enhancement":
@@ -3176,7 +3036,6 @@ class AutomationManager:
             self.metrics["tasks_completed"] += 1
             if task.name in self.schedules:
                 self.schedules[task.name]["last_run"] = task.completed_at
-            self._last_completed_at_by_phase[task.name] = task.completed_at
             if not (task.metadata or {}).get("skip_automation_run_history"):
                 _persist_automation_run(
                     task.name,
@@ -3184,147 +3043,51 @@ class AutomationManager:
                     task.completed_at,
                     True,
                     None,
+                    metadata=task.metadata or {},
                 )
             # Record completion for last-60m run counts (used by monitoring timeline).
-            try:
-                cutoff = datetime.now(timezone.utc) - timedelta(minutes=60)
-                dq = self._phase_run_times_last_60m[task.name]
-                dq.append(task.completed_at)
-                while dq and dq[0] < cutoff:
-                    dq.popleft()
-                dq_lane = self._lane_run_times_last_60m[effective_lane]
-                dq_lane.append(task.completed_at)
-                while dq_lane and dq_lane[0] < cutoff:
-                    dq_lane.popleft()
-            except Exception:
-                pass
-
-            # v8: When collection_cycle completes, enter analysis pipeline (step 0) and reset re-enqueue counts
-            if task.name == "collection_cycle":
-                self._analysis_window_start = task.completed_at
-                self._active_step = 0
-                self._step_started_at = task.completed_at
-                self._requeue_counts = {}
-
-            # Calculate processing time
-            processing_time = (task.completed_at - task.started_at).total_seconds()
-            self._update_avg_processing_time(processing_time)
-
-            # Update processing history for adaptive timing
-            self._update_processing_history(task.name, processing_time)
-
-            logger.info(
-                f"Task {task.name} completed in {processing_time:.2f}s (Phase {task.metadata.get('phase', 0)})"
-            )
-
-            # Continuous iteration: when work remains, queue next run (v8: capped per analysis window)
-            if task.name in BATCH_PHASES_CONTINUOUS and not (task.metadata or {}).get(
-                "nightly_sequential_drain"
-            ):
+            if not (task.metadata or {}).get("skip_automation_run_history"):
                 try:
-                    current = self._requeue_counts.get(task.name, 0)
-                    if (
-                        self._max_requeue_per_window > 0
-                        and current >= self._max_requeue_per_window
-                    ):
-                        logger.debug(
-                            "Re-enqueue cap reached for %s (%s)",
-                            task.name,
-                            self._max_requeue_per_window,
-                        )
-                    elif await self._has_pending_work(task.name):
-                        if (
-                            self._scheduled_enqueue_paused()
-                            and task.name not in QUEUE_PAUSE_ALLOW_SCHEDULED
-                        ):
-                            logger.debug(
-                                "Queue soft cap: skip continuous re-queue for %s (depth=%s)",
-                                task.name,
-                                self._automation_queue_depth(),
-                            )
-                        elif automation_db_pool_should_defer_phase(task.name):
-                            logger.debug(
-                                "DB worker pool pressure — skip continuous re-queue for %s",
-                                task.name,
-                            )
-                        else:
-                            next_task = Task(
-                                id=f"{task.name}_{int(task.completed_at.timestamp())}_next",
-                                name=task.name,
-                                priority=self.schedules[task.name].get(
-                                    "priority", TaskPriority.NORMAL
-                                ),
-                                status=TaskStatus.PENDING,
-                                created_at=task.completed_at,
-                                metadata={
-                                    "scheduled": True,
-                                    "phase": self.schedules[task.name].get("phase", 0),
-                                    "estimated_duration": self.schedules[task.name].get(
-                                        "estimated_duration", 60
-                                    ),
-                                    "continuous": True,
-                                    "lane_default": self._phase_default_lane(task.name),
-                                    "resource_class": self._phase_resource_class(task.name),
-                                },
-                            )
-                            if await self._enqueue_scheduled_task(next_task):
-                                self._requeue_counts[task.name] = current + 1
-                                logger.debug(
-                                    "Queued next %s immediately (pending work remains, requeue %s/%s)",
-                                    task.name,
-                                    current + 1,
-                                    self._max_requeue_per_window,
-                                )
-                except Exception as e:
-                    logger.debug("Re-enqueue check for %s: %s", task.name, e)
-
-            # Chain: request any phase that depends on this one so the pipeline keeps moving
-            # When enrichment-backlog-first is enabled and backlog non-empty, do not chain-request phases outside the whitelist
-            enrichment_backlog = 0
-            if (
-                ENRICHMENT_BACKLOG_FIRST_ENABLED
-                and get_all_backlog_counts
-                and task.name == "content_enrichment"
-            ):
-                try:
-                    counts = get_all_backlog_counts()
-                    enrichment_backlog = counts.get("content_enrichment", 0) or 0
+                    cutoff = datetime.now(timezone.utc) - timedelta(minutes=60)
+                    dq = self._phase_run_times_last_60m[task.name]
+                    dq.append(task.completed_at)
+                    while dq and dq[0] < cutoff:
+                        dq.popleft()
+                    dq_lane = self._lane_run_times_last_60m[effective_lane]
+                    dq_lane.append(task.completed_at)
+                    while dq_lane and dq_lane[0] < cutoff:
+                        dq_lane.popleft()
                 except Exception:
                     pass
-            if (task.metadata or {}).get("nightly_sequential_drain"):
-                pass
-            else:
-                for other_name, other_sched in self.schedules.items():
-                    if not other_sched.get("enabled", True):
-                        continue
-                    deps = other_sched.get("depends_on") or []
-                    if task.name not in deps:
-                        continue
-                    if (
-                        enrichment_backlog > 0
-                        and other_name not in ENRICHMENT_BACKLOG_FIRST_WHITELIST
-                    ):
-                        logger.info(
-                            "Chained: skipping %s (enrichment backlog first, %s articles pending)",
-                            other_name,
-                            enrichment_backlog,
-                        )
-                        continue
-                    if (
-                        self._scheduled_enqueue_paused()
-                        and other_name not in QUEUE_PAUSE_ALLOW_SCHEDULED
-                    ):
-                        logger.debug(
-                            "Queue soft cap: skip chained request for %s (depth=%s)",
-                            other_name,
-                            self._automation_queue_depth(),
-                        )
-                        continue
+
+            processing_time = (task.completed_at - task.started_at).total_seconds()
+            self._update_avg_processing_time(processing_time)
+            self._update_processing_history(task.name, processing_time)
+            logger.info(
+                "Task %s completed in %.2fs (Phase %s)",
+                task.name,
+                processing_time,
+                task.metadata.get("phase", 0),
+            )
+
+            try:
+                from services.backlog_metrics import (
+                    RAW_PENDING_COUNT_KEYS,
+                    invalidate_backlog_metrics_cache_throttled,
+                )
+
+                if task.name in RAW_PENDING_COUNT_KEYS:
+                    invalidate_backlog_metrics_cache_throttled(min_interval_seconds=30.0)
                     try:
-                        self.request_phase(other_name)
-                        logger.info("Chained: requested %s (depends on %s)", other_name, task.name)
-                    except Exception as e:
-                        logger.debug("Chain request %s: %s", other_name, e)
+                        from services.monitor_backlog_snapshot_service import (
+                            maybe_refresh_monitor_backlog_snapshot_after_drain,
+                        )
+
+                        maybe_refresh_monitor_backlog_snapshot_after_drain()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
         except Exception as e:
             # Handle task failure
@@ -3341,6 +3104,7 @@ class AutomationManager:
                 finished_at,
                 False,
                 str(e),
+                metadata=task.metadata or {},
             )
             # Record failure for last-60m run counts (used by monitoring timeline).
             try:
@@ -3358,10 +3122,25 @@ class AutomationManager:
 
             logger.error(f"Task {task.name} failed: {e}")
 
-            # Retry if under max retries
+            # Retry if under max retries (config-driven backoff per phase)
+            try:
+                from services.phase_retry_silence_service import (
+                    backoff_seconds_for_retry,
+                    max_retries_for_phase,
+                )
+
+                task.max_retries = max_retries_for_phase(task.name)
+            except Exception:
+                pass
             if task.retry_count < task.max_retries:
                 task.status = TaskStatus.RETRYING
-                await asyncio.sleep(min(60 * task.retry_count, 300))  # Exponential backoff
+                try:
+                    from services.phase_retry_silence_service import backoff_seconds_for_retry
+
+                    delay = backoff_seconds_for_retry(task.name, task.retry_count)
+                except Exception:
+                    delay = min(60 * max(1, task.retry_count), 300)
+                await asyncio.sleep(delay)
                 await self._enqueue_scheduled_task(
                     task,
                     bypass_nightly_cap=True,
@@ -3402,15 +3181,164 @@ class AutomationManager:
                 logger.debug("Activity feed complete: %s", e)
             # Store task result
             self.tasks[task.id] = task
+            ctrl = getattr(self, "pipeline_controller", None)
+            if ctrl is not None:
+                ctrl.notify_worker_done()
+
+    _MONITOR_STABLE_ACTIVITY_PHASES = frozenset(
+        {
+            "nightly_enrichment_context",
+            "collection_cycle",
+            "unified_intake_extraction",
+            "entity_profile_build",
+            "storyline_assembly",
+            "content_enrichment",
+            "mention_resolution",
+            "claim_extraction",
+            "event_extraction_v5",
+            "entity_extraction",
+        }
+    )
+    # Drain phases skip the outer task-level history row; each batch completion is persisted separately.
+    _BATCH_RUN_HISTORY_PHASES = frozenset(
+        {
+            "unified_intake_extraction",
+            "entity_profile_build",
+            "claim_extraction",
+            "claims_to_facts",
+            "content_enrichment",
+            "document_processing",
+            "spine_sql_tail",
+            "storyline_membership_review",
+            "storyline_hygiene",
+            "story_continuation",
+            "episode_assembly_maintenance",
+            "chronological_events_catchup",
+        }
+    )
 
     def _activity_feed_activity_id(self, task: Task) -> str:
         """
         Stable id for phases that should appear once in Monitor \"Current activity\".
         (Otherwise each Task UUID creates a separate row; nightly can enqueue up to MAX_QUEUED.)
         """
-        if task.name == "nightly_enrichment_context":
-            return "phase:nightly_enrichment_context"
+        if task.name in self._MONITOR_STABLE_ACTIVITY_PHASES:
+            return f"phase:{task.name}"
         return task.id
+
+    async def _record_phase_batch_loop(
+        self,
+        task: Task,
+        *,
+        loops_processed: int,
+        **stats: Any,
+    ) -> None:
+        """Increment batch-loop counter for Monitor current activity (does not reset started_at)."""
+        task.metadata = task.metadata or {}
+        task.metadata["loops_processed"] = loops_processed
+        task.metadata["iteration_index"] = loops_processed
+        for key, value in stats.items():
+            if value is not None:
+                task.metadata[key] = value
+        try:
+            from shared.monitor_run_vocabulary import (
+                RunHistoryStatus,
+                emit_phase_run_event,
+                normalize_phase_run_event,
+            )
+            from shared.services.phase_batch_run_history import batch_stats_had_work
+
+            batch_finished = datetime.now(timezone.utc)
+            batch_started = task.metadata.get("_batch_run_started_at")
+            if batch_started is None:
+                batch_started = task.started_at or batch_finished
+            # claim_extraction: never persist empty batch_rounds. Historical spam (~160/hr on
+            # Jul 15–16) came from allow_empty=True while PopOS cycled ~every 15–20s with a
+            # probe/batch race that wrote contexts=0 rows into automation_run_history.
+            allow_empty = task.name in self._BATCH_RUN_HISTORY_PHASES
+            if task.name == "claim_extraction":
+                _ctx = int(stats.get("contexts_processed") or 0)
+                _cl = int(stats.get("claims_inserted") or 0)
+                if _ctx <= 0 and _cl <= 0:
+                    allow_empty = False
+            should_emit_history = allow_empty or batch_stats_had_work(stats)
+            event = normalize_phase_run_event(
+                task.name,
+                loops_processed,
+                started_at=batch_started,
+                finished_at=batch_finished,
+                scheduler_path="automation_manager",
+                run_history_status=RunHistoryStatus.BATCH_ROUND,
+                allow_empty=allow_empty,
+                **stats,
+            )
+            if should_emit_history:
+                persisted = await emit_phase_run_event(
+                    event,
+                    activity_id=self._activity_feed_activity_id(task),
+                    base_message=self._activity_message(task),
+                    allow_empty_history=allow_empty,
+                )
+            else:
+                from services.activity_feed_service import get_activity_feed
+                from shared.monitor_run_vocabulary import format_activity_message
+
+                feed = get_activity_feed()
+                feed.update_current_progress(
+                    self._activity_feed_activity_id(task),
+                    message=format_activity_message(self._activity_message(task), event),
+                    **event.activity_payload(),
+                )
+                persisted = False
+            task.metadata["_batch_run_started_at"] = batch_finished
+            try:
+                from shared.monitor_run_vocabulary import is_measurable_run_history_row
+
+                if persisted or is_measurable_run_history_row(
+                    event.to_metadata(),
+                    started_at=event.started_at,
+                    finished_at=event.finished_at,
+                ):
+                    cutoff = datetime.now(timezone.utc) - timedelta(minutes=60)
+                    dq = self._phase_run_times_last_60m[task.name]
+                    dq.append(batch_finished)
+                    while dq and dq[0] < cutoff:
+                        dq.popleft()
+                    self._measurable_runs_60m_sql_cache["at"] = 0.0
+            except Exception:
+                pass
+        except Exception as e:
+            logger.debug("Activity feed batch progress: %s", e)
+
+    def _make_batch_progress_callback(self, task: Task):
+        async def _on_batch(loops_processed: int, **stats: Any) -> None:
+            await self._record_phase_batch_loop(task, loops_processed=loops_processed, **stats)
+
+        return _on_batch
+
+    @staticmethod
+    def _stamp_monitor_batch_throughput(
+        task: Task,
+        *,
+        round_processed: int,
+        items_processed: int | None = None,
+        **extra: Any,
+    ) -> None:
+        """Mark task metadata so Monitor measured rows/run can sample this run.
+
+        ``query_measured_rows_per_run_by_phase`` requires ``batch=true`` and a
+        positive iteration throughput key (prefer ``round_processed`` = batch budget).
+        """
+        if not isinstance(getattr(task, "metadata", None), dict):
+            task.metadata = {}
+        rp = max(0, int(round_processed or 0))
+        task.metadata["batch"] = True
+        task.metadata["round_processed"] = rp
+        if items_processed is not None:
+            task.metadata["items_processed"] = int(items_processed)
+        for key, value in extra.items():
+            if value is not None:
+                task.metadata[key] = value
 
     def _activity_message(self, task: Task) -> str:
         """Human-readable one-line message for monitoring UI."""
@@ -3478,16 +3406,24 @@ class AutomationManager:
             return "ML processing (summaries, features)"
         if name == "entity_extraction":
             return "Entity extraction"
+        if name == "unified_intake_extraction":
+            return "Unified intake extraction (entities, events, claims, scoring)"
         if name == "event_extraction":
             return "Event extraction"
         if name == "story_continuation":
             return "Story continuation"
+        if name == "episode_assembly_maintenance":
+            return "Episode assembly maintenance (orphan backfill + clusters)"
         if name == "watchlist_alerts":
             return "Generating watchlist alerts"
         if name == "data_cleanup":
             return "Data cleanup"
         if name == "health_check":
             return "Health check"
+        if name == "rss_feed_health":
+            return "RSS feed health review"
+        if name == "rolling_arc_refresh":
+            return "Rolling 12m arc refresh"
         if name == "nightly_enrichment_context":
             return "Nightly pipeline (enrichment → context sync → ~70B summaries)"
         if name == "cache_cleanup":
@@ -3500,7 +3436,7 @@ class AutomationManager:
         return name.replace("_", " ").title()
 
     async def _execute_rss_processing(self, task: Task):
-        """Execute RSS processing: use domain feeds (collect_rss_feeds) so all politics/finance/science_tech.rss_feeds are used."""
+        """Execute RSS processing: use domain feeds (collect_rss_feeds) for all active pipeline domains."""
         import asyncio
 
         from collectors.rss_collector import collect_rss_feeds
@@ -3520,12 +3456,29 @@ class AutomationManager:
         """Fetch full article text with trafilatura for articles with short content."""
         import asyncio
 
+        task.metadata = task.metadata or {}
         try:
             from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
 
-            if in_nightly_pipeline_window_est() and not (task.metadata or {}).get(
+            if in_nightly_pipeline_window_est() and not task.metadata.get(
                 "nightly_sequential_drain"
             ):
+                # Standalone CE no-ops overnight; nightly_enrichment_context owns the drain.
+                # Skip outer history so Monitor Recent activity is not paired with a non-measurable
+                # sub-1s empty row that leaves runs_1h unchanged.
+                task.metadata["skip_automation_run_history"] = True
+                try:
+                    from services.activity_feed_service import get_activity_feed
+
+                    get_activity_feed().update_current_progress(
+                        self._activity_feed_activity_id(task),
+                        message=(
+                            "Content enrichment deferred "
+                            "(nightly pipeline owns drain)"
+                        ),
+                    )
+                except Exception:
+                    pass
                 logger.debug(
                     "Content enrichment: nightly pipeline window — handled by nightly_enrichment_context"
                 )
@@ -3533,29 +3486,36 @@ class AutomationManager:
         except Exception:
             pass
 
-        from services.article_content_enrichment_service import enrich_articles_batch
+        from shared.content_enrichment_drain import run_content_enrichment_batch
 
+        # Batch row is the measurable runs_1h signal; skip empty outer task row.
+        task.metadata["skip_automation_run_history"] = True
         try:
+            default_bs = 60
+            try:
+                from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+                default_bs, _meta = resolve_adaptive_batch("content_enrichment", default_bs)
+            except Exception:
+                pass
+            enrich_bs = max(1, int(default_bs))
             async with self._content_enrichment_lock:
                 loop = asyncio.get_event_loop()
-                # Burst (48h catch-up): batch 60; revert to 40 after
+                # Queue-first claim → scoped enrich → finalize (U5)
                 enriched = await loop.run_in_executor(
-                    None, lambda: enrich_articles_batch(batch_size=60)
+                    None, lambda bs=enrich_bs: run_content_enrichment_batch(batch_size=bs)
                 )
-            if enriched and enriched > 0:
-                await self._maybe_request_storyline_assembly_after_enrichment()
+            enriched_n = int(enriched or 0)
+            # Always emit batch_round (allow_empty via _BATCH_RUN_HISTORY_PHASES) so idle /
+            # fast completions still increment runs_1h — matching activity "ran Xm ago".
+            await self._record_phase_batch_loop(
+                task,
+                loops_processed=1,
+                round_processed=enriched_n,
+                processed=enriched_n,
+            )
         except Exception as e:
             logger.warning(f"Content enrichment failed: {e}")
-
-    async def _maybe_request_storyline_assembly_after_enrichment(self) -> None:
-        """Queue per-domain storyline assembly when unlinked article backlog exceeds threshold."""
-        try:
-            from services.storyline_assembly_service import domains_needing_assembly
-
-            for domain_key in domains_needing_assembly():
-                self.request_phase("storyline_assembly", domain=domain_key)
-        except Exception as e:
-            logger.debug("storyline assembly after enrichment: %s", e)
 
     async def _execute_document_collection(self, task: Task):
         """Discover government and academic PDF documents (invoked from collection_cycle)."""
@@ -3574,20 +3534,58 @@ class AutomationManager:
     async def _execute_document_processing(self, task: Task):
         """Process pending PDFs (download, extract text, sections, entities)."""
         import asyncio
+        from datetime import datetime, timezone
+
+        from shared.services.phase_batch_run_history import record_phase_batch_completion_async
 
         try:
+            from shared.process_memory import process_rss_mb
             from services.backlog_metrics import get_backlog_count
             from services.document_processing_service import process_unprocessed_documents
 
-            # Process more per run when backlog is large (batch 10 + backlog over 20 → limit 25)
+            rss = process_rss_mb()
+            pause_mb = float(
+                __import__("config.runtime", fromlist=["env_str"]).env_str(
+                    "AUTOMATION_RSS_PAUSE_MB", "1800"
+                )
+                or "1800"
+            )
+            if rss is not None and rss >= pause_mb:
+                logger.warning(
+                    "Skipping document_processing — process RSS %.0f MB (gate %.0f)",
+                    rss,
+                    pause_mb,
+                )
+                return
+
+            # Adaptive batch ceiling; scale down when backlog is small or RSS memory is high
             backlog = get_backlog_count("document_processing") or 0
-            limit = 25 if backlog > 20 else 15 if backlog > 10 else 10
+            try:
+                from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+                limit, _meta = resolve_adaptive_batch("document_processing", 10)
+            except Exception:
+                limit = 10
+            if backlog <= 10:
+                limit = min(int(limit), 3)
+            elif backlog <= 20:
+                limit = min(int(limit), 6)
+            if rss is not None and rss >= min(1200.0, pause_mb * 0.7):
+                limit = min(int(limit), 1)
+            started = datetime.now(timezone.utc)
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
-                None, lambda: process_unprocessed_documents(limit=limit)
+                None, lambda lim=int(limit): process_unprocessed_documents(limit=lim)
             )
-            count = result.get("processed", 0) if isinstance(result, dict) else 0
+            finished = datetime.now(timezone.utc)
+            count = int(result.get("processed", 0) if isinstance(result, dict) else 0)
             if count > 0:
+                await record_phase_batch_completion_async(
+                    "document_processing",
+                    started,
+                    finished,
+                    stats={"round_processed": count, "processed": count},
+                )
                 logger.info(f"Document processing (v8): {count} documents processed")
         except Exception as e:
             logger.warning(f"Document processing failed: {e}")
@@ -3596,8 +3594,6 @@ class AutomationManager:
         """v8: Run collection sub-steps sequentially; drain enrichment and document processing; drain pending_collection_queue."""
         import asyncio
 
-        # Entering collection window — leave analysis pipeline mode
-        self._analysis_window_start = None
         asyncio.get_event_loop()
         dummy = Task(
             id=task.id + "_sub",
@@ -3613,7 +3609,7 @@ class AutomationManager:
             sl = pipeline_backfill_status_line()
             if sl:
                 logger.warning("Collection cycle: %s", sl)
-        skip_rss = os.environ.get("AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE", "").lower() in (
+        skip_rss = env_str("AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE", "").lower() in (
             "1",
             "true",
             "yes",
@@ -3630,30 +3626,41 @@ class AutomationManager:
                 await self._execute_rss_processing(dummy)
             except Exception as e:
                 logger.warning(f"Collection cycle RSS step failed: {e}")
-        # 2. Content enrichment — loop until drained or cap (nightly pipeline window: nightly_enrichment_context owns this)
-        skip_enrich_nightly = False
+            # Fresh intake invalidates stale stall evidence: give every auto-silenced
+            # phase another chance. Anything still broken re-earns its silence via the
+            # failing-streak threshold.
+            try:
+                from services.phase_retry_silence_service import lift_auto_silences
+
+                lifted = await asyncio.to_thread(
+                    lambda: lift_auto_silences(reason="rss_intake", force=True)
+                )
+                if lifted:
+                    self._apply_automation_disabled_schedules()
+                    logger.info("RSS intake lifted auto-silence for: %s", lifted)
+            except Exception as e:
+                logger.debug("collection_cycle silence lift: %s", e)
+        # 2. Content enrichment — PipelineController schedules standalone content_enrichment
         try:
             from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
 
             skip_enrich_nightly = in_nightly_pipeline_window_est()
         except Exception:
-            pass
+            skip_enrich_nightly = False
         if not skip_enrich_nightly:
-            max_enrich_iters = 30
-            for _ in range(max_enrich_iters):
-                if not get_all_pending_counts:
-                    break
-                try:
-                    counts = get_all_pending_counts()
-                    if (counts.get("content_enrichment") or 0) == 0:
-                        break
-                except Exception:
-                    break
-                try:
-                    await self._execute_content_enrichment(dummy)
-                except Exception as e:
-                    logger.warning(f"Collection cycle enrichment step failed: {e}")
-                    break
+            try:
+                ctrl = getattr(self, "pipeline_controller", None)
+                if ctrl is not None:
+                    ctrl.request_replan()
+            except Exception as e:
+                logger.debug("collection_cycle post-RSS replan: %s", e)
+        # Stir the beaker when intake preprocess is already clear (RSS done, backlog low).
+        try:
+            from shared.chemistry_beaker import kickoff_beaker_phases
+
+            kickoff_beaker_phases(self, reason="collection_cycle_post_rss")
+        except Exception as e:
+            logger.debug("collection_cycle beaker kickoff: %s", e)
         # 3. Document collection (skip during backfill pause — avoid adding new external documents)
         if not backfill_pause:
             try:
@@ -3663,6 +3670,7 @@ class AutomationManager:
         else:
             logger.info("Collection cycle: skipping document collection (PIPELINE_BACKFILL_MODE pause)")
         # 4. Document processing — loop until drained or cap
+        loops_processed = 0
         max_doc_iters = 20
         for _ in range(max_doc_iters):
             if not get_all_pending_counts:
@@ -3675,6 +3683,12 @@ class AutomationManager:
                 break
             try:
                 await self._execute_document_processing(dummy)
+                loops_processed += 1
+                await self._record_phase_batch_loop(
+                    task,
+                    loops_processed=loops_processed,
+                    step="document_processing",
+                )
             except Exception as e:
                 logger.warning(f"Collection cycle document processing failed: {e}")
                 break
@@ -3708,101 +3722,16 @@ class AutomationManager:
             logger.info("Collection cycle drained %s pending collection request(s)", drained)
 
     async def _execute_storyline_synthesis(self, task: Task):
-        """Auto-synthesize storylines (Wikipedia-style) that have 3+ articles."""
-        import asyncio
+        from shared.retired_phase_dispatch import dispatch_retired_automation_phase
 
-        try:
-            from services.deep_content_synthesis import DeepContentSynthesisService
-
-            svc = DeepContentSynthesisService()
-            loop = asyncio.get_event_loop()
-
-            for domain_key, schema in pipeline_url_schema_pairs():
-                conn = await self._get_db_connection()
-                if not conn:
-                    continue
-                try:
-                    cur = conn.cursor()
-                    # Storylines with 3+ articles: no synthesis yet, or stale (newest article newer than synthesized_at)
-                    try:
-                        cur.execute(
-                            f"""
-                            SELECT s.id FROM {schema}.storylines s
-                            JOIN (SELECT storyline_id, COUNT(*) AS c FROM {schema}.storyline_articles GROUP BY storyline_id) sa
-                              ON sa.storyline_id = s.id AND sa.c >= 3
-                            WHERE s.synthesized_content IS NULL
-                               OR EXISTS (
-                                 SELECT 1 FROM {schema}.storyline_articles sa2
-                                 JOIN {schema}.articles a ON a.id = sa2.article_id
-                                 WHERE sa2.storyline_id = s.id
-                                 AND a.created_at > COALESCE(s.synthesized_at, '1970-01-01'::timestamptz)
-                               )
-                            ORDER BY s.synthesized_at NULLS FIRST,
-                                     (SELECT MAX(a2.created_at) FROM {schema}.storyline_articles sa3
-                                      JOIN {schema}.articles a2 ON a2.id = sa3.article_id
-                                      WHERE sa3.storyline_id = s.id) DESC NULLS LAST
-                            LIMIT 4
-                            """
-                        )
-                    except Exception:
-                        # Fallback if synthesized_at column missing
-                        cur.execute(
-                            f"""
-                            SELECT s.id FROM {schema}.storylines s
-                            JOIN (SELECT storyline_id, COUNT(*) AS c FROM {schema}.storyline_articles GROUP BY storyline_id) sa
-                              ON sa.storyline_id = s.id AND sa.c >= 3
-                            WHERE s.synthesized_content IS NULL
-                            ORDER BY s.updated_at DESC
-                            LIMIT 4
-                            """
-                        )
-                    rows = cur.fetchall()
-                    cur.close()
-                    conn.close()
-                except Exception:
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
-                    continue
-                for (storyline_id,) in rows:
-                    try:
-                        await loop.run_in_executor(
-                            None,
-                            lambda d=domain_key, sid=storyline_id: svc.synthesize_storyline_content(
-                                d, sid, depth="standard", save_to_db=True
-                            ),
-                        )
-                        logger.info(
-                            f"Storyline synthesis (v8): {domain_key} storyline {storyline_id}"
-                        )
-                    except Exception as e:
-                        logger.warning(f"Storyline synthesis {storyline_id} failed: {e}")
-        except Exception as e:
-            logger.warning(f"Storyline synthesis phase failed: {e}")
+        await dispatch_retired_automation_phase(self, "storyline_synthesis", task)
 
     async def _execute_daily_briefing_synthesis(self, task: Task):
-        """Generate breaking-news synthesis per domain for briefing page."""
-        import asyncio
-
-        try:
-            from services.deep_content_synthesis import DeepContentSynthesisService
-
-            svc = DeepContentSynthesisService()
-            loop = asyncio.get_event_loop()
-            for domain_key in get_pipeline_active_domain_keys():
-                try:
-                    await loop.run_in_executor(
-                        None,
-                        lambda d=domain_key: svc.synthesize_breaking_news(
-                            d, hours=72, min_articles=3
-                        ),  # v8
-                    )
-                    logger.info(f"Daily briefing synthesis (v8): {domain_key}")
-                except Exception as e:
-                    logger.warning(f"Daily briefing synthesis {domain_key} failed: {e}")
-        except Exception as e:
-            logger.warning(f"Daily briefing synthesis phase failed: {e}")
+        """Fully retired — Briefings reads desk-promoted / RAG editorial fields."""
+        logger.info(
+            "daily_briefing_synthesis fully retired; use desk promote + content_refinement_queue"
+        )
+        return
 
     async def _execute_context_sync(self, task: Task):
         """Backfill: sync domain articles to intelligence.contexts (Phase 1.2 context-centric)."""
@@ -3829,16 +3758,37 @@ class AutomationManager:
 
         from services.context_processor_service import sync_domain_articles_to_contexts
 
-        for domain_key in get_pipeline_active_domain_keys():
+        try:
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            sync_limit, _meta = resolve_adaptive_batch("context_sync", 100)
+        except Exception:
+            sync_limit = 100
+        sync_limit = max(1, int(sync_limit))
+        domains = _domains_for_phase("context_sync")
+        total_all = 0
+
+        for domain_key in domains:
             try:
-                # Production: 100 contexts/batch, ~5-10s per batch, prevents backlog
+                # Production: adaptive contexts/batch (default 100)
                 total = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda d=domain_key: sync_domain_articles_to_contexts(d, limit=100)
+                    None,
+                    lambda d=domain_key, lim=sync_limit: sync_domain_articles_to_contexts(
+                        d, limit=lim
+                    ),
                 )
+                total_all += int(total or 0)
                 if total > 0:
                     logger.info(f"Context sync {domain_key}: {total} contexts created")
             except Exception as e:
                 logger.warning(f"Context sync {domain_key} failed: {e}")
+        self._stamp_monitor_batch_throughput(
+            task,
+            round_processed=int(sync_limit) * max(1, len(domains)),
+            items_processed=total_all,
+            adaptive_batch=int(sync_limit),
+            contexts_created=total_all,
+        )
 
     async def _execute_entity_profile_sync(self, task: Task):
         """Sync entity_canonical -> entity_profiles + old_entity_to_new (Phase 1.3 context-centric)."""
@@ -3853,15 +3803,31 @@ class AutomationManager:
 
         from services.entity_profile_sync_service import sync_domain_entity_profiles
 
-        for domain_key in get_pipeline_active_domain_keys():
+        domains = _domains_for_phase("entity_profile_sync")
+        total_all = 0
+        for domain_key in domains:
             try:
                 total = await asyncio.get_event_loop().run_in_executor(
                     None, lambda d=domain_key: sync_domain_entity_profiles(d)
                 )
+                total_all += int(total or 0)
                 if total > 0:
                     logger.info(f"Entity profile sync {domain_key}: {total} new mappings")
             except Exception as e:
                 logger.warning(f"Entity profile sync {domain_key} failed: {e}")
+        per_domain = 40
+        try:
+            from services.backlog_metrics import BATCH_SIZE_PER_TASK
+
+            per_domain = max(1, int(BATCH_SIZE_PER_TASK.get("entity_profile_sync", 40)))
+        except Exception:
+            pass
+        self._stamp_monitor_batch_throughput(
+            task,
+            round_processed=int(per_domain) * max(1, len(domains)),
+            items_processed=total_all,
+            mappings_created=total_all,
+        )
 
     async def _execute_claim_extraction(self, task: Task):
         """Extract claims (subject/predicate/object) from contexts without claims (Phase 2.1 context-centric)."""
@@ -3879,17 +3845,31 @@ class AutomationManager:
         )
 
         task.metadata = task.metadata or {}
+        is_nightly_seq = bool(task.metadata.get("nightly_sequential_drain"))
         try:
             # Default: one automation task drains all pending contexts in a loop (CLAIM_EXTRACTION_DRAIN=true).
             # Keeps a single claim_extraction slot busy until idle so we do not stack many queued copies; other
             # workers and LLM lane semaphores handle sharing the GPU with other phases.
+            # Nightly unified sequential drain: one batch per outer loop iteration so later phases get
+            # time inside the 00:00–07:00 window (full drain can run 15m+ per call and starve the sweep).
             # Drain writes one automation_run_history row per batch; skip the task-level history row.
             run_limit = (task.metadata or {}).get("nightly_limit")
             nlim = int(run_limit) if run_limit else None
-            if claim_extraction_drain_enabled():
+            use_drain = claim_extraction_drain_enabled() and not is_nightly_seq
+            on_batch = self._make_batch_progress_callback(task)
+            if use_drain:
                 task.metadata["skip_automation_run_history"] = True
+
+                async def _claim_batch_cb(batch_n: int, res) -> None:
+                    await on_batch(
+                        batch_n,
+                        contexts_processed=res.contexts_processed,
+                        claims_inserted=res.claims_inserted,
+                    )
+
                 total, batches = await drain_claim_extraction_for_automation_task(
                     nightly_limit=nlim,
+                    on_batch_complete=_claim_batch_cb,
                 )
                 if total > 0:
                     logger.info(
@@ -3899,6 +3879,12 @@ class AutomationManager:
                     )
             else:
                 res = await run_claim_extraction_batch(limit=nlim)
+                if res.contexts_processed > 0 or res.claims_inserted > 0:
+                    await on_batch(
+                        1,
+                        contexts_processed=res.contexts_processed,
+                        claims_inserted=res.claims_inserted,
+                    )
                 if res.claims_inserted > 0:
                     logger.info(
                         "Claim extraction: %s claims inserted",
@@ -3919,23 +3905,42 @@ class AutomationManager:
         try:
             from services.legislative_reference_service import run_legislative_reference_batch
 
-            stats = await asyncio.to_thread(run_legislative_reference_batch)
+            article_limit = 8
+            try:
+                from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+                article_limit, adaptive_meta = resolve_adaptive_batch(
+                    "legislative_references", article_limit
+                )
+                if isinstance(task.metadata, dict):
+                    task.metadata["adaptive_batch"] = article_limit
+                    task.metadata["adaptive_batch_meta"] = adaptive_meta
+            except Exception:
+                pass
+            stats = await asyncio.to_thread(
+                run_legislative_reference_batch,
+                article_limit_per_domain=article_limit,
+            )
             if stats and not stats.get("skipped") and int(stats.get("articles_scanned") or 0) > 0:
                 logger.info(
-                    "Legislative references: scanned %s articles, %s snapshots",
+                    "Legislative references: scanned %s articles, %s snapshots (batch=%s)",
                     stats.get("articles_scanned"),
                     stats.get("references_upserted"),
+                    article_limit,
                 )
         except Exception as e:
             logger.warning("Legislative references failed: %s", e)
 
     async def _execute_claims_to_facts(self, task: Task):
         """Promote high-confidence extracted_claims to versioned_facts (activates story state chain)."""
+        from datetime import datetime, timezone
+
         from services.claim_extraction_service import (
             claims_to_facts_drain_enabled,
             drain_claims_to_facts_for_automation_task,
             promote_claims_to_versioned_facts,
         )
+        from shared.services.phase_batch_run_history import record_phase_batch_completion_async
 
         task.metadata = task.metadata or {}
         try:
@@ -3952,25 +3957,204 @@ class AutomationManager:
                 )
                 if total > 0:
                     logger.info(
-                        "Claims to facts: %s rows promoted (%s batch(es) in one task)",
+                        "claims_to_facts drain: promoted=%s batches=%s",
                         total,
                         batches,
                     )
-            else:
-                if per_batch is not None:
-                    stats = await asyncio.to_thread(
-                        promote_claims_to_versioned_facts,
-                        None,
-                        per_batch,
-                    )
-                else:
-                    stats = await asyncio.to_thread(promote_claims_to_versioned_facts)
-                if not isinstance(stats, dict):
-                    return
-                if stats.get("candidates", 0) == 0:
-                    logger.debug("Claims to facts: no promotable claims in batch")
+                return
+
+            started = datetime.now(timezone.utc)
+            stats = await asyncio.to_thread(
+                promote_claims_to_versioned_facts,
+                limit=per_batch,
+            )
+            finished = datetime.now(timezone.utc)
+            if stats and int(stats.get("promoted") or 0) > 0:
+                logger.info(
+                    "claims_to_facts: promoted=%s candidates=%s",
+                    stats.get("promoted"),
+                    stats.get("candidates"),
+                )
+            try:
+                await record_phase_batch_completion_async(
+                    "claims_to_facts",
+                    started,
+                    finished,
+                    stats={
+                        "promoted": int((stats or {}).get("promoted") or 0),
+                        "candidates": int((stats or {}).get("candidates") or 0),
+                    },
+                )
+            except Exception:
+                pass
         except Exception as e:
-            logger.warning(f"Claims to facts failed: {e}")
+            logger.warning("claims_to_facts failed: %s", e)
+
+    async def _execute_claim_evidence_appraisal(self, task: Task):
+        """v11 corpus: grade paper findings with quote-required refusal contract."""
+        from config.feature_registry import is_feature_enabled
+        from services.claim_evidence_appraisal_service import (
+            is_enabled,
+            run_claim_evidence_appraisal_batch,
+        )
+
+        if not is_enabled() and not is_feature_enabled("claim_evidence_appraisal"):
+            logger.debug("claim_evidence_appraisal skipped (feature disabled)")
+            return
+        try:
+            limit = 8
+            if isinstance(task.metadata, dict) and task.metadata.get("batch_limit"):
+                limit = int(task.metadata["batch_limit"])
+            stats = await asyncio.to_thread(
+                run_claim_evidence_appraisal_batch,
+                domain_key=None,
+                limit=limit,
+            )
+            if stats and int(stats.get("appraised") or 0) > 0:
+                logger.info("claim_evidence_appraisal: %s", stats)
+        except Exception as e:
+            logger.warning("claim_evidence_appraisal failed: %s", e)
+
+    async def _execute_editorial_reduction_pass(self, task: Task):
+        """v11 Reduction: prune in_reduction packages then route back to research/narrative."""
+        from config.feature_registry import is_feature_enabled
+        from services.editorial_package_reduction_service import (
+            is_enabled,
+            run_reduction_batch,
+        )
+
+        if not is_enabled():
+            logger.debug("editorial_reduction_pass skipped (EDITORIAL_REDUCTION_ENABLED off)")
+            return
+        if not is_feature_enabled("editorial_reduction") and not is_enabled():
+            return
+        try:
+            limit = 5
+            if isinstance(task.metadata, dict) and task.metadata.get("batch_limit"):
+                limit = int(task.metadata["batch_limit"])
+            stats = await asyncio.to_thread(run_reduction_batch, limit=limit)
+            if stats and int(stats.get("processed") or 0) > 0:
+                logger.info("editorial_reduction_pass: %s", stats)
+            try:
+                from shared.pipeline_handoffs import (
+                    after_editorial_reduction,
+                    route_target_counts,
+                )
+
+                routes = route_target_counts(stats if isinstance(stats, dict) else None)
+                after_editorial_reduction(
+                    self,
+                    processed=int((stats or {}).get("processed") or 0),
+                    routed_to_research=routes.get("research", 0),
+                    routed_to_narrative=routes.get("narrative", 0),
+                )
+            except Exception as e:
+                logger.debug("editorial_reduction handoff: %s", e)
+        except Exception as e:
+            logger.warning("editorial_reduction_pass failed: %s", e)
+
+    async def _execute_editorial_narrative_pass(self, task: Task):
+        """v11 Narrative: assemble in_narrative packages then route to Reduction/Editor."""
+        from services.editorial_package_narrative_service import (
+            is_enabled,
+            run_narrative_batch,
+        )
+
+        if not is_enabled():
+            logger.debug("editorial_narrative_pass skipped (EDITORIAL_NARRATIVE_ENABLED off)")
+            return
+        try:
+            limit = 5
+            if isinstance(task.metadata, dict) and task.metadata.get("batch_limit"):
+                limit = int(task.metadata["batch_limit"])
+            stats = await asyncio.to_thread(run_narrative_batch, limit=limit)
+            if stats and int(stats.get("processed") or 0) > 0:
+                logger.info("editorial_narrative_pass: %s", stats)
+            try:
+                from shared.pipeline_handoffs import (
+                    after_editorial_narrative,
+                    route_target_counts,
+                )
+
+                routes = route_target_counts(stats if isinstance(stats, dict) else None)
+                after_editorial_narrative(
+                    self,
+                    processed=int((stats or {}).get("processed") or 0),
+                    routed_to_reduction=routes.get("reduction", 0),
+                )
+            except Exception as e:
+                logger.debug("editorial_narrative handoff: %s", e)
+        except Exception as e:
+            logger.warning("editorial_narrative_pass failed: %s", e)
+
+    async def _execute_editorial_evidence_expand_pass(self, task: Task):
+        """v11 Narrative evidence-expand: multi-source retrieve → brief → Reduction."""
+        from services.editorial_package_evidence_expand_service import (
+            is_enabled,
+            run_evidence_expand_batch,
+        )
+
+        if not is_enabled():
+            logger.debug(
+                "editorial_evidence_expand_pass skipped "
+                "(EDITORIAL_EVIDENCE_EXPAND_ENABLED off)"
+            )
+            return
+        try:
+            limit = 3
+            if isinstance(task.metadata, dict) and task.metadata.get("batch_limit"):
+                limit = int(task.metadata["batch_limit"])
+            stats = await asyncio.to_thread(run_evidence_expand_batch, limit=limit)
+            if stats and int(stats.get("processed") or 0) > 0:
+                logger.info("editorial_evidence_expand_pass: %s", stats)
+            try:
+                from shared.pipeline_handoffs import after_editorial_evidence_expand
+
+                after_editorial_evidence_expand(
+                    self,
+                    processed=int((stats or {}).get("processed") or 0),
+                    routed_to_reduction=int(
+                        (stats or {}).get("routed_to_reduction") or 0
+                    ),
+                )
+            except Exception as e:
+                logger.debug("editorial_evidence_expand handoff: %s", e)
+        except Exception as e:
+            logger.warning("editorial_evidence_expand_pass failed: %s", e)
+
+    async def _execute_editorial_research_pass(self, task: Task):
+        """v11 Research: spine + assemble in_research packages then route to Reduction/Editor."""
+        from services.editorial_package_research_service import (
+            is_enabled,
+            run_research_batch,
+        )
+
+        if not is_enabled():
+            logger.debug("editorial_research_pass skipped (EDITORIAL_RESEARCH_ENABLED off)")
+            return
+        try:
+            limit = 5
+            if isinstance(task.metadata, dict) and task.metadata.get("batch_limit"):
+                limit = int(task.metadata["batch_limit"])
+            stats = await asyncio.to_thread(run_research_batch, limit=limit)
+            if stats and int(stats.get("processed") or 0) > 0:
+                logger.info("editorial_research_pass: %s", stats)
+            try:
+                from shared.pipeline_handoffs import (
+                    after_editorial_research,
+                    route_target_counts,
+                )
+
+                routes = route_target_counts(stats if isinstance(stats, dict) else None)
+                after_editorial_research(
+                    self,
+                    processed=int((stats or {}).get("processed") or 0),
+                    routed_to_reduction=routes.get("reduction", 0),
+                )
+            except Exception as e:
+                logger.debug("editorial_research handoff: %s", e)
+        except Exception as e:
+            logger.warning("editorial_research_pass failed: %s", e)
 
     async def _execute_claim_subject_gap_refresh(self, task: Task):
         """Rebuild intelligence.claim_subject_gap_catalog (open subjects lacking profiles/canonicals)."""
@@ -4018,6 +4202,10 @@ class AutomationManager:
 
     async def _execute_event_tracking(self, task: Task):
         """Populate tracked_events and event_chronicles from contexts (Phase 2.3 context-centric)."""
+        from datetime import datetime, timezone
+
+        from shared.services.phase_batch_run_history import record_phase_batch_completion_async
+
         try:
             from config.context_centric_config import is_context_centric_task_enabled
 
@@ -4028,36 +4216,49 @@ class AutomationManager:
         try:
             from services.event_tracking_service import run_event_tracking_batch
 
-            # Higher limit to drain unlinked-context backlog; ~30 contexts/batch, 3 domains
-            total = await run_event_tracking_batch(limit=300)
+            started = datetime.now(timezone.utc)
+            try:
+                from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+                batch_max = max(
+                    25, min(300, env_int("EVENT_TRACKING_ASSEMBLY_BATCH_MAX", 300))
+                )
+                default_lim = max(
+                    1,
+                    min(
+                        batch_max,
+                        env_int("EVENT_TRACKING_ASSEMBLY_BATCH_LIMIT", 25),
+                    ),
+                )
+                track_lim, _meta = resolve_adaptive_batch("event_tracking", default_lim)
+                track_lim = max(1, min(batch_max, int(track_lim)))
+            except Exception:
+                track_lim = 300
+            total = int(await run_event_tracking_batch(limit=track_lim) or 0)
+            finished = datetime.now(timezone.utc)
+            await record_phase_batch_completion_async(
+                "event_tracking",
+                started,
+                finished,
+                stats={
+                    "chronicle_entries": total,
+                    "round_processed": max(total, int(track_lim)),
+                    "processed": total,
+                    "batch_limit": int(track_lim),
+                },
+                allow_empty=True,
+            )
+            task.metadata = task.metadata or {}
+            task.metadata["skip_automation_run_history"] = True
             if total > 0:
                 logger.info(f"Event tracking: {total} chronicle entries added")
         except Exception as e:
             logger.warning(f"Event tracking failed: {e}")
 
     async def _execute_investigation_report_refresh(self, task: Task):
-        """Regenerate investigation reports for events whose context set has changed (Phase 2.4)."""
-        try:
-            from config.context_centric_config import is_context_centric_task_enabled
+        from shared.retired_phase_dispatch import dispatch_retired_automation_phase
 
-            if not is_context_centric_task_enabled("investigation_report_refresh"):
-                return
-        except Exception:
-            pass
-        from services.investigation_report_service import (
-            create_initial_reports_for_new_events,
-            refresh_stale_investigation_reports,
-        )
-
-        try:
-            created = await create_initial_reports_for_new_events(limit=5)
-            refreshed = await refresh_stale_investigation_reports(limit=3)
-            if created > 0 or refreshed > 0:
-                logger.info(f"Investigation report refresh: {created} new, {refreshed} updated")
-            else:
-                logger.debug("Investigation report refresh: no new or stale reports")
-        except Exception as e:
-            logger.warning(f"Investigation report refresh failed: {e}")
+        await dispatch_retired_automation_phase(self, "investigation_report_refresh", task)
 
     async def _execute_cross_domain_synthesis(self, task: Task):
         """Run cross-domain correlation job (events spanning domains -> cross_domain_correlations)."""
@@ -4077,28 +4278,9 @@ class AutomationManager:
             logger.warning(f"Cross-domain synthesis failed: {e}")
 
     async def _execute_event_coherence_review(self, task: Task):
-        """LLM-powered review: verify each context in an event actually belongs (Phase 3)."""
-        try:
-            from config.context_centric_config import is_context_centric_task_enabled
+        from shared.retired_phase_dispatch import dispatch_retired_automation_phase
 
-            if not is_context_centric_task_enabled("event_coherence_review"):
-                return
-        except Exception:
-            pass
-        from services.event_coherence_reviewer import review_all_open_events
-
-        try:
-            result = await review_all_open_events(relevance_threshold=0.5, auto_remove=True)
-            removed = result.get("total_contexts_removed", 0)
-            reviewed = result.get("events_reviewed", 0)
-            if removed > 0:
-                logger.info(
-                    f"Event coherence review: {removed} contexts removed from {reviewed} events"
-                )
-            else:
-                logger.debug(f"Event coherence review: {reviewed} events reviewed, all coherent")
-        except Exception as e:
-            logger.warning(f"Event coherence review failed: {e}")
+        await dispatch_retired_automation_phase(self, "event_coherence_review", task)
 
     async def _execute_entity_profile_build(self, task: Task):
         """Build Wikipedia-style sections for entity_profiles from contexts (Phase 1.3)."""
@@ -4109,17 +4291,69 @@ class AutomationManager:
                 return
         except Exception:
             pass
-        from services.entity_profile_builder_service import run_profile_builder_batch
+        from services.entity_profile_builder_service import (
+            drain_entity_profile_build,
+            entity_profile_build_batch_limit,
+            entity_profile_build_drain_enabled,
+            run_profile_builder_batch,
+        )
+
+        task.metadata = task.metadata or {}
+        is_nightly_seq = bool(task.metadata.get("nightly_sequential_drain"))
+        task.metadata["skip_automation_run_history"] = True
+        task.metadata.pop("_batch_run_started_at", None)
+        on_batch = self._make_batch_progress_callback(task)
+        limit = entity_profile_build_batch_limit()
+        use_drain = entity_profile_build_drain_enabled() and not is_nightly_seq
+
+        async def _on_profile_built(updated: int, processed_idx: int) -> None:
+            await on_batch(
+                processed_idx,
+                profiles_updated=1,
+                round_processed=1,
+                total_processed=updated,
+            )
 
         try:
-            updated = await run_profile_builder_batch(limit=25)  # v8
-            if updated > 0:
-                logger.info(f"Entity profile build: {updated} profiles updated")
+            if use_drain:
+                total_updated = 0
+
+                async def _profile_batch_cb(batch_n: int, batch_stats) -> None:
+                    nonlocal total_updated
+                    total_updated += batch_stats.updated
+                    await on_batch(
+                        batch_n,
+                        profiles_updated=batch_stats.updated,
+                        round_processed=batch_stats.updated,
+                        total_processed=total_updated,
+                        fast_updated=batch_stats.fast_updated,
+                        full_updated=batch_stats.full_updated,
+                        contexts_used=batch_stats.contexts_used,
+                    )
+
+                stats = await drain_entity_profile_build(
+                    batch_limit=limit,
+                    on_batch_complete=_profile_batch_cb,
+                )
+                updated = int(stats.get("profiles_updated", 0) or 0)
+            else:
+                batch_result = await run_profile_builder_batch(
+                    limit=limit,
+                    on_profile_built=_on_profile_built,
+                )
+                updated = batch_result.updated
+            task.metadata["items_processed"] = int(updated or 0)
+            if updated <= 0:
+                logger.debug("Entity profile build: no profiles updated this run")
         except Exception as e:
             logger.warning(f"Entity profile build failed: {e}")
 
     async def _execute_entity_dossier_compile(self, task: Task):
         """Compile entity dossiers (chronicle_data, relationships, positions) for entities missing or stale (Phase 2.6)."""
+        from datetime import datetime, timezone
+
+        from shared.services.phase_batch_run_history import record_phase_batch_completion_async
+
         try:
             from config.context_centric_config import is_context_centric_task_enabled
 
@@ -4132,100 +4366,134 @@ class AutomationManager:
         from services.dossier_compiler_service import _run_scheduled_dossier_compiles
 
         try:
+            started = datetime.now(timezone.utc)
             loop = asyncio.get_event_loop()
-            compiled = await loop.run_in_executor(
-                self._executor,
-                _run_scheduled_dossier_compiles,
-                20,  # max_dossiers_per_run
-                None,  # get_db_connection_fn -> use default
-                7,  # stale_days
+            try:
+                from services.assembly_conductor_service import _entity_dossier_compile_limit
+
+                dossier_max = _entity_dossier_compile_limit()
+            except Exception:
+                dossier_max = max(1, min(100, env_int("ENTITY_DOSSIER_COMPILE_MAX", 20)))
+            compiled = int(
+                await loop.run_in_executor(
+                    self._executor,
+                    _run_scheduled_dossier_compiles,
+                    dossier_max,
+                    None,  # get_db_connection_fn -> use default
+                    None,  # stale_days -> ENTITY_DOSSIER_STALE_DAYS / event-driven eligibility
+                )
+                or 0
             )
+            finished = datetime.now(timezone.utc)
             if compiled > 0:
+                await record_phase_batch_completion_async(
+                    "entity_dossier_compile",
+                    started,
+                    finished,
+                    stats={
+                        "dossiers_compiled": compiled,
+                        "round_processed": compiled,
+                        "processed": compiled,
+                    },
+                )
                 logger.info(f"Entity dossier compile: {compiled} dossiers compiled")
         except Exception as e:
             logger.warning(f"Entity dossier compile failed: {e}")
 
     async def _execute_entity_position_tracker(self, task: Task):
-        """Extract entity positions (stances, votes, policy) from articles; populate intelligence.entity_positions."""
-        try:
-            from config.context_centric_config import is_context_centric_task_enabled
+        from shared.retired_phase_dispatch import dispatch_retired_automation_phase
 
-            if not is_context_centric_task_enabled("entity_position_tracker"):
-                return
-        except Exception:
-            pass
-        from services.entity_position_tracker_service import run_position_tracker_batch
-
-        try:
-            loop = asyncio.get_event_loop()
-            results = await loop.run_in_executor(
-                self._executor,
-                run_position_tracker_batch,
-                None,  # domain_key -> all domains
-                5,  # min_mentions
-                8,  # max_entities
-                25,  # max_articles_per_entity (v8)
-            )
-            total = sum(
-                r.get("total_positions", 0) for r in (results or {}).values() if isinstance(r, dict)
-            )
-            if total > 0:
-                logger.info("Entity position tracker: %s positions extracted", total)
-        except Exception as e:
-            logger.warning("Entity position tracker failed: %s", e)
+        await dispatch_retired_automation_phase(self, "entity_position_tracker", task)
 
     async def _execute_metadata_enrichment(self, task: Task):
         """Run metadata enrichment batch for domain articles (language, categories, sentiment, quality)."""
-        try:
-            from services.metadata_enrichment_service import (
-                run_metadata_enrichment_batch_for_domains,
-            )
+        from shared.legacy_intake_rollback import (
+            legacy_intake_rollback_active,
+            load_metadata_enrichment_service,
+        )
 
-            total = await run_metadata_enrichment_batch_for_domains(limit_per_domain=5)
+        if not legacy_intake_rollback_active():
+            logger.debug(
+                "metadata_enrichment skipped (unified intake path; LEGACY_INTAKE_EXTRACTION_ENABLED for rollback)"
+            )
+            return
+        try:
+            mod = load_metadata_enrichment_service()
+            try:
+                from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+                meta_lim, _meta = resolve_adaptive_batch(
+                    "metadata_enrichment",
+                    max(1, min(200, env_int("METADATA_ENRICHMENT_LIMIT_PER_DOMAIN", 5))),
+                )
+            except Exception:
+                meta_lim = max(
+                    1,
+                    min(200, env_int("METADATA_ENRICHMENT_LIMIT_PER_DOMAIN", 5)),
+                )
+            total = await mod.run_metadata_enrichment_batch_for_domains(
+                limit_per_domain=max(1, int(meta_lim))
+            )
             if total > 0:
                 logger.info("Metadata enrichment: %d articles enriched", total)
         except Exception as e:
             logger.warning("Metadata enrichment failed: %s", e)
 
     async def _execute_story_enhancement(self, task: Task):
-        """Phase 3 RAG: Run full enhancement cycle (triggers + entity enrichment + profile build)."""
+        """Story state triggers + entity enrich/build (enhancement orchestrator)."""
         from services.enhancement_orchestrator_service import run_enhancement_cycle
+        from shared.services.phase_batch_run_history import record_phase_batch_completion_async
 
+        task.metadata = task.metadata or {}
+        started = datetime.now(timezone.utc)
         try:
-            def _int_env(name: str, default: int) -> int:
-                try:
-                    return int(os.environ.get(name, str(default)))
-                except ValueError:
-                    return default
+            enrich_lim = 10
+            build_lim = 10
+            try:
+                from shared.adaptive_batch_policy import resolve_adaptive_batch
 
-            fact_batch = max(10, min(500, _int_env("STORY_ENHANCEMENT_FACT_BATCH", 100)))
-            queue_batch = max(1, min(50, _int_env("STORY_ENHANCEMENT_QUEUE_BATCH", 10)))
-            enrich_limit = max(1, min(50, _int_env("STORY_ENHANCEMENT_ENRICH_LIMIT", 10)))
-            build_limit = max(1, min(50, _int_env("STORY_ENHANCEMENT_BUILD_LIMIT", 10)))
+                enrich_lim, enrich_meta = resolve_adaptive_batch("entity_enrichment", enrich_lim)
+                build_lim, build_meta = resolve_adaptive_batch("entity_profile_build", build_lim)
+                task.metadata["adaptive_batch"] = {
+                    "entity_enrichment": int(enrich_lim),
+                    "entity_profile_build": int(build_lim),
+                }
+                task.metadata["adaptive_batch_meta"] = {
+                    "entity_enrichment": enrich_meta,
+                    "entity_profile_build": build_meta,
+                }
+            except Exception:
+                pass
             result = await run_enhancement_cycle(
-                fact_batch=fact_batch,
-                queue_batch=queue_batch,
-                enrich_limit=enrich_limit,
-                build_limit=build_limit,
+                enrich_limit=max(1, int(enrich_lim)),
+                build_limit=max(1, int(build_lim)),
             )
-            total = (
-                result.get("fact_change_log_processed", 0)
-                + result.get("story_update_queue_processed", 0)
-                + result.get("entity_profiles_enriched", 0)
-                + result.get("entity_profiles_built", 0)
-            )
-            if total > 0 or result.get("errors"):
-                logger.info(
-                    "Story enhancement cycle: fact_log=%s queue=%s enriched=%s built=%s",
-                    result.get("fact_change_log_processed", 0),
-                    result.get("story_update_queue_processed", 0),
-                    result.get("entity_profiles_enriched", 0),
-                    result.get("entity_profiles_built", 0),
+            finished = datetime.now(timezone.utc)
+            built = int(result.get("entity_profiles_built") or 0)
+            enriched = int(result.get("entity_profiles_enriched") or 0)
+            fact_rows = int(result.get("fact_change_log_processed") or 0)
+            queue_rows = int(result.get("story_update_queue_processed") or 0)
+            if built > 0 or enriched > 0 or fact_rows > 0 or queue_rows > 0:
+                await self._record_phase_batch_loop(
+                    task,
+                    loops_processed=1,
+                    entity_profiles_built=built,
+                    entity_profiles_enriched=enriched,
+                    round_processed=built + enriched + fact_rows + queue_rows,
+                    fact_change_log_processed=fact_rows,
+                    story_update_queue_processed=queue_rows,
                 )
-            if result.get("errors"):
-                logger.warning("Story enhancement errors: %s", result["errors"])
+                if built > 0:
+                    await record_phase_batch_completion_async(
+                        "entity_profile_build",
+                        started,
+                        finished,
+                        stats={"profiles_updated": built, "round_processed": built},
+                        scheduler_path="story_enhancement",
+                    )
+                task.metadata["skip_automation_run_history"] = True
         except Exception as e:
-            logger.warning(f"Story enhancement failed: {e}")
+            logger.warning("Story enhancement failed: %s", e)
 
     async def _execute_content_refinement_queue(self, task: Task):
         """Drain intelligence.content_refinement_queue (storyline RAG, timeline narratives, ~70B finisher)."""
@@ -4244,6 +4512,16 @@ class AutomationManager:
         try:
             auto_enqueue_comprehensive_rag_for_automation()
             stats = await process_content_refinement_queue_batch()
+            processed = int((stats or {}).get("processed") or 0)
+            batch_limit = int((stats or {}).get("batch_limit") or processed or 4)
+            self._stamp_monitor_batch_throughput(
+                task,
+                round_processed=max(processed, batch_limit),
+                items_processed=processed,
+                failed=int((stats or {}).get("failed") or 0),
+                pending_before=int((stats or {}).get("pending_before") or 0),
+                pending_after=int((stats or {}).get("pending_after") or 0),
+            )
             logger.info(
                 "Content refinement queue: pending_before=%s processed=%s failed=%s by_type=%s pending_after=%s",
                 stats.get("pending_before"),
@@ -4339,7 +4617,7 @@ class AutomationManager:
             try:
                 nightly_meta["nightly_limit"] = max(
                     50,
-                    int(os.environ.get("NIGHTLY_CLAIM_EXTRACTION_BATCH_LIMIT", "250")),
+                    env_int("NIGHTLY_CLAIM_EXTRACTION_BATCH_LIMIT", 250),
                 )
             except ValueError:
                 nightly_meta["nightly_limit"] = 250
@@ -4357,6 +4635,7 @@ class AutomationManager:
             priority=sched.get("priority", TaskPriority.NORMAL),
             status=TaskStatus.PENDING,
             created_at=datetime.now(timezone.utc),
+            max_retries=_phase_max_retries(phase_name),
             metadata=nightly_meta,
         )
         await self._execute_task(task, "nightly_sequential_drain")
@@ -4367,33 +4646,23 @@ class AutomationManager:
         from services.entity_enrichment_service import run_enrichment_batch
 
         try:
-            # Production: max 20 entities per run (LLM limits); timeout 10s/entity; skip if queue >1000
-            updated = run_enrichment_batch(limit=20)
+            # Production: adaptive entities per run (default 20); timeout 10s/entity; skip if queue >1000
+            try:
+                from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+                enrich_lim, _meta = resolve_adaptive_batch("entity_enrichment", 20)
+            except Exception:
+                enrich_lim = 20
+            updated = run_enrichment_batch(limit=max(1, int(enrich_lim)))
             if updated > 0:
                 logger.info(f"Entity enrichment: {updated} profiles enriched")
         except Exception as e:
             logger.warning(f"Entity enrichment failed: {e}")
 
     async def _execute_pattern_matching(self, task: Task):
-        """Phase 4 RAG: Run watch pattern matching for all domains; record pattern_matches and create watchlist alerts."""
-        from services.watch_pattern_service import run_pattern_matching_all_domains
+        from shared.retired_phase_dispatch import dispatch_retired_automation_phase
 
-        try:
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None, lambda: run_pattern_matching_all_domains(limit_per_domain=30)
-            )
-            if result.get("matches_stored", 0) > 0:
-                logger.info(
-                    "Pattern matching: matches_stored=%s alerts_created=%s "
-                    "skipped_no_storyline=%s skipped_not_on_watchlist=%s",
-                    result.get("matches_stored", 0),
-                    result.get("alerts_created", 0),
-                    result.get("alerts_skipped_no_storyline", 0),
-                    result.get("alerts_skipped_not_on_watchlist", 0),
-                )
-        except Exception as e:
-            logger.warning("Pattern matching failed: %s", e)
+        await dispatch_retired_automation_phase(self, "pattern_matching", task)
 
     async def _execute_research_topic_refinement(self, task: Task):
         """Idle-only: pick one finance research topic and submit a refinement (analysis) at low priority."""
@@ -4489,10 +4758,22 @@ class AutomationManager:
         try:
             from services.entity_organizer_service import run_cycle
 
+            relationship_limit = 100
+            try:
+                from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+                relationship_limit, adaptive_meta = resolve_adaptive_batch(
+                    "entity_organizer", relationship_limit
+                )
+                if isinstance(task.metadata, dict):
+                    task.metadata["adaptive_batch"] = relationship_limit
+                    task.metadata["adaptive_batch_meta"] = adaptive_meta
+            except Exception:
+                pass
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 self.executor,
-                lambda: run_cycle(domain_key=None, relationship_limit=100),
+                lambda: run_cycle(domain_key=None, relationship_limit=relationship_limit),
             )
             total_actions = result.get("cleanup", {}).get("total_actions", 0)
             rel = result.get("relationships_extracted", 0)
@@ -4539,27 +4820,76 @@ class AutomationManager:
 
     async def _execute_graph_connection_distillation(self, task: Task):
         """Apply pending graph_connection_proposals (storyline merges, entity merges, M2M links)."""
+        from datetime import datetime, timezone
+
+        from shared.services.phase_batch_run_history import record_phase_batch_completion_async
+
+        # Prefer batch history with throughput; skip empty task-shell rows that
+        # falsely trip PipelineController zero-progress stall detection.
+        task.metadata = task.metadata or {}
+        task.metadata["skip_automation_run_history"] = True
+
         try:
             from services.graph_connection_processor_service import (
                 process_graph_connection_proposals_batch,
             )
 
+            started = datetime.now(timezone.utc)
             loop = asyncio.get_event_loop()
             stats = await loop.run_in_executor(
                 self.executor,
                 process_graph_connection_proposals_batch,
                 None,
             )
+            finished = datetime.now(timezone.utc)
             if stats and (
-                stats.get("storyline_merged")
+                stats.get("examined")
+                or stats.get("storyline_merged")
                 or stats.get("storyline_links")
                 or stats.get("entity_merged")
                 or stats.get("entity_links")
                 or stats.get("topic_links")
                 or stats.get("hyperedge_links")
                 or stats.get("rejected")
+                or stats.get("left_pending_editorial")
             ):
                 logger.info("Graph connection distillation: %s", stats)
+            processed = 0
+            examined = 0
+            batch_limit = 0
+            if isinstance(stats, dict):
+                examined = int(stats.get("examined") or 0)
+                batch_limit = int(stats.get("batch_limit") or 0)
+                processed = int(
+                    stats.get("processed")
+                    or sum(
+                        int(stats.get(k) or 0)
+                        for k in (
+                            "storyline_merged",
+                            "storyline_links",
+                            "entity_merged",
+                            "entity_links",
+                            "topic_links",
+                            "hyperedge_links",
+                            "rejected",
+                        )
+                    )
+                )
+            # Prefer real work; fall back to configured batch_limit so empty
+            # examined rounds remain measurable (throughput > 0).
+            round_n = max(processed, examined, batch_limit, 1)
+            await record_phase_batch_completion_async(
+                "graph_connection_distillation",
+                started,
+                finished,
+                stats={
+                    "round_processed": round_n,
+                    "processed": max(processed, examined),
+                    "examined": examined,
+                    "batch_limit": batch_limit,
+                },
+                allow_empty=True,
+            )
             if stats and stats.get("errors"):
                 logger.debug("Graph connection distillation errors: %s", stats["errors"])
         except Exception as e:
@@ -4684,32 +5014,20 @@ class AutomationManager:
         logger.info("Entity organizer downtime loop stopped")
 
     async def _execute_pattern_recognition(self, task: Task):
-        """Discover patterns (network, temporal, behavioral, event) and persist to pattern_discoveries (Phase 2.2)."""
-        try:
-            from config.context_centric_config import is_context_centric_task_enabled
+        from shared.retired_phase_dispatch import dispatch_retired_automation_phase
 
-            if not is_context_centric_task_enabled("pattern_recognition"):
-                return
-        except Exception:
-            pass
-        import asyncio
-
-        from services.pattern_recognition_service import run_pattern_discovery_batch
-
-        try:
-            total = await asyncio.get_event_loop().run_in_executor(
-                None, run_pattern_discovery_batch
-            )
-            if total > 0:
-                logger.info(f"Pattern recognition: {total} patterns discovered")
-        except Exception as e:
-            logger.warning(f"Pattern recognition failed: {e}")
+        await dispatch_retired_automation_phase(self, "pattern_recognition", task)
 
     async def _execute_embeddings_worker(self, task: Task):
         """Chunk + embed articles into intelligence.embedding_chunks (nightly-friendly)."""
         import asyncio
 
         from services.embeddings_worker_service import run_embeddings_worker_batch
+        from shared.intelligence_phase_gates import should_skip_automation_phase
+
+        if should_skip_automation_phase("embeddings_worker"):
+            logger.debug("Embeddings worker skipped (embedding_chunks empty; set EMBEDDINGS_WORKER_FORCE_BACKFILL=true to seed)")
+            return
 
         try:
             result = await asyncio.get_event_loop().run_in_executor(
@@ -4782,36 +5100,19 @@ class AutomationManager:
             logger.warning("Sanctions refresh failed: %s", e)
 
     async def _execute_arc_report_generation(self, task: Task):
-        import asyncio
-        import os
+        from shared.retired_phase_dispatch import dispatch_retired_automation_phase
 
-        from services.arc_catalog_service import list_active_arcs, sync_arc_definitions_from_yaml
-        from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
-        from services.slow_report_service import generate_slow_report
-
-        anytime = os.environ.get("ARC_REPORT_ANYTIME", "false").lower() in ("1", "true", "yes")
-        if not anytime and not in_nightly_pipeline_window_est():
-            logger.info("Arc report generation skipped outside nightly pipeline window")
-            return
-
-        try:
-            await asyncio.get_event_loop().run_in_executor(None, sync_arc_definitions_from_yaml)
-            arcs = await asyncio.get_event_loop().run_in_executor(None, list_active_arcs)
-            for arc in arcs:
-                aid = arc.get("arc_id")
-                if not aid:
-                    continue
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda a=aid: generate_slow_report(a, report_type="weekly_brief")
-                )
-                logger.info("Arc report %s: %s", aid, result.get("validation"))
-        except Exception as e:
-            logger.warning("Arc report generation failed: %s", e)
+        await dispatch_retired_automation_phase(self, "arc_report_generation", task)
 
     async def _execute_longitudinal_matview_refresh(self, task: Task):
         import asyncio
 
         from shared.database.connection import get_db_connection_context
+        from shared.intelligence_phase_gates import should_skip_automation_phase
+
+        if should_skip_automation_phase("longitudinal_matview_refresh"):
+            logger.debug("Longitudinal matview refresh skipped (intelligence.arc_definitions empty)")
+            return
 
         def _refresh():
             with get_db_connection_context() as conn:
@@ -4844,106 +5145,54 @@ class AutomationManager:
                 logger.warning("Longitudinal matview non-concurrent refresh failed: %s", e2)
 
     async def _execute_editorial_document_generation(self, task: Task):
-        """Generate/refine editorial_document for active storylines across all domains."""
-        from services.editorial_document_service import generate_storyline_editorial
-        from services.content_validation_service import content_validation_service
-
-        for domain in get_pipeline_active_domain_keys():
-            try:
-                # Validate content before proceeding with editorial generation
-                # This ensures that downstream processes have sufficient content
-                logger.debug(f"Checking content availability for editorial document generation in domain {domain}")
-                
-                # Get storylines that need editorial work
-                schema = resolve_domain_schema(domain)
-                conn = get_db_connection()
-                if conn:
-                    try:
-                        with conn.cursor() as cursor:
-                            cursor.execute(
-                                f"""
-                                SELECT s.id, s.title, s.description, s.analysis_summary,
-                                       s.editorial_document, s.document_version, s.last_refinement,
-                                       s.updated_at
-                                FROM {schema}.storylines s
-                                WHERE s.status IN ('active', 'developing', 'ongoing')
-                                  AND (
-                                      s.editorial_document IS NULL
-                                      OR s.editorial_document = '{{}}'::jsonb
-                                      OR s.updated_at > COALESCE(s.last_refinement, '1970-01-01'::timestamptz)
-                                  )
-                                ORDER BY s.updated_at DESC
-                                LIMIT 10
-                                """
-                            )
-                            storylines = cursor.fetchall()
-                        
-                        # Validate that these storylines have sufficient content
-                        for row in storylines:
-                            sid, title, description, analysis_summary, existing_doc, doc_version, last_refined, updated_at = row
-                            storyline_validation = await content_validation_service.validate_storyline_content_requirements(domain, sid)
-                            if not storyline_validation.get("valid", False):
-                                logger.warning(f"Skipping storyline {sid} in domain {domain} - insufficient content")
-                                continue
-                            
-                        conn.commit()
-                    except Exception as e:
-                        logger.warning(f"Content validation check failed for domain {domain}: {e}")
-                        try:
-                            conn.rollback()
-                        except Exception:
-                            pass
-                    finally:
-                        try:
-                            conn.close()
-                        except Exception:
-                            pass
-                
-                result = await generate_storyline_editorial(domain, limit=5)
-                logger.info("Editorial doc generation (%s): %s", domain, result)
-            except Exception as e:
-                logger.warning("editorial_document_generation (%s): %s", domain, e)
+        """Fully retired — storyline editorial_document via RAG refinement or desk promote."""
+        logger.info(
+            "editorial_document_generation fully retired; use content_refinement_queue or desk promote"
+        )
+        return
 
     async def _execute_editorial_briefing_generation(self, task: Task):
-        """Global narrative + domain lenses first, then legacy briefing for events without a spine."""
-        from services.editorial_document_service import generate_event_editorial
-        from services.tracked_event_narrative_service import run_tracked_event_narrative_stack
-
-        try:
-            stack = await run_tracked_event_narrative_stack(limit=5)
-            logger.info("Tracked event narrative stack: %s", stack)
-        except Exception as e:
-            logger.warning("tracked_event_narrative_stack: %s", e)
-        try:
-            result = await generate_event_editorial(limit=5)
-            logger.info("Editorial briefing generation: %s", result)
-        except Exception as e:
-            logger.warning("editorial_briefing_generation: %s", e)
+        """Fully retired — tracked_event narratives via desk promote / narrative_stack API."""
+        logger.info(
+            "editorial_briefing_generation fully retired; use desk promote or narrative_stack"
+        )
+        return
 
     async def _execute_narrative_thread_build(self, task: Task):
-        """Build narrative threads from storylines across all domains, then synthesize."""
+        """Build narrative threads from EEL-backed canonical episodes."""
         import asyncio
 
-        from services.narrative_thread_service import build_threads_for_domain
+        from services.narrative_thread_service import build_narrative_threads_from_eel
+        from shared.domain_registry import get_pipeline_active_domain_keys
 
-        loop = asyncio.get_event_loop()
-        for domain in get_pipeline_active_domain_keys():
-            try:
+        try:
+            limit = max(10, min(500, env_int("NARRATIVE_THREAD_EEL_LIMIT", 200)))
+            loop = asyncio.get_event_loop()
+            total_built = 0
+            for domain in get_pipeline_active_domain_keys():
                 result = await loop.run_in_executor(
-                    None, lambda d=domain: build_threads_for_domain(d, limit=30)
+                    self._executor,
+                    build_narrative_threads_from_eel,
+                    domain,
+                    limit,
                 )
-                built = result.get("built", 0)
-                if built > 0:
-                    logger.info("Narrative thread build (%s): %s threads", domain, built)
-            except Exception as e:
-                logger.warning("narrative_thread_build (%s): %s", domain, e)
+                total_built += int(result.get("built") or 0)
+                if result.get("errors"):
+                    logger.debug(
+                        "narrative_thread_build %s errors=%s",
+                        domain,
+                        result["errors"][:3],
+                    )
+            task.metadata["items_processed"] = total_built
+            if total_built:
+                logger.info("narrative_thread_build: %s threads built/updated", total_built)
+        except Exception as e:
+            logger.warning("narrative_thread_build failed: %s", e)
 
     async def _execute_digest_generation(self, task: Task):
-        """Execute digest generation task"""
-        from services.digest_automation_service import get_digest_service
-
-        digest_service = get_digest_service()
-        await digest_service.generate_digest_if_needed()
+        """Fully retired — no digest batch synthesizer."""
+        logger.info("digest_generation fully retired; Briefings uses /api/{domain}/report")
+        return
 
     async def _execute_data_cleanup(self, task: Task):
         """Execute data cleanup task — articles + intelligence layer."""
@@ -5000,6 +5249,22 @@ class AutomationManager:
         except Exception as e:
             logger.warning("pending_db_flush failed: %s", e)
 
+    async def _execute_rss_feed_health(self, task: Task):
+        """Weekly RSS feed quality cull (or legacy warn/silence if policy=warn_silence)."""
+        from services.rss_feed_health_service import run_feed_health_cycle
+
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, run_feed_health_cycle)
+        logger.info("rss_feed_health cycle: %s", result)
+
+    async def _execute_rolling_arc_refresh(self, task: Task):
+        """Phase B: refresh rolling 12-month arcs + latent co-arc proposals."""
+        from services.rolling_arc_service import refresh_default_rolling_arcs
+
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, refresh_default_rolling_arcs)
+        logger.info("rolling_arc_refresh: %s", result)
+
     async def _execute_health_check(self, task: Task):
         """Execute health check task (manual ``request_phase`` only; scheduled runs use ``_standalone_health_check_loop``)."""
         from shared.database.connection import get_health_db_connection_context
@@ -5041,7 +5306,6 @@ class AutomationManager:
                 finished_at = datetime.now(timezone.utc)
                 self.metrics["last_health_check"] = finished_at
                 sched["last_run"] = finished_at
-                self._last_completed_at_by_phase["health_check"] = finished_at
                 _persist_automation_run(
                     "health_check", started_at, finished_at, True, None
                 )
@@ -5054,6 +5318,14 @@ class AutomationManager:
                 except Exception:
                     pass
                 logger.debug("health_check (standalone): ok")
+                try:
+                    from services.monitor_backlog_snapshot_service import (
+                        maybe_refresh_monitor_backlog_snapshot,
+                    )
+
+                    await loop.run_in_executor(None, maybe_refresh_monitor_backlog_snapshot)
+                except Exception as snap_err:
+                    logger.debug("monitor_backlog_snapshot refresh skipped: %s", snap_err)
             except Exception as e:
                 finished_at = datetime.now(timezone.utc)
                 sched["last_run"] = finished_at
@@ -5145,117 +5417,81 @@ class AutomationManager:
             )
 
     async def _execute_rag_enhancement(self, task: Task):
-        """Execute RAG enhancement per domain (v8): enhance storylines with Wikipedia/GDELT context, store by (domain, storyline_id)."""
-        from shared.database.connection import get_db_connection
+        from services.rag_enhancement_runner import run_rag_enhancement_batch
 
-        from services.rag import get_rag_service
-
-        rag_service = get_rag_service()
-        enhanced_count = 0
-        for domain in get_pipeline_active_domain_keys():
-            schema = resolve_domain_schema(domain)
-            try:
-                conn = get_db_connection()
-                if not conn:
-                    continue
-                try:
-                    with conn.cursor() as cur:
-                        cur.execute(f"""
-                            SELECT s.id, s.title, s.rag_enhanced_at,
-                                   COALESCE(array_agg(sa.article_id) FILTER (WHERE sa.article_id IS NOT NULL), '{{}}') AS article_ids
-                            FROM {schema}.storylines s
-                            LEFT JOIN {schema}.storyline_articles sa ON sa.storyline_id = s.id
-                            WHERE s.status = 'active'
-                            GROUP BY s.id, s.title, s.rag_enhanced_at
-                            HAVING COUNT(sa.article_id) > 0
-                        """)
-                        rows = cur.fetchall()
-                finally:
-                    conn.close()
-
-                for row in rows:
-                    sid, title, rag_enhanced_at, article_ids = row[0], row[1], row[2], row[3] or []
-                    try:
-                        if rag_enhanced_at:
-                            elapsed = (datetime.now(timezone.utc) - rag_enhanced_at).total_seconds()
-                            if elapsed < 3600:
-                                continue
-                        # Fetch article summaries for context
-                        articles_for_rag = []
-                        if article_ids:
-                            conn = get_db_connection()
-                            if conn:
-                                try:
-                                    with conn.cursor() as cur:
-                                        cur.execute(
-                                            f"""
-                                            SELECT id, title, content, summary, source_domain
-                                            FROM {schema}.articles WHERE id = ANY(%s)
-                                        """,
-                                            (list(article_ids)[:30],),
-                                        )
-                                        for r in cur.fetchall():
-                                            articles_for_rag.append(
-                                                {
-                                                    "id": r[0],
-                                                    "title": r[1],
-                                                    "content": r[2] or "",
-                                                    "summary": r[3],
-                                                    "source": r[4],
-                                                }
-                                            )
-                                finally:
-                                    conn.close()
-                        await rag_service.enhance_storyline_context(
-                            storyline_id=str(sid),
-                            storyline_title=title or "",
-                            articles=articles_for_rag,
-                            domain=domain,
-                        )
-                        enhanced_count += 1
-                    except Exception as e:
-                        logger.debug("RAG enhance %s storyline %s: %s", domain, sid, e)
-            except Exception as e:
-                logger.warning("RAG enhancement domain %s: %s", domain, e)
-        logger.info(
-            "RAG enhancement completed: %s storylines enhanced (all domains)", enhanced_count
-        )
+        await run_rag_enhancement_batch()
 
     async def _execute_ml_processing(self, task: Task):
-        """Execute ML processing task. Skips cleanly if column ml_processed is missing."""
+        """Queue articles for ML processing; drain multiple rounds within run budget."""
+        from shared.legacy_intake_rollback import legacy_intake_rollback_active
+
+        if not legacy_intake_rollback_active():
+            logger.debug(
+                "ml_processing skipped (unified intake path; LEGACY_INTAKE_EXTRACTION_ENABLED for rollback)"
+            )
+            return
         try:
             from modules.ml.background_processor import BackgroundMLProcessor
 
-            ml_processor = BackgroundMLProcessor(self.db_config)
+            from shared.pipeline_batch_drain import RunBudget, phase_run_budget_seconds
 
+            ml_processor = BackgroundMLProcessor(self.db_config)
             processed_count = 0
+            batch_rounds = 0
+            try:
+                from shared.adaptive_batch_policy import resolve_phase_batch_limit
+
+                per_schema_limit = resolve_phase_batch_limit(
+                    "ml_processing", 50, env_suffix="BATCH_LIMIT"
+                )
+            except Exception:
+                from shared.pipeline_batch_drain import phase_batch_limit
+
+                per_schema_limit = phase_batch_limit("ml_processing", 50, env_suffix="BATCH_LIMIT")
+            budget = RunBudget(phase_run_budget_seconds("ml_processing", 900))
+
             ml_ready = sql_ml_ready_and_content_bounds()
             _ord = sql_order_created_at()
-            for schema in get_pipeline_schema_names_active():
-                conn = await self._get_db_connection()
-                try:
-                    with conn.cursor() as cursor:
-                        cursor.execute(f"""
-                            SELECT id FROM {schema}.articles
-                            WHERE ml_processed = FALSE
-                              AND ({ml_ready})
-                            ORDER BY created_at {_ord}
-                            LIMIT 50
-                        """)
-                        articles = cursor.fetchall()
-                finally:
-                    conn.close()
 
-                for (article_id,) in articles:
+            while not budget.expired():
+                round_queued = 0
+                for schema in get_pipeline_schema_names_active():
+                    conn = await self._get_db_connection()
                     try:
-                        ml_processor.queue_article_for_processing(
-                            article_id, "full_analysis", schema_name=schema
-                        )
-                        processed_count += 1
-                    except Exception as e:
-                        logger.error("Error processing article %s (%s): %s", article_id, schema, e)
+                        with conn.cursor() as cursor:
+                            cursor.execute(f"""
+                                SELECT id FROM {schema}.articles
+                                WHERE ml_processed = FALSE
+                                  AND ({ml_ready})
+                                ORDER BY created_at {_ord}
+                                LIMIT {per_schema_limit}
+                            """)
+                            articles = cursor.fetchall()
+                    finally:
+                        conn.close()
 
-            logger.info(f"ML processing completed: {processed_count} articles queued")
+                    for (article_id,) in articles:
+                        try:
+                            ml_processor.queue_article_for_processing(
+                                article_id, "full_analysis"
+                            )
+                            processed_count += 1
+                            round_queued += 1
+                        except Exception as e:
+                            logger.error(
+                                "Error processing article %s (%s): %s", article_id, schema, e
+                            )
+
+                if round_queued == 0:
+                    break
+                batch_rounds += 1
+
+            logger.info(
+                "ML processing completed: %s articles queued in %s round(s) (budget=%ss)",
+                processed_count,
+                batch_rounds,
+                phase_run_budget_seconds("ml_processing", 900),
+            )
         except Exception as e:
             if "ml_processed" in str(e) and (
                 "does not exist" in str(e) or "UndefinedColumn" in str(e)
@@ -5279,7 +5515,7 @@ class AutomationManager:
         """
         env_key = f"{phase_name.upper()}_MAX_FAILURES"
         try:
-            max_failures = int(os.environ.get(env_key, str(default_max_attempts)))
+            max_failures = int(env_str(env_key, str(default_max_attempts)))
         except ValueError:
             max_failures = default_max_attempts
         max_failures = max(1, min(20, max_failures))
@@ -5364,180 +5600,112 @@ class AutomationManager:
             conn.close()
 
     async def _execute_sentiment_analysis(self, task: Task):
-        """Execute sentiment analysis task"""
-        from services.ai_processing_service import get_ai_service
+        """Execute sentiment analysis; drain batches within run budget."""
+        from shared.legacy_intake_rollback import legacy_intake_rollback_active
+
+        if not legacy_intake_rollback_active():
+            logger.debug("sentiment_analysis skipped (folded into unified intake)")
+            return
+        from shared.legacy_intake_rollback import load_ai_processing_service
+        from shared.pipeline_batch_drain import RunBudget, phase_run_budget_seconds
         from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_article_phase_pass, sql_article_pass_null
 
-        ai_service = get_ai_service()
+        ai_service = load_ai_processing_service().get_ai_service()
         analyzed_count = 0
+        batch_rounds = 0
+        try:
+            from shared.adaptive_batch_policy import resolve_phase_batch_limit
+
+            per_schema_limit = resolve_phase_batch_limit(
+                "sentiment_analysis", 100, env_suffix="BATCH_LIMIT"
+            )
+        except Exception:
+            from shared.pipeline_batch_drain import phase_batch_limit
+
+            per_schema_limit = phase_batch_limit(
+                "sentiment_analysis", 100, env_suffix="BATCH_LIMIT"
+            )
+        budget = RunBudget(phase_run_budget_seconds("sentiment_analysis", 900))
 
         ml_ready = sql_ml_ready_and_content_bounds()
         pass_clause = ""
         if phase_backlog_uses_pass_marker("sentiment_analysis"):
             pass_clause = f" AND ({sql_article_pass_null('sentiment_analysis', 'a')}) "
         _ord = sql_order_created_at()
-        for schema in get_pipeline_schema_names_active():
-            # Fetch candidates quickly, then close transaction before awaited LLM work.
-            conn = await self._get_db_connection()
-            try:
-                with conn.cursor() as cursor:
-                    cursor.execute(f"""
-                        SELECT a.id, a.content FROM {schema}.articles a
-                        WHERE a.sentiment_score IS NULL
-                          AND COALESCE((a.metadata #>> '{{pipeline_skip,sentiment_analysis_skip}}')::boolean, false) = false
-                          AND ({ml_ready})
-                          {pass_clause}
-                        ORDER BY a.created_at {_ord}
-                        LIMIT 100
-                    """)
-                    articles = cursor.fetchall()
-            finally:
-                conn.close()
 
-            for article_id, content in articles:
+        while not budget.expired():
+            round_analyzed = 0
+            for schema in get_pipeline_schema_names_active():
+                conn = await self._get_db_connection()
                 try:
-                    sentiment = await ai_service.analyze_sentiment(content)
-                    if not isinstance(sentiment, dict):
-                        continue
-                    score = sentiment.get("score", 0)
-                    label = sentiment.get("label", "")
-
-                    # Persist each result in a short-lived transaction.
-                    write_conn = await self._get_db_connection()
-                    try:
-                        with write_conn.cursor() as write_cur:
-                            write_cur.execute(
-                                f"""
-                                UPDATE {schema}.articles
-                                SET sentiment_score = %s,
-                                    sentiment_label = COALESCE(%s, sentiment_label),
-                                    updated_at = CURRENT_TIMESTAMP
-                                WHERE id = %s
-                            """,
-                                (score, label or None, article_id),
-                            )
-                            write_conn.commit()
-                        record_article_phase_pass(schema, article_id, "sentiment_analysis", "scored")
-                        analyzed_count += 1
-                    finally:
-                        write_conn.close()
-                except Exception as e:
-                    logger.error(
-                        "Error analyzing sentiment for article %s (%s): %s", article_id, schema, e
-                    )
-                    await self._mark_article_phase_failure(
-                        schema=schema,
-                        article_id=article_id,
-                        phase_name="sentiment_analysis",
-                        error=e,
-                        default_max_attempts=3,
-                    )
-
-        logger.info(f"Sentiment analysis completed: {analyzed_count} articles analyzed")
-
-    async def _execute_storyline_processing(self, task: Task):
-        """Execute storyline processing per domain: generates analysis_summary, seeds editorial_document.
-        Uses domain-aware StorylineService so politics/finance/science_tech storylines get narratives.
-        Includes content validation to ensure downstream processes have sufficient content."""
-        from domains.storyline_management.services.storyline_service import (
-            StorylineService as DomainStorylineService,
-        )
-        from shared.database.connection import get_db_connection
-        from services.content_validation_service import content_validation_service
-
-        processed_count = 0
-        for domain, schema in pipeline_url_schema_pairs():
-            try:
-                conn = get_db_connection()
-                if not conn:
-                    continue
-                try:
-                    with conn.cursor() as cur:
-                        cur.execute(f"""
-                            SELECT s.id, s.title,
-                                   COALESCE(s.analysis_summary, '') AS analysis_summary,
-                                   COALESCE(s.master_summary, '') AS master_summary,
-                                   (s.editorial_document IS NOT NULL AND s.editorial_document != '{{}}'::jsonb) AS has_ed
-                            FROM {schema}.storylines s
-                            WHERE s.status = 'active'
-                              AND EXISTS (
-                                  SELECT 1 FROM {schema}.storyline_articles sa WHERE sa.storyline_id = s.id
-                              )
+                    with conn.cursor() as cursor:
+                        cursor.execute(f"""
+                            SELECT a.id, a.content FROM {schema}.articles a
+                            WHERE a.sentiment_score IS NULL
+                              AND COALESCE((a.metadata #>> '{{pipeline_skip,sentiment_analysis_skip}}')::boolean, false) = false
+                              AND ({ml_ready})
+                              {pass_clause}
+                            ORDER BY a.created_at {_ord}
+                            LIMIT {per_schema_limit}
                         """)
-                        rows = cur.fetchall()
+                        articles = cursor.fetchall()
                 finally:
                     conn.close()
 
-                svc = DomainStorylineService(domain=domain)
-                for row in rows:
-                    sid, _title, analysis_summary, master_summary, has_ed = (
-                        row[0],
-                        row[1],
-                        row[2] or "",
-                        row[3] or "",
-                        row[4],
-                    )
-                    summary_for_check = analysis_summary or master_summary
-                    
-                    # Validate content before proceeding with processing
-                    storyline_validation = await content_validation_service.validate_storyline_content_requirements(domain, sid)
-                    if not storyline_validation.get("valid", False):
-                        logger.warning("Skipping storyline %s/%s: insufficient content", domain, sid)
-                        continue
-                    
-                    if len(summary_for_check) < 100:
-                        try:
-                            result = await svc.generate_storyline_summary(sid)
-                            if not result.get("success"):
-                                continue
-                            summary_text = (result.get("data") or {}).get("summary", "")
-                            if summary_text:
-                                from shared.llm_text_sanitize import sanitize_briefing_lede
+                for article_id, content in articles:
+                    try:
+                        sentiment = await ai_service.analyze_sentiment(content)
+                        if not isinstance(sentiment, dict):
+                            continue
+                        score = sentiment.get("score", 0)
+                        label = sentiment.get("label", "")
 
-                                summary_text = sanitize_briefing_lede(summary_text, max_length=400)
-                                processed_count += 1
-                                if not has_ed:
-                                    try:
-                                        conn = get_db_connection()
-                                        if conn:
-                                            try:
-                                                with conn.cursor() as cur:
-                                                    cur.execute(
-                                                        f"""
-                                                        UPDATE {schema}.storylines
-                                                        SET editorial_document = jsonb_build_object(
-                                                                'lede', LEFT(%s, 300),
-                                                                'developments', '[]'::jsonb,
-                                                                'analysis', %s,
-                                                                'outlook', '',
-                                                                'generated_at', NOW()::text
-                                                            ),
-                                                            document_version = COALESCE(document_version, 0) + 1,
-                                                            document_status = 'auto_seeded'
-                                                        WHERE id = %s AND (editorial_document IS NULL OR editorial_document = '{{}}'::jsonb)
-                                                    """,
-                                                        (summary_text, summary_text, sid),
-                                                    )
-                                                conn.commit()
-                                            finally:
-                                                conn.close()
-                                    except Exception as ed_err:
-                                        logger.debug(
-                                            "Seed editorial_document %s/%s: %s", domain, sid, ed_err
-                                        )
-                        except Exception as e:
-                            logger.warning(
-                                "Error processing storyline %s/%s (generate_storyline_summary): %s",
-                                domain,
-                                sid,
-                                e,
-                            )
-            except Exception as e:
-                logger.warning("Storyline processing domain %s: %s", domain, e)
+                        write_conn = await self._get_db_connection()
+                        try:
+                            with write_conn.cursor() as write_cur:
+                                write_cur.execute(
+                                    f"""
+                                    UPDATE {schema}.articles
+                                    SET sentiment_score = %s,
+                                        sentiment_label = COALESCE(%s, sentiment_label),
+                                        updated_at = CURRENT_TIMESTAMP
+                                    WHERE id = %s
+                                """,
+                                    (score, label or None, article_id),
+                                )
+                                write_conn.commit()
+                            record_article_phase_pass(schema, article_id, "sentiment_analysis", "scored")
+                            analyzed_count += 1
+                            round_analyzed += 1
+                        finally:
+                            write_conn.close()
+                    except Exception as e:
+                        logger.error(
+                            "Error analyzing sentiment for article %s (%s): %s", article_id, schema, e
+                        )
+                        await self._mark_article_phase_failure(
+                            schema=schema,
+                            article_id=article_id,
+                            phase_name="sentiment_analysis",
+                            error=e,
+                            default_max_attempts=3,
+                        )
+
+            if round_analyzed == 0:
+                break
+            batch_rounds += 1
 
         logger.info(
-            "Storyline processing completed: %s storylines processed (all domains)", processed_count
+            "Sentiment analysis completed: %s articles in %s round(s) (budget=%ss)",
+            analyzed_count,
+            batch_rounds,
+            phase_run_budget_seconds("sentiment_analysis", 900),
         )
+
+    async def _execute_storyline_processing(self, task: Task):
+        from shared.retired_phase_dispatch import dispatch_retired_automation_phase
+
+        await dispatch_retired_automation_phase(self, "storyline_processing", task)
 
     async def _execute_storyline_automation(self, task: Task):
         """Run RAG discovery for one storyline (from metadata) or all automation-enabled storylines."""
@@ -5549,10 +5717,21 @@ class AutomationManager:
         if storyline_id and domain:
             try:
                 svc = StorylineAutomationService(domain=domain)
+                batch_started = datetime.now(timezone.utc)
                 result = await svc.discover_articles_for_storyline(
                     storyline_id, force_refresh=False
                 )
                 count = len(result.get("articles", []))
+                await self._record_phase_batch_loop(
+                    task,
+                    loops_processed=1,
+                    storylines_scanned=1,
+                    articles_matched=count,
+                    round_processed=1,
+                    domain=domain,
+                    storyline_id=storyline_id,
+                )
+                task.metadata["skip_automation_run_history"] = True
                 logger.info(
                     "Storyline automation: storyline_id=%s domain=%s discovered %s articles",
                     storyline_id,
@@ -5569,20 +5748,51 @@ class AutomationManager:
             try:
                 batch_limit = max(
                     5,
-                    int(os.environ.get("STORYLINE_AUTOMATION_BATCH_PER_DOMAIN", "15")),
+                    env_int("STORYLINE_AUTOMATION_BATCH_PER_DOMAIN", 15),
                 )
             except ValueError:
                 pass
-            for d in get_pipeline_active_domain_keys():
+            try:
+                from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+                batch_limit, _meta = resolve_adaptive_batch("storyline_automation", batch_limit)
+                batch_limit = max(5, int(batch_limit))
+            except Exception:
+                pass
+            for d in _domains_for_phase("storyline_automation"):
+                # Optional operator pause (empty default — not a permanent domain policy).
+                excluded_raw = env_str("STORYLINE_AUTOMATION_EXCLUDE_DOMAINS", "") or ""
+                excluded = {x.strip() for x in excluded_raw.split(",") if x.strip()}
+                if d in excluded:
+                    logger.info(
+                        "Storyline automation: skipping domain=%s (STORYLINE_AUTOMATION_EXCLUDE_DOMAINS)",
+                        d,
+                    )
+                    continue
+                domain_started = datetime.now(timezone.utc)
+                scanned = 0
+                matched = 0
+                skipped_freq = 0
+                skipped_backoff = 0
                 try:
                     svc = StorylineAutomationService(domain=d)
                     conn = await self._get_db_connection()
                     schema = resolve_domain_schema(d)
                     try:
                         with conn.cursor() as cur:
+                            # Due by frequency, and not inside zero-yield backoff window.
                             cur.execute(f"""
                                 SELECT id FROM {schema}.storylines
                                 WHERE automation_enabled = true
+                                  AND (
+                                    last_automation_run IS NULL
+                                    OR last_automation_run
+                                         <= NOW() - (COALESCE(automation_frequency_hours, 24) || ' hours')::interval
+                                  )
+                                  AND (
+                                    NULLIF(quality_metrics->>'zero_yield_until', '') IS NULL
+                                    OR (quality_metrics->>'zero_yield_until')::timestamptz <= NOW()
+                                  )
                                 ORDER BY last_automation_run ASC NULLS FIRST
                                 LIMIT %s
                             """, (batch_limit,))
@@ -5590,147 +5800,612 @@ class AutomationManager:
                     finally:
                         conn.close()
                     for row in storyline_rows:
-                        await svc.discover_articles_for_storyline(row[0], force_refresh=False)
+                        scanned += 1
+                        result = await svc.discover_articles_for_storyline(row[0], force_refresh=False)
+                        if result.get("skipped_frequency"):
+                            skipped_freq += 1
+                        if result.get("skipped_zero_yield_backoff"):
+                            skipped_backoff += 1
+                        matched += len(result.get("articles") or [])
+                    if scanned > 0:
+                        await self._record_phase_batch_loop(
+                            task,
+                            loops_processed=scanned,
+                            storylines_scanned=scanned,
+                            articles_matched=matched,
+                            round_processed=scanned,
+                            domain=d,
+                            skipped_frequency=skipped_freq,
+                            skipped_zero_yield_backoff=skipped_backoff,
+                        )
+                        task.metadata["skip_automation_run_history"] = True
                 except Exception as e:
                     logger.debug("Storyline automation batch %s: %s", d, e)
+            if not (task.metadata or {}).get("skip_automation_run_history"):
+                # Idle sweep (nothing due): still stamp budget so Monitor can measure.
+                n_dom = len(_domains_for_phase("storyline_automation")) or 1
+                self._stamp_monitor_batch_throughput(
+                    task,
+                    round_processed=int(batch_limit) * int(n_dom),
+                    items_processed=0,
+                    adaptive_batch=int(batch_limit),
+                )
             logger.info("Storyline automation: batch run across domains completed")
 
-    async def _execute_storyline_enrichment(self, task: Task):
-        """v8: Enrich existing storylines with full-history RAG (past articles/contexts from entire DB)."""
-        from services.storyline_automation_service import StorylineAutomationService
+    async def _execute_storyline_review_agent(self, task: Task):
+        """LLM agent: approve/reject pending storyline_article_suggestions."""
+        if env_str("STORYLINE_REVIEW_AGENT_ENABLED", "true").lower() not in ("1", "true", "yes"):
+            return
+        from services.storyline_review_agent_service import run_storyline_review_agent_all_domains
 
-        meta = task.metadata or {}
-        storyline_id = meta.get("storyline_id")
-        domain = meta.get("domain")
-        if storyline_id and domain:
+        batch_limit = 60
+        adaptive_meta: dict = {}
+        try:
+            batch_limit = max(10, env_int("STORYLINE_REVIEW_BATCH_SIZE", 60))
+        except ValueError:
+            batch_limit = 60
+        try:
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            batch_limit, adaptive_meta = resolve_adaptive_batch(
+                "storyline_review_agent", batch_limit
+            )
+            batch_limit = max(10, int(batch_limit))
+            if isinstance(task.metadata, dict):
+                task.metadata["adaptive_batch"] = batch_limit
+                if adaptive_meta:
+                    task.metadata["adaptive_batch_meta"] = adaptive_meta
+        except Exception:
+            adaptive_meta = {}
+
+        try:
+            result = await run_storyline_review_agent_all_domains(batch_limit=batch_limit)
+            approved = int(result.get("approved", 0) or 0)
+            rejected = int(result.get("rejected", 0) or 0)
+            skipped = int(result.get("skipped", 0) or 0)
+            errors = int(result.get("errors", 0) or 0)
+            llm_calls = int(result.get("llm_calls", 0) or 0)
+            parse_exhausted = int(result.get("parse_exhausted", 0) or 0)
+            decided = approved + rejected
+            if isinstance(task.metadata, dict):
+                task.metadata["approved"] = approved
+                task.metadata["rejected"] = rejected
+                task.metadata["skipped"] = skipped
+                task.metadata["errors"] = errors
+                task.metadata["llm_calls"] = llm_calls
+                task.metadata["parse_exhausted"] = parse_exhausted
+                task.metadata["decided"] = decided
+                # Throughput for Monitor ETA = decisions only (skips do not drain).
+                task.metadata["items_processed"] = decided
+            yield_info: dict = {}
             try:
-                svc = StorylineAutomationService(domain=domain)
-                result = await svc.discover_articles_for_storyline(
-                    storyline_id, force_refresh=True, enrichment_mode=True
+                from shared.adaptive_batch_policy import (
+                    apply_adaptive_batch_yield_gate,
+                    record_adaptive_batch_yield,
                 )
-                count = len(result.get("articles", []))
-                logger.info(
-                    "Storyline enrichment: storyline_id=%s domain=%s discovered %s articles (full history)",
-                    storyline_id,
-                    domain,
-                    count,
+
+                yield_info = record_adaptive_batch_yield(
+                    "storyline_review_agent",
+                    approved=approved,
+                    rejected=rejected,
+                    skipped=skipped,
+                    errors=errors,
+                    batch_limit=batch_limit,
                 )
-            except Exception as e:
-                logger.warning(
-                    "Storyline enrichment failed for storyline_id=%s: %s", storyline_id, e
+                if isinstance(task.metadata, dict):
+                    task.metadata["adaptive_batch_yield"] = yield_info
+                # Apply yield gate now (hold/decrease only — no headroom double-step).
+                post_batch, post_meta = apply_adaptive_batch_yield_gate(
+                    "storyline_review_agent"
                 )
-        else:
-            for d in get_pipeline_active_domain_keys():
+                if isinstance(task.metadata, dict):
+                    task.metadata["adaptive_batch_after"] = int(post_batch)
+                    task.metadata["adaptive_batch_meta_after"] = post_meta
+            except Exception:
+                pass
+            try:
+                await self._record_phase_batch_loop(
+                    task,
+                    loops_processed=1,
+                    items_processed=decided,
+                    approved=approved,
+                    rejected=rejected,
+                    skipped=skipped,
+                    parse_exhausted=parse_exhausted,
+                    llm_calls=llm_calls,
+                    round_processed=1 if decided > 0 else 0,
+                )
+                if isinstance(task.metadata, dict):
+                    task.metadata["skip_automation_run_history"] = True
+            except Exception:
+                pass
+            logger.info(
+                "Storyline review agent: approved=%s rejected=%s llm_calls=%s skipped=%s "
+                "parse_exhausted=%s errors=%s batch=%s decided=%s "
+                "adaptive_action=%s yield_gate=%s decision_rate=%s batch_after=%s",
+                approved,
+                rejected,
+                llm_calls,
+                skipped,
+                parse_exhausted,
+                errors,
+                batch_limit,
+                decided,
+                (adaptive_meta or {}).get("action"),
+                (
+                    (task.metadata or {}).get("adaptive_batch_meta_after") or {}
+                ).get("yield_gate")
+                or (adaptive_meta or {}).get("yield_gate"),
+                (yield_info or {}).get("decision_rate"),
+                (task.metadata or {}).get("adaptive_batch_after", batch_limit),
+            )
+        except Exception as e:
+            logger.warning("Storyline review agent failed: %s", e)
+
+    async def _execute_storyline_membership_review(self, task: Task):
+        """Decouple off-topic storyline members; soft-deprioritize weak connections."""
+        if env_str("STORYLINE_MEMBERSHIP_REVIEW_ENABLED", "true").lower() not in (
+            "1",
+            "true",
+            "yes",
+        ):
+            return
+        from services.storyline_membership_review_service import (
+            run_storyline_membership_review_all_domains,
+        )
+
+        limit = 100
+        try:
+            limit = max(1, env_int("STORYLINE_MEMBERSHIP_REVIEW_MAX_STORYLINES", 100))
+        except ValueError:
+            limit = 100
+        adaptive_meta: dict = {}
+        try:
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            limit, adaptive_meta = resolve_adaptive_batch(
+                "storyline_membership_review", limit
+            )
+            limit = max(1, int(limit))
+            if isinstance(task.metadata, dict):
+                task.metadata["adaptive_batch"] = limit
+                if adaptive_meta:
+                    task.metadata["adaptive_batch_meta"] = adaptive_meta
+        except Exception:
+            adaptive_meta = {}
+        dry_run = env_str("STORYLINE_MEMBERSHIP_REVIEW_DRY_RUN", "false").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        try:
+            result = run_storyline_membership_review_all_domains(
+                limit_per_domain=limit, dry_run=dry_run
+            )
+            totals = result.get("totals") or {}
+            by_domain = result.get("by_domain") or {}
+            storylines_scanned = 0
+            if isinstance(by_domain, dict):
+                for domain_res in by_domain.values():
+                    if isinstance(domain_res, dict):
+                        storylines_scanned += len(domain_res.get("storylines") or [])
+            # Action totals (esp. dry-run demote/unlink candidates) are not batch
+            # throughput — Monitor rows/run must track storylines scanned only.
+            action_total = sum(int(totals.get(k, 0) or 0) for k in totals)
+            if isinstance(task.metadata, dict):
+                task.metadata.update(
+                    {
+                        "dry_run": dry_run,
+                        "unlinked": int(totals.get("unlinked", 0) or 0),
+                        "demoted": int(totals.get("demoted", 0) or 0),
+                        "queued": int(totals.get("queued", 0) or 0),
+                        "graph_quarantined": int(totals.get("graph_quarantined", 0) or 0),
+                        "sei_demoted": int(totals.get("sei_demoted", 0) or 0),
+                        "tracked_events_unlinked": int(
+                            totals.get("tracked_events_unlinked", 0) or 0
+                        ),
+                        "action_totals_sum": action_total,
+                        "storylines_scanned": storylines_scanned,
+                        "items_processed": storylines_scanned,
+                    }
+                )
+            logger.info(
+                "Storyline membership review: dry_run=%s limit_per_domain=%s totals=%s scanned=%s",
+                dry_run,
+                limit,
+                totals,
+                storylines_scanned,
+            )
+            try:
+                await self._record_phase_batch_loop(
+                    task,
+                    loops_processed=1,
+                    round_processed=storylines_scanned,
+                    items_processed=storylines_scanned,
+                    storylines_scanned=storylines_scanned,
+                )
+            except Exception:
+                pass
+            try:
+                from services.storyline_membership_llm_agent import run_membership_llm_midband
+
+                llm_limit = 40
                 try:
-                    svc = StorylineAutomationService(domain=d)
-                    conn = await self._get_db_connection()
-                    schema = resolve_domain_schema(d)
-                    try:
-                        with conn.cursor() as cur:
-                            cur.execute(f"""
-                                SELECT s.id FROM {schema}.storylines s
-                                WHERE s.automation_enabled = true
-                                AND EXISTS (SELECT 1 FROM {schema}.storyline_articles sa WHERE sa.storyline_id = s.id)
-                                ORDER BY s.last_automation_run ASC NULLS FIRST
-                                LIMIT 3
-                            """)
-                            storyline_rows = cur.fetchall()
-                    finally:
-                        conn.close()
-                    for row in storyline_rows:
-                        await svc.discover_articles_for_storyline(
-                            row[0], force_refresh=True, enrichment_mode=True
-                        )
-                except Exception as e:
-                    logger.debug("Storyline enrichment batch %s: %s", d, e)
-            logger.info("Storyline enrichment: full-history batch run across domains completed")
+                    from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+                    llm_limit, _llm_meta = resolve_adaptive_batch(
+                        "storyline_review_agent", llm_limit
+                    )
+                except Exception:
+                    llm_limit = 40
+                llm_stats = await run_membership_llm_midband(
+                    batch_limit=llm_limit, dry_run=dry_run
+                )
+                if isinstance(task.metadata, dict):
+                    task.metadata["membership_llm"] = llm_stats
+                logger.info("Storyline membership LLM mid-band: %s", llm_stats)
+            except Exception as llm_e:
+                logger.debug("Storyline membership LLM: %s", llm_e)
+        except Exception as e:
+            logger.warning("Storyline membership review failed: %s", e)
+
+    async def _execute_storyline_hygiene(self, task: Task):
+        """Freeze → core prune → near-dup title merge (move-not-copy)."""
+        if env_str("STORYLINE_HYGIENE_ENABLED", "true").lower() not in (
+            "1",
+            "true",
+            "yes",
+        ):
+            return
+        from services.storyline_hygiene_service import run_storyline_hygiene_all_domains
+
+        limit = 25
+        try:
+            limit = max(1, env_int("STORYLINE_HYGIENE_MAX_STORYLINES", 25))
+        except ValueError:
+            limit = 25
+        max_merges = 5
+        try:
+            max_merges = max(0, env_int("STORYLINE_HYGIENE_MAX_MERGES", 5))
+        except ValueError:
+            max_merges = 5
+        adaptive_meta: dict = {}
+        try:
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            limit, adaptive_meta = resolve_adaptive_batch("storyline_hygiene", limit)
+            limit = max(1, int(limit))
+            if isinstance(task.metadata, dict):
+                task.metadata["adaptive_batch"] = limit
+                if adaptive_meta:
+                    task.metadata["adaptive_batch_meta"] = adaptive_meta
+        except Exception:
+            adaptive_meta = {}
+        dry_run = env_str("STORYLINE_HYGIENE_DRY_RUN", "false").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        try:
+            result = run_storyline_hygiene_all_domains(
+                limit_per_domain=limit,
+                max_merges_per_domain=max_merges,
+                dry_run=dry_run,
+            )
+            totals = result.get("totals") or {}
+            if isinstance(task.metadata, dict):
+                task.metadata.update(
+                    {
+                        "dry_run": dry_run,
+                        "pruned": int(totals.get("pruned", 0) or 0),
+                        "unlinked": int(totals.get("unlinked", 0) or 0),
+                        "merged": int(totals.get("merged", 0) or 0),
+                        "merge_skipped": int(totals.get("merge_skipped", 0) or 0),
+                        "merge_candidates": int(totals.get("merge_candidates", 0) or 0),
+                        "errors": int(totals.get("errors", 0) or 0),
+                        "items_processed": int(totals.get("pruned", 0) or 0),
+                    }
+                )
+            logger.info(
+                "Storyline hygiene: dry_run=%s limit=%s merges=%s totals=%s",
+                dry_run,
+                limit,
+                max_merges,
+                totals,
+            )
+            try:
+                await self._record_phase_batch_loop(
+                    task,
+                    loops_processed=1,
+                    round_processed=int(totals.get("pruned", 0) or 0),
+                    items_processed=int(totals.get("pruned", 0) or 0),
+                )
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning("Storyline hygiene failed: %s", e)
+
+    async def _execute_embedding_link_candidates(self, task: Task):
+        from shared.chemistry_beaker import embedding_link_candidates_enabled
+
+        if not embedding_link_candidates_enabled():
+            task.metadata = task.metadata or {}
+            task.metadata["skip_automation_run_history"] = True
+            return
+        from services.embedding_link_candidate_service import (
+            run_embedding_link_candidates_for_domain,
+        )
+
+        limit = 12
+        try:
+            limit = max(1, env_int("EMBEDDING_LINK_MAX_STORYLINES", 12))
+        except ValueError:
+            limit = 12
+        try:
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            limit, adaptive_meta = resolve_adaptive_batch("embedding_link_candidates", limit)
+            if isinstance(task.metadata, dict):
+                task.metadata["adaptive_batch"] = limit
+                task.metadata["adaptive_batch_meta"] = adaptive_meta
+        except Exception:
+            pass
+        try:
+            domains = _domains_for_phase("embedding_link_candidates")
+            by_domain = {}
+            totals = {"proposals": 0, "merges_enqueued": 0, "scanned": 0, "errors": 0}
+            for dk in domains:
+                res = run_embedding_link_candidates_for_domain(dk, limit=limit)
+                by_domain[dk] = res
+                for k in totals:
+                    totals[k] += int(res.get(k, 0) or 0)
+            result = {"by_domain": by_domain, "totals": totals}
+            totals = result.get("totals") or {}
+            # Monitor measured rows/run requires metadata.batch=true. Use
+            # per-domain adaptive limit × active domains so AVG matches
+            # configured_rows_per_run (per-domain adaptive phases).
+            doms = len(domains) or 1
+            if isinstance(task.metadata, dict):
+                task.metadata.update(
+                    {
+                        "proposals": int(totals.get("proposals", 0) or 0),
+                        "merges_enqueued": int(totals.get("merges_enqueued", 0) or 0),
+                        "scanned": int(totals.get("scanned", 0) or 0),
+                    }
+                )
+                self._stamp_monitor_batch_throughput(
+                    task,
+                    round_processed=int(limit) * int(doms),
+                    items_processed=int(totals.get("proposals", 0) or 0),
+                )
+            logger.info("Embedding link candidates: totals=%s batch=%s", totals, limit)
+        except Exception as e:
+            logger.warning("Embedding link candidates failed: %s", e)
+
+    async def _execute_collision_sampling(self, task: Task):
+        from shared.chemistry_beaker import collision_sampling_enabled
+
+        if not collision_sampling_enabled():
+            task.metadata = task.metadata or {}
+            task.metadata["skip_automation_run_history"] = True
+            return
+        from services.embedding_link_candidate_service import run_random_collision_sample
+
+        pairs = 8
+        try:
+            pairs = max(1, env_int("COLLISION_SAMPLING_PAIRS", 8))
+        except ValueError:
+            pairs = 8
+        try:
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            pairs, adaptive_meta = resolve_adaptive_batch("collision_sampling", pairs)
+            if isinstance(task.metadata, dict):
+                task.metadata["adaptive_batch"] = pairs
+                task.metadata["adaptive_batch_meta"] = adaptive_meta
+        except Exception:
+            pass
+        try:
+            domains = _domains_for_phase("collision_sampling")
+            proposals = 0
+            errors = 0
+            for dk in domains:
+                result = run_random_collision_sample(domain_key=dk, pairs=pairs)
+                proposals += int((result or {}).get("proposals") or 0)
+                errors += int((result or {}).get("errors") or 0)
+            if isinstance(task.metadata, dict):
+                # batch + round_processed=pairs so measured rows/run tracks adaptive
+                # pair budget (not proposal count, which is often pairs × domains).
+                self._stamp_monitor_batch_throughput(
+                    task,
+                    round_processed=int(pairs),
+                    items_processed=proposals,
+                    proposals=proposals,
+                    errors=errors,
+                )
+            logger.info(
+                "Collision sampling: proposals=%s errors=%s pairs=%s domains=%s",
+                proposals,
+                errors,
+                pairs,
+                len(domains),
+            )
+        except Exception as e:
+            logger.warning("Collision sampling failed: %s", e)
+
+    async def _execute_stimulus_rag(self, task: Task):
+        from shared.chemistry_beaker import stimulus_rag_enabled
+
+        if not stimulus_rag_enabled():
+            task.metadata = task.metadata or {}
+            task.metadata["skip_automation_run_history"] = True
+            return
+        from services.rag_evidence_pull_service import (
+            drain_queued_evidence_pulls,
+            screen_ai_arxiv_for_evidence_pull,
+            screen_hypothesized_bonds_for_evidence_pull,
+        )
+
+        screen_limit = 20
+        try:
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            screen_limit, adaptive_meta = resolve_adaptive_batch("stimulus_rag", screen_limit)
+            if isinstance(task.metadata, dict):
+                task.metadata["adaptive_batch"] = screen_limit
+                task.metadata["adaptive_batch_meta"] = adaptive_meta
+        except Exception:
+            pass
+        bond_limit = screen_limit
+        drain_limit = max(1, min(8, max(3, screen_limit // 7)))
+        try:
+            screened = screen_ai_arxiv_for_evidence_pull(limit=screen_limit)
+            bond_screened = screen_hypothesized_bonds_for_evidence_pull(limit=bond_limit)
+            drained = drain_queued_evidence_pulls(limit=drain_limit)
+            if isinstance(task.metadata, dict):
+                task.metadata["screened"] = screened
+                task.metadata["bond_screened"] = bond_screened
+                task.metadata["drained"] = drained
+                items = (
+                    int(drained.get("processed") or 0)
+                    + int(screened.get("enqueued") or 0)
+                    + int(bond_screened.get("enqueued") or 0)
+                )
+                self._stamp_monitor_batch_throughput(
+                    task,
+                    round_processed=int(screen_limit),
+                    items_processed=items,
+                )
+            logger.info(
+                "Stimulus RAG: screen=%s bonds=%s drain=%s (screen_lim=%s drain_lim=%s)",
+                screened,
+                bond_screened,
+                drained,
+                screen_limit,
+                drain_limit,
+            )
+        except Exception as e:
+            logger.warning("Stimulus RAG failed: %s", e)
+
+    async def _execute_protein_harden(self, task: Task):
+        from shared.chemistry_beaker import protein_harden_enabled
+
+        if not protein_harden_enabled():
+            task.metadata = task.metadata or {}
+            task.metadata["skip_automation_run_history"] = True
+            return
+        from services.protein_harden_service import run_protein_harden
+
+        limit = 40
+        try:
+            limit = max(1, env_int("PROTEIN_HARDEN_BATCH", 40))
+        except ValueError:
+            limit = 40
+        try:
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            limit, adaptive_meta = resolve_adaptive_batch("protein_harden", limit)
+            if isinstance(task.metadata, dict):
+                task.metadata["adaptive_batch"] = limit
+                task.metadata["adaptive_batch_meta"] = adaptive_meta
+        except Exception:
+            pass
+        try:
+            result = run_protein_harden(limit=limit)
+            if isinstance(task.metadata, dict):
+                task.metadata.update(result)
+                self._stamp_monitor_batch_throughput(
+                    task,
+                    round_processed=int(limit),
+                    items_processed=int(result.get("promoted") or 0)
+                    + int(result.get("refined") or 0),
+                )
+            logger.info("Protein harden: %s batch=%s", result, limit)
+        except Exception as e:
+            logger.warning("Protein harden failed: %s", e)
+
+    async def _execute_graph_link_drift_review(self, task: Task):
+        if env_str("GRAPH_LINK_DRIFT_REVIEW_ENABLED", "false").lower() not in (
+            "1",
+            "true",
+            "yes",
+        ):
+            return
+        from services.graph_link_drift_service import rescore_active_graph_links
+
+        limit = 40
+        try:
+            limit = max(1, env_int("GRAPH_LINK_DRIFT_BATCH", 40))
+        except ValueError:
+            limit = 40
+        adaptive_meta: dict = {}
+        try:
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            limit, adaptive_meta = resolve_adaptive_batch("graph_link_drift_review", limit)
+            limit = max(1, int(limit))
+            if isinstance(task.metadata, dict):
+                task.metadata["adaptive_batch"] = limit
+                if adaptive_meta:
+                    task.metadata["adaptive_batch_meta"] = adaptive_meta
+        except Exception:
+            adaptive_meta = {}
+
+        try:
+            stats = rescore_active_graph_links(limit=limit)
+            if isinstance(task.metadata, dict):
+                task.metadata.update(stats)
+                self._stamp_monitor_batch_throughput(
+                    task,
+                    # Prefer round_processed=limit so measured rows/run tracks adaptive
+                    # batch size (examined/updated may be lower on short queues).
+                    round_processed=int(limit),
+                    items_processed=int(stats.get("updated", 0) or 0)
+                    + int(stats.get("quarantined", 0) or 0),
+                )
+            logger.info(
+                "Graph link drift review: limit=%s adaptive=%s stats=%s",
+                limit,
+                bool(adaptive_meta.get("adaptive")) if adaptive_meta else False,
+                stats,
+            )
+        except Exception as e:
+            logger.warning("Graph link drift review failed: %s", e)
+
+    async def _execute_storyline_enrichment(self, task: Task):
+        from shared.retired_phase_dispatch import dispatch_retired_automation_phase
+
+        await dispatch_retired_automation_phase(self, "storyline_enrichment", task)
 
     async def _execute_storyline_discovery(self, task: Task):
-        """Auto-discover storylines from recent article clusters using AI similarity.
-        Runs AIStorylineDiscovery.discover_storylines() for each domain (full backlog,
-        newest-first cap), creating new storylines from high-similarity clusters."""
-        import asyncio
+        from shared.retired_phase_dispatch import dispatch_retired_automation_phase
 
-        try:
-            from services.ai_storyline_discovery import get_discovery_service
-
-            service = get_discovery_service()
-            total_created = 0
-            for domain in get_pipeline_active_domain_keys():
-                try:
-                    loop = asyncio.get_event_loop()
-                    result = await loop.run_in_executor(
-                        None,
-                        lambda d=domain: service.discover_storylines(
-                            domain=d, hours=None, save_to_db=True
-                        ),
-                    )
-                    saved = len(result.get("saved_storylines", []))
-                    clusters = result.get("summary", {}).get("clusters_found", 0)
-                    total_created += saved
-                    cp = (result.get("stats") or {}).get("clustering_params") or {}
-                    sd = (result.get("stats") or {}).get("storyline_development") or {}
-                    logger.info(
-                        "Storyline discovery [%s]: clusters=%d saved=%d thresholds=%s development=%s",
-                        domain,
-                        clusters,
-                        saved,
-                        cp,
-                        sd,
-                    )
-                    if saved > 0:
-                        logger.info(
-                            "Storyline discovery [%s]: %d clusters → %d new storylines",
-                            domain,
-                            clusters,
-                            saved,
-                        )
-                except Exception as e:
-                    logger.warning("Storyline discovery failed for %s: %s", domain, e)
-            logger.info("Storyline discovery complete: %d new storylines created", total_created)
-        except Exception as e:
-            logger.warning("Storyline discovery task failed: %s", e)
+        await dispatch_retired_automation_phase(self, "storyline_discovery", task)
 
     async def _execute_proactive_detection(self, task: Task):
-        """v8: Detect emerging storylines from unlinked articles (per domain)."""
-        try:
-            from domains.storyline_management.services.proactive_detection_service import (
-                ProactiveDetectionService,
-            )
+        from shared.retired_phase_dispatch import dispatch_retired_automation_phase
 
-            for domain in get_pipeline_active_domain_keys():
-                try:
-                    svc = ProactiveDetectionService(domain=domain)
-                    result = await svc.detect_emerging_storylines()
-                    if result.get("success"):
-                        d = result.get("data") or {}
-                        if (
-                            d.get("stored_count", 0) > 0
-                            or d.get("promoted_to_domain_storylines", 0) > 0
-                        ):
-                            logger.info(
-                                "Proactive detection [%s]: emerging_stored=%s promoted_to_domain_storylines=%s",
-                                domain,
-                                d.get("stored_count", 0),
-                                d.get("promoted_to_domain_storylines", 0),
-                            )
-                except Exception as e:
-                    logger.debug("Proactive detection failed for %s: %s", domain, e)
-        except Exception as e:
-            logger.warning("Proactive detection task failed: %s", e)
+        await dispatch_retired_automation_phase(self, "proactive_detection", task)
 
     async def _execute_storyline_assembly(self, task: Task):
         """Run proactive detection + discovery + automation for one domain or all pipeline domains."""
         from services.storyline_assembly_service import (
-            run_storyline_assembly_all_domains,
             run_storyline_assembly_for_domain,
         )
+        from shared.domain_processing_mode import domain_runs_phase
 
         meta = task.metadata or {}
         domain = meta.get("domain")
+        task.metadata = task.metadata or {}
         try:
             if domain:
+                if not domain_runs_phase(domain, "storyline_assembly"):
+                    logger.debug(
+                        "Storyline assembly skipped corpus domain=%s", domain
+                    )
+                    return
                 result = await run_storyline_assembly_for_domain(domain)
+                task.metadata["skip_automation_run_history"] = True
                 logger.info(
                     "Storyline assembly [%s]: unlinked %s → %s steps=%s",
                     domain,
@@ -5739,8 +6414,21 @@ class AutomationManager:
                     list((result.get("steps") or {}).keys()),
                 )
             else:
-                batch = await run_storyline_assembly_all_domains()
-                for dk, res in (batch.get("domains") or {}).items():
+                from services.storyline_assembly_service import (
+                    domains_needing_assembly,
+                    count_unlinked_articles,
+                )
+
+                allowed = set(_domains_for_phase("storyline_assembly"))
+                domains = [dk for dk in domains_needing_assembly() if dk in allowed]
+                if domains:
+                    domains = sorted(
+                        domains,
+                        key=lambda dk: count_unlinked_articles(dk),
+                        reverse=True,
+                    )
+                for dk in domains:
+                    res = await run_storyline_assembly_for_domain(dk)
                     if res.get("unlinked_before", 0) != res.get("unlinked_after", 0):
                         logger.info(
                             "Storyline assembly [%s]: unlinked %s → %s",
@@ -5748,6 +6436,7 @@ class AutomationManager:
                             res.get("unlinked_before"),
                             res.get("unlinked_after"),
                         )
+                task.metadata["skip_automation_run_history"] = True
         except Exception as e:
             logger.warning("Storyline assembly failed: %s", e)
 
@@ -5757,11 +6446,20 @@ class AutomationManager:
             from services.fact_verification_service import verify_recent_claims
 
             loop = asyncio.get_event_loop()
-            for domain in get_pipeline_active_domain_keys():
+            try:
+                from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+                fv_limit, _meta = resolve_adaptive_batch("fact_verification", 20)
+            except Exception:
+                fv_limit = 20
+            fv_limit = max(1, int(fv_limit))
+            for domain in _domains_for_phase("fact_verification"):
                 try:
                     result = await loop.run_in_executor(
                         self._executor,
-                        lambda d=domain: verify_recent_claims(d, hours=72, limit=20),
+                        lambda d=domain, lim=fv_limit: verify_recent_claims(
+                            d, hours=72, limit=lim
+                        ),
                     )
                     if result.get("success") and result.get("claims_verified", 0) > 0:
                         logger.info(
@@ -5794,132 +6492,147 @@ class AutomationManager:
         except Exception as e:
             logger.warning("Fact verification task failed: %s", e)
 
-    async def _execute_entity_extraction(self, task: Task):
-        """Execute entity extraction via ArticleEntityExtractionService.
+    async def _execute_spine_sql_tail(self, task: Task) -> None:
+        """SQL-only spine tail: claims_to_facts, profile links, link indexer, event markers."""
+        from shared.pipeline_batch_drain import phase_run_budget_seconds
+        from services.spine_sql_tail_service import run_spine_sql_tail_drain
 
-        Routes through the canonical extraction pipeline which does:
-        LLM extraction → canonical resolution → Wikipedia backfill → article_entities storage.
-        Processes all active domain schemas (registry).
-        """
-        from services.article_entity_extraction_service import ArticleEntityExtractionService
+        task.metadata = task.metadata or {}
+        task.metadata["skip_automation_run_history"] = True
+        result = await run_spine_sql_tail_drain(
+            budget_seconds=phase_run_budget_seconds("spine_sql_tail", 300),
+        )
+        processed = int(
+            result.get("claims_to_facts", 0)
+            + result.get("profile_links", 0)
+            + result.get("link_indexer_articles", 0)
+            + result.get("event_context_markers", 0)
+        )
+        if processed > 0 or int(result.get("rounds") or 0) > 0:
+            await self._record_phase_batch_loop(
+                task,
+                loops_processed=max(1, int(result.get("rounds") or 0)),
+                processed=processed,
+                round_processed=processed,
+            )
+        task.metadata["items_processed"] = processed
+        logger.info("spine_sql_tail drain: processed=%s rounds=%s", processed, result.get("rounds"))
 
-        extractor = ArticleEntityExtractionService()
-        domains = list(pipeline_url_schema_pairs())
-        extracted_count = 0
+    async def _execute_unified_intake_extraction(self, task: Task):
+        """Single batched LLM pass: entities, claims, events, sentiment, quality."""
+        from shared.pipeline_batch_drain import phase_run_budget_seconds
+        from shared.unified_intake_extraction_runner import run_unified_intake_extraction_batch_drain
 
+        async def _on_fail(schema: str, article_id: int, error: Exception) -> None:
+            await self._mark_article_phase_failure(
+                schema=schema,
+                article_id=article_id,
+                phase_name="unified_intake_extraction",
+                error=error,
+                default_max_attempts=3,
+            )
+
+        task.metadata = task.metadata or {}
+        task.metadata["skip_automation_run_history"] = True
+        task.metadata.pop("_batch_run_started_at", None)
+        on_batch = self._make_batch_progress_callback(task)
+
+        async def _unified_batch_cb(batch_n: int, stats: dict) -> None:
+            await on_batch(batch_n, **stats)
+
+        async def _unified_wave_cb(wave_idx: int, stats: dict) -> None:
+            processed = int(stats.get("round_processed") or 0)
+            if processed <= 0:
+                return
+            await on_batch(
+                int(stats.get("batch_round") or wave_idx),
+                round_processed=processed,
+                total_processed=int(stats.get("total_processed") or processed),
+                backfill_count=int(stats.get("backfill_count") or 0),
+            )
+
+        per_domain = None
         try:
-            articles_per_domain = int(os.environ.get("ENTITY_EXTRACTION_ARTICLES_PER_DOMAIN", "20"))
-        except ValueError:
-            articles_per_domain = 20
-        articles_per_domain = max(5, min(120, articles_per_domain))
+            from shared.adaptive_batch_policy import resolve_phase_batch_limit
 
-        from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
+            per_domain = resolve_phase_batch_limit("unified_intake_extraction", 40)
+        except Exception:
+            pass
 
-        pass_clause = ""
-        if phase_backlog_uses_pass_marker("entity_extraction"):
-            pass_clause = f" AND ({sql_article_pass_null('entity_extraction', 'a')}) "
-        _ord = sql_order_created_at()
-
-        conn = await self._get_db_connection()
-        try:
-            cursor = conn.cursor()
-            domain_articles = {}
-            for domain_key, schema_name in domains:
-                try:
-                    cursor.execute(f"""
-                        SELECT a.id, a.title, a.content
-                        FROM {schema_name}.articles a
-                        LEFT JOIN {schema_name}.article_entities ae ON ae.article_id = a.id
-                        WHERE ae.id IS NULL
-                          AND COALESCE((a.metadata #>> '{{pipeline_skip,entity_extraction_skip}}')::boolean, false) = false
-                          AND a.content IS NOT NULL
-                          AND LENGTH(a.content) > 100
-                          AND (
-                            LENGTH(a.content) >= 500
-                            OR a.created_at < NOW() - INTERVAL '2 hours'
-                            OR COALESCE(a.enrichment_status, '') IN (
-                                'enriched', 'failed', 'inaccessible'
-                            )
-                          )
-                          {pass_clause}
-                        ORDER BY a.created_at {_ord}
-                        LIMIT {articles_per_domain}
-                    """)
-                    domain_articles[schema_name] = cursor.fetchall()
-                except Exception as e:
-                    logger.warning("Entity extraction query for %s: %s", schema_name, e)
-                    domain_articles[schema_name] = []
-        finally:
-            cursor.close()
-            conn.close()
-
-        try:
-            parallel = max(1, min(16, int(os.environ.get("ENTITY_EXTRACTION_PARALLEL", "4"))))
-        except ValueError:
-            parallel = 4
-        sem = asyncio.Semaphore(parallel)
-
-        async def _extract_one(
-            domain_key: str, schema_name: str, article_id: int, title: str, content: str
-        ) -> bool:
-            async with sem:
-                try:
-                    result = await extractor.extract_and_store(
-                        article_id=article_id,
-                        title=title or "",
-                        content=content,
-                        schema=schema_name,
-                    )
-                    ok = bool(result.get("success"))
-                    if ok:
-                        from shared.pipeline_pass_marker import record_article_phase_pass
-
-                        cnt = (result.get("counts") or {}).get("entities") or 0
-                        record_article_phase_pass(
-                            schema_name,
-                            article_id,
-                            "entity_extraction",
-                            "entities_stored" if int(cnt) > 0 else "no_entities_stored",
-                        )
-                    return ok
-                except Exception as e:
-                    logger.error(
-                        "Entity extraction for article %s (%s): %s", article_id, domain_key, e
-                    )
-                    await self._mark_article_phase_failure(
-                        schema=schema_name,
-                        article_id=article_id,
-                        phase_name="entity_extraction",
-                        error=e,
-                        default_max_attempts=3,
-                    )
-                    return False
-
-        tasks = []
-        for domain_key, schema_name in domains:
-            for article_id, title, content in domain_articles.get(schema_name, []):
-                tasks.append(_extract_one(domain_key, schema_name, article_id, title, content))
-        if tasks:
-            results = await asyncio.gather(*tasks)
-            extracted_count = sum(1 for r in results if r)
-
+        result = await run_unified_intake_extraction_batch_drain(
+            budget_seconds=phase_run_budget_seconds("unified_intake_extraction", 0),
+            articles_per_domain=per_domain,
+            on_article_failure=_on_fail,
+            on_batch_complete=_unified_batch_cb,
+            on_wave_complete=_unified_wave_cb,
+        )
+        processed = int(result.get("articles_processed") or 0)
         logger.info(
-            f"Entity extraction completed: {extracted_count} articles processed across domains"
+            "Unified intake extraction: %s articles in %s batch round(s)",
+            processed,
+            result.get("batch_rounds", 0),
+        )
+        # Critical path: CE restore (if needed) → event coreference before chemistry stir.
+        try:
+            from shared.pipeline_handoffs import after_unified_intake
+
+            after_unified_intake(self, articles_processed=processed)
+        except Exception as e:
+            logger.debug("unified_intake event-rail handoff: %s", e)
+        # Legacy chemistry beaker — secondary; gated by CHEMISTRY_BEAKER_ENABLED.
+        try:
+            from shared.chemistry_beaker import kickoff_beaker_phases
+
+            kickoff_beaker_phases(self, reason="unified_intake_batch_complete")
+        except Exception as e:
+            logger.debug("unified_intake beaker kickoff: %s", e)
+
+    async def _execute_entity_extraction(self, task: Task):
+        """Batched entity extraction on PopOS GPU (with Widow CPU overflow when dual-lane)."""
+        from shared.legacy_intake_rollback import (
+            legacy_intake_rollback_active,
+            load_entity_extraction_runner,
         )
 
-        if extracted_count > 0 and os.environ.get("ENTITY_EXTRACTION_POST_SYNC", "").lower() in (
+        if not legacy_intake_rollback_active():
+            logger.debug(
+                "entity_extraction skipped (unified intake path; LEGACY_INTAKE_EXTRACTION_ENABLED for rollback)"
+            )
+            return
+
+        run_entity_extraction_batch_drain = load_entity_extraction_runner().run_entity_extraction_batch_drain
+
+        async def _on_fail(schema: str, article_id: int, error: Exception) -> None:
+            await self._mark_article_phase_failure(
+                schema=schema,
+                article_id=article_id,
+                phase_name="entity_extraction",
+                error=error,
+                default_max_attempts=3,
+            )
+
+        result = await run_entity_extraction_batch_drain(on_article_failure=_on_fail)
+        extracted_count = int(result.get("articles_processed") or 0)
+        logger.info(
+            "Entity extraction completed: %s articles in %s batch round(s)",
+            extracted_count,
+            result.get("batch_rounds", 0),
+        )
+
+        if extracted_count > 0 and env_str("ENTITY_EXTRACTION_POST_SYNC", "").lower() in (
             "1",
             "true",
             "yes",
         ):
             try:
-                post_lim = int(os.environ.get("ENTITY_EXTRACTION_POST_MENTION_LIMIT", "1500"))
+                post_lim = env_int("ENTITY_EXTRACTION_POST_MENTION_LIMIT", 1500)
             except ValueError:
                 post_lim = 1500
             from services.context_processor_service import backfill_context_entity_mentions_for_domain
             from services.entity_profile_sync_service import sync_domain_entity_profiles
+            from shared.domain_registry import pipeline_url_schema_pairs
 
-            for domain_key, _schema_name in domains:
+            for domain_key, _schema_name in pipeline_url_schema_pairs():
                 try:
                     sync_domain_entity_profiles(domain_key)
                 except Exception as e:
@@ -5929,166 +6642,42 @@ class AutomationManager:
                 except Exception as e:
                     logger.debug("entity_extraction post-sync mentions %s: %s", domain_key, e)
 
+    async def _execute_mention_resolution(self, task: Task):
+        from services.automation.executor import execute_mention_resolution
+
+        await execute_mention_resolution(task)
+
     async def _execute_event_extraction_v5(self, task: Task):
-        """v5.0 -- Extract structured events with temporal grounding from domain articles."""
+        """v5.0 — batched event extraction with PopOS GPU routing when enabled."""
+        from shared.legacy_intake_rollback import (
+            legacy_intake_rollback_active,
+            load_event_extraction_runner,
+        )
+
+        if not legacy_intake_rollback_active():
+            logger.debug(
+                "event_extraction skipped (unified intake path; LEGACY_INTAKE_EXTRACTION_ENABLED for rollback)"
+            )
+            return
         try:
-            from services.event_extraction_service import EventExtractionService
-            from shared.database.connection import get_db_connection
+            run_event_extraction_batch_drain = load_event_extraction_runner().run_event_extraction_batch_drain
 
-            svc = EventExtractionService()
-            loop = asyncio.get_event_loop()
-            try:
-                try:
-                    parallel = max(1, int(os.environ.get("EVENT_EXTRACTION_PARALLEL", "4")))
-                except ValueError:
-                    parallel = 4
-                sem = asyncio.Semaphore(parallel)
-                total_events = 0
-                total_articles = 0
-
-                async def _process_article(
-                    schema: str, domain_for_events: str, row: tuple
-                ) -> int:
-                    article_id, content, pub_date, storyline_id = row
-                    async with sem:
-                        try:
-                            if pub_date is None:
-                                pub_date = datetime.now(timezone.utc)
-                            events = await svc.extract_events_from_article(
-                                article_id=article_id,
-                                content=content,
-                                pub_date=pub_date,
-                                storyline_id=storyline_id,
-                                domain=domain_for_events,
-                            )
-                            conn_a = await loop.run_in_executor(None, get_db_connection)
-                            if not conn_a:
-                                return 0
-                            try:
-                                saved = await svc.save_events(events, conn_a)
-                                cur = conn_a.cursor()
-                                cur.execute(
-                                    f"""
-                                    UPDATE {schema}.articles
-                                    SET timeline_processed = true,
-                                        timeline_events_generated = %s,
-                                        updated_at = CURRENT_TIMESTAMP
-                                    WHERE id = %s
-                                """,
-                                    (len(events), article_id),
-                                )
-                                conn_a.commit()
-                                try:
-                                    from shared.pipeline_pass_marker import record_article_phase_pass
-
-                                    record_article_phase_pass(
-                                        schema,
-                                        article_id,
-                                        "event_extraction",
-                                        "timeline_saved",
-                                    )
-                                except Exception:
-                                    pass
-                                cur.close()
-                                return saved
-                            except Exception:
-                                try:
-                                    conn_a.rollback()
-                                except Exception:
-                                    pass
-                                raise
-                            finally:
-                                conn_a.close()
-                        except Exception as e:
-                            logger.error(
-                                "Event extraction failed for %s article %s: %s",
-                                schema,
-                                article_id,
-                                e,
-                            )
-                            await self._mark_article_phase_failure(
-                                schema=schema,
-                                article_id=article_id,
-                                phase_name="event_extraction",
-                                error=e,
-                                default_max_attempts=2,
-                            )
-                            return 0
-
-                from shared.database.db_availability import schema_has_table
-
-                for schema in get_pipeline_schema_names_active():
-                    if not schema_has_table(schema, "articles"):
-                        logger.warning(
-                            "event_extraction: skip schema %s (articles table missing)",
-                            schema,
-                        )
-                        continue
-                    try:
-                        domain_for_events = schema_to_primary_domain_key(schema)
-                    except KeyError:
-                        domain_for_events = schema.replace("_", "-")
-                    from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
-
-                    ev_pass = ""
-                    if phase_backlog_uses_pass_marker("event_extraction"):
-                        ev_pass = f" AND ({sql_article_pass_null('event_extraction', 'a')}) "
-                    _ev_ord = sql_order_coalesce_pub_created("a")
-
-                    conn = await self._get_db_connection()
-                    cursor = conn.cursor()
-                    try:
-                        cursor.execute(f"""
-                            SELECT a.id, a.content, a.published_at,
-                                   (
-                                       SELECT sa.storyline_id::text
-                                       FROM {schema}.storyline_articles sa
-                                       WHERE sa.article_id = a.id
-                                       ORDER BY sa.added_at DESC NULLS LAST
-                                       LIMIT 1
-                                   ) AS storyline_id
-                            FROM {schema}.articles a
-                            WHERE a.timeline_processed = false
-                              AND COALESCE((a.metadata #>> '{{pipeline_skip,event_extraction_skip}}')::boolean, false) = false
-                              AND a.content IS NOT NULL
-                              AND LENGTH(a.content) > 100
-                              AND (
-                                  a.processing_status = 'completed'
-                                  OR a.enrichment_status IN ('completed', 'enriched')
-                              )
-                              {ev_pass}
-                            ORDER BY {_ev_ord}
-                            LIMIT 30
-                        """)
-                        articles = cursor.fetchall()
-                    finally:
-                        cursor.close()
-                        conn.close()
-
-                    total_articles += len(articles)
-                    if not articles:
-                        continue
-                    results = await asyncio.gather(
-                        *[
-                            _process_article(schema, domain_for_events, row)
-                            for row in articles
-                        ],
-                        return_exceptions=True,
-                    )
-                    for r in results:
-                        if isinstance(r, int):
-                            total_events += r
-                        elif isinstance(r, Exception):
-                            logger.debug("event_extraction gather: %s", r)
-
-                logger.info(
-                    "v5 event extraction completed: %s events from %s articles across %s schemas",
-                    total_events,
-                    total_articles,
-                    len(get_pipeline_schema_names_active()),
+            async def _on_fail(schema: str, article_id: int, error: Exception) -> None:
+                await self._mark_article_phase_failure(
+                    schema=schema,
+                    article_id=article_id,
+                    phase_name="event_extraction",
+                    error=error,
+                    default_max_attempts=2,
                 )
-            finally:
-                await svc.close()
+
+            result = await run_event_extraction_batch_drain(on_article_failure=_on_fail)
+            logger.info(
+                "v5 event extraction completed: %s events from %s articles (%s rounds)",
+                result.get("events_saved", 0),
+                result.get("articles_processed", 0),
+                result.get("batch_rounds", 0),
+            )
         except Exception as e:
             if (
                 "timeline_processed" in str(e) or "chronological_events" in str(e)
@@ -6098,40 +6687,63 @@ class AutomationManager:
                 raise
 
     async def _execute_event_deduplication_v5(self, task: Task):
-        """v5.0 -- Deduplicate events across sources. Skips cleanly if chronological_events is missing."""
+        """v5.0 -- Deduplicate / coreference events. Skips cleanly if chronological_events is missing."""
         try:
-            from services.event_deduplication_service import EventDeduplicationService
+            from services.event_coreference_service import coreference_recent
 
             conn = await self._get_db_connection()
             try:
-                svc = EventDeduplicationService(conn)
-                # Simple direct call with fallback to ensure method exists
+                dedupe_limit = 100
                 try:
-                    stats = await svc.deduplicate_recent(limit=100)
-                    logger.info(
-                        f"v5 event deduplication completed: "
-                        f"checked={stats['checked']}, merged={stats['merged']}"
+                    from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+                    dedupe_limit, adaptive_meta = resolve_adaptive_batch(
+                        "event_deduplication", dedupe_limit
                     )
-                except AttributeError as attr_err:
-                    if "deduplicate_recent" in str(attr_err):
-                        # Try to reload the module to fix potential import caching issues
-                        logger.warning("Method not found, attempting module reload: %s", attr_err)
-                        import importlib
-                        import sys
-                        # Remove from cache if present
-                        module_name = "services.event_deduplication_service"
-                        if module_name in sys.modules:
-                            del sys.modules[module_name]
-                        # Re-import
-                        from services.event_deduplication_service import EventDeduplicationService as NewEventDeduplicationService
-                        svc_fresh = NewEventDeduplicationService(conn)
-                        stats = await svc_fresh.deduplicate_recent(limit=100)
-                        logger.info(
-                            f"v5 event deduplication completed (after reload): "
-                            f"checked={stats['checked']}, merged={stats['merged']}"
+                    if isinstance(task.metadata, dict):
+                        task.metadata["adaptive_batch"] = dedupe_limit
+                        task.metadata["adaptive_batch_meta"] = adaptive_meta
+                except Exception:
+                    pass
+                stats = await coreference_recent(conn, limit=dedupe_limit)
+                if isinstance(task.metadata, dict):
+                    task.metadata["dedup_stats"] = {
+                        k: stats.get(k, 0)
+                        for k in (
+                            "checked",
+                            "merged",
+                            "hard_merges",
+                            "soft_links",
+                            "chains_collapsed",
+                            "soft_pruned",
+                            "no_match",
+                            "singletons_marked",
                         )
-                    else:
-                        raise
+                    }
+                logger.info(
+                    "v5 event deduplication completed: "
+                    "checked=%s, merged=%s, hard_merges=%s, soft_links=%s, "
+                    "singletons=%s, chains_collapsed=%s, soft_pruned=%s (batch=%s)",
+                    stats.get("checked", 0),
+                    stats.get("merged", 0),
+                    stats.get("hard_merges", 0),
+                    stats.get("soft_links", 0),
+                    stats.get("singletons_marked", 0),
+                    stats.get("chains_collapsed", 0),
+                    stats.get("soft_pruned", 0),
+                    dedupe_limit,
+                )
+                try:
+                    from shared.pipeline_handoffs import after_event_deduplication
+
+                    after_event_deduplication(
+                        self,
+                        merged=int(stats.get("merged") or 0),
+                        soft_links=int(stats.get("soft_links") or 0),
+                        hard_merges=int(stats.get("hard_merges") or 0),
+                    )
+                except Exception as e:
+                    logger.debug("event_deduplication handoff: %s", e)
             finally:
                 conn.close()
         except Exception as e:
@@ -6143,8 +6755,45 @@ class AutomationManager:
                 logger.error(f"Event deduplication failed: {e}", exc_info=True)
                 raise
 
+    async def _execute_chronological_events_catchup(self, task: Task):
+        """Re-extract chronological_events for UIE-complete articles with zero CE rows."""
+        from services.chronological_events_catchup_service import (
+            is_enabled,
+            run_catchup_batch_sync,
+        )
+
+        if not is_enabled():
+            logger.debug(
+                "chronological_events_catchup skipped (CHRONOLOGICAL_EVENTS_CATCHUP_ENABLED off)"
+            )
+            return
+        try:
+            limit = 5
+            if isinstance(task.metadata, dict) and task.metadata.get("batch_limit"):
+                limit = int(task.metadata["batch_limit"])
+            stats = await asyncio.to_thread(run_catchup_batch_sync, limit=limit)
+            if stats and int(stats.get("processed") or 0) > 0:
+                logger.info("chronological_events_catchup: %s", stats)
+            await self._record_phase_batch_loop(
+                task,
+                loops_processed=1,
+                round_processed=int(stats.get("processed") or 0),
+                items_processed=int(stats.get("saved_total") or 0),
+            )
+            try:
+                from shared.pipeline_handoffs import after_chronological_events_catchup
+
+                after_chronological_events_catchup(
+                    self, saved_total=int((stats or {}).get("saved_total") or 0)
+                )
+            except Exception as e:
+                logger.debug("chronological_events_catchup handoff: %s", e)
+        except Exception as e:
+            logger.warning("chronological_events_catchup failed: %s", e)
+
     async def _execute_story_continuation_v5(self, task: Task):
         """v5.0 -- Match events to existing storylines and manage lifecycle states. Runs per domain (storylines/story_entity_index are per-schema)."""
+        from services.pipeline_phase_heartbeat_service import record_phase_heartbeat
         from services.story_continuation_service import StoryContinuationService
 
         conn = await self._get_db_connection()
@@ -6153,10 +6802,20 @@ class AutomationManager:
             return
         try:
             total = {"checked": 0, "linked": 0, "flagged": 0}
-            for schema in get_pipeline_schema_names_active():
+            cont_limit = 30
+            try:
+                from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+                cont_limit, adaptive_meta = resolve_adaptive_batch("story_continuation", cont_limit)
+                if isinstance(task.metadata, dict):
+                    task.metadata["adaptive_batch"] = cont_limit
+                    task.metadata["adaptive_batch_meta"] = adaptive_meta
+            except Exception:
+                pass
+            for schema in _schemas_for_phase("story_continuation"):
                 try:
                     svc = StoryContinuationService(conn, schema=schema)
-                    stats = await svc.process_recent_events(limit=30)
+                    stats = await svc.process_recent_events(limit=cont_limit)
                     svc.update_lifecycle_states()
                     total["checked"] += stats["checked"]
                     total["linked"] += stats["linked"]
@@ -6175,6 +6834,89 @@ class AutomationManager:
                 f"v5 story continuation completed: "
                 f"checked={total['checked']}, linked={total['linked']}, flagged={total['flagged']}"
             )
+            await self._record_phase_batch_loop(
+                task,
+                loops_processed=1,
+                round_processed=total["checked"],
+                items_processed=total["linked"] + total["flagged"],
+            )
+            try:
+                from shared.pipeline_handoffs import after_story_continuation
+
+                after_story_continuation(self, linked=int(total.get("linked") or 0))
+            except Exception as e:
+                logger.debug("story_continuation handoff: %s", e)
+            try:
+                record_phase_heartbeat(
+                    "story_continuation",
+                    scheduler_path="automation",
+                    success=True,
+                    items_processed=total["checked"],
+                    detail={
+                        "status": "complete",
+                        "linked": total["linked"],
+                        "flagged": total["flagged"],
+                        "checked": total["checked"],
+                    },
+                )
+            except Exception as hb_err:
+                logger.debug("story_continuation heartbeat: %s", hb_err)
+        finally:
+            conn.close()
+
+    async def _execute_episode_assembly_maintenance(self, task: Task):
+        """Drain orphan CE→episode links: backfill, cluster batch-link, TE bridge, EEL promote."""
+        from services.episode_assembly_maintenance_service import (
+            is_enabled,
+            run_episode_assembly_maintenance,
+        )
+        from services.pipeline_phase_heartbeat_service import record_phase_heartbeat
+
+        if not is_enabled():
+            logger.debug("episode_assembly_maintenance disabled (EPISODE_ASSEMBLY_MAINTENANCE_ENABLED)")
+            return
+
+        conn = await self._get_db_connection()
+        if not conn:
+            logger.warning("episode_assembly_maintenance: no DB connection")
+            return
+        try:
+            result = await run_episode_assembly_maintenance(conn, apply=True)
+            items = int(result.get("items_processed") or 0)
+            task.metadata = task.metadata or {}
+            task.metadata["items_processed"] = items
+            task.metadata["episode_assembly"] = result
+            await self._record_phase_batch_loop(
+                task,
+                loops_processed=1,
+                items_processed=items,
+                matched=int((result.get("continuation_backfill") or {}).get("matched") or 0),
+                founded=int((result.get("continuation_backfill") or {}).get("founded") or 0),
+                events_linked=int((result.get("cluster_link") or {}).get("events_linked") or 0),
+                te_bridged=int((result.get("te_bridge") or {}).get("bridged") or 0),
+            )
+            logger.info(
+                "episode_assembly_maintenance: items=%s matched=%s founded=%s cluster_linked=%s te=%s",
+                items,
+                (result.get("continuation_backfill") or {}).get("matched"),
+                (result.get("continuation_backfill") or {}).get("founded"),
+                (result.get("cluster_link") or {}).get("events_linked"),
+                (result.get("te_bridge") or {}).get("bridged"),
+            )
+            try:
+                record_phase_heartbeat(
+                    "episode_assembly_maintenance",
+                    scheduler_path="automation",
+                    success=True,
+                    items_processed=items,
+                    detail={"status": "complete", **{k: result.get(k) for k in (
+                        "continuation_backfill", "cluster_link", "te_bridge", "promote_eel"
+                    ) if result.get(k) is not None}},
+                )
+            except Exception as hb_err:
+                logger.debug("episode_assembly_maintenance heartbeat: %s", hb_err)
+        except Exception as e:
+            logger.warning("episode_assembly_maintenance failed: %s", e)
         finally:
             conn.close()
 
@@ -6187,6 +6929,7 @@ class AutomationManager:
             svc = WatchlistService(conn)
             reactivation = svc.generate_reactivation_alerts()
             new_events = svc.generate_new_event_alerts()
+
             logger.info(f"v5 watchlist alerts: {reactivation} reactivation, {new_events} new-event")
         except Exception as e:
             if "does not exist" in str(e) or "relation" in str(e).lower():
@@ -6200,26 +6943,41 @@ class AutomationManager:
 
     async def _execute_quality_scoring(self, task: Task):
         """Execute quality scoring task"""
-        from services.ai_processing_service import get_ai_service
+        from shared.legacy_intake_rollback import legacy_intake_rollback_active
 
-        ai_service = get_ai_service()
+        if not legacy_intake_rollback_active():
+            logger.debug("quality_scoring skipped (folded into unified intake)")
+            return
+        from shared.legacy_intake_rollback import load_ai_processing_service
+
+        ai_service = load_ai_processing_service().get_ai_service()
         scored_count = 0
 
         ml_ready = sql_ml_ready_and_content_bounds()
         _ord = sql_order_created_at()
+        try:
+            from shared.adaptive_batch_policy import resolve_adaptive_batch
+
+            qs_limit, _meta = resolve_adaptive_batch("quality_scoring", 50)
+        except Exception:
+            qs_limit = 50
+        qs_limit = max(1, int(qs_limit))
         for schema in get_pipeline_schema_names_active():
             # Fetch candidates quickly, then close transaction before awaited LLM work.
             conn = await self._get_db_connection()
             try:
                 with conn.cursor() as cursor:
-                    cursor.execute(f"""
+                    cursor.execute(
+                        f"""
                         SELECT id, content, title FROM {schema}.articles
                         WHERE quality_score IS NULL
                           AND COALESCE((metadata #>> '{{pipeline_skip,quality_scoring_skip}}')::boolean, false) = false
                           AND ({ml_ready})
                         ORDER BY created_at {_ord}
-                        LIMIT 50
-                    """)
+                        LIMIT %s
+                    """,
+                        (qs_limit,),
+                    )
                     articles = cursor.fetchall()
             finally:
                 conn.close()
@@ -6259,102 +7017,9 @@ class AutomationManager:
         logger.info(f"Quality scoring completed: {scored_count} articles scored")
 
     async def _execute_timeline_generation(self, task: Task):
-        """
-        Summarize existing chronological_events into storylines.timeline_summary text.
+        from shared.retired_phase_dispatch import dispatch_retired_automation_phase
 
-        Does not extract events (that is event_extraction + story_continuation). Optional
-        historical_context enriches summaries with older facts when STORYLINE_HISTORICAL_IN_TIMELINE_SUMMARY=1.
-        """
-        from services.timeline_builder_service import TimelineBuilderService
-
-        use_historical = os.environ.get(
-            "STORYLINE_HISTORICAL_IN_TIMELINE_SUMMARY", "1"
-        ).strip().lower() in ("1", "true", "yes")
-        generated_count = 0
-
-        for schema in get_pipeline_schema_names_active():
-            conn_sel = await self._get_db_connection()
-            storyline_ids: list[int] = []
-            try:
-                with conn_sel.cursor() as cur:
-                    cur.execute(f"""
-                        SELECT s.id FROM {schema}.storylines s
-                        WHERE s.status = 'active'
-                          AND EXISTS (
-                              SELECT 1 FROM {schema}.storyline_articles sa
-                              WHERE sa.storyline_id = s.id
-                          )
-                          AND (
-                              s.timeline_summary IS NULL
-                              OR LENGTH(COALESCE(s.timeline_summary, '')) < 100
-                          )
-                        ORDER BY s.updated_at DESC NULLS LAST
-                        LIMIT 12
-                    """)
-                    storyline_ids = [row[0] for row in cur.fetchall() if row and row[0] is not None]
-            finally:
-                conn_sel.close()
-
-            for sid in storyline_ids:
-                conn = await self._get_db_connection()
-                try:
-                    tb = TimelineBuilderService(conn, schema_name=schema)
-                    timeline = tb.build_timeline(sid)
-                    events = timeline.get("events") or []
-                    if not events:
-                        continue
-                    parts = []
-                    for e in events[:25]:
-                        title = (e.get("title") or "").strip()
-                        d = e.get("event_date")
-                        ds = d.isoformat() if hasattr(d, "isoformat") else (str(d) if d else "")
-                        if title:
-                            parts.append(f"{ds}: {title}" if ds else title)
-                    summary = f"Timeline ({len(events)} events): " + " | ".join(parts[:12])
-                    if use_historical:
-                        try:
-                            from shared.domain_registry import schema_to_primary_domain_key
-                            from services.storyline_historical_context_service import (
-                                build_storyline_historical_context,
-                                render_historical_context_for_llm,
-                            )
-
-                            dk = schema_to_primary_domain_key(schema)
-                            hctx = build_storyline_historical_context(dk, sid, conn=conn)
-                            if hctx.get("success"):
-                                hist = render_historical_context_for_llm(hctx, max_chars=2000)
-                                if hist:
-                                    summary = summary + "\n\n" + hist
-                        except Exception as hist_err:
-                            logger.debug("timeline_summary historical_context: %s", hist_err)
-                    if len(summary) > 12000:
-                        summary = summary[:11997] + "..."
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            f"""
-                            UPDATE {schema}.storylines
-                            SET timeline_summary = %s
-                            WHERE id = %s
-                        """,
-                            (summary, sid),
-                        )
-                        conn.commit()
-                    generated_count += 1
-                except Exception as e:
-                    logger.error(
-                        "Timeline generation failed for storyline %s (%s): %s",
-                        sid,
-                        schema,
-                        e,
-                    )
-                finally:
-                    conn.close()
-
-        logger.info(
-            "Timeline summary generation completed: %s storyline summaries from existing "
-            "chronological_events (no event extraction in this phase)",
-            generated_count,
-        )
+        await dispatch_retired_automation_phase(self, "timeline_generation", task)
 
     async def _execute_cache_cleanup(self, task: Task):
         """Execute cache cleanup task"""
@@ -6371,23 +7036,30 @@ class AutomationManager:
             logger.error(f"Error during cache cleanup: {e}")
 
     async def _execute_topic_clustering(self, task: Task):
-        """Execute topic clustering task - continuous iterative refinement with confidence-based stopping"""
+        """Execute topic clustering — bounded SQL selection + parallel batch processing."""
         try:
             logger.info(
-                "🔄 Starting iterative topic clustering task with confidence-based prioritization (v5.0 - all domains)"
+                "Starting topic clustering (parallel batch, topic_clusters SSOT)"
             )
 
-            # Import the topic clustering service
+            from config.settings import (
+                topic_clustering_backlog_uses_pass_marker,
+                topic_clustering_batch_size,
+                topic_clustering_concurrency,
+                topic_clustering_graduation_confidence,
+                topic_clustering_iterative_refinement_enabled,
+            )
             from domains.content_analysis.services.topic_clustering_service import (
                 TopicClusteringService,
+                process_articles_batch,
             )
+            from shared.database.connection import get_db_config, get_db_connection
             from shared.domain_registry import (
                 first_active_domain_key,
                 pipeline_url_schema_pairs,
                 resolve_domain_schema,
             )
 
-            # Pipeline-active silos only (same basis as entity_extraction / backlog_metrics)
             domains = [
                 {"domain_key": dk, "schema_name": schema}
                 for dk, schema in pipeline_url_schema_pairs()
@@ -6397,259 +7069,81 @@ class AutomationManager:
                 logger.warning("No active domains found, defaulting to %s", fb)
                 domains = [{"domain_key": fb, "schema_name": resolve_domain_schema(fb)}]
 
-            # Topic clustering configuration constants
-            try:
-                from config.settings import (
-                    topic_clustering_backlog_uses_pass_marker,
-                    topic_clustering_graduation_confidence,
-                    topic_clustering_iterative_refinement_enabled,
-                )
-
-                CONFIDENCE_THRESHOLD = float(topic_clustering_graduation_confidence())
-                TC_USE_PASS_MARKER = topic_clustering_backlog_uses_pass_marker()
-                TC_ITERATIVE = topic_clustering_iterative_refinement_enabled()
-            except Exception:
-                CONFIDENCE_THRESHOLD = 0.88
-                TC_USE_PASS_MARKER = True
-                TC_ITERATIVE = False
-            LOW_CONFIDENCE_THRESHOLD = 0.7
-            BATCH_SIZE = 20
-            NEW_ARTICLE_COUNT = 8  # 40% of batch size
-            LOW_CONFIDENCE_COUNT = 6  # 30% of batch size
-            MEDIUM_CONFIDENCE_COUNT = 6  # 30% of batch size
-
-            from shared.database.connection import get_db_config
+            CONFIDENCE_THRESHOLD = float(topic_clustering_graduation_confidence())
+            TC_USE_PASS_MARKER = topic_clustering_backlog_uses_pass_marker()
+            TC_ITERATIVE = topic_clustering_iterative_refinement_enabled()
+            BATCH_SIZE = topic_clustering_batch_size()
+            CONCURRENCY = topic_clustering_concurrency()
 
             db_config = get_db_config()
             total_processed = 0
-            total_graduated = 0
+            total_fast_lane = 0
+            total_llm = 0
 
-            # Process each domain
             for domain_info in domains:
                 domain_key = domain_info["domain_key"]
                 schema_name = domain_info.get("schema_name", domain_key.replace("-", "_"))
 
-                logger.info(f"📊 Processing domain: {domain_key} (schema: {schema_name})")
+                logger.info("Topic clustering domain=%s schema=%s", domain_key, schema_name)
 
-                # Initialize topic clustering service for this domain (schema from registry)
                 topic_service = TopicClusteringService(db_config, domain=domain_key)
                 topic_service.schema = schema_name
 
-                if TC_USE_PASS_MARKER and not TC_ITERATIVE:
-                    tc_where = """(pass_at IS NULL OR TRIM(COALESCE(pass_at, '')) = '')"""
-                else:
-                    tc_where = """priority_group != 'high_confidence'"""
-
-                # Process articles incrementally with balanced prioritization
-                conn = await self._get_db_connection()
+                conn = get_db_connection()
                 try:
-                    cursor = conn.cursor()
-                    try:
-                        tc_age_order = sql_order_created_at()
-                        cursor.execute(
-                            f"""
-                            WITH article_confidence AS (
-                                SELECT
-                                    a.id,
-                                    a.title,
-                                    a.created_at,
-                                    COUNT(ata.id) as assignment_count,
-                                    COALESCE(AVG(ata.confidence_score), 0.0) as avg_confidence,
-                                    COALESCE(MIN(ata.confidence_score), 0.0) as min_confidence,
-                                    COALESCE(MAX(ata.confidence_score), 0.0) as max_confidence,
-                                    (a.metadata->'pipeline'->'topic_clustering'->>'last_pass_at') AS pass_at,
-                                    CASE
-                                        WHEN COUNT(ata.id) = 0 THEN 'new'
-                                        WHEN COALESCE(AVG(ata.confidence_score), 0.0) < %s THEN 'low_confidence'
-                                        WHEN COALESCE(AVG(ata.confidence_score), 0.0) < %s THEN 'medium_confidence'
-                                        ELSE 'high_confidence'
-                                    END as priority_group
-                                FROM {schema_name}.articles a
-                                LEFT JOIN {schema_name}.article_topic_assignments ata ON a.id = ata.article_id
-                                WHERE a.content IS NOT NULL
-                                AND LENGTH(a.content) > 100
-                                GROUP BY a.id, a.title, a.created_at,
-                                    (a.metadata->'pipeline'->'topic_clustering'->>'last_pass_at')
-                            )
-                            SELECT
-                                id,
-                                title,
-                                assignment_count,
-                                avg_confidence,
-                                min_confidence,
-                                max_confidence,
-                                priority_group,
-                                pass_at,
-                                created_at
-                            FROM article_confidence
-                            WHERE {tc_where}
-                            ORDER BY
-                                CASE priority_group
-                                    WHEN 'new' THEN 1
-                                    WHEN 'low_confidence' THEN 2
-                                    WHEN 'medium_confidence' THEN 3
-                                END,
-                                avg_confidence ASC,  -- Lower confidence first within each group
-                                created_at {tc_age_order}
-                        """,
-                            (LOW_CONFIDENCE_THRESHOLD, CONFIDENCE_THRESHOLD),
+                    with conn.cursor() as cursor:
+                        article_ids = TopicClusteringService.select_pending_article_ids(
+                            cursor,
+                            schema_name,
+                            batch_size=BATCH_SIZE,
+                            use_pass_marker=TC_USE_PASS_MARKER,
+                            iterative=TC_ITERATIVE,
+                            confidence_threshold=CONFIDENCE_THRESHOLD,
                         )
-                        all_articles = cursor.fetchall()
-                    finally:
-                        cursor.close()
                 finally:
                     conn.close()
 
-                if not all_articles:
-                    logger.info(
-                        f"  ✅ No articles need topic clustering in {domain_key} (all above confidence threshold)"
-                    )
-                    continue
-
-                # Balanced prioritization: Mix of new, low, and medium confidence articles
-                # This ensures we process new articles while refining existing ones
-                new_articles = [a for a in all_articles if a[6] == "new"]
-                low_confidence = [a for a in all_articles if a[6] == "low_confidence"]
-                medium_confidence = [a for a in all_articles if a[6] == "medium_confidence"]
-
-                # Calculate balanced selection (40% new, 30% low, 30% medium)
-                # This mix ensures:
-                # - New articles get started (40%)
-                # - Low confidence articles get refined (30%)
-                # - Medium confidence articles graduate out (30%)
-                target_count = BATCH_SIZE
-                new_count = min(NEW_ARTICLE_COUNT, len(new_articles))  # 40% = 8 articles
-                low_count = min(LOW_CONFIDENCE_COUNT, len(low_confidence))  # 30% = 6 articles
-                medium_count = min(
-                    MEDIUM_CONFIDENCE_COUNT, len(medium_confidence)
-                )  # 30% = 6 articles
-
-                # Select articles from each group
-                selected_articles = []
-                selected_articles.extend(new_articles[:new_count])
-                selected_articles.extend(low_confidence[:low_count])
-                selected_articles.extend(medium_confidence[:medium_count])
-
-                # If we don't have enough, fill from remaining groups
-                # Priority: new > low > medium (to prevent backlog)
-                remaining = target_count - len(selected_articles)
-                if remaining > 0:
-                    # Prioritize new articles first (to prevent backlog)
-                    if len(new_articles) > new_count:
-                        remaining_new = new_articles[new_count : new_count + remaining]
-                        selected_articles.extend(remaining_new)
-                        remaining -= len(remaining_new)
-
-                    # Then low confidence articles
-                    if remaining > 0 and len(low_confidence) > low_count:
-                        remaining_low = low_confidence[low_count : low_count + remaining]
-                        selected_articles.extend(remaining_low)
-                        remaining -= len(remaining_low)
-
-                    # Finally medium confidence articles
-                    if remaining > 0 and len(medium_confidence) > medium_count:
-                        remaining_medium = medium_confidence[
-                            medium_count : medium_count + remaining
-                        ]
-                        selected_articles.extend(remaining_medium)
-
-                article_ids = [a[0] for a in selected_articles]
-
                 if not article_ids:
-                    logger.info(f"  ✅ No articles selected for processing in {domain_key}")
+                    logger.info("No pending topic clustering articles in %s", domain_key)
                     continue
 
                 logger.info(
-                    f"  📊 Balanced selection: {len(new_articles[:new_count])} new, "
-                    f"{len(low_confidence[:low_count])} low confidence, "
-                    f"{len(medium_confidence[:medium_count])} medium confidence "
-                    f"({len(article_ids)} total)"
+                    "Selected %s articles (batch=%s concurrency=%s)",
+                    len(article_ids),
+                    BATCH_SIZE,
+                    CONCURRENCY,
                 )
 
-                processed_count = 0
-                graduated_count = 0
-                topics_created = 0
-                topics_assigned = 0
-
-                # Process articles one by one for iterative refinement
-                for article_data in selected_articles:
-                    article_id = article_data[0]
-                    current_avg_confidence = float(article_data[3]) if article_data[3] else 0.0
-                    article_data[6]
-
-                    try:
-                        # Skip if already above threshold (safety check)
-                        if current_avg_confidence >= CONFIDENCE_THRESHOLD:
-                            logger.debug(
-                                f"  Article {article_id} already above threshold ({current_avg_confidence:.2f}), skipping"
-                            )
-                            continue
-
-                        result = await topic_service.process_article(article_id)
-
-                        if result.get("success"):
-                            processed_count += 1
-                            topics_created += len(result.get("created_topics", []))
-                            topics_assigned += result.get("total_assigned", 0)
-
-                            # Check if article graduated (above threshold)
-                            # Re-check confidence after processing
-                            conn_check = await self._get_db_connection()
-                            cursor_check = conn_check.cursor()
-                            cursor_check.execute(
-                                f"""
-                                SELECT COALESCE(AVG(confidence_score), 0.0) as avg_confidence
-                                FROM {schema_name}.article_topic_assignments
-                                WHERE article_id = %s
-                            """,
-                                (article_id,),
-                            )
-                            result_row = cursor_check.fetchone()
-                            new_confidence = (
-                                float(result_row[0]) if result_row and result_row[0] else 0.0
-                            )
-                            cursor_check.close()
-                            conn_check.close()
-
-                            if new_confidence >= CONFIDENCE_THRESHOLD:
-                                graduated_count += 1
-                                logger.info(
-                                    f"  ✅ Article {article_id} graduated: "
-                                    f"{current_avg_confidence:.2f} → {new_confidence:.2f}"
-                                )
-
-                            if processed_count % 5 == 0:
-                                logger.info(
-                                    f"  Processed {processed_count}/{len(article_ids)} articles "
-                                    f"({graduated_count} graduated)..."
-                                )
-                        else:
-                            logger.warning(
-                                f"  Failed to process article {article_id}: {result.get('error')}"
-                            )
-
-                    except Exception as e:
-                        logger.error(f"  Error processing article {article_id}: {e}")
-                        continue
+                batch_result = await process_articles_batch(
+                    topic_service,
+                    article_ids,
+                    concurrency=CONCURRENCY,
+                )
 
                 logger.info(
-                    f"  ✅ {domain_key} domain: {processed_count} articles processed, "
-                    f"{graduated_count} articles graduated (≥{CONFIDENCE_THRESHOLD}), "
-                    f"{topics_assigned} topic assignments made, "
-                    f"{topics_created} new topics created"
+                    "  %s: processed=%s failed=%s fast_lane=%s llm=%s assigned=%s created=%s",
+                    domain_key,
+                    batch_result.processed,
+                    batch_result.failed,
+                    batch_result.fast_lane_hits,
+                    batch_result.llm_extractions,
+                    batch_result.topics_assigned,
+                    batch_result.topics_created,
                 )
 
-                total_processed += processed_count
-                total_graduated += graduated_count
+                total_processed += batch_result.processed
+                total_fast_lane += batch_result.fast_lane_hits
+                total_llm += batch_result.llm_extractions
 
             logger.info(
-                f"✅ Topic clustering cycle completed across all domains: "
-                f"{total_processed} articles processed, "
-                f"{total_graduated} articles graduated (≥{CONFIDENCE_THRESHOLD})"
+                "Topic clustering cycle done: processed=%s fast_lane=%s llm=%s",
+                total_processed,
+                total_fast_lane,
+                total_llm,
             )
 
         except Exception as e:
-            logger.error(f"❌ Error during topic clustering: {e}", exc_info=True)
+            logger.error(f"Error during topic clustering: {e}", exc_info=True)
 
     async def _get_db_connection(self):
         """Get database connection from shared pool. Runs in executor to avoid blocking the event loop."""
@@ -6658,245 +7152,57 @@ class AutomationManager:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, get_db_connection)
 
-    def _watchdog_required_phases(self) -> list[str]:
-        """Flatten analysis pipeline steps and add document_processing for the 60-minute watchdog."""
-        phases: list[str] = []
-        for step in ANALYSIS_PIPELINE_STEPS:
-            phases.extend(step)
-        if "document_processing" not in phases:
-            phases.append("document_processing")
-        if "content_enrichment" not in phases:
-            phases.append("content_enrichment")
-        return phases
+    def _sql_measurable_runs_last_60m_by_phase(self) -> dict[str, int]:
+        """DB-backed runs_1h counts — same predicate as processing_progress (survives API restart)."""
+        import time
 
-    async def _run_collection_watchdog(self, collection_started_at: datetime) -> None:
-        """
-        Run once 60 minutes after collection_cycle started. Check each required phase: if it has not
-        run since collection started and (has pending work or we can't tell), request_phase so it
-        gets added to the queue. No gating of the next collection_cycle.
-        """
+        now = time.monotonic()
+        cached = self._measurable_runs_60m_sql_cache
+        if now - float(cached.get("at") or 0) < 60.0 and isinstance(cached.get("counts"), dict):
+            return cached["counts"]
+        counts: dict[str, int] = {}
         try:
-            await asyncio.sleep(WATCHDOG_SECONDS)
-        except asyncio.CancelledError:
-            return
-        if not self.is_running:
-            return
-        required = self._watchdog_required_phases()
-        pending_counts: dict[str, int] = {}
-        if get_all_pending_counts:
-            try:
-                pending_counts = get_all_pending_counts()
-            except Exception as e:
-                logger.debug("Watchdog get_all_pending_counts: %s", e)
-        requested: list[str] = []
-        for phase_name in required:
-            schedule = self.schedules.get(phase_name)
-            if not schedule or not schedule.get("enabled", True):
-                continue
-            try:
-                from config.context_centric_config import is_context_centric_task_enabled
+            from shared.database.connection import get_ui_db_connection_context
+            from shared.monitor_run_vocabulary import MEANINGFUL_DURATION_SEC, run_history_measurable_sql
 
-                if not is_context_centric_task_enabled(phase_name):
-                    continue
-            except Exception:
-                pass
-            # Watchdog lists every pipeline phase; nightly_enrichment_context must not be
-            # request_phase'd outside the clock window (scheduler already gates scheduled runs).
-            if phase_name == "nightly_enrichment_context":
-                try:
-                    from services.nightly_ingest_window_service import (
-                        in_nightly_pipeline_window_est,
-                    )
-
-                    if not in_nightly_pipeline_window_est():
-                        continue
-                except Exception:
-                    continue
-            last_run = schedule.get("last_run") or self._last_completed_at_by_phase.get(phase_name)
-            if last_run and collection_started_at and last_run >= collection_started_at:
-                continue
-            has_work = (pending_counts.get(phase_name) or 0) > 0
-            if not has_work and phase_name in BATCH_PHASES_CONTINUOUS:
-                has_work = await self._has_pending_work(phase_name)
-            if (
-                not has_work
-                and phase_name not in pending_counts
-                and phase_name not in BATCH_PHASES_CONTINUOUS
-            ):
-                has_work = True
-            if has_work:
-                try:
-                    self.request_phase(phase_name)
-                    requested.append(phase_name)
-                except Exception as e:
-                    logger.debug("Watchdog request_phase %s: %s", phase_name, e)
-        if requested:
-            logger.info("Collection watchdog: requested phases (add to queue) %s", requested)
-
-    async def _has_pending_work(self, phase_name: str) -> bool:
-        """Quick check: is there still work for this phase in any domain? Used to re-enqueue for continuous run."""
-        if phase_name not in BATCH_PHASES_CONTINUOUS:
-            return False
-        try:
-            conn = await self._get_db_connection()
-            if not conn:
-                return False
-            cur = conn.cursor()
-            try:
-                if phase_name == "content_enrichment":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.articles
-                                WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
-                                  AND COALESCE(enrichment_attempts, 0) < 3
-                                  AND url IS NOT NULL AND url != ''
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "ml_processing":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.articles
-                                WHERE ml_processed = FALSE AND content IS NOT NULL AND LENGTH(content) > 100
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "entity_extraction":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.articles
-                                WHERE (entities IS NULL OR entities = '{{}}') AND content IS NOT NULL AND LENGTH(content) > 100
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "sentiment_analysis":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.articles
-                                WHERE sentiment_score IS NULL AND content IS NOT NULL AND LENGTH(content) > 50
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "storyline_processing":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.storylines s
-                                WHERE s.status = 'active'
-                                  AND EXISTS (
-                                      SELECT 1 FROM {schema}.storyline_articles sa
-                                      WHERE sa.storyline_id = s.id
-                                  )
-                                  AND LENGTH(
-                                      TRIM(
-                                          COALESCE(s.analysis_summary, '')
-                                          || COALESCE(s.master_summary, '')
-                                      )
-                                  ) < 100
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "rag_enhancement":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.storylines
-                                WHERE rag_enhanced_at IS NULL
-                                   OR rag_enhanced_at < CURRENT_TIMESTAMP - INTERVAL '1 hour'
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "storyline_automation":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.storylines
-                                WHERE automation_enabled = true
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "entity_profile_build":
+            measurable = run_history_measurable_sql()
+            with get_ui_db_connection_context() as conn:
+                with conn.cursor() as cur:
                     cur.execute(
-                        """
-                        SELECT 1 FROM intelligence.entity_profiles ep
-                        WHERE (ep.sections IS NULL OR ep.sections::text IN ('[]', '{}', 'null'))
-                        AND EXISTS (
-                            SELECT 1 FROM intelligence.context_entity_mentions cem
-                            WHERE cem.entity_profile_id = ep.id
-                        )
-                        LIMIT 1
-                        """
+                        f"""
+                        SELECT phase_name, COUNT(*)::int
+                        FROM automation_run_history
+                        WHERE finished_at >= NOW() - INTERVAL '1 hour'
+                          AND {measurable}
+                        GROUP BY phase_name
+                        """,
+                        {"min_dur": MEANINGFUL_DURATION_SEC},
                     )
-                    if cur.fetchone():
-                        return True
-                elif phase_name == "quality_scoring":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.articles
-                                WHERE quality_score IS NULL AND content IS NOT NULL AND LENGTH(content) > 100
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "timeline_generation":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.storylines
-                                WHERE timeline_summary IS NULL OR LENGTH(timeline_summary) < 100
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "topic_clustering":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.articles a
-                                WHERE a.content IS NOT NULL AND LENGTH(a.content) > 100
-                                AND NOT EXISTS (
-                                    SELECT 1 FROM {schema}.article_topic_assignments ata
-                                    WHERE ata.article_id = a.id
-                                )
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "event_extraction":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.articles
-                                WHERE processing_status = 'completed' AND timeline_processed = false
-                                AND content IS NOT NULL AND LENGTH(content) > 100
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "content_refinement_queue":
-                    from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
-
-                    if in_nightly_pipeline_window_est():
-                        return False
-                    cur.execute(
-                        """
-                        SELECT 1 FROM intelligence.content_refinement_queue
-                        WHERE status = 'pending'
-                        LIMIT 1
-                        """
-                    )
-                    if cur.fetchone():
-                        return True
-            finally:
-                cur.close()
-                conn.close()
+                    for name, cnt in cur.fetchall() or []:
+                        if name:
+                            counts[str(name)] = int(cnt or 0)
         except Exception as e:
-            logger.debug("_has_pending_work %s: %s", phase_name, e)
-        return False
+            logger.debug("sql measurable runs 60m: %s", e)
+            prev = cached.get("counts")
+            return prev if isinstance(prev, dict) else {}
+        self._measurable_runs_60m_sql_cache = {"at": now, "counts": counts}
+        return counts
 
-    def get_status(self) -> dict[str, Any]:
-        """Get automation status. Includes backlog_counts when backlog_metrics is available."""
+    def _merged_runs_last_60m_by_phase(self) -> dict[str, int]:
+        """max(in-memory live counter, SQL measurable) — aligned with processing_progress runs_1h."""
+        in_mem = {k: len(dq) for k, dq in self._phase_run_times_last_60m.items() if dq}
+        sql = self._sql_measurable_runs_last_60m_by_phase()
+        merged = dict(sql)
+        for phase, count in in_mem.items():
+            merged[phase] = max(int(merged.get(phase, 0)), int(count))
+        return merged
+
+    def get_status(self, *, include_pending: bool = True) -> dict[str, Any]:
+        """Get automation status.
+
+        ``include_pending=False`` skips live backlog SQL (use for Monitor HTTP) so the
+        UI DB/worker pools are not blocked for 30–200s on every 15s poll.
+        """
         phase_active = (
             sum(1 for t in self._phase_worker_tasks if not t.done())
             if self._phase_worker_tasks
@@ -6923,7 +7229,13 @@ class AutomationManager:
             "schedules": self.schedules,
             "recent_tasks": list(self.tasks.values())[-10:],  # Last 10 tasks
         }
-        # Per-phase queue/run metrics for monitoring timeline:
+        ctrl = getattr(self, "pipeline_controller", None)
+        if ctrl is not None:
+            out["controller_state"] = ctrl.get_state()
+            out["controller_state"]["queue_depth"] = self._automation_queue_depth()
+        else:
+            out["controller_state"] = None
+        # Per-phase queue/run metrics
         # - queued_tasks_by_phase: tasks currently enqueued (not yet executing)
         # - active_tasks_by_phase: tasks currently executing (workers)
         # - runs_last_60m_by_phase: how many phase runs completed in the last 60 minutes
@@ -6960,9 +7272,7 @@ class AutomationManager:
         except Exception:
             out["active_tasks_by_phase"] = {}
         try:
-            out["runs_last_60m_by_phase"] = {
-                k: len(dq) for k, dq in self._phase_run_times_last_60m.items()
-            }
+            out["runs_last_60m_by_phase"] = self._merged_runs_last_60m_by_phase()
         except Exception:
             out["runs_last_60m_by_phase"] = {}
         try:
@@ -6977,16 +7287,36 @@ class AutomationManager:
             }
         except Exception:
             out["runs_last_60m_by_lane"] = {}
-        if get_all_backlog_counts:
+        if include_pending:
+            if get_all_backlog_counts:
+                try:
+                    out["backlog_counts"] = get_all_backlog_counts()
+                except Exception:
+                    pass
+            if get_all_pending_counts:
+                try:
+                    out["pending_counts"] = get_all_pending_counts()
+                except Exception:
+                    pass
+        else:
+            # Prefer precomputed Monitor snapshot — never block HTTP on live COUNTs.
             try:
-                out["backlog_counts"] = get_all_backlog_counts()
+                from services.monitor_backlog_snapshot_service import (
+                    read_monitor_backlog_snapshot,
+                )
+
+                snap = read_monitor_backlog_snapshot(allow_stale=True) or {}
+                out["pending_counts"] = dict(
+                    snap.get("queue_depths") or snap.get("pending") or {}
+                )
+                out["backlog_counts"] = dict(
+                    snap.get("scheduling_backlog") or snap.get("backlog") or {}
+                )
+                out["pending_source"] = "monitor_backlog_snapshot"
             except Exception:
-                pass
-        if get_all_pending_counts:
-            try:
-                out["pending_counts"] = get_all_pending_counts()
-            except Exception:
-                pass
+                out["pending_counts"] = {}
+                out["backlog_counts"] = {}
+                out["pending_source"] = "unavailable"
         try:
             from services.document_pipeline_metrics import get_document_pipeline_metrics
 
@@ -6994,62 +7324,32 @@ class AutomationManager:
         except Exception:
             out["document_pipeline"] = {"error": "unavailable"}
         try:
-            from services.workload_balancer import (
-                sample_effective_cooldowns,
-                workload_balancer_enabled,
-                workload_balancer_phase_names,
-            )
+            from shared.database.connection import get_db_pool_snapshot
 
-            pend = out.get("pending_counts") or {}
-            out["work_balancer"] = {
-                "enabled": workload_balancer_enabled(),
-                "phases": sorted(workload_balancer_phase_names()),
-                "base_cooldown_seconds": WORKLOAD_MIN_COOLDOWN,
-                "effective_cooldown_seconds": sample_effective_cooldowns(
-                    pend,
-                    base_cooldown=WORKLOAD_MIN_COOLDOWN,
-                ),
-            }
+            out["db_pools"] = get_db_pool_snapshot()
         except Exception:
-            out["work_balancer"] = {"enabled": False, "error": "unavailable"}
-        rr: dict[str, Any] = {
-            "enabled": AUTOMATION_DYNAMIC_RESOURCE_ROUTING_ENABLED,
-            "headroom": self._resource_headroom or {},
-            "thresholds": {
-                "gpu_saturated_headroom": ROUTER_GPU_SATURATED_HEADROOM,
-                "gpu_extra_headroom": ROUTER_GPU_EXTRA_HEADROOM,
-                "cpu_hot_headroom": ROUTER_CPU_HOT_HEADROOM,
-                "cpu_extra_headroom": ROUTER_CPU_EXTRA_HEADROOM,
-                "db_pressure_headroom": ROUTER_DB_PRESSURE_HEADROOM,
-                "db_extra_headroom": ROUTER_DB_EXTRA_HEADROOM,
-            },
-            "phase_lane_defaults": {
-                "gpu": sorted(GPU_LANE_PHASES),
-                "cpu": sorted([k for k in self.schedules.keys() if k not in GPU_LANE_PHASES]),
-            },
-            "structured_llm_cpu_phases": sorted(STRUCTURED_LLM_CPU_LANE_PHASES),
-            "resource_classes": {
-                "db_heavy": sorted(DB_HEAVY_PHASES),
-            },
-        }
+            out["db_pools"] = {"error": "unavailable"}
+        try:
+            ctrl = getattr(self, "pipeline_controller", None)
+            out["pipeline_controller"] = ctrl.get_state() if ctrl is not None else {"active": False}
+        except Exception:
+            out["pipeline_controller"] = {"error": "unavailable"}
         try:
             from shared.services.llm_service import llm_service as _ls
 
-            rr["llm_endpoints"] = {
+            out["llm_routing"] = {
                 "dual_host_enabled": bool(_ls.dual_host_enabled),
-                "default_base_url": _ls.ollama_base_url,
                 "cpu_base_url": _ls.ollama_cpu_host,
                 "gpu_base_url": _ls.ollama_gpu_host,
-                "cpu_concurrency_cap": max(
-                    1, int(os.environ.get("OLLAMA_CPU_CONCURRENCY", "6"))
-                ),
-                "gpu_concurrency_cap": max(
-                    1, int(os.environ.get("OLLAMA_GPU_CONCURRENCY", "6"))
-                ),
             }
         except Exception as e:
-            rr["llm_endpoints"] = {"error": str(e)}
-        out["resource_router"] = rr
+            out["llm_routing"] = {"error": str(e)}
+        try:
+            from shared.pipeline_queue_vocabulary import add_automation_status_aliases
+
+            out = add_automation_status_aliases(out)
+        except Exception:
+            pass
         return out
 
     def get_metrics(self) -> dict[str, Any]:
@@ -7070,6 +7370,56 @@ class AutomationManager:
                 ),
             },
         }
+
+    def get_orchestrator_snapshot(self, *, include_pending: bool = True) -> dict[str, Any]:
+        """Lightweight status for OrchestratorCoordinator (avoids full get_status DB work)."""
+        from collections import Counter
+
+        queued_counter: Counter[str] = Counter()
+        for q in (self.task_queue, self._requested_task_queue):
+            try:
+                internal = getattr(q, "_queue", None)
+                if internal is not None:
+                    for item in list(internal):
+                        t = item[2] if isinstance(item, tuple) and len(item) >= 3 else item
+                        if hasattr(t, "name"):
+                            queued_counter.update([t.name])
+            except Exception:
+                pass
+        pending: dict[str, int] = {}
+        if include_pending:
+            try:
+                from services.backlog_metrics import get_all_pending_counts
+
+                pending = get_all_pending_counts()
+            except Exception:
+                pass
+        snapshot: dict[str, Any] = {
+            "pending_counts": pending,
+            "active_tasks_by_phase": {
+                k: int(v)
+                for k, v in self._running_tasks_by_phase.items()
+                if int(v or 0) > 0
+            },
+            "queued_tasks_by_phase": dict(queued_counter),
+            "schedules": {
+                name: {
+                    "last_run": sched.get("last_run"),
+                    "estimated_duration": sched.get("estimated_duration", 60),
+                }
+                for name, sched in self.schedules.items()
+            },
+            "metrics": {
+                "processing_history": (self.metrics.get("processing_history") or {}),
+            },
+        }
+        try:
+            from services.pipeline_conductor_service import conductor_pipeline_modes
+
+            snapshot["pipeline_conductor"] = conductor_pipeline_modes()
+        except Exception:
+            pass
+        return snapshot
 
 
 # Global instance

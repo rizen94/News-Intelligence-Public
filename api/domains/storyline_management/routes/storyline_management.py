@@ -14,12 +14,15 @@ from shared.database.connection import get_db_connection
 from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
 from shared.services.domain_aware_service import validate_domain
 from shared.services.llm_service import llm_service
+from shared.storyline_article_counts import storyline_article_count_subquery, sync_counts_update_sql
 
 from ..services.proactive_detection_service import ProactiveDetectionService
 from ..services.quality_assessment_service import QualityAssessmentService
 from ..services.rag_analysis_service import RAGAnalysisService
 from ..services.storyline_service import StorylineService
 from services.article_content_enrichment_service import format_article_content_excerpt
+from services.storyline_coherence_guardrails import sanitize_storyline_title_for_display
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -125,9 +128,10 @@ async def get_domain_storylines(
                 total = cur.fetchone()[0]
 
                 # Get paginated storylines
+                ac_sub = storyline_article_count_subquery(schema, "s")
                 query = f"""
                     SELECT s.id, s.title, s.description, s.created_at, s.updated_at,
-                           s.status, s.article_count, s.document_status,
+                           s.status, {ac_sub} AS article_count, s.document_status,
                            s.editorial_document->>'lede' as editorial_lede,
                            (SELECT MAX(sa.added_at) FROM {schema}.storyline_articles sa
                             WHERE sa.storyline_id = s.id) AS last_article_added_at
@@ -144,10 +148,14 @@ async def get_domain_storylines(
                 storylines = []
                 for row in cur.fetchall():
                     laa = row[9] if len(row) > 9 else None
+                    raw_title = row[1]
+                    display_title = sanitize_storyline_title_for_display(
+                        raw_title, fallback=f"Storyline #{row[0]}"
+                    )
                     storylines.append(
                         {
                             "id": row[0],
-                            "title": row[1],
+                            "title": display_title,
                             "description": row[2],
                             "created_at": row[3].isoformat() if row[3] else None,
                             "updated_at": row[4].isoformat() if row[4] else None,
@@ -245,16 +253,14 @@ async def update_domain_storyline(
                     f"""
                     UPDATE {schema}.storylines
                     SET title = %s, description = %s, updated_at = %s,
-                        article_count = (
-                            SELECT COUNT(*) FROM {schema}.storyline_articles
-                            WHERE storyline_id = %s
-                        )
+                        {sync_counts_update_sql(schema)}
                     WHERE id = %s
                 """,
                     (
                         storyline_data.get("title"),
                         storyline_data.get("description", ""),
                         datetime.now(),
+                        storyline_id,
                         storyline_id,
                         storyline_id,
                     ),
@@ -388,14 +394,11 @@ async def remove_article_from_domain_storyline(
                 cur.execute(
                     f"""
                     UPDATE {schema}.storylines
-                    SET article_count = (
-                        SELECT COUNT(*) FROM {schema}.storyline_articles
-                        WHERE storyline_id = %s
-                    ),
+                    SET {sync_counts_update_sql(schema)},
                     updated_at = %s
                     WHERE id = %s
                 """,
-                    (storyline_id, datetime.now(), storyline_id),
+                    (storyline_id, storyline_id, datetime.now(), storyline_id),
                 )
 
                 conn.commit()
@@ -469,32 +472,33 @@ async def add_article_to_domain_storyline(
                 if cur.fetchone():
                     raise HTTPException(status_code=400, detail="Article already in storyline")
 
-                # Add the article to the storyline in domain schema
-                cur.execute(
-                    f"""
-                    INSERT INTO {schema}.storyline_articles (storyline_id, article_id, added_at, relevance_score)
-                    VALUES (%s, %s, %s, %s)
-                """,
-                    (
-                        storyline_id,
-                        article_id,
-                        datetime.now(),
-                        request.get("relevance_score", 0.5) if request else 0.5,
-                    ),
+                from shared.membership_store import MembershipIntent, admit as membership_admit
+
+                ok, reason = membership_admit(
+                    conn,
+                    domain_key=domain,
+                    schema=schema,
+                    episode_id=int(storyline_id),
+                    article_id=int(article_id),
+                    intent=MembershipIntent.API_MANUAL,
+                    blend_score=float(request.get("relevance_score", 0.5) if request else 0.5),
+                    added_by="storyline_management_api",
                 )
+                if not ok:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Could not add article to storyline: {reason}",
+                    )
 
                 # Update article count in domain schema
                 cur.execute(
                     f"""
                     UPDATE {schema}.storylines
-                    SET article_count = (
-                        SELECT COUNT(*) FROM {schema}.storyline_articles
-                        WHERE storyline_id = %s
-                    ),
+                    SET {sync_counts_update_sql(schema)},
                     updated_at = %s
                     WHERE id = %s
                 """,
-                    (storyline_id, datetime.now(), storyline_id),
+                    (storyline_id, storyline_id, datetime.now(), storyline_id),
                 )
 
                 conn.commit()
@@ -673,12 +677,17 @@ async def get_domain_storyline(
                 laa_r = cur.fetchone()
                 last_article_added_at = laa_r[0] if laa_r and laa_r[0] else None
 
+                raw_title = storyline[1]
+                display_title = sanitize_storyline_title_for_display(
+                    raw_title, fallback=f"Storyline #{storyline[0]}"
+                )
+
                 return {
                     "success": True,
                     "data": {
                         "storyline": {
                             "id": storyline[0],
-                            "title": storyline[1],
+                            "title": display_title,
                             "description": storyline[2],
                             "created_at": storyline[3].isoformat() if storyline[3] else None,
                             "updated_at": storyline[4].isoformat() if storyline[4] else None,
@@ -742,29 +751,34 @@ async def add_article_to_domain_storyline_by_id(
                 if not cur.fetchone():
                     raise HTTPException(status_code=404, detail="Article not found")
 
-                # Add article to storyline in domain schema
-                cur.execute(
-                    f"""
-                    INSERT INTO {schema}.storyline_articles (storyline_id, article_id, added_at)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (storyline_id, article_id) DO NOTHING
-                """,
-                    (storyline_id, article_id, datetime.now()),
+                from shared.membership_store import MembershipIntent, admit as membership_admit
+
+                ok, reason = membership_admit(
+                    conn,
+                    domain_key=domain,
+                    schema=schema,
+                    episode_id=int(storyline_id),
+                    article_id=int(article_id),
+                    intent=MembershipIntent.API_MANUAL,
+                    blend_score=0.5,
+                    added_by="storyline_management_api",
                 )
-                inserted = cur.rowcount > 0
+                inserted = ok
+                if not ok:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Could not add article to storyline: {reason}",
+                    )
 
                 if inserted:
                     cur.execute(
                         f"""
                         UPDATE {schema}.storylines
-                        SET article_count = (
-                            SELECT COUNT(*) FROM {schema}.storyline_articles
-                            WHERE storyline_id = %s
-                        ),
+                        SET {sync_counts_update_sql(schema)},
                         updated_at = %s
                         WHERE id = %s
                         """,
-                        (storyline_id, datetime.now(), storyline_id),
+                        (storyline_id, storyline_id, datetime.now(), storyline_id),
                     )
 
                 conn.commit()
@@ -1417,9 +1431,9 @@ def load_rag_analysis_inputs_for_queue(
                 (storyline_id,),
             )
             articles = cur.fetchall()
-            if not articles:
-                return None
-            return (storyline, articles)
+            # Allow empty membership — callers may write a title-focused stub
+            # instead of failing when a polluted summary needs clearing.
+            return (storyline, list(articles or []))
     finally:
         conn.close()
 
@@ -1431,26 +1445,212 @@ async def process_storyline_rag_analysis(
     try:
         from shared.database.connection import get_db_connection
         from shared.services.llm_service import llm_service
+        from services.storyline_core_prune_service import (
+            filter_articles_for_keeper_evidence,
+            narrative_body_looks_polluted,
+            should_use_keeper_only_evidence,
+        )
 
         schema = resolve_domain_schema(domain)
         title, description, current_summary = storyline
 
+        # Optional: load relationship_type + SEI for keeper filtering
+        member_meta: dict[int, dict] = {}
+        sei: set[str] = set()
+        conn_meta = get_db_connection()
+        if conn_meta:
+            try:
+                with conn_meta.cursor() as cur:
+                    cur.execute(
+                        f"""
+                        SELECT sa.article_id,
+                               COALESCE(sa.relationship_type, ''),
+                               COALESCE(sa.relevance_score, 0)
+                        FROM {schema}.storyline_articles sa
+                        WHERE sa.storyline_id = %s
+                        """,
+                        (storyline_id,),
+                    )
+                    for aid, rel, rel_score in cur.fetchall():
+                        member_meta[int(aid)] = {
+                            "relationship_type": rel or "",
+                            "relevance": float(rel_score or 0),
+                        }
+                    try:
+                        cur.execute(
+                            f"""
+                            SELECT entity_name FROM {schema}.story_entity_index
+                            WHERE storyline_id = %s
+                            ORDER BY mention_count DESC NULLS LAST
+                            LIMIT 40
+                            """,
+                            (storyline_id,),
+                        )
+                        sei = {str(r[0]).lower() for r in cur.fetchall() if r and r[0]}
+                    except Exception:
+                        sei = set()
+            finally:
+                conn_meta.close()
+
+        article_dicts = []
+        for article in articles:
+            aid = int(article[0])
+            meta = member_meta.get(aid, {})
+            article_dicts.append(
+                {
+                    "id": aid,
+                    "title": article[1] or "",
+                    "entities": set(),
+                    "relevance": meta.get("relevance"),
+                    "relationship_type": meta.get("relationship_type") or "",
+                    "_tuple": article,
+                }
+            )
+        prefer = False
+        try:
+            from services.storyline_core_prune_service import narrative_body_looks_polluted as _poll
+
+            prefer = _poll(current_summary or "") or should_use_keeper_only_evidence(
+                title=title or "", summary=current_summary or ""
+            )
+        except Exception:
+            prefer = should_use_keeper_only_evidence(
+                title=title or "", summary=current_summary or ""
+            )
+
+        filtered = filter_articles_for_keeper_evidence(
+            storyline_title=title or "",
+            storyline_summary=current_summary or "",
+            articles=article_dicts,
+            sei_entities=sei,
+            prefer_regenerate_from_keepers=prefer,
+        )
+        if filtered:
+            articles = [a["_tuple"] for a in filtered if a.get("_tuple")]
+        elif prefer and article_dicts:
+            # Fall back to top relevance members instead of empty evidence
+            ranked = sorted(
+                article_dicts,
+                key=lambda a: float(a.get("relevance") or 0),
+                reverse=True,
+            )[:8]
+            articles = [a["_tuple"] for a in ranked if a.get("_tuple")]
+            logger.warning(
+                "RAG analysis storyline=%s domain=%s: keeper-only kept 0; "
+                "fallback top-%s by relevance",
+                storyline_id,
+                domain,
+                len(articles),
+            )
+        # Hard cap — large bags push 8B into meta "collection of articles" dumps
+        _EVIDENCE_CAP = 8
+        if len(articles) > _EVIDENCE_CAP:
+            articles = articles[:_EVIDENCE_CAP]
+
         # Build context from articles
-        context_parts = [f"Storyline: {title}"]
+        context_parts = [
+            f"Storyline title (ANCHOR — analysis must stay on this): {title}",
+        ]
         if description:
             context_parts.append(f"Description: {description}")
 
-        context_parts.append("\nArticles in storyline:")
-        for article in articles:
-            # articles tuple format: (id, title, content, summary, published_at, source_domain, url)
-            article_id, article_title, content, summary, published_at, source, url = article
-            context_parts.append(f"\n- {article_title} ({source}, {published_at})")
-            if summary:
-                context_parts.append(f"  Summary: {summary}")
-            else:
-                context_parts.append(f"  Content: {content[:500]}...")
+        if articles:
+            context_parts.append("\nArticles in storyline (evidence for THIS title only):")
+            for article in articles:
+                article_id, article_title, content, summary, published_at, source, url = article
+                context_parts.append(f"\n- {article_title} ({source}, {published_at})")
+                if summary:
+                    context_parts.append(f"  Summary: {summary}")
+                else:
+                    context_parts.append(f"  Content: {content[:500]}...")
+        else:
+            context_parts.append(
+                "\nNo on-title article evidence available after keeper filter. "
+                "Write a short note that the storyline title lacks matching members; "
+                "do NOT invent a global news roundup."
+            )
+
+        # Skip Wikipedia/GDELT for mega/shell/keeper-only — it triggers meta dumps
+        include_external = bool(articles) and not prefer
+        if include_external:
+            try:
+                from services.storyline_rag_context_service import (
+                    ensure_storyline_rag_context,
+                    render_rag_context_for_llm,
+                )
+
+                rag_data = await ensure_storyline_rag_context(domain, storyline_id)
+                external_block = render_rag_context_for_llm(rag_data, max_chars=2000)
+                if external_block:
+                    context_parts.append("\n## External context (Wikipedia/GDELT)")
+                    context_parts.append(external_block)
+            except Exception as rag_err:
+                logger.debug("process_storyline_rag_analysis external RAG skip: %s", rag_err)
 
         storyline_context = "\n".join(context_parts)
+
+        # Empty membership: do not invent a kitchen-sink roundup via LLM
+        if not articles:
+            stub = (
+                f"Title-focused brief for “{title}”: "
+                f"no linked articles remain on this storyline. "
+                f"Re-attach on-title members or retire the shell."
+            )
+            conn = get_db_connection()
+            if conn:
+                try:
+                    import json as _json
+
+                    with conn.cursor() as cur:
+                        cur.execute(f"SET search_path TO {schema}, public")
+                        editorial_doc = {
+                            "lede": stub[:300],
+                            "developments": [],
+                            "analysis": stub,
+                            "outlook": "",
+                            "key_entities": [],
+                            "sources": [],
+                            "generated_at": datetime.now().isoformat(),
+                            "based_on_articles": [],
+                            "keeper_only": bool(prefer),
+                            "empty_membership_stub": True,
+                        }
+                        cur.execute(
+                            f"""
+                            UPDATE {schema}.storylines
+                            SET analysis_summary = %s,
+                                quality_score = COALESCE(quality_score, %s),
+                                ml_processing_status = 'completed',
+                                processing_status = 'completed',
+                                editorial_document = %s,
+                                document_version = COALESCE(document_version, 0) + 1,
+                                document_status = 'rag_analyzed',
+                                last_refinement = %s
+                            WHERE id = %s
+                            """,
+                            (
+                                stub,
+                                0.50,
+                                _json.dumps(editorial_doc),
+                                datetime.now(),
+                                storyline_id,
+                            ),
+                        )
+                        conn.commit()
+                        logger.info(
+                            "Wrote empty-membership stub for storyline %s",
+                            storyline_id,
+                        )
+                except Exception as e:
+                    logger.error(
+                        "Error writing empty-membership stub for %s: %s",
+                        storyline_id,
+                        e,
+                        exc_info=True,
+                    )
+                finally:
+                    conn.close()
+            return
 
         # Generate comprehensive analysis using LLM
         analysis_result = await llm_service.generate_storyline_analysis(storyline_context)
@@ -1465,6 +1665,24 @@ async def process_storyline_rag_analysis(
                         cur.execute(f"SET search_path TO {schema}, public")
 
                         analysis_text = analysis_result["analysis"]
+                        rejected_polluted = False
+                        # Refuse to persist another kitchen-sink global blob for a specific title
+                        if analysis_text and narrative_body_looks_polluted(analysis_text):
+                            if should_use_keeper_only_evidence(
+                                title=title or "", summary=current_summary or ""
+                            ) or (title and not str(title).lower().startswith("global")):
+                                rejected_polluted = True
+                                logger.warning(
+                                    "RAG analysis rejected polluted global-frame body for "
+                                    "storyline=%s title=%r",
+                                    storyline_id,
+                                    (title or "")[:80],
+                                )
+                                analysis_text = (
+                                    f"Title-focused brief for “{title}”: "
+                                    f"automated analysis could not produce a clean narrative "
+                                    f"from current members. Review membership or re-run after prune."
+                                )
 
                         # Build editorial_document from the RAG analysis
                         import json as _json
@@ -1478,14 +1696,18 @@ async def process_storyline_rag_analysis(
                             "sources": list(set(a[5] for a in articles if len(a) > 5 and a[5])),
                             "generated_at": datetime.now().isoformat(),
                             "based_on_articles": [a[0] for a in articles if a[0]],
+                            "keeper_only": bool(prefer),
                         }
 
+                        # Preserve non-null discovery quality; only fill default when missing.
+                        # Mirror processing_status so explorers don't treat create-flag as pipeline stuck.
                         cur.execute(
                             f"""
                             UPDATE {schema}.storylines
                             SET analysis_summary = %s,
-                                quality_score = %s,
+                                quality_score = COALESCE(quality_score, %s),
                                 ml_processing_status = 'completed',
+                                processing_status = 'completed',
                                 editorial_document = %s,
                                 document_version = COALESCE(document_version, 0) + 1,
                                 document_status = 'rag_analyzed',
@@ -1506,7 +1728,7 @@ async def process_storyline_rag_analysis(
                     # Legacy per-schema timeline_events writes (default off; use chronological_events pipeline)
                     import os
 
-                    if os.environ.get("LEGACY_TIMELINE_EVENTS_WRITES", "0").strip().lower() in (
+                    if env_str("LEGACY_TIMELINE_EVENTS_WRITES", "0").strip().lower() in (
                         "1",
                         "true",
                         "yes",

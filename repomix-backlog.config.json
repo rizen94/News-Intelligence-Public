@@ -1,0 +1,52 @@
+{
+  "$schema": "https://repomix.com/schemas/latest/schema.json",
+  "output": {
+    "filePath": "repomix-backlog-output.md",
+    "style": "markdown",
+    "removeComments": false,
+    "removeEmptyLines": false,
+    "showLineNumbers": true
+  },
+  "include": [
+    "api/scripts/bulk_catchup.py",
+    "api/scripts/run_major_backlog_catchup.py",
+    "api/scripts/bulk_catchup_status.py",
+    "api/scripts/run_entity_extraction_catchup.py",
+    "api/scripts/catchup_context_sync.py",
+    "api/scripts/catchup_topic_clustering.py",
+    "api/scripts/catchup_stale_fact_change_log.py",
+    "api/scripts/catchup_entity_profiles_claim_resolution.py",
+    "api/scripts/run_storyline_discovery_catchup.py",
+    "api/scripts/verify_dual_lane_catchup.py",
+    "api/scripts/verify_gpu_sprint_routing.py",
+    "api/scripts/run_backlog_gpu_sprint.py",
+    "api/shared/backlog_orchestration.py",
+    "api/shared/bulk_catchup_llm_routing.py",
+    "api/shared/bulk_catchup_pause.py",
+    "api/shared/catchup_host_metrics.py",
+    "api/services/backlog_metrics.py",
+    "api/services/automation_manager.py",
+    "api/shared/services/llm_service.py",
+    "api/shared/services/ollama_model_caller.py",
+    "api/shared/services/ollama_model_policy.py",
+    "api/services/event_extraction_service.py",
+    "api/services/dossier_compiler_service.py",
+    "api/config/settings.py",
+    "scripts/run_backlog_gpu_sprint.sh",
+    "scripts/run_hyperfocus_backlog.sh",
+    "scripts/quiesce_for_hyperfocus.sh",
+    "scripts/resume_after_hyperfocus.sh",
+    "scripts/run_backlog_catchup_window.sh",
+    "scripts/pause_for_bulk_catchup.sh",
+    "scripts/resume_after_bulk_catchup.sh",
+    "scripts/backlog_burndown.sh",
+    "configs/env.aggressive_burn_down.env",
+    "docs/PIPELINE_OPERATIONS_WIDOW.md"
+  ],
+  "ignore": {
+    "useGitignore": true,
+    "customPatterns": [
+      "repomix-backlog-output.*"
+    ]
+  }
+}

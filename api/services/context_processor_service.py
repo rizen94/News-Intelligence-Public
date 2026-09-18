@@ -12,6 +12,7 @@ from shared.article_processing_gates import (
     article_eligible_for_context,
     sql_context_sync_article_ready,
 )
+from shared.context_chunking import split_article_into_context_chunks
 from shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
@@ -71,13 +72,12 @@ def ensure_context_for_article(domain_key: str, article_id: int) -> int | None:
 
             title = (title or "")[:2000]
             content = (content or "")[:500000]
-            raw_content = content
+            chunks = split_article_into_context_chunks(title, content)
 
             ctx_metadata: dict[str, Any] = {
                 "url": url,
                 "published_at": str(published_at) if published_at else None,
             }
-            # Copy RSS source_credibility from articles.metadata (orchestrator_governance tiers)
             try:
                 cur.execute(
                     f"SELECT metadata FROM {schema_name}.articles WHERE id = %s",
@@ -93,42 +93,58 @@ def ensure_context_for_article(domain_key: str, article_id: int) -> int | None:
             except Exception as meta_err:
                 logger.debug("Context processor: article metadata not read (%s)", meta_err)
 
-            # Insert context
-            cur.execute(
-                """
-                INSERT INTO intelligence.contexts
-                (source_type, domain_key, title, content, raw_content, metadata, created_at, updated_at)
-                VALUES ('article', %s, %s, %s, %s, %s, COALESCE(%s, NOW()), NOW())
-                RETURNING id
-                """,
-                (
-                    domain_key,
-                    title,
-                    content,
-                    raw_content,
-                    json.dumps(ctx_metadata),
-                    created_at,
-                ),
-            )
-            context_id = cur.fetchone()[0]
+            primary_id: int | None = None
+            for idx, (chunk_title, chunk_content) in enumerate(chunks):
+                source_type = "article" if idx == 0 else "article_chunk"
+                chunk_meta = dict(ctx_metadata)
+                chunk_meta["chunk_index"] = idx
+                chunk_meta["chunk_total"] = len(chunks)
+                if idx > 0:
+                    chunk_meta["parent_article_id"] = article_id
 
-            # Link article -> context
-            cur.execute(
-                """
-                INSERT INTO intelligence.article_to_context (context_id, domain_key, article_id)
-                VALUES (%s, %s, %s)
-                """,
-                (context_id, domain_key, article_id),
-            )
+                cur.execute(
+                    """
+                    INSERT INTO intelligence.contexts
+                    (source_type, domain_key, title, content, raw_content, metadata, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, COALESCE(%s, NOW()), NOW())
+                    RETURNING id
+                    """,
+                    (
+                        source_type,
+                        domain_key,
+                        chunk_title[:2000],
+                        chunk_content,
+                        chunk_content,
+                        json.dumps(chunk_meta),
+                        created_at,
+                    ),
+                )
+                context_id = cur.fetchone()[0]
+                if idx == 0:
+                    primary_id = context_id
+                    cur.execute(
+                        """
+                        INSERT INTO intelligence.article_to_context (context_id, domain_key, article_id)
+                        VALUES (%s, %s, %s)
+                        """,
+                        (context_id, domain_key, article_id),
+                    )
+
             conn.commit()
-            logger.debug(f"Context {context_id} created for {domain_key}.articles.{article_id}")
+            logger.debug(
+                "Context %s (+ %s chunks) for %s.articles.%s",
+                primary_id,
+                max(0, len(chunks) - 1),
+                domain_key,
+                article_id,
+            )
             conn.close()
-            # Link context to entity_profiles via article_entities (Phase 1.3); non-fatal
-            try:
-                link_context_to_article_entities(context_id, domain_key, article_id)
-            except Exception:
-                pass
-            return context_id
+            if primary_id is not None:
+                try:
+                    link_context_to_article_entities(primary_id, domain_key, article_id)
+                except Exception:
+                    pass
+            return primary_id
     except Exception as e:
         logger.warning(f"Context processor: ensure_context_for_article failed: {e}")
         try:

@@ -17,6 +17,7 @@ from typing import Any
 
 from shared.database.connection import get_db_connection
 from shared.domain_registry import resolve_domain_schema
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ _CHRONO_EVENTS = "public.chronological_events"
 
 def _int_env(name: str, default: int, lo: int, hi: int) -> int:
     try:
-        return max(lo, min(hi, int(os.environ.get(name, str(default)))))
+        return max(lo, min(hi, int(env_str(name, str(default)))))
     except (TypeError, ValueError):
         return default
 

@@ -12,7 +12,12 @@ redis_data/
 # Docker volumes and data
 docker/data/
 volumes/
-data/
+# Data dirs, but NOT source packages named data/ (api/domains/finance/data is source).
+/data/
+/api/data/
+docker/data/
+news-intelligence-kit/data/
+**/db_data/
 
 # Virtual environments
 venv/
@@ -33,6 +38,9 @@ __pycache__/
 .env
 .env.local
 .env.production
+.env.popos_worker
+.env.dev
+.env.*.local
 configs/ddns.env
 config/.secrets
 api/config/.secrets
@@ -64,7 +72,15 @@ api/temp/
 # Code assistant files (legacy)
 *code-assistant*
 *aider*
-*ollama*
+# Local assistant caches. NOT source: api/**/*ollama*.py are real modules.
+*code-assistant*
+*aider*
+ollama_models_cache*
+# Machine-local XDG config (e.g. .config/ollama/ollama.env); was covered by *ollama*
+# until that rule was narrowed for source files.
+.config/
+!api/**/*ollama*.py
+!scripts/**/*ollama*
 
 # OS generated files
 .DS_Store
@@ -91,7 +107,10 @@ npm-debug.log*
 
 # Large data files
 *.csv
-models/
+# ML model binaries, but NOT source packages named models/
+# (api/domains/*/models/ hold pydantic models).
+/models/
+**/ml_models/
 
 # Large backup and export files
 news-system-backup-*/
@@ -127,3 +146,17 @@ docs/_local_expanded/
 
 # Repomix generated exports (config files are tracked)
 repomix-output.*
+api.xml
+
+# Cursor agent plans (local only)
+.cursor/plans/
+
+# Scratch / one-off verification at repo root
+final_verification.py
+verify_usd_tracker_files.py
+test_usd_tracker_components.py
+scripts/_tmp_*
+scripts/watcher.sh.fixed
+
+# Editor backup artifacts
+*.bak.*

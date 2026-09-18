@@ -1,0 +1,6 @@
+services:
+  api:
+    environment:
+      AUTOMATION_MAX_CONCURRENT_TASKS: 2
+      MAX_CONCURRENT_OLLAMA_TASKS: 2
+      KIT_HARDWARE_TIER: minimal

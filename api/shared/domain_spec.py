@@ -109,7 +109,7 @@ class DomainSpec(BaseModel):
             raise ValueError(
                 f"schema_name {self.schema_name!r} is reserved; pick a different schema for new silos"
             )
-        if self.domain_key == "science-tech":
+        if self.domain_key in ("science-tech", "science_tech"):
             raise ValueError("science-tech is retired; use split silos (e.g. artificial-intelligence)")
         return self
 

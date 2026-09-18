@@ -15,6 +15,7 @@ from shared.domain_registry import resolve_domain_schema
 import os
 from dataclasses import dataclass, field
 from typing import Any
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -439,11 +440,11 @@ class DomainKnowledgeService:
 
     def __init__(self, db_config: dict[str, Any] = None):
         self.db_config = db_config or {
-            "host": os.getenv("DB_HOST", "localhost"),
-            "port": int(os.getenv("DB_PORT", 5433)),
-            "database": os.getenv("DB_NAME", "news_intelligence"),
-            "user": os.getenv("DB_USER", "newsapp"),
-            "password": os.getenv("DB_PASSWORD", "newsapp_password"),
+            "host": env_str("DB_HOST", "localhost"),
+            "port": int(env_str("DB_PORT", 5433)),
+            "database": env_str("DB_NAME", "news_intelligence"),
+            "user": env_str("DB_USER", "newsapp"),
+            "password": env_str("DB_PASSWORD", "newsapp_password"),
         }
 
         # Domain knowledge bases
@@ -543,8 +544,8 @@ class DomainKnowledgeService:
             return self._generate_politics_context(entity_names, timeframe)
         elif domain == "finance":
             return self._generate_finance_context(entity_names, timeframe)
-        elif domain in ("artificial-intelligence", "science-tech", "science_tech"):
-            return self._generate_science_tech_context(entity_names, timeframe)
+        elif domain == "artificial-intelligence":
+            return self._generate_ai_tech_context(entity_names, timeframe)
         else:
             return f"Context for {', '.join(entity_names)} in {domain_name}."
 
@@ -628,8 +629,8 @@ class DomainKnowledgeService:
             )
         )
 
-    def _generate_science_tech_context(self, entities: list[str], timeframe: str) -> str:
-        """Generate science-tech-specific historical context"""
+    def _generate_ai_tech_context(self, entities: list[str], timeframe: str) -> str:
+        """Generate AI / technology historical context."""
         context_parts = []
 
         if any(
@@ -769,7 +770,7 @@ class DomainKnowledgeService:
                 "and economic data releases. Key dates include employment reports, "
                 "CPI releases, and Fed announcements."
             )
-        elif domain in ("artificial-intelligence", "science-tech", "science_tech"):
+        elif domain == "artificial-intelligence":
             return (
                 "Technology timelines are marked by product launches, research milestones, "
                 "and regulatory developments. Conference seasons and earnings reports "

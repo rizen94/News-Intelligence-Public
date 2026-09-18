@@ -1,0 +1,114 @@
+# Single scheduler manifest — owner, enabled, notes.
+# Env gates: AUTOMATION_DISABLED_SCHEDULES, schedulers.yaml enabled flag.
+
+schedulers:
+  automation_manager:
+    owner: automation_manager
+    interval_seconds: 5
+    enabled: true
+    note: Primary processing scheduler (all phases)
+
+  orchestrator_coordinator:
+    owner: orchestrator_coordinator
+    interval_seconds: 60
+    enabled: true
+    note: Collection cadence + finance interest; processing nudge + post-RSS kickoff via pipeline_conductor
+
+  newsplatform_secondary:
+    owner: systemd
+    unit: newsplatform-secondary.service
+    enabled: true
+    note: RSS ingest ~10min when schedule allows
+
+  widow_db_adjacent_cron:
+    owner: cron
+    file: infrastructure/widow-db-adjacent.cron
+    interval: "*/15 * * * *"
+    enabled: true
+    jobs:
+      - name: context_sync
+        script_flag: --context-sync
+        note: AUTHORITATIVE on Widow when in AUTOMATION_DISABLED_SCHEDULES for automation
+      - name: entity_profile_sync
+        script_flag: --entity-profile-sync
+      - name: pending_db_flush
+        script_flag: --pending-db-flush
+
+  widow_tracking_discovery_cron:
+    owner: cron
+    file: infrastructure/widow-tracking-discovery.cron
+    interval: "0 6 * * 1,4"
+    enabled: true
+    note: Headless tracking discovery loop — demoted proactive_detection/storyline_discovery phases
+    jobs:
+      - name: tracking_discovery_loop
+        script: api/scripts/run_tracking_discovery_loop.py
+        note: API discovery → vault candidates → promotion_bridge → storyline_assembly stubs
+
+  nri_mention_resolver_timer:
+    owner: systemd
+    unit: nri-mention-resolver.timer
+    enabled: false
+    replaced_by: mention_resolution
+    note: Disabled after unification — use AutomationManager mention_resolution phase
+
+  nri_loop_timer:
+    owner: systemd
+    unit: nri-loop.timer
+    enabled: false
+    note: Shadow loop; default off via NRI_LOOP_ENABLED
+
+  nri_api:
+    owner: systemd
+    unit: nri-api.service
+    enabled: false
+    replaced_by: news-intelligence-api-public
+    note: Retired after nri_core in-process routes
+
+  rss_feed_health:
+    owner: automation_manager
+    interval_seconds: 604800
+    enabled: true
+    note: Weekly quality cull — drop lowest avg-quality feed until all scored feeds >= 0.60
+
+  rolling_arc_refresh:
+    owner: automation_manager
+    interval_seconds: 86400
+    enabled: true
+    note: Phase B nightly rolling 12m arc chapterize (ROLLING_ARCS_ENABLED)
+
+  quiver_collector:
+    owner: automation_manager
+    interval_seconds: 21600  # 6 hours
+    enabled: true
+    note: Quiver Quantitative API - congress trades, gov contracts, lobbying, insider trades
+    domains: ["politics", "finance"]
+    condition: "QUIVER_COLLECTOR_ENABLED and QUIVER_API_KEY"
+
+  chemistry_beaker:
+    owner: automation_manager
+    enabled: true
+    note: >
+      Post-RSS intake connection lifecycle (CHEMISTRY_BEAKER_ENABLED).
+      Phases: graph_connection_distillation → embedding_link_candidates →
+      collision_sampling → stimulus_rag → protein_harden.
+      Kickoff after collection_cycle RSS and after unified_intake batches when
+      enrichment+UIE pending ≤ catchup_clear_threshold.
+    phases:
+      - graph_connection_distillation
+      - embedding_link_candidates
+      - collision_sampling
+      - stimulus_rag
+      - protein_harden
+    condition: "CHEMISTRY_BEAKER_ENABLED"
+
+# context_sync split-brain resolution: cron owns sync on Widow prod (see widow-db_adjacent)
+
+consolidation:
+  interval_seconds: 3600
+  startup_delay_seconds: 60
+  rotation:
+    - storylines
+    - entities
+    - investigations
+    - events
