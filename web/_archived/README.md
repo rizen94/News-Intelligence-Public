@@ -25,3 +25,15 @@ No import, lazy import, or route reference from `src/` when archived.
 | `domains/Finance/MarketResearch`, `MarketPatterns`, `CorporateAnnouncements` | Pre-`/:domain` finance pages; the live finance surfaces are under `pages/` |
 | `services/frontendHealthService.ts` | Superseded by `apiConnectionManager.ts` |
 | `utils/safeServiceCall.ts` | Superseded by `ErrorBoundary` + per-call handling in `services/api/` |
+
+### `.jsx` pass (wiring audit)
+
+The first sweep only scanned `.ts`/`.tsx`. These `.jsx` modules are equally unreferenced.
+
+| Module | Note |
+|--------|------|
+| `components/Notifications/NotificationSystem.jsx` | Superseded by `hooks/useNotification.tsx` |
+| `components/StorylineCreationDialog.jsx` | No importer; only a leftover `StorylineCreationDialogProps` interface in `types/index.ts` still names it |
+| `components/StorylineManagementTest.jsx` | Dev harness page, never routed |
+| `pages/RSSFeeds/RSSDuplicateManager.jsx` | Never routed in `App.tsx`, **and** all six `/api/rss_feeds/duplicates/*` endpoints it calls have no backend route |
+| `pages/Topics/TopicArticles.jsx` | No importer; `TopicManagement.jsx` has its own local `topicArticles` state |
