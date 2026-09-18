@@ -18,6 +18,8 @@ route structure, where every router mounts at `/api`.
 | Global (orchestrator) | `/api/orchestrator/dashboard` | `/api/orchestrator/dashboard` |
 | Context-centric | `/api/entity_profiles`, `/api/contexts` | `/api/entity_profiles`, `/api/contexts` |
 | Watchlist | `/api/watchlist` | `/api/watchlist` |
+| Pulse digest | `/api/pulse` | `/api/pulse` |
+| Follow registry | `/api/follows`, `/api/follows/movement` | `/api/follows` |
 
 > **History:** Frontend URLs previously used `/api/...` but the backend never
 > had a `/v4/` prefix in its routes. This mismatch was corrected by removing `/v4/`

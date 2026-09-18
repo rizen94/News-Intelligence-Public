@@ -203,6 +203,16 @@ def get_linkage_coverage() -> dict[str, Any]:
                     )
                     graph_links = int((cur.fetchone() or [0])[0] or 0)
 
+                discovery_open = 0
+                if _table_exists(cur, "intelligence", "connection_findings"):
+                    cur.execute(
+                        """
+                        SELECT COUNT(*)::int FROM intelligence.connection_findings
+                        WHERE status IN ('open', 'queued_research')
+                        """
+                    )
+                    discovery_open = int((cur.fetchone() or [0])[0] or 0)
+
                 per_domain = []
                 dup_total = 0
                 for dk in get_pipeline_active_domain_keys():
@@ -229,6 +239,7 @@ def get_linkage_coverage() -> dict[str, Any]:
                 "duplicate_title_groups": dup_total,
                 "narrative_threads": narrative_threads,
                 "graph_connection_links_active": graph_links,
+                "discovery_findings_open": discovery_open,
             },
             "domains": per_domain,
         }
