@@ -98,10 +98,15 @@ def _env_override(feature_key: str) -> bool | None:
     return None
 
 
-def _merge_entry(key: str, base: dict[str, Any]) -> dict[str, Any]:
+def _merge_entry(
+    key: str,
+    base: dict[str, Any],
+    db_overrides: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     entry = dict(base)
     entry["key"] = key
-    overrides = _db_overrides().get(key) or {}
+    all_overrides = _db_overrides() if db_overrides is None else db_overrides
+    overrides = all_overrides.get(key) or {}
     for field in ("enabled", "lifecycle", "notes"):
         if overrides.get(field) is not None:
             entry[field] = overrides[field]
@@ -119,7 +124,11 @@ def _merge_entry(key: str, base: dict[str, Any]) -> dict[str, Any]:
 @lru_cache(maxsize=1)
 def get_feature_registry() -> dict[str, dict[str, Any]]:
     raw = _load_yaml_registry()
-    return {k: _merge_entry(k, v) for k, v in raw.items()}
+    # One read of intelligence.feature_registry_overrides for the whole registry. Resolving it per
+    # feature meant ~98 identical SELECTs, each taking and returning a pool connection, on the first
+    # feature check in every process.
+    overrides = _db_overrides()
+    return {k: _merge_entry(k, v, overrides) for k, v in raw.items()}
 
 
 def get_feature(feature_key: str) -> dict[str, Any] | None:
