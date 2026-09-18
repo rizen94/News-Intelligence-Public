@@ -67,10 +67,14 @@ fi
 echo "✅ Pre-flight OK (${LOCAL_ROUTES} ≥ ${WIDOW_ROUTES})"
 echo ""
 
-# Ensure remote directory exists
-ssh "${WIDOW_USER}@${WIDOW_HOST}" "sudo mkdir -p ${REMOTE_DIR} && sudo chown ${WIDOW_USER}:${WIDOW_USER} ${REMOTE_DIR}"
+# Ensure remote directory exists and is writable by the deploy user.
+# Root-owned leftovers (e.g. compose/) previously caused rsync code 23 and
+# aborted the script under set -e before API restart.
+ssh "${WIDOW_USER}@${WIDOW_HOST}" \
+  "sudo mkdir -p ${REMOTE_DIR} && sudo chown -R ${WIDOW_USER}:${WIDOW_USER} ${REMOTE_DIR}"
 
 # Rsync exclude patterns (match start_system.sh exclusions where relevant)
+set +e
 rsync -avz --progress --no-perms --no-owner --no-group \
   --exclude='.venv' \
   --exclude='.venv.backup' \
@@ -84,6 +88,16 @@ rsync -avz --progress --no-perms --no-owner --no-group \
   --exclude='chroma_data' \
   --exclude='News-Intelligence-Archive' \
   "${PROJECT_DIR}/" "${WIDOW_USER}@${WIDOW_HOST}:${REMOTE_DIR}/"
+RSYNC_RC=$?
+set -e
+# 0 = ok, 23 = partial (some attrs/files); abort on harder failures.
+if [[ "$RSYNC_RC" -ne 0 && "$RSYNC_RC" -ne 23 ]]; then
+  echo "FAIL: rsync exited ${RSYNC_RC}"
+  exit "$RSYNC_RC"
+fi
+if [[ "$RSYNC_RC" -eq 23 ]]; then
+  echo "⚠️  rsync reported partial transfer (code 23); continuing if API tree looks intact"
+fi
 
 # Copy DB password if present (for .env and .pgpass on Widow)
 if [ -f "$PROJECT_DIR/.db_password_widow" ]; then
