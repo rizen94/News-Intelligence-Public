@@ -68,6 +68,46 @@ class TestOrchestratorGovernance:
         assert cfg["resources"]["daily_llm_tokens"] == 100000
 
 
+class TestSchedulersManifest:
+    @pytest.fixture
+    def registry(self):
+        mod = _import("services.automation.registry")
+        mod.invalidate_schedulers_manifest_cache()
+        yield mod
+        mod.invalidate_schedulers_manifest_cache()
+
+    def test_key_lookups_parse_the_manifest_once(self, registry, monkeypatch):
+        parses = {"n": 0}
+        real_load = registry.yaml.safe_load
+
+        def _counted(stream):
+            parses["n"] += 1
+            return real_load(stream)
+
+        monkeypatch.setattr(registry.yaml, "safe_load", _counted)
+
+        owners = registry.list_scheduler_owners()
+        assert owners
+        for name in owners:
+            registry.scheduler_entry(name)
+            registry.is_scheduler_enabled(name)
+
+        assert parses["n"] == 1
+
+    def test_callers_cannot_mutate_each_others_manifest(self, registry):
+        a = registry.load_schedulers_manifest()
+        a.setdefault("schedulers", {})["_sentinel"] = 1
+
+        b = registry.load_schedulers_manifest()
+        assert "_sentinel" not in (b.get("schedulers") or {})
+
+    def test_missing_manifest_returns_empty(self, registry, monkeypatch, tmp_path):
+        monkeypatch.setattr(registry, "_SCHEDULERS_PATH", tmp_path / "nope.yaml")
+        registry.invalidate_schedulers_manifest_cache()
+
+        assert registry.load_schedulers_manifest() == {}
+
+
 class TestFeatureRegistry:
     def test_db_overrides_are_read_once_for_the_whole_registry(self, monkeypatch):
         fr = _import("config.feature_registry")
