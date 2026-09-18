@@ -119,7 +119,7 @@ COMMENT ON TABLE intelligence.quiver_insider_trades IS
 DO $$
 BEGIN
     -- Check if politics domain exists in public.domains
-    IF EXISTS (SELECT 1 FROM public.domains WHERE key = 'politics') THEN
+    IF EXISTS (SELECT 1 FROM public.domains WHERE domain_key = 'politics') THEN
         -- Politicians are stored as entity_profiles with domain_key='politics'
         -- Metadata fields: bioguide_id, chamber, party, state, source='quiver_congress'
         RAISE NOTICE 'Politics domain exists - politicians will be linked via entity_profiles';

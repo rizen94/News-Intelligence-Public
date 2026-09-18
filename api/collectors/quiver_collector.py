@@ -45,8 +45,9 @@ def _quiver_headers() -> dict[str, str]:
     key = _quiver_api_key()
     if not key:
         return {}
-    # Quiver API uses "Token" prefix, not "Bearer"
-    return {"Authorization": f"Token {key}"}
+    # Official Quiver docs: Bearer. Some older clients used Token.
+    scheme = (env_str("QUIVER_AUTH_SCHEME", "Bearer") or "Bearer").strip()
+    return {"Authorization": f"{scheme} {key}"}
 
 
 def _quiver_get(endpoint: str, params: dict | None = None) -> dict[str, Any] | list[Any] | None:

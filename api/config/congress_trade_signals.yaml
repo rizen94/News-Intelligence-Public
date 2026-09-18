@@ -1,0 +1,118 @@
+# Congressional trade signals — scoring + paper portfolio gates (deterministic).
+# Feature flag: congress_trade_signals in features.yaml
+
+enabled: true
+
+enrichment:
+  bipartisan_cluster_window_days: 14
+  # When CONGRESS_GOV_API_KEY unset, leadership/committee come from static maps below.
+  use_congress_gov: true
+
+scoring:
+  min_score: 0.55
+  max_lag_days: 45
+  weights:
+    side: 0.22
+    size: 0.18
+    lag: 0.20
+    bipartisan_cluster: 0.15
+    committee_sector: 0.12
+    leadership: 0.08
+    freshness: 0.05
+  side_scores:
+    buy: 1.0
+    sell: 0.55
+    other: 0.15
+  # lag_days → penalty in [0,1]; score contrib = weight * (1 - penalty)
+  lag_full_penalty_days: 45
+  freshness_half_life_days: 21
+
+paper:
+  rebalance: monthly
+  max_positions: 20
+  max_sector_weight: 0.25
+  max_single_weight: 0.10
+  turnover_budget: 0.40
+  starting_nav: 100.0
+  benchmark_ticker: SPY
+
+hitl:
+  top_n_per_day: 10
+  min_score: 0.65
+  metadata_source: congress_quiver
+
+# Amount midpoints / ordinals for Quiver amount_range strings
+amount_buckets:
+  - match: "$1,001"
+    mid: 8000
+    ordinal: 1
+  - match: "$15,001"
+    mid: 32500
+    ordinal: 2
+  - match: "$50,001"
+    mid: 125000
+    ordinal: 3
+  - match: "$100,001"
+    mid: 300000
+    ordinal: 4
+  - match: "$250,001"
+    mid: 625000
+    ordinal: 5
+  - match: "$500,001"
+    mid: 750000
+    ordinal: 6
+  - match: "$1,000,001"
+    mid: 2500000
+    ordinal: 7
+  - match: "$5,000,001"
+    mid: 7500000
+    ordinal: 8
+
+# Ticker → sector (v1 static; unknown → other)
+issuer_sectors:
+  AAPL: technology
+  MSFT: technology
+  GOOGL: technology
+  GOOG: technology
+  AMZN: consumer
+  META: technology
+  NVDA: technology
+  TSLA: consumer
+  JPM: financials
+  BAC: financials
+  GS: financials
+  XOM: energy
+  CVX: energy
+  UNH: healthcare
+  JNJ: healthcare
+  PFE: healthcare
+  LLY: healthcare
+  BA: industrials
+  CAT: industrials
+  LMT: industrials
+  RTX: industrials
+  SPY: broad_market
+  QQQ: broad_market
+  IWM: broad_market
+
+# Committee name substring → sector overlap targets
+committee_sector_map:
+  Armed Services: industrials
+  Armed Services Committee: industrials
+  Financial Services: financials
+  Banking: financials
+  Energy: energy
+  Commerce: technology
+  Science: technology
+  Ways and Means: financials
+  Health: healthcare
+  Judiciary: other
+  Agriculture: consumer
+  Intelligence: industrials
+  Foreign Relations: other
+  Homeland Security: industrials
+
+# Bioguide IDs with elevated leadership weight (chairs / floor leadership heuristic)
+leadership_bioguides:
+  # Placeholder examples — operators can extend; unknown → 1.0
+  # S000033: 1.35

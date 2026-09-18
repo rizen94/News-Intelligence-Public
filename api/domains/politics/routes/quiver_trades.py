@@ -452,3 +452,65 @@ async def get_top_tickers(
         "data": tickers,
         "period_days": days
     }
+
+
+@router.get("/signals")
+async def get_congress_trade_signals(
+    eligible_only: bool = Query(True, description="Only eligible scored signals"),
+    limit: int = Query(50, ge=1, le=200),
+) -> dict[str, Any]:
+    """Scored congressional trade signals (disclosure-dated; no live brokerage)."""
+    from services.congress_trade_signals_service import is_enabled, list_congress_signals
+
+    if not is_enabled():
+        raise HTTPException(status_code=503, detail="congress_trade_signals feature disabled")
+    rows = list_congress_signals(eligible_only=eligible_only, limit=limit)
+    for r in rows:
+        for key in ("as_of_date", "created_at", "updated_at"):
+            if r.get(key) is not None and hasattr(r[key], "isoformat"):
+                r[key] = r[key].isoformat()
+    return {
+        "success": True,
+        "count": len(rows),
+        "signals": rows,
+        "no_live_brokerage": True,
+    }
+
+
+@router.get("/paper-portfolio")
+async def get_congress_paper_portfolio(
+    months: int = Query(12, ge=1, le=60),
+) -> dict[str, Any]:
+    """Monthly paper NAV vs SPY for congress trade strategy."""
+    from services.congress_trade_signals_service import get_paper_portfolio, is_enabled
+
+    if not is_enabled():
+        raise HTTPException(status_code=503, detail="congress_trade_signals feature disabled")
+    data = get_paper_portfolio(months=months)
+    for row in data.get("nav_history") or []:
+        if row.get("as_of_date") is not None and hasattr(row["as_of_date"], "isoformat"):
+            row["as_of_date"] = row["as_of_date"].isoformat()
+    for row in data.get("latest_positions") or []:
+        if row.get("as_of_month") is not None and hasattr(row["as_of_month"], "isoformat"):
+            row["as_of_month"] = row["as_of_month"].isoformat()
+    return {"success": True, **data}
+
+
+@router.post("/signals/run")
+async def run_congress_trade_signals(
+    skip_paper: bool = Query(False),
+    skip_hitl: bool = Query(False),
+) -> dict[str, Any]:
+    """Operator kick: enrich → score → optional paper + HITL promote."""
+    from services.congress_trade_signals_service import (
+        is_enabled,
+        run_congress_trade_signals_pipeline,
+    )
+
+    if not is_enabled():
+        raise HTTPException(status_code=503, detail="congress_trade_signals feature disabled")
+    result = run_congress_trade_signals_pipeline(
+        rebuild_paper=not skip_paper,
+        promote_hitl=not skip_hitl,
+    )
+    return {"success": bool(result.get("ok")), **result}
