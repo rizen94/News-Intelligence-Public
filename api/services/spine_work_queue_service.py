@@ -178,6 +178,82 @@ def claim_fair_share_batch(phase: str, batch_size: int) -> dict[str, list[int]]:
     return claimed
 
 
+def reclaim_stale_content_enrichment_processing(
+    *,
+    older_than_minutes: float | None = None,
+) -> int:
+    """
+    Return long-stuck ``processing`` enrichment queue rows to ``pending``.
+
+    Prevents crash/restart leftovers from blocking claim loops. Called at the
+    start of each content_enrichment drain round.
+    """
+    try:
+        from config.runtime import env_float
+
+        minutes = float(
+            older_than_minutes
+            if older_than_minutes is not None
+            else env_float("CONTENT_ENRICHMENT_STALE_PROCESSING_MINUTES", 60.0)
+        )
+    except Exception:
+        minutes = 60.0
+    minutes = max(5.0, min(24 * 60.0, minutes))
+    if not spine_work_queues_enabled():
+        return 0
+
+    total = 0
+    try:
+        from shared.domain_registry import get_schema_names_active
+        from shared.database.connection import get_db_connection_context
+
+        schemas = list(get_schema_names_active())
+    except Exception as exc:
+        logger.debug("reclaim_stale_content_enrichment_processing: schemas: %s", exc)
+        return 0
+
+    for schema_name in schemas:
+        table = _queue_table_for_phase("content_enrichment")
+        if not table:
+            continue
+        try:
+            with get_db_connection_context() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"""
+                        UPDATE {schema_name}.{table}
+                        SET status = 'pending',
+                            started_at = NULL,
+                            retry_count = retry_count + 1,
+                            last_attempt_at = NOW(),
+                            next_retry_at = NOW() + INTERVAL '2 minutes',
+                            error_message = COALESCE(error_message, '')
+                                || ' [reclaimed_stale_processing>'
+                                || %s::text || 'm]'
+                        WHERE status = 'processing'
+                          AND started_at IS NOT NULL
+                          AND started_at < NOW() - (%s || ' minutes')::interval
+                        """,
+                        (str(int(minutes)), str(minutes)),
+                    )
+                    n = int(cur.rowcount or 0)
+                conn.commit()
+            total += n
+        except Exception as exc:
+            logger.debug(
+                "reclaim_stale_content_enrichment_processing %s: %s",
+                schema_name,
+                exc,
+            )
+    if total:
+        logger.warning(
+            "content_enrichment reclaim: reset %s stale processing rows (>%sm)",
+            total,
+            int(minutes),
+        )
+    return total
+
+
 def finalize_content_enrichment_queue_round(
     schema_name: str,
     article_ids: list[int],

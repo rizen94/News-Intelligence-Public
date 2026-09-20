@@ -89,6 +89,27 @@ STORYLINE_DISCOVERY_PDF_CONTEXT_LIMIT = int(env_str("STORYLINE_DISCOVERY_PDF_CON
 DISCOVERY_MAX_CLUSTER_ARTICLES = max(
     10, int(env_str("DISCOVERY_MAX_CLUSTER_ARTICLES", "250"))
 )
+# Scheduled assembly discovery uses a tighter default than the full discovery limit.
+_DEFAULT_ASSEMBLY_DISCOVERY_ARTICLE_CAP = 1500
+
+
+def assembly_discovery_article_cap() -> int:
+    """
+    Env-backed article load cap for scheduled assembly discovery windows.
+
+    Prefer ``STORYLINE_ASSEMBLY_DISCOVERY_ARTICLE_LIMIT``; otherwise a safer
+    assembly default (not the full 10k discovery limit) to bound O(n²) RAM.
+    Always clamped to ``[100, STORYLINE_DISCOVERY_ARTICLE_LIMIT]``.
+    """
+    try:
+        raw = env_str("STORYLINE_ASSEMBLY_DISCOVERY_ARTICLE_LIMIT", "").strip()
+        if raw:
+            value = int(raw)
+        else:
+            value = _DEFAULT_ASSEMBLY_DISCOVERY_ARTICLE_CAP
+    except (TypeError, ValueError):
+        value = _DEFAULT_ASSEMBLY_DISCOVERY_ARTICLE_CAP
+    return max(100, min(int(STORYLINE_DISCOVERY_ARTICLE_LIMIT), int(value)))
 
 
 @dataclass

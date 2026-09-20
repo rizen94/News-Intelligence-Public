@@ -22,9 +22,19 @@ def news_intel_connection() -> Generator[Any, None, None]:
         conn.close()
 
 
-def get_watermark(name: str) -> int:
-    with news_intel_connection() as conn:
-        with conn.cursor() as cur:
+@contextlib.contextmanager
+def _borrow_conn(conn: Any | None = None) -> Generator[Any, None, None]:
+    """Use an existing connection when provided; otherwise open a short-lived one."""
+    if conn is not None:
+        yield conn
+        return
+    with news_intel_connection() as owned:
+        yield owned
+
+
+def get_watermark(name: str, *, conn: Any | None = None) -> int:
+    with _borrow_conn(conn) as c:
+        with c.cursor() as cur:
             cur.execute(
                 f"SELECT last_value FROM {T_WATERMARKS} WHERE name = %s",
                 (name,),
@@ -33,9 +43,10 @@ def get_watermark(name: str) -> int:
             return int(row[0]) if row else 0
 
 
-def set_watermark(name: str, value: int) -> None:
-    with news_intel_connection() as conn:
-        with conn.cursor() as cur:
+def set_watermark(name: str, value: int, *, conn: Any | None = None) -> None:
+    owns = conn is None
+    with _borrow_conn(conn) as c:
+        with c.cursor() as cur:
             cur.execute(
                 f"""
                 INSERT INTO {T_WATERMARKS} (name, last_value)
@@ -46,13 +57,19 @@ def set_watermark(name: str, value: int) -> None:
                 """,
                 (name, value),
             )
-        conn.commit()
+        if owns:
+            c.commit()
 
 
-def fetch_new_mentions(since_id: int = 0, limit: int = 500) -> list[dict[str, Any]]:
+def fetch_new_mentions(
+    since_id: int = 0,
+    limit: int = 500,
+    *,
+    conn: Any | None = None,
+) -> list[dict[str, Any]]:
     require_prod_safety()
-    with news_intel_connection() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+    with _borrow_conn(conn) as c:
+        with c.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 """
                 SELECT
