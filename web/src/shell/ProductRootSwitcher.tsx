@@ -124,25 +124,28 @@ export function AdminOpsSidebar({ base }: AdminSidebarProps) {
   const grafanaUrl = getGrafanaOpsUrl();
 
   return (
-    <aside className='ni-admin-sidebar' aria-label='Admin operations'>
-      <div className='ni-admin-sidebar-label'>Operations</div>
-      {ADMIN_NAV.map(item => {
-        const to = item.segment ? `${adminBase}/${item.segment}` : adminBase;
-        const isActive = item.end
-          ? pathname === adminBase || pathname === `${adminBase}/`
-          : pathname === to || pathname.startsWith(`${to}/`);
-        return (
-          <Link
-            key={item.label}
-            to={to}
-            className={isActive ? 'is-active' : undefined}
-            aria-current={isActive ? 'page' : undefined}
-          >
-            {item.label}
-          </Link>
-        );
-      })}
-      <div className='ni-admin-grafana'>
+    <>
+      <div className='ni-sidebar-section'>
+        <div className='ni-sidebar-label'>Operations</div>
+        {ADMIN_NAV.map(item => {
+          const to = item.segment ? `${adminBase}/${item.segment}` : adminBase;
+          const isEnd = 'end' in item && item.end;
+          const isActive = isEnd
+            ? pathname === adminBase || pathname === `${adminBase}/`
+            : pathname === to || pathname.startsWith(`${to}/`);
+          return (
+            <Link
+              key={item.label}
+              to={to}
+              className={isActive ? 'is-active' : undefined}
+              aria-current={isActive ? 'page' : undefined}
+            >
+              {item.label}
+            </Link>
+          );
+        })}
+      </div>
+      <div className='ni-sidebar-footer'>
         {grafanaUrl ? (
           <a href={grafanaUrl} target='_blank' rel='noopener noreferrer'>
             Open Grafana
@@ -153,6 +156,6 @@ export function AdminOpsSidebar({ base }: AdminSidebarProps) {
           </span>
         )}
       </div>
-    </aside>
+    </>
   );
 }

@@ -1,6 +1,6 @@
 /**
- * Shared product-root chrome — News / Finance / Admin feel like one product.
- * Content areas keep their own tokens (broadsheet paper, finance denser, admin ops).
+ * Shared product chrome — News / Finance / Admin outer shell.
+ * Content panes may override paper/typography; header + sidebar stay here.
  */
 
 @import url('https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&display=swap');
@@ -9,10 +9,54 @@
   --ni-chrome-ink: #1a1814;
   --ni-chrome-muted: #5c564c;
   --ni-chrome-accent: #b01030;
+  --ni-chrome-accent-soft: rgba(176, 16, 48, 0.08);
   --ni-chrome-border: rgba(26, 24, 20, 0.16);
-  --ni-chrome-surface: rgba(255, 255, 255, 0.92);
+  --ni-chrome-surface: #ffffff;
+  --ni-chrome-shell: #f0ebe3;
+  --ni-chrome-header-bg: rgba(255, 255, 255, 0.94);
+  --ni-chrome-sidebar-bg: rgba(255, 255, 255, 0.72);
+  --ni-chrome-header-height: 3.5rem;
+  --ni-chrome-sidebar-width: 200px;
+  --ni-chrome-pad-x: 1.25rem;
   --ni-font-display: 'Source Serif 4', Georgia, serif;
   --ni-font-ui: 'Source Sans 3', 'Helvetica Neue', sans-serif;
+}
+
+/* —— Outer shell —— */
+.ni-app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--ni-chrome-shell);
+  color: var(--ni-chrome-ink);
+  font-family: var(--ni-font-ui);
+  box-sizing: border-box;
+}
+
+.ni-app-shell *,
+.ni-app-shell *::before,
+.ni-app-shell *::after {
+  box-sizing: border-box;
+}
+
+/* —— Sticky top bar (identical across roots) —— */
+.ni-app-header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  min-height: var(--ni-chrome-header-height);
+  display: flex;
+  align-items: center;
+  background: var(--ni-chrome-header-bg);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--ni-chrome-border);
+}
+
+.ni-app-header-inner {
+  width: 100%;
+  padding: 0.55rem var(--ni-chrome-pad-x);
+  display: flex;
+  align-items: center;
 }
 
 .ni-product-chrome {
@@ -22,6 +66,7 @@
   flex-wrap: wrap;
   width: 100%;
   font-family: var(--ni-font-ui);
+  min-height: calc(var(--ni-chrome-header-height) - 1.1rem);
 }
 
 .ni-product-brand {
@@ -40,6 +85,7 @@
 }
 
 .ni-product-brand-sub {
+  font-family: var(--ni-font-ui);
   font-weight: 600;
   color: var(--ni-chrome-ink);
   margin-left: 0.35rem;
@@ -72,7 +118,7 @@
 
 .ni-root-switcher a:hover {
   color: var(--ni-chrome-ink);
-  background: rgba(176, 16, 48, 0.06);
+  background: var(--ni-chrome-accent-soft);
 }
 
 .ni-root-switcher a.is-active {
@@ -95,18 +141,164 @@
   color: var(--ni-chrome-accent);
 }
 
-/* Admin ops sidebar — never include user-content destinations */
-.ni-admin-shell {
-  display: flex;
-  min-height: calc(100vh - 3.5rem);
+/* Domain filter in chrome */
+.ni-app-shell .v2-domain-select {
+  font: inherit;
+  font-family: var(--ni-font-ui);
+  font-size: 0.8rem;
+  border: 1px solid var(--ni-chrome-border);
+  background: var(--ni-chrome-surface);
+  color: var(--ni-chrome-ink);
+  padding: 0.25rem 0.4rem;
+  border-radius: 2px;
 }
 
-.ni-admin-sidebar {
-  width: 200px;
+/* —— Body: sidebar + main —— */
+.ni-app-body {
+  display: flex;
+  flex: 1;
+  min-height: calc(100vh - var(--ni-chrome-header-height));
+}
+
+.ni-app-body--solo .ni-app-main {
+  max-width: 72rem;
+  margin: 0 auto;
+}
+
+.ni-app-sidebar {
+  width: var(--ni-chrome-sidebar-width);
   flex-shrink: 0;
   padding: 1rem 0.75rem;
   border-right: 1px solid var(--ni-chrome-border);
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--ni-chrome-sidebar-bg);
+  font-family: var(--ni-font-ui);
+}
+
+.ni-sidebar-section {
+  margin-bottom: 1.15rem;
+}
+
+.ni-sidebar-section:last-child {
+  margin-bottom: 0;
+}
+
+.ni-sidebar-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ni-chrome-muted);
+  padding: 0 0.55rem 0.4rem;
+}
+
+.ni-app-sidebar a,
+.ni-sidebar-link {
+  display: block;
+  padding: 0.45rem 0.55rem;
+  border-radius: 4px;
+  color: var(--ni-chrome-ink);
+  text-decoration: none;
+  font-size: 0.88rem;
+  font-weight: 600;
+  margin-bottom: 0.1rem;
+}
+
+.ni-app-sidebar a:hover,
+.ni-sidebar-link:hover {
+  background: var(--ni-chrome-accent-soft);
+  color: var(--ni-chrome-ink);
+}
+
+.ni-app-sidebar a.is-active,
+.ni-app-sidebar a.active,
+.ni-sidebar-link.is-active {
+  background: rgba(26, 24, 20, 0.08);
+  color: var(--ni-chrome-accent);
+}
+
+.ni-sidebar-footer {
+  margin-top: 1rem;
+  padding: 0.55rem;
+  border-top: 1px solid var(--ni-chrome-border);
+  font-size: 0.8rem;
+}
+
+.ni-sidebar-footer a {
+  color: var(--ni-chrome-accent);
+  font-weight: 600;
+}
+
+.ni-app-main {
+  flex: 1;
+  min-width: 0;
+  padding: 1.25rem var(--ni-chrome-pad-x) 2.5rem;
+}
+
+/* News content: broadsheet paper only inside the article column */
+.ni-app-shell--news .ni-app-main {
+  background: var(--v2-paper, #f3efe6);
+  color: var(--v2-ink, var(--ni-chrome-ink));
+  max-width: none;
+}
+
+.ni-app-shell--news .ni-app-main > .ni-news-measure {
+  max-width: 72rem;
+  margin: 0 auto;
+}
+
+/* Finance / Admin content stay on shell ground; panels use surface */
+.ni-app-shell--finance .ni-app-main,
+.ni-app-shell--admin .ni-app-main {
+  max-width: 90rem;
+}
+
+@media (max-width: 800px) {
+  .ni-app-body {
+    flex-direction: column;
+  }
+
+  .ni-app-sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--ni-chrome-border);
+    display: flex;
+    gap: 0.35rem;
+    overflow-x: auto;
+    padding: 0.75rem var(--ni-chrome-pad-x);
+  }
+
+  .ni-sidebar-section {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.2rem;
+    flex-shrink: 0;
+  }
+
+  .ni-sidebar-label {
+    display: none;
+  }
+
+  .ni-sidebar-footer {
+    margin-top: 0;
+    padding: 0.25rem 0.55rem;
+    border-top: 0;
+    border-left: 1px solid var(--ni-chrome-border);
+  }
+}
+
+/* Legacy admin sidebar class aliases (AdminOpsSidebar) */
+.ni-admin-shell {
+  display: flex;
+  min-height: calc(100vh - var(--ni-chrome-header-height));
+}
+
+.ni-admin-sidebar {
+  width: var(--ni-chrome-sidebar-width);
+  flex-shrink: 0;
+  padding: 1rem 0.75rem;
+  border-right: 1px solid var(--ni-chrome-border);
+  background: var(--ni-chrome-sidebar-bg);
   font-family: var(--ni-font-ui);
 }
 
@@ -130,7 +322,7 @@
 }
 
 .ni-admin-sidebar a:hover {
-  background: rgba(176, 16, 48, 0.06);
+  background: var(--ni-chrome-accent-soft);
 }
 
 .ni-admin-sidebar a.is-active {
@@ -146,7 +338,7 @@
 }
 
 .ni-admin-grafana a {
-  color: #1565c0;
+  color: var(--ni-chrome-accent);
   font-weight: 600;
 }
 
