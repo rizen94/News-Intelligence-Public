@@ -1,11 +1,11 @@
 /**
- * News product layout — broadsheet content + shared product-root chrome.
+ * News product layout — broadsheet content pane + shared AppShell chrome.
  */
 import React from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import '../styles/broadsheet.css';
 import { DomainFilter, useV2Domain, withDomainQuery } from '../hooks/useV2Domain';
-import { ProductRootSwitcher } from '../../shell/ProductRootSwitcher';
+import AppShell from '../../shell/AppShell';
 
 const NAV = [
   { to: '/v2', label: 'Home', end: true },
@@ -17,39 +17,34 @@ const NAV = [
 export default function UserLayout() {
   const domain = useV2Domain();
 
-  return (
-    <div className='v2-user'>
-      <header className='v2-masthead'>
-        <div className='v2-masthead-inner'>
-          <ProductRootSwitcher>
-            <DomainFilter />
-          </ProductRootSwitcher>
-          <nav aria-label='News sections' style={{ width: '100%' }}>
-            <ul className='v2-nav-primaries'>
-              {NAV.map(item => (
-                <li key={item.to}>
-                  <NavLink
-                    to={withDomainQuery(item.to, domain)}
-                    end={item.end}
-                    style={({ isActive }) => ({
-                      textDecoration: 'none',
-                      color: isActive ? 'var(--v2-ink)' : undefined,
-                      borderBottomColor: isActive
-                        ? 'var(--v2-accent)'
-                        : undefined,
-                    })}
-                  >
-                    {item.label}
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
-          </nav>
-        </div>
-      </header>
-      <main className='v2-page'>
-        <Outlet />
-      </main>
+  const sidebar = (
+    <div className='ni-sidebar-section'>
+      <div className='ni-sidebar-label'>Sections</div>
+      {NAV.map(item => (
+        <NavLink
+          key={item.to}
+          to={withDomainQuery(item.to, domain)}
+          end={item.end}
+          className={({ isActive }) => (isActive ? 'is-active' : undefined)}
+        >
+          {item.label}
+        </NavLink>
+      ))}
     </div>
+  );
+
+  return (
+    <AppShell
+      root='news'
+      brandTo='/v2'
+      headerActions={<DomainFilter />}
+      sidebar={sidebar}
+      sidebarLabel='News sections'
+      className='v2-user'
+    >
+      <div className='ni-news-measure'>
+        <Outlet />
+      </div>
+    </AppShell>
   );
 }
