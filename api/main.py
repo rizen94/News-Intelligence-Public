@@ -283,90 +283,113 @@ async def lifespan(app: FastAPI):
         logger.error("❌ Failed to initialize Finance Orchestrator: %s", e)
         app.state.finance_orchestrator = None
 
-    # Start automation manager in background thread (before OrchestratorCoordinator)
+    # Start automation manager in background thread (before OrchestratorCoordinator).
+    # PopOS local UI/API must set AUTOMATION_MANAGER_ENABLED=false so it does not
+    # run a second AutomationManager against Widow DB + local Ollama (starves
+    # news-intelligence-popos-worker-refine entity_profile_build).
+    _am_enabled = os.environ.get("AUTOMATION_MANAGER_ENABLED", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
     try:
-        from services.automation_manager import AutomationManager
-        from services.ml_processing_service import MLProcessingService
-        import services.automation_manager as _automation_module
-
-        automation = AutomationManager(db_config)
-
-        def start_automation():
-            import asyncio
-            from concurrent.futures import ThreadPoolExecutor
-
-            loop = asyncio.new_event_loop()
-            loop.set_default_executor(ThreadPoolExecutor(max_workers=2))
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(automation.start())
-            except Exception as exc:
-                logger.error(
-                    "Automation manager background thread exited: %s",
-                    exc,
-                    exc_info=True,
-                )
-                app.state.automation = None
-                _automation_module.automation_manager = None
-
-        automation_thread = threading.Thread(target=start_automation, daemon=True)
-        automation_thread.start()
-
-        logger.info("Automation manager started in background thread")
-
-        app.state.automation = automation
-        app.state.automation_thread = automation_thread
-        _automation_module.automation_manager = automation
-        automation.set_finance_orchestrator_getter(
-            lambda: getattr(app.state, "finance_orchestrator", None)
-        )
-
-        try:
-            ml_processing_service = MLProcessingService()
-            ml_processing_service.start_processing()
-            logger.info("✅ ML Processing Service started automatically")
-            app.state.ml_processing = ml_processing_service
-        except Exception as e:
-            logger.error(f"❌ Failed to start ML Processing Service: {e}")
-
-        try:
-            from domains.content_analysis.services.topic_extraction_queue_worker import (
-                TopicExtractionQueueWorker,
+        if not _am_enabled:
+            logger.info(
+                "Automation manager skipped (AUTOMATION_MANAGER_ENABLED=%s)",
+                os.environ.get("AUTOMATION_MANAGER_ENABLED", ""),
             )
-            from shared.database.connection import get_db_connection
+            app.state.automation = None
+            app.state.automation_thread = None
+        else:
+            from services.automation_manager import AutomationManager
+            from services.ml_processing_service import MLProcessingService
+            import services.automation_manager as _automation_module
 
-            def start_queue_workers_background():
+            automation = AutomationManager(db_config)
+
+            def start_automation():
                 import asyncio
+                from concurrent.futures import ThreadPoolExecutor
 
                 loop = asyncio.new_event_loop()
+                loop.set_default_executor(ThreadPoolExecutor(max_workers=2))
                 asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(automation.start())
+                except Exception as exc:
+                    logger.error(
+                        "Automation manager background thread exited: %s",
+                        exc,
+                        exc_info=True,
+                    )
+                    app.state.automation = None
+                    _automation_module.automation_manager = None
 
-                async def start_workers():
-                    from shared.domain_registry import pipeline_url_schema_pairs
+            automation_thread = threading.Thread(target=start_automation, daemon=True)
+            automation_thread.start()
 
-                    for _domain_key, schema in pipeline_url_schema_pairs():
-                        try:
-                            worker = TopicExtractionQueueWorker(get_db_connection, schema=schema)
-                            asyncio.create_task(worker.start())
-                            logger.info(
-                                f"✅ Started topic extraction queue worker for {_domain_key} ({schema})"
-                            )
-                        except Exception as e:
-                            logger.error(f"❌ Failed to start queue worker for {_domain_key}: {e}")
+            logger.info("Automation manager started in background thread")
 
-                    while True:
-                        await asyncio.sleep(60)
-
-                loop.run_until_complete(start_workers())
-
-            queue_worker_thread = threading.Thread(
-                target=start_queue_workers_background, daemon=True
+            app.state.automation = automation
+            app.state.automation_thread = automation_thread
+            _automation_module.automation_manager = automation
+            automation.set_finance_orchestrator_getter(
+                lambda: getattr(app.state, "finance_orchestrator", None)
             )
-            queue_worker_thread.start()
-            app.state.queue_worker_thread = queue_worker_thread
-            logger.info("✅ Topic extraction queue workers started automatically in background")
-        except Exception as e:
-            logger.error(f"❌ Failed to start topic extraction queue workers: {e}")
+
+            try:
+                ml_processing_service = MLProcessingService()
+                ml_processing_service.start_processing()
+                logger.info("✅ ML Processing Service started automatically")
+                app.state.ml_processing = ml_processing_service
+            except Exception as e:
+                logger.error(f"❌ Failed to start ML Processing Service: {e}")
+
+            try:
+                from domains.content_analysis.services.topic_extraction_queue_worker import (
+                    TopicExtractionQueueWorker,
+                )
+                from shared.database.connection import get_db_connection
+
+                def start_queue_workers_background():
+                    import asyncio
+
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+
+                    async def start_workers():
+                        from shared.domain_registry import pipeline_url_schema_pairs
+
+                        for _domain_key, schema in pipeline_url_schema_pairs():
+                            try:
+                                worker = TopicExtractionQueueWorker(
+                                    get_db_connection, schema=schema
+                                )
+                                asyncio.create_task(worker.start())
+                                logger.info(
+                                    f"✅ Started topic extraction queue worker for {_domain_key} ({schema})"
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"❌ Failed to start queue worker for {_domain_key}: {e}"
+                                )
+
+                        while True:
+                            await asyncio.sleep(60)
+
+                    loop.run_until_complete(start_workers())
+
+                queue_worker_thread = threading.Thread(
+                    target=start_queue_workers_background, daemon=True
+                )
+                queue_worker_thread.start()
+                app.state.queue_worker_thread = queue_worker_thread
+                logger.info(
+                    "✅ Topic extraction queue workers started automatically in background"
+                )
+            except Exception as e:
+                logger.error(f"❌ Failed to start topic extraction queue workers: {e}")
     except Exception as e:
         logger.error(f"Failed to start automation manager: {e}")
         app.state.automation = None
