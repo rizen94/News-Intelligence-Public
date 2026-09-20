@@ -5,6 +5,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import type { StoryUnit as StoryUnitData } from '../services/readerApi';
+import { withDomainQuery } from '../hooks/useV2Domain';
 
 type Variant = 'hero' | 'lead' | 'secondary';
 
@@ -15,7 +16,10 @@ type Props = {
 };
 
 export function StoryUnit({ item, variant = 'secondary', style }: Props) {
-  const href = item.href || `/v2/storylines/${item.domain}/${item.storyline_id}`;
+  const href = withDomainQuery(
+    item.href || `/v2/storylines/${item.domain}/${item.storyline_id}`,
+    item.domain || null
+  );
   return (
     <article
       className={`v2-story-unit v2-story-unit--${variant}`}

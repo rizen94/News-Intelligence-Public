@@ -1,7 +1,7 @@
 /**
  * Reader home — hero + cascade (News) with Current / One-offs rails.
  */
-import React, { useEffect, useState, useTransition } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { StoryUnit } from '../../components/StoryUnit';
 import { rememberFeedNav } from '../../components/PaginationBar';
@@ -12,11 +12,13 @@ export default function HomePage() {
   const domain = useV2Domain();
   const [data, setData] = useState<ReaderHomeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [pending, setPending] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     setError(null);
+    setPending(true);
+    setData(null);
     fetchReaderHome(domain, { page: 1, pageSize: 12 })
       .then(res => {
         if (cancelled) return;
@@ -26,13 +28,20 @@ export default function HomePage() {
           news.map(it => ({
             domain: it.domain,
             storyline_id: it.storyline_id,
-            href: it.href,
+            href: withDomainQuery(
+              it.href || `/v2/storylines/${it.domain}/${it.storyline_id}`,
+              it.domain || domain
+            ),
           }))
         );
-        startTransition(() => setData(res));
+        setData(res);
+        setPending(false);
       })
       .catch(err => {
-        if (!cancelled) setError(err?.message || 'Failed to load home feed');
+        if (!cancelled) {
+          setError(err?.message || 'Failed to load home feed');
+          setPending(false);
+        }
       });
     return () => {
       cancelled = true;

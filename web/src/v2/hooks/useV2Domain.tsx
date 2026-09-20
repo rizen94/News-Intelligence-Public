@@ -51,6 +51,17 @@ export function DomainFilter() {
 
 export function withDomainQuery(path: string, domain: string | null): string {
   if (!domain) return path;
-  const join = path.includes('?') ? '&' : '?';
-  return `${path}${join}domain=${encodeURIComponent(domain)}`;
+  try {
+    // Absolute or root-relative — avoid duplicating ?domain=
+    const url = new URL(path, 'https://ni.local');
+    if (url.searchParams.get('domain') === domain) {
+      return `${url.pathname}${url.search}${url.hash}`;
+    }
+    url.searchParams.set('domain', domain);
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    if (path.includes('domain=')) return path;
+    const join = path.includes('?') ? '&' : '?';
+    return `${path}${join}domain=${encodeURIComponent(domain)}`;
+  }
 }

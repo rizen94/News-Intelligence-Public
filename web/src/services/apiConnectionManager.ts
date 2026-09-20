@@ -69,6 +69,12 @@ class APIConnectionManager {
             'public',
             'deduplication',
             'topics',
+            'reader',
+            'editorial',
+            'pulse',
+            'causal_edges',
+            'rolling_arcs',
+            'signals',
           ];
           const isGlobalRoute =
             globalApiPrefixes.includes(firstSegment) ||

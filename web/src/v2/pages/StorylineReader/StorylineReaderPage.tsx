@@ -7,9 +7,11 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Breadcrumb,
   feedNavNeighbors,
+  rememberFeedNav,
 } from '../../components/PaginationBar';
 import { withDomainQuery } from '../../hooks/useV2Domain';
 import {
+  fetchReaderHome,
   fetchReaderStoryline,
   type ReaderPackResponse,
 } from '../../services/readerApi';
@@ -41,10 +43,7 @@ export default function StorylineReaderPage() {
   const navigate = useNavigate();
   const [pack, setPack] = useState<ReaderPackResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const neighbors =
-    domain && id
-      ? feedNavNeighbors(domain, Number(id))
-      : { prev: null, next: null, index: -1, total: 0 };
+  const [navTick, setNavTick] = useState(0);
 
   useEffect(() => {
     if (!domain || !id) return;
@@ -63,19 +62,44 @@ export default function StorylineReaderPage() {
     };
   }, [domain, id]);
 
+  // Seed prev/next from the news feed when the user deep-links (no session nav).
+  useEffect(() => {
+    if (!domain || !id) return;
+    if (feedNavNeighbors(domain, Number(id)).index >= 0) return;
+    let cancelled = false;
+    fetchReaderHome(domain, { page: 1, pageSize: 24, section: 'news' })
+      .then(res => {
+        if (cancelled) return;
+        const ids = (res.nav_ids || []).map(n => ({
+          ...n,
+          href: withDomainQuery(n.href, n.domain || domain),
+        }));
+        if (!ids.length) return;
+        rememberFeedNav('news', ids);
+        setNavTick(t => t + 1);
+      })
+      .catch(() => {
+        /* non-fatal — reader body still loads */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [domain, id]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      const nav = domain && id ? feedNavNeighbors(domain, Number(id)) : null;
       if (e.key === 'j' || e.key === 'ArrowRight') {
-        if (neighbors.next) {
+        if (nav?.next) {
           e.preventDefault();
-          navigate(neighbors.next.href);
+          navigate(nav.next.href);
         }
       } else if (e.key === 'k' || e.key === 'ArrowLeft') {
-        if (neighbors.prev) {
+        if (nav?.prev) {
           e.preventDefault();
-          navigate(neighbors.prev.href);
+          navigate(nav.prev.href);
         }
       } else if (e.key === 'Escape') {
         navigate(withDomainQuery('/v2/news', domain || null));
@@ -83,7 +107,13 @@ export default function StorylineReaderPage() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [neighbors.next, neighbors.prev, navigate, domain]);
+  }, [navigate, domain, id, navTick]);
+
+  const nav =
+    domain && id
+      ? feedNavNeighbors(domain, Number(id))
+      : { prev: null, next: null, index: -1, total: 0 };
+  void navTick;
 
   if (error) {
     return (
@@ -129,21 +159,22 @@ export default function StorylineReaderPage() {
       />
 
       <div className='v2-reader-nav' role='navigation' aria-label='Story navigation'>
-        {neighbors.prev ? (
-          <Link className='v2-reader-nav-link' to={neighbors.prev.href}>
+        {nav.prev ? (
+          <Link className='v2-reader-nav-link' to={nav.prev.href}>
             ← Previous
           </Link>
         ) : (
           <span className='v2-reader-nav-link is-disabled'>← Previous</span>
         )}
         <span className='v2-pager-meta'>
-          {neighbors.index >= 0
-            ? `${neighbors.index + 1} / ${neighbors.total}`
-            : 'From feed'}
-          <span style={{ marginLeft: '0.5rem', opacity: 0.7 }}>j/k or ←/→</span>
+          {nav.index >= 0 ? `${nav.index + 1} / ${nav.total}` : 'From feed'}
+          <span style={{ marginLeft: '0.5rem', opacity: 0.7 }}>
+            {' '}
+            j/k or ←/→
+          </span>
         </span>
-        {neighbors.next ? (
-          <Link className='v2-reader-nav-link' to={neighbors.next.href}>
+        {nav.next ? (
+          <Link className='v2-reader-nav-link' to={nav.next.href}>
             Next →
           </Link>
         ) : (
