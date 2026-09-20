@@ -1,21 +1,15 @@
 /**
  * News Intelligence — web SPA entry (React + Vite + MUI).
  *
- * Routing:
- * - Legacy (default): `/:domain/*` via MainLayout — unchanged until explicit cutover.
- * - v2 User: `/v2/*` (Modern Broadsheet reader) under `web/src/v2/`.
- * - v2 Admin: `/v2/admin/*` (utilitarian ops) — parallel to classic Operations.
+ * Product roots (shared chrome via ProductRootSwitcher):
+ * - News: `/v2/*` broadsheet reader (`web/src/v2/`)
+ * - Finance: `/finance/{trackers|markets|reporting}` (`web/src/finance/`)
+ * - Admin: `/v2/admin/*` and `/admin/*` — ops only (Monitor, Work, SQL, Audit, Grafana)
  *
- * Domains come from the API (`/api/system_monitoring/registry_domains`) with a
- * static fallback — see `utils/domainHelper` and AGENTS.md.
+ * Classic: `/:domain/*` via MainLayout remains via “Classic app”.
  *
- * API calls: `apiConnectionManager` sets base URL and domain for `/api/{domain}/...`
- * and global `/api/...` routes (see docs/WEB_API_CONNECTIONS.md).
- *
- * Layout: Hero status bar + sidebar (Discover, Investigate, Monitor, Analyze).
- * Public demo: `PublicDemoProvider` + `DemoRouteGuard` hide watchlist, ops, and
- * other write-heavy routes — see `AppNav` filter and guarded routes below.
- * Product display notes (incorporation candidate): docs/archive/planning_incubator/WEB_PRODUCT_DISPLAY_PLAN.md
+ * Domains: `/api/system_monitoring/registry_domains` + `utils/domainHelper`.
+ * Public demo: `PublicDemoProvider` + `DemoRouteGuard` — see AppNav + guarded routes.
  */
 import React, { Suspense, useEffect } from 'react';
 import { Box, CircularProgress } from '@mui/material';

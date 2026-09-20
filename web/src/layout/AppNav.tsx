@@ -218,8 +218,34 @@ export function AppNav() {
           }}
         >
           <ListItemText
-            primary='Try new app'
-            secondary='Broadsheet /v2'
+            primary='News'
+            secondary='/v2 broadsheet'
+            primaryTypographyProps={{ fontWeight: 600, fontSize: '0.875rem' }}
+            secondaryTypographyProps={{ fontSize: '0.7rem' }}
+          />
+        </ListItemButton>
+        <ListItemButton
+          onClick={() => {
+            navigate('/finance');
+            setMobileOpen(false);
+          }}
+        >
+          <ListItemText
+            primary='Finance'
+            secondary='/finance product'
+            primaryTypographyProps={{ fontWeight: 600, fontSize: '0.875rem' }}
+            secondaryTypographyProps={{ fontSize: '0.7rem' }}
+          />
+        </ListItemButton>
+        <ListItemButton
+          onClick={() => {
+            navigate('/v2/admin');
+            setMobileOpen(false);
+          }}
+        >
+          <ListItemText
+            primary='Admin'
+            secondary='Monitor / SQL / Work'
             primaryTypographyProps={{ fontWeight: 600, fontSize: '0.875rem' }}
             secondaryTypographyProps={{ fontSize: '0.7rem' }}
           />

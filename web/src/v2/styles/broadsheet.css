@@ -443,26 +443,25 @@
   flex-wrap: wrap;
   gap: 0.5rem 1rem;
   align-items: center;
-  padding: 0.75rem 1.25rem;
+  padding: 0.65rem 1.25rem;
   background: #fff;
   border-bottom: 1px solid var(--v2-admin-border);
-}
-
-.v2-admin-nav a {
-  color: var(--v2-admin-ink);
-  text-decoration: none;
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-
-.v2-admin-nav a[aria-current='page'] {
-  color: var(--v2-admin-accent);
+  position: sticky;
+  top: 0;
+  z-index: 30;
 }
 
 .v2-admin-main {
   max-width: 80rem;
   margin: 0 auto;
   padding: 1.25rem;
+}
+
+.admin-monitor-embed {
+  /* Slim Monitor embeds inside Admin; keep MUI density readable on gray ops bg */
+  background: #fff;
+  border: 1px solid var(--v2-admin-border);
+  padding: 0.5rem 0.75rem 1rem;
 }
 
 .v2-admin-panel {

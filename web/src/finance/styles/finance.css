@@ -26,43 +26,17 @@
 .finance-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 1rem;
-  padding: 0.85rem 1.25rem;
+  padding: 0.75rem 1.25rem;
   border-bottom: 1px solid var(--fin-border);
-  background: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.9);
   backdrop-filter: blur(8px);
   position: sticky;
   top: 0;
   z-index: 20;
 }
 
-.finance-brand {
-  font-family: var(--fin-font-display);
-  font-size: 1.35rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  color: var(--fin-ink);
-  text-decoration: none;
-}
-
-.finance-brand span {
-  color: var(--fin-accent);
-}
-
-.finance-cross-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 0.85rem;
-  font-size: 0.85rem;
-}
-
-.finance-cross-links a {
-  color: var(--fin-muted);
-  text-decoration: none;
-}
-
-.finance-cross-links a:hover {
+.finance-app .ni-product-brand-sub {
   color: var(--fin-accent);
 }
 

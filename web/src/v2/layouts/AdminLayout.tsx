@@ -1,46 +1,31 @@
 /**
- * v2 Admin layout — utilitarian ops shell (not broadsheet).
+ * Admin product layout — ops-only sidebar + shared product-root chrome.
+ * Deliberately excludes user-content destinations (Dashboard, Storylines, Articles, …).
  */
 import React from 'react';
-import { Link, NavLink, Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import '../styles/broadsheet.css';
-import { getDefaultDomainKey } from '../../utils/domainHelper';
-
-const NAV = [
-  { to: '/v2/admin', label: 'Overview', end: true },
-  { to: '/v2/admin/monitor', label: 'Monitor' },
-  { to: '/v2/admin/work', label: 'Work executed' },
-  { to: '/v2/admin/sql', label: 'SQL' },
-  { to: '/v2/admin/audit', label: 'Audit' },
-];
+import {
+  AdminOpsSidebar,
+  ProductRootSwitcher,
+  adminBaseFromPath,
+} from '../../shell/ProductRootSwitcher';
 
 export default function AdminLayout() {
-  const classic = `/${getDefaultDomainKey()}/monitor`;
+  const { pathname } = useLocation();
+  const base = adminBaseFromPath(pathname);
 
   return (
     <div className='v2-admin'>
       <header className='v2-admin-nav'>
-        <strong style={{ marginRight: '0.5rem' }}>NI Admin</strong>
-        {NAV.map(item => (
-          <NavLink key={item.to} to={item.to} end={item.end}>
-            {({ isActive }) => (
-              <span aria-current={isActive ? 'page' : undefined}>{item.label}</span>
-            )}
-          </NavLink>
-        ))}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.75rem' }}>
-          <div className='v2-switcher' aria-label='User Admin switcher'>
-            <Link to='/v2'>User</Link>
-            <span className='is-active'>Admin</span>
-          </div>
-          <Link to={classic} style={{ fontSize: '0.8rem' }}>
-            Classic app
-          </Link>
-        </div>
+        <ProductRootSwitcher subtitle='Admin' brandTo={base} />
       </header>
-      <main className='v2-admin-main'>
-        <Outlet />
-      </main>
+      <div className='ni-admin-shell'>
+        <AdminOpsSidebar base={base} />
+        <main className='ni-admin-main'>
+          <Outlet />
+        </main>
+      </div>
     </div>
   );
 }

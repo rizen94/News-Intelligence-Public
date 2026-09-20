@@ -47,9 +47,10 @@ Context for AI assistants. Use project terminology consistently.
 | Finance product (trackers / markets / reporting) | `web/src/finance/` — routes under `/finance/*` (parallel to classic `/:domain` and News `/v2`) |
 | API client | `web/src/services/api/` + `apiService.ts` |
 | DB (single source) | `api/shared/database/connection.py` |
-| Domain layout / shell (legacy) | `web/src/layout/MainLayout.tsx` (routes in `App.tsx`: `/:domain` with MainLayout) — **default live app** |
+| Domain layout / shell (legacy) | `web/src/layout/MainLayout.tsx` (routes in `App.tsx`: `/:domain` with MainLayout) — **Classic app** |
+| Product root switcher | `web/src/shell/ProductRootSwitcher.tsx` — News `/v2` · Finance `/finance` · Admin `/v2/admin` + `/admin` |
 | v2 User (broadsheet) | `web/src/v2/` — routes `/v2`, `/v2/news`, `/v2/current`, `/v2/one-offs`, `/v2/storylines/:domain/:id` |
-| v2 Admin (ops) | `web/src/v2/` — routes `/v2/admin`, `/v2/admin/monitor`, `/work`, `/sql`, `/audit` |
+| v2 Admin (ops) | `web/src/v2/` — `/v2/admin` + `/admin` (Monitor, Work, SQL, Audit; no user-content nav) |
 | Reader APIs (additive) | `api/domains/reader/` — `GET /api/reader/home`, `GET /api/reader/storylines/{id}` |
 | Background automation | `api/services/automation_manager.py` |
 | Human reviewer navigation | `docs/CODEBASE_MAP.md`, `docs/PIPELINE_AND_AUTOMATION.md`, `docs/CODE_REVIEW_AND_RUN_CAVEATS.md` |

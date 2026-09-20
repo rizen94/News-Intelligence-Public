@@ -1,11 +1,10 @@
 /**
- * Top-level Finance product layout — parallel to classic `/:domain` and News `/v2`.
- * Forces finance domain for API calls; leaves Admin / classic routes alone.
+ * Finance product layout — denser content + shared product-root chrome.
  */
 import React, { useEffect } from 'react';
-import { NavLink, Outlet, Link } from 'react-router-dom';
+import { NavLink, Outlet } from 'react-router-dom';
 import { useDomain } from '../../contexts/DomainContext';
-import { getDefaultDomainKey } from '../../utils/domainHelper';
+import { ProductRootSwitcher } from '../../shell/ProductRootSwitcher';
 import '../styles/finance.css';
 
 const NAV = [
@@ -41,7 +40,6 @@ const NAV = [
 
 export default function FinanceLayout() {
   const { setDomain } = useDomain();
-  const newsHome = `/${getDefaultDomainKey()}/dashboard`;
 
   useEffect(() => {
     setDomain('finance');
@@ -50,15 +48,7 @@ export default function FinanceLayout() {
   return (
     <div className='finance-app'>
       <header className='finance-header'>
-        <Link to='/finance' className='finance-brand'>
-          News Intelligence · <span>Finance</span>
-        </Link>
-        <nav className='finance-cross-links' aria-label='Product cross links'>
-          <Link to={newsHome}>News (classic)</Link>
-          <Link to='/v2'>News (/v2)</Link>
-          <Link to='/finance'>Finance home</Link>
-          <Link to='/finance/commodity/gold'>Classic commodity</Link>
-        </nav>
+        <ProductRootSwitcher subtitle='Finance' brandTo='/finance' />
       </header>
       <div className='finance-shell'>
         <aside className='finance-nav' aria-label='Finance navigation'>
