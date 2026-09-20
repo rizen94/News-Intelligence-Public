@@ -3,7 +3,8 @@
  * No redirect to classic domain routes; always calls finance API silo.
  * Warning/progress cues render on each chart/metric panel (not a standalone legend grid).
  * Chart overlays: 1w/1m level lines (widen/narrow color) + FRED-window hi/lo/median +
- * curated historic_crisis_refs (GFC/COVID/tight) — citation constants, not live FRED extremes.
+ * curated historic_crisis_refs chips always; GFC/COVID ReferenceLines only when Crisis scale
+ * is on (default off so recent path stays readable). Tight ~241 uses normal scale.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -866,9 +867,9 @@ export default function CreditSpreadsPage() {
       <h1 className='finance-page-title'>Credit spreads</h1>
       <p className='finance-page-lede'>
         High-yield and investment-grade credit stress vs. Treasuries. Warning = widening;
-        progress = narrowing / stable. Chart lines mark last week / last month, FRED-window
-        high·low·median (~3y live), and curated crisis refs (GFC / COVID / tight) — citation
-        constants, not a dense multi-decade dump.
+        progress = narrowing / stable. Chart lines mark last week / last month and FRED-window
+        high·low·median (~3y live). Crisis peaks (GFC / COVID) stay as teaching chips; turn
+        Crisis scale on to draw those lines. Citation constants — not a dense multi-decade dump.
       </p>
 
       {error && (
