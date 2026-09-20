@@ -1,8 +1,14 @@
 /**
  * Longform storyline reader — summary, timeline, citations, dossier rail.
+ * Interactive: breadcrumbs, prev/next from last feed, j/k keyboard nav.
  */
 import React, { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import {
+  Breadcrumb,
+  feedNavNeighbors,
+} from '../../components/PaginationBar';
+import { withDomainQuery } from '../../hooks/useV2Domain';
 import {
   fetchReaderStoryline,
   type ReaderPackResponse,
@@ -19,7 +25,9 @@ function DossierTree({ nodes }: { nodes: Array<Record<string, unknown>> }) {
         return (
           <li key={String(n.id ?? i)} className='v2-dossier-item'>
             {href ? <Link to={href}>{name}</Link> : <strong>{name}</strong>}
-            {n.who ? <div style={{ color: 'var(--v2-ink-muted)' }}>{String(n.who)}</div> : null}
+            {n.who ? (
+              <div style={{ color: 'var(--v2-ink-muted)' }}>{String(n.who)}</div>
+            ) : null}
             {children.length ? <DossierTree nodes={children} /> : null}
           </li>
         );
@@ -30,13 +38,19 @@ function DossierTree({ nodes }: { nodes: Array<Record<string, unknown>> }) {
 
 export default function StorylineReaderPage() {
   const { domain, id } = useParams<{ domain: string; id: string }>();
+  const navigate = useNavigate();
   const [pack, setPack] = useState<ReaderPackResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const neighbors =
+    domain && id
+      ? feedNavNeighbors(domain, Number(id))
+      : { prev: null, next: null, index: -1, total: 0 };
 
   useEffect(() => {
     if (!domain || !id) return;
     let cancelled = false;
     setError(null);
+    setPack(null);
     fetchReaderStoryline(id, domain)
       .then(res => {
         if (!cancelled) setPack(res);
@@ -49,11 +63,40 @@ export default function StorylineReaderPage() {
     };
   }, [domain, id]);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.key === 'j' || e.key === 'ArrowRight') {
+        if (neighbors.next) {
+          e.preventDefault();
+          navigate(neighbors.next.href);
+        }
+      } else if (e.key === 'k' || e.key === 'ArrowLeft') {
+        if (neighbors.prev) {
+          e.preventDefault();
+          navigate(neighbors.prev.href);
+        }
+      } else if (e.key === 'Escape') {
+        navigate(withDomainQuery('/v2/news', domain || null));
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [neighbors.next, neighbors.prev, navigate, domain]);
+
   if (error) {
     return (
       <div>
+        <Breadcrumb
+          crumbs={[
+            { label: 'Home', to: withDomainQuery('/v2', domain || null) },
+            { label: 'News', to: withDomainQuery('/v2/news', domain || null) },
+            { label: 'Error' },
+          ]}
+        />
         <p className='v2-empty'>{error}</p>
-        <Link to='/v2'>← Home</Link>
+        <Link to={withDomainQuery('/v2', domain || null)}>← Home</Link>
       </div>
     );
   }
@@ -75,121 +118,170 @@ export default function StorylineReaderPage() {
       : null);
 
   return (
-    <div className='v2-reader-layout'>
-      <article className='v2-reader-body'>
-        <p className='v2-section-label'>
-          {(domain || '').toUpperCase()} · Storyline
-        </p>
-        <h1>{pack.title}</h1>
-        <div className='v2-hero-rule' />
-        <div className='v2-story-meta' style={{ marginBottom: '1.25rem' }}>
-          {pack.updated_at ? <span>Updated {pack.updated_at.slice(0, 10)}</span> : null}
-          {pack.article_count != null ? (
-            <span>{pack.article_count} sources</span>
+    <div>
+      <Breadcrumb
+        crumbs={[
+          { label: 'Home', to: withDomainQuery('/v2', domain || null) },
+          { label: 'News', to: withDomainQuery('/v2/news', domain || null) },
+          { label: (domain || '').toUpperCase() },
+          { label: pack.title.slice(0, 48) + (pack.title.length > 48 ? '…' : '') },
+        ]}
+      />
+
+      <div className='v2-reader-nav' role='navigation' aria-label='Story navigation'>
+        {neighbors.prev ? (
+          <Link className='v2-reader-nav-link' to={neighbors.prev.href}>
+            ← Previous
+          </Link>
+        ) : (
+          <span className='v2-reader-nav-link is-disabled'>← Previous</span>
+        )}
+        <span className='v2-pager-meta'>
+          {neighbors.index >= 0
+            ? `${neighbors.index + 1} / ${neighbors.total}`
+            : 'From feed'}
+          <span style={{ marginLeft: '0.5rem', opacity: 0.7 }}>j/k or ←/→</span>
+        </span>
+        {neighbors.next ? (
+          <Link className='v2-reader-nav-link' to={neighbors.next.href}>
+            Next →
+          </Link>
+        ) : (
+          <span className='v2-reader-nav-link is-disabled'>Next →</span>
+        )}
+      </div>
+
+      <div className='v2-reader-layout'>
+        <article className='v2-reader-body'>
+          <p className='v2-section-label'>
+            {(domain || '').toUpperCase()} · Storyline
+          </p>
+          <h1>{pack.title}</h1>
+          <div className='v2-hero-rule' />
+          <div className='v2-story-meta' style={{ marginBottom: '1.25rem' }}>
+            {pack.updated_at ? (
+              <span>Updated {pack.updated_at.slice(0, 10)}</span>
+            ) : null}
+            {pack.article_count != null ? (
+              <span>{pack.article_count} sources</span>
+            ) : null}
+            {pack.status ? <span>{pack.status}</span> : null}
+          </div>
+
+          {pull ? <blockquote className='v2-pull-quote'>{pull}</blockquote> : null}
+
+          <section>
+            <h2 className='v2-section-label'>Summary</h2>
+            <p style={{ whiteSpace: 'pre-wrap' }}>
+              {pack.summary || 'No summary yet.'}
+            </p>
+          </section>
+
+          {pack.background_information ? (
+            <section>
+              <hr className='v2-section-rule' />
+              <h2 className='v2-section-label'>Background</h2>
+              <p style={{ whiteSpace: 'pre-wrap' }}>{pack.background_information}</p>
+            </section>
           ) : null}
-          {pack.status ? <span>{pack.status}</span> : null}
-        </div>
 
-        {pull ? <blockquote className='v2-pull-quote'>{pull}</blockquote> : null}
-
-        <section>
-          <h2 className='v2-section-label'>Summary</h2>
-          <p style={{ whiteSpace: 'pre-wrap' }}>{pack.summary || 'No summary yet.'}</p>
-        </section>
-
-        {pack.background_information ? (
           <section>
             <hr className='v2-section-rule' />
-            <h2 className='v2-section-label'>Background</h2>
-            <p style={{ whiteSpace: 'pre-wrap' }}>{pack.background_information}</p>
+            <h2 className='v2-section-label'>Timeline</h2>
+            {events.length === 0 ? (
+              <p className='v2-empty'>No timeline events yet.</p>
+            ) : (
+              <ol className='v2-timeline'>
+                {events.map((ev, i) => (
+                  <li key={String(ev.id ?? i)}>
+                    <div className='v2-story-kicker'>
+                      {String(ev.event_date || ev.actual_event_date || 'Undated')}
+                    </div>
+                    <strong style={{ fontFamily: 'var(--v2-font-display)' }}>
+                      {String(ev.title || 'Event')}
+                    </strong>
+                    {ev.description ? (
+                      <p
+                        style={{
+                          margin: '0.25rem 0 0',
+                          color: 'var(--v2-ink-muted)',
+                        }}
+                      >
+                        {String(ev.description)}
+                      </p>
+                    ) : null}
+                  </li>
+                ))}
+              </ol>
+            )}
           </section>
-        ) : null}
 
-        <section>
-          <hr className='v2-section-rule' />
-          <h2 className='v2-section-label'>Timeline</h2>
-          {events.length === 0 ? (
-            <p className='v2-empty'>No timeline events yet.</p>
-          ) : (
-            <ol className='v2-timeline'>
-              {events.map((ev, i) => (
-                <li key={String(ev.id ?? i)}>
-                  <div className='v2-story-kicker'>
-                    {String(ev.event_date || ev.actual_event_date || 'Undated')}
-                  </div>
-                  <strong style={{ fontFamily: 'var(--v2-font-display)' }}>
-                    {String(ev.title || 'Event')}
-                  </strong>
-                  {ev.description ? (
-                    <p style={{ margin: '0.25rem 0 0', color: 'var(--v2-ink-muted)' }}>
-                      {String(ev.description)}
-                    </p>
-                  ) : null}
-                </li>
-              ))}
-            </ol>
-          )}
-        </section>
+          <section>
+            <hr className='v2-section-rule' />
+            <h2 className='v2-section-label'>Citations</h2>
+            {citations.length === 0 ? (
+              <p className='v2-empty'>No member articles.</p>
+            ) : (
+              <ul style={{ paddingLeft: '1.1rem' }}>
+                {citations.map(c => (
+                  <li key={c.id} style={{ marginBottom: '0.65rem' }}>
+                    {c.url ? (
+                      <a href={c.url} target='_blank' rel='noreferrer'>
+                        {c.title}
+                      </a>
+                    ) : (
+                      c.title
+                    )}
+                    <div
+                      style={{ fontSize: '0.8rem', color: 'var(--v2-ink-muted)' }}
+                    >
+                      {[c.source_domain, c.published_at?.slice(0, 10)]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </article>
 
-        <section>
-          <hr className='v2-section-rule' />
-          <h2 className='v2-section-label'>Citations</h2>
-          {citations.length === 0 ? (
-            <p className='v2-empty'>No member articles.</p>
-          ) : (
-            <ul style={{ paddingLeft: '1.1rem' }}>
-              {citations.map(c => (
-                <li key={c.id} style={{ marginBottom: '0.65rem' }}>
-                  {c.url ? (
-                    <a href={c.url} target='_blank' rel='noreferrer'>
-                      {c.title}
-                    </a>
-                  ) : (
-                    c.title
-                  )}
-                  <div style={{ fontSize: '0.8rem', color: 'var(--v2-ink-muted)' }}>
-                    {[c.source_domain, c.published_at?.slice(0, 10)]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      </article>
-
-      <aside className='v2-dossier-rail' aria-label='Dossier'>
-        <h3>Dossier</h3>
-        <p style={{ color: 'var(--v2-ink-muted)', fontSize: '0.8rem' }}>
-          Who / what / why · hierarchy
-        </p>
-        {hierarchy && (hierarchy as { is_mega_storyline?: boolean }).is_mega_storyline ? (
-          <p className='v2-badge'>Mega storyline</p>
-        ) : null}
-        {Array.isArray((hierarchy as { children?: unknown[] }).children) &&
-        ((hierarchy as { children: Array<{ id: number; title: string; href?: string }> })
-          .children.length > 0) ? (
-          <div style={{ marginBottom: '1rem' }}>
-            <div className='v2-story-kicker'>Child arcs</div>
-            <ul style={{ paddingLeft: '1rem', margin: '0.35rem 0' }}>
-              {(
-                hierarchy as {
-                  children: Array<{ id: number; title: string; href?: string }>;
-                }
-              ).children.map(ch => (
-                <li key={ch.id}>
-                  <Link to={ch.href || `/v2/storylines/${domain}/${ch.id}`}>
-                    {ch.title}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-        <DossierTree nodes={tree} />
-        {!tree.length ? <p className='v2-empty'>No entities linked yet.</p> : null}
-      </aside>
+        <aside className='v2-dossier-rail' aria-label='Dossier'>
+          <h3>Dossier</h3>
+          <p style={{ color: 'var(--v2-ink-muted)', fontSize: '0.8rem' }}>
+            Who / what / why · hierarchy
+          </p>
+          {hierarchy &&
+          (hierarchy as { is_mega_storyline?: boolean }).is_mega_storyline ? (
+            <p className='v2-badge'>Mega storyline</p>
+          ) : null}
+          {Array.isArray((hierarchy as { children?: unknown[] }).children) &&
+          (
+            hierarchy as {
+              children: Array<{ id: number; title: string; href?: string }>;
+            }
+          ).children.length > 0 ? (
+            <div style={{ marginBottom: '1rem' }}>
+              <div className='v2-story-kicker'>Child arcs</div>
+              <ul style={{ paddingLeft: '1rem', margin: '0.35rem 0' }}>
+                {(
+                  hierarchy as {
+                    children: Array<{ id: number; title: string; href?: string }>;
+                  }
+                ).children.map(ch => (
+                  <li key={ch.id}>
+                    <Link to={ch.href || `/v2/storylines/${domain}/${ch.id}`}>
+                      {ch.title}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          <DossierTree nodes={tree} />
+          {!tree.length ? <p className='v2-empty'>No entities linked yet.</p> : null}
+        </aside>
+      </div>
     </div>
   );
 }

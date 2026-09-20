@@ -1,11 +1,11 @@
 /**
- * One-offs list + calendar (expected_on / announced_on).
+ * One-offs list + calendar (expected_on / announced_on) with pagination.
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { StoryUnit } from '../../components/StoryUnit';
-import { useV2Domain } from '../../hooks/useV2Domain';
-import { fetchReaderHome, type StoryUnit as StoryUnitData } from '../../services/readerApi';
+import { PaginationBar } from '../../components/PaginationBar';
+import { usePagedFeed } from '../../hooks/usePagedFeed';
 
 function dayKey(iso: string | null | undefined): string | null {
   if (!iso) return null;
@@ -13,26 +13,10 @@ function dayKey(iso: string | null | undefined): string | null {
 }
 
 export default function OneOffsPage() {
-  const domain = useV2Domain();
-  const [items, setItems] = useState<StoryUnitData[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchReaderHome(domain)
-      .then(res => {
-        if (!cancelled) setItems(res.one_offs || []);
-      })
-      .catch(err => {
-        if (!cancelled) setError(err?.message || 'Failed to load one-offs');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [domain]);
+  const { items, pagination, error, pending } = usePagedFeed('one_offs', 20);
 
   const byDay = useMemo(() => {
-    const map = new Map<string, StoryUnitData[]>();
+    const map = new Map<string, typeof items>();
     for (const item of items) {
       const key = dayKey(item.expected_on) || dayKey(item.announced_on);
       if (!key) continue;
@@ -63,9 +47,10 @@ export default function OneOffsPage() {
       <hr className='v2-section-rule' />
 
       {error ? <p className='v2-empty'>{error}</p> : null}
+      {pending && !items.length ? <p className='v2-empty'>Loading…</p> : null}
 
       <h2 className='v2-section-label'>Calendar</h2>
-      {byDay.length === 0 ? (
+      {byDay.length === 0 && !pending ? (
         <p className='v2-empty'>No concrete expected dates yet.</p>
       ) : (
         <div className='v2-cal-grid'>
@@ -103,6 +88,7 @@ export default function OneOffsPage() {
           />
         ))}
       </div>
+      <PaginationBar pagination={pagination} ariaLabel='One-offs pages' />
     </div>
   );
 }

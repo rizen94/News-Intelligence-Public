@@ -1,26 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { StoryUnit } from '../../components/StoryUnit';
-import { useV2Domain } from '../../hooks/useV2Domain';
-import { fetchReaderHome, type StoryUnit as StoryUnitData } from '../../services/readerApi';
+import { PaginationBar } from '../../components/PaginationBar';
+import { usePagedFeed } from '../../hooks/usePagedFeed';
 
 export default function NewsPage() {
-  const domain = useV2Domain();
-  const [items, setItems] = useState<StoryUnitData[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchReaderHome(domain)
-      .then(res => {
-        if (!cancelled) setItems(res.news || []);
-      })
-      .catch(err => {
-        if (!cancelled) setError(err?.message || 'Failed to load news');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [domain]);
+  const { items, pagination, error, pending, windowHours } = usePagedFeed('news', 12);
 
   return (
     <div>
@@ -32,7 +16,7 @@ export default function NewsPage() {
           margin: '0 0 0.5rem',
         }}
       >
-        Material updates · last 48 hours
+        Material updates · last {windowHours} hours
       </h1>
       <p style={{ color: 'var(--v2-ink-muted)', maxWidth: '36rem' }}>
         Storylines with a real standfirst after editorial or timeline change —
@@ -40,7 +24,8 @@ export default function NewsPage() {
       </p>
       <div className='v2-hero-rule' />
       {error ? <p className='v2-empty'>{error}</p> : null}
-      {!error && items.length === 0 ? (
+      {pending && !items.length ? <p className='v2-empty'>Loading…</p> : null}
+      {!error && !pending && items.length === 0 ? (
         <p className='v2-empty'>No qualifying news right now.</p>
       ) : null}
       <div className='v2-cascade'>
@@ -52,6 +37,7 @@ export default function NewsPage() {
           />
         ))}
       </div>
+      <PaginationBar pagination={pagination} ariaLabel='News pages' />
     </div>
   );
 }

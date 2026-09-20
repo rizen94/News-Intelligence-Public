@@ -8,6 +8,9 @@ const DOMAINS = [
   { value: '', label: 'All domains' },
   { value: 'politics', label: 'Politics' },
   { value: 'finance', label: 'Finance' },
+  { value: 'legal', label: 'Legal' },
+  { value: 'medicine', label: 'Medicine' },
+  { value: 'artificial-intelligence', label: 'AI' },
 ];
 
 export function useV2Domain(): string | null {
@@ -31,6 +34,8 @@ export function DomainFilter() {
           const next = new URLSearchParams(params);
           if (e.target.value) next.set('domain', e.target.value);
           else next.delete('domain');
+          // Reset page when domain changes
+          next.delete('page');
           setParams(next, { replace: true });
         }}
       >

@@ -22,13 +22,37 @@ export type StoryUnit = {
   href: string;
 };
 
+export type PaginationMeta = {
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+  has_prev: boolean;
+  has_next: boolean;
+};
+
+export type NavId = {
+  domain: string;
+  storyline_id: number;
+  href: string;
+};
+
 export type ReaderHomeResponse = {
   domain: string | null;
   generated_at: string;
   news_window_hours: number;
-  news: StoryUnit[];
-  current_events: StoryUnit[];
-  one_offs: StoryUnit[];
+  news?: StoryUnit[];
+  current_events?: StoryUnit[];
+  one_offs?: StoryUnit[];
+  section?: string;
+  pagination?:
+    | PaginationMeta
+    | {
+        news: PaginationMeta;
+        current_events: PaginationMeta;
+        one_offs: PaginationMeta;
+      };
+  nav_ids?: NavId[];
 };
 
 export type ReaderPackResponse = {
@@ -63,9 +87,16 @@ export type ReaderPackResponse = {
   };
 };
 
-export async function fetchReaderHome(domain?: string | null): Promise<ReaderHomeResponse> {
+export async function fetchReaderHome(
+  domain?: string | null,
+  opts?: { page?: number; pageSize?: number; section?: string | null }
+): Promise<ReaderHomeResponse> {
   const api = getApi();
-  const params = domain ? { domain } : {};
+  const params: Record<string, string | number> = {};
+  if (domain) params.domain = domain;
+  if (opts?.page) params.page = opts.page;
+  if (opts?.pageSize) params.page_size = opts.pageSize;
+  if (opts?.section) params.section = opts.section;
   const { data } = await api.get<ReaderHomeResponse>('/api/reader/home', { params });
   return data;
 }

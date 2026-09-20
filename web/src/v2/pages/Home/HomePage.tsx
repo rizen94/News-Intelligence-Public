@@ -4,6 +4,7 @@
 import React, { useEffect, useState, useTransition } from 'react';
 import { Link } from 'react-router-dom';
 import { StoryUnit } from '../../components/StoryUnit';
+import { rememberFeedNav } from '../../components/PaginationBar';
 import { useV2Domain, withDomainQuery } from '../../hooks/useV2Domain';
 import { fetchReaderHome, type ReaderHomeResponse } from '../../services/readerApi';
 
@@ -16,9 +17,19 @@ export default function HomePage() {
   useEffect(() => {
     let cancelled = false;
     setError(null);
-    fetchReaderHome(domain)
+    fetchReaderHome(domain, { page: 1, pageSize: 12 })
       .then(res => {
-        if (!cancelled) startTransition(() => setData(res));
+        if (cancelled) return;
+        const news = res.news || [];
+        rememberFeedNav(
+          'news',
+          news.map(it => ({
+            domain: it.domain,
+            storyline_id: it.storyline_id,
+            href: it.href,
+          }))
+        );
+        startTransition(() => setData(res));
       })
       .catch(err => {
         if (!cancelled) setError(err?.message || 'Failed to load home feed');
@@ -33,6 +44,10 @@ export default function HomePage() {
   const rest = news.slice(1, 8);
   const current = (data?.current_events || []).slice(0, 6);
   const oneOffs = (data?.one_offs || []).slice(0, 6);
+  const newsTotal =
+    data?.pagination && 'news' in data.pagination
+      ? data.pagination.news.total
+      : news.length;
 
   return (
     <div>
@@ -62,6 +77,14 @@ export default function HomePage() {
           />
         ))}
       </div>
+
+      {newsTotal > rest.length + (lead ? 1 : 0) ? (
+        <p style={{ marginTop: '0.75rem' }}>
+          <Link to={withDomainQuery('/v2/news', domain)}>
+            All news ({newsTotal}) →
+          </Link>
+        </p>
+      ) : null}
 
       <hr className='v2-section-rule' />
       <div
