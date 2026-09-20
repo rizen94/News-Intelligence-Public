@@ -35,6 +35,7 @@ This document maps the full system: API route structure, web interface structure
 |------|------|
 | API server | `api/main.py` |
 | Frontend app | `web/src/App.tsx` |
+| Finance product UI | `web/src/finance/` → `/finance/*` (Trackers, Markets, Reporting) |
 | API client layer | `web/src/services/api/` + `web/src/services/apiService.ts` |
 | Database (single source) | `api/shared/database/connection.py` |
 | LLM service | `api/shared/services/llm_service.py` |
@@ -288,6 +289,8 @@ All routes are mounted from `api/main.py`. Each domain router defines its own pr
 | GET | `/api/{domain}/finance/sources/status` | Source health |
 | GET | `/api/{domain}/finance/data-sources` | Data sources |
 | GET | `/api/{domain}/finance/market-data` | Market data |
+| GET | `/api/{domain}/finance/credit-spread` | Credit spreads (FRED OAS or ETF yields) |
+| GET | `/api/{domain}/finance/usd-purchasing-power-tracker` | USD purchasing power tracker |
 | GET | `/api/{domain}/finance/market-trends` | Market trends |
 | GET | `/api/{domain}/finance/market-patterns` | Market patterns |
 | GET | `/api/{domain}/finance/corporate-announcements` | Corporate announcements |
@@ -382,22 +385,31 @@ All routes are mounted from `api/main.py`. Each domain router defines its own pr
 
 ### 4.0 Dual SPA paths (side-by-side)
 
-Until an explicit archive cutover, **two** client trees ship in the same build:
+Three product roots share a top-level switcher (`web/src/shell/ProductRootSwitcher.tsx`):
 
 | Tree | Prefix | Code | Notes |
 |------|--------|------|-------|
-| Legacy (default) | `/:domain/…` | `web/src/layout/MainLayout.tsx`, `web/src/pages/` | Domain is URL spine; Operations under `/:domain/monitor` |
-| v2 User | `/v2/…` | `web/src/v2/` | Modern Broadsheet; domain is `?domain=` filter |
-| v2 Admin | `/v2/admin/…` | `web/src/v2/pages/admin/` | Utilitarian ops; does **not** remove classic Operations |
+| News | `/v2/…` | `web/src/v2/` | Broadsheet reader; domain is `?domain=` filter |
+| Finance | `/finance/…` | `web/src/finance/` | Trackers / Markets / Reporting |
+| Admin | `/v2/admin/…`, `/admin/…` | `web/src/v2/pages/admin/` | Ops only — Monitor, Work, SQL, Audit, Grafana; no user-content nav |
+| Classic (legacy) | `/:domain/…` | `web/src/layout/MainLayout.tsx` | Kept via "Classic app"; Operations still at `/:domain/monitor` |
 
-Cross-links: classic AppNav “Try new app” → `/v2`; v2 chrome “Classic app” → `/:domain/dashboard` (or monitor). User/Admin switcher lives inside v2 only (no auth yet).
+Cross-links: classic AppNav "Try new app" → `/v2`; product chrome root toggle swaps News / Finance / Admin. Classic `/finance/commodity/...` and `/finance/analysis` remain under `/:domain`.
 
-### 4.1 Route Map (legacy)
+### 4.1 Route Map (legacy + finance product)
 
-All **legacy** routes are under `/:domain/` where domain is `politics`, `finance`, or `science-tech`. Default redirect: `/` → `/politics/dashboard`.
+All **classic** routes are under `/:domain/` where domain is `politics`, `finance`, or `science-tech`. Default redirect: `/` → `/politics/dashboard`.
+
+**Finance product** (product-root chrome): `/finance`, `/finance/trackers/*`, `/finance/markets/*`, `/finance/reporting/*`. See `web/src/finance/`.
 
 | Path | Component | Description |
 |------|-----------|-------------|
+| `/finance` | `FinanceHomePage` | Finance product home (Trackers / Markets / Reporting) |
+| `/finance/trackers/usd-purchasing-power` | `UsdPurchasingPowerPage` | USD purchasing power tracker |
+| `/finance/trackers/credit-spreads` | `CreditSpreadsPage` | HY/IG credit spreads |
+| `/finance/markets/commodity/:commodity` | `CommodityMarketsPage` | Commodity series under Finance product |
+| `/finance/markets/macro` | `MacroMarketsPage` | Core FRED macro series |
+| `/finance/reporting/*` | reporting shell | Analysis / evidence / traces |
 | `/:domain/dashboard` | `Dashboard` | Intelligence dashboard: What's New, Active Investigations, System Intelligence |
 | `/:domain/discover` | `DiscoverPage` | Latest contexts, entity browser, event timeline |
 | `/:domain/discover/contexts/:id` | `ContextDetailPage` | Context detail |
@@ -414,9 +426,9 @@ All **legacy** routes are under `/:domain/` where domain is `politics`, `finance
 | `/:domain/investigate/narrative-threads` | `NarrativeThreadsPage` | Narrative threads |
 | `/:domain/monitor` | `MonitorPage` | System monitoring, automation, pipeline |
 | `/:domain/analyze` | `AnalyzePage` | Analysis |
-| `/:domain/analysis` | `FinancialAnalysis` | Financial analysis form |
+| `/:domain/analysis` | `FinancialAnalysis` | Financial analysis form (classic) |
 | `/:domain/analysis/:taskId` | `FinancialAnalysisResult` | Financial analysis result |
-| `/:domain/commodity/:commodity` | `CommodityDashboard` | Commodity dashboard (gold, silver, platinum) |
+| `/:domain/commodity/:commodity` | `CommodityDashboard` | Commodity dashboard (classic; gold, silver, platinum, oil, gas) |
 
 ### 4.1b Route Map (v2)
 
@@ -448,7 +460,8 @@ Located in `web/src/layout/AppNav.tsx` — persistent sidebar (220px desktop, dr
 | Investigate | `investigate` | SearchIcon | All domains |
 | Monitor | `monitor` | MonitorHeartIcon | All domains |
 | Analyze | `analyze` | AnalyticsIcon | All domains |
-| Commodity | `commodity/gold` | ShowChartIcon | **Finance only** |
+| Commodity | `commodity/gold` | ShowChartIcon | **Finance domain only** (classic) |
+| Finance product | `/finance` | ShowChartIcon | All domains (cross-link) |
 
 Domain selector in the header switches between politics, finance, science-tech.
 

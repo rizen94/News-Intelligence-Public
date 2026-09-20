@@ -42,6 +42,7 @@ Context for AI assistants. Use project terminology consistently.
 |------|------|
 | API | `api/main.py` |
 | Frontend | `web/src/App.tsx` |
+| Finance product (trackers / markets / reporting) | `web/src/finance/` — routes under `/finance/*` (parallel to classic `/:domain` and News `/v2`) |
 | API client | `web/src/services/api/` + `apiService.ts` |
 | DB (single source) | `api/shared/database/connection.py` |
 | Domain layout / shell (legacy) | `web/src/layout/MainLayout.tsx` (routes in `App.tsx`: `/:domain` with MainLayout) — **default live app** |
@@ -52,7 +53,7 @@ Context for AI assistants. Use project terminology consistently.
 | Human reviewer navigation | `docs/CODEBASE_MAP.md`, `docs/PIPELINE_AND_AUTOMATION.md`, `docs/CODE_REVIEW_AND_RUN_CAVEATS.md` |
 | Public HTTPS read-only demo | `docs/PUBLIC_DEPLOYMENT.md` (TLS, env, `NEWS_INTEL_DEMO_*`, `GET /api/public/demo_config`) |
 
-**Dual SPA paths (until cutover):** Legacy `/:domain/…` stays the default. v2 is opt-in via “Try new app” in classic AppNav or `/v2`. No redirects from legacy → v2. Archive legacy only after explicit review.
+**Product roots (unified chrome):** News `/v2`, Finance `/finance`, Admin `/v2/admin` (also `/admin`) share a top-level root switcher. Classic `/:domain/...` remains via "Classic app". Finance trackers/markets/reporting stay under `/finance/*`; Admin is ops-only (Monitor, SQL, Work, Grafana) — no user-content sidebar.
 
 ---
 
