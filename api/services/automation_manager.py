@@ -1432,29 +1432,46 @@ class AutomationManager:
             pass
 
     def get_disabled_schedule_names(self) -> list[str]:
-        """Phases disabled via AUTOMATION_DISABLED_SCHEDULES (e.g. Widow cron offload)."""
+        """Phases disabled via AUTOMATION_DISABLED_SCHEDULES and remote worker ownership."""
         raw = os.environ.get("AUTOMATION_DISABLED_SCHEDULES", "").strip()
-        if not raw:
-            return []
-        return sorted({x.strip() for x in raw.split(",") if x.strip()})
+        names = {x.strip() for x in raw.split(",") if x.strip()} if raw else set()
+        try:
+            from shared.remote_phase_worker import remote_owned_phases
+
+            names |= set(remote_owned_phases())
+        except Exception:
+            pass
+        return sorted(names)
 
     def is_schedule_disabled(self, phase_name: str) -> bool:
         return phase_name.strip() in set(self.get_disabled_schedule_names())
 
     def _apply_automation_disabled_schedules(self) -> None:
-        """Disable named schedules and strip them from depends_on so dependents still run (Widow cron offload)."""
+        """Disable named schedules and strip them from depends_on so dependents still run."""
         disabled = set(self.get_disabled_schedule_names())
         if not disabled:
             return
+        remote_owned: set[str] = set()
+        try:
+            from shared.remote_phase_worker import remote_owned_phases
+
+            remote_owned = set(remote_owned_phases())
+        except Exception:
+            pass
         for name in disabled:
             if name in self.schedules:
+                was_enabled = bool(self.schedules[name].get("enabled", True))
                 self.schedules[name]["enabled"] = False
-                logger.info(
-                    "Automation schedule %s disabled (AUTOMATION_DISABLED_SCHEDULES)",
-                    name,
+                reason = (
+                    "REMOTE_PHASE_WORKER_OWNED_PHASES"
+                    if name in remote_owned
+                    else "AUTOMATION_DISABLED_SCHEDULES"
                 )
+                # Only log real transitions (reconciler may re-run).
+                if was_enabled:
+                    logger.info("Automation schedule %s disabled (%s)", name, reason)
             else:
-                logger.warning("AUTOMATION_DISABLED_SCHEDULES: unknown phase %s", name)
+                logger.warning("disabled schedule unknown phase %s", name)
         for sched_name, sched in self.schedules.items():
             deps = list(sched.get("depends_on") or [])
             if not deps:
@@ -6910,8 +6927,13 @@ class AutomationManager:
             logger.debug("_has_pending_work %s: %s", phase_name, e)
         return False
 
-    def get_status(self) -> dict[str, Any]:
-        """Get automation status. Includes backlog_counts when backlog_metrics is available."""
+    def get_status(self, include_pending: bool = False) -> dict[str, Any]:
+        """Get automation status. Includes backlog_counts when backlog_metrics is available.
+
+        ``include_pending`` is accepted for Monitor/API compatibility (ignored; backlog
+        counts are always attached when ``backlog_metrics`` is importable).
+        """
+        _ = include_pending
         phase_active = (
             sum(1 for t in self._phase_worker_tasks if not t.done())
             if self._phase_worker_tasks
