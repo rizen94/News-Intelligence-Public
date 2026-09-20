@@ -2,6 +2,8 @@
  * Credit spreads tracker under /finance/trackers — adapted from classic CreditSpreadDashboard.
  * No redirect to classic domain routes; always calls finance API silo.
  * Warning/progress cues render on each chart/metric panel (not a standalone legend grid).
+ * Chart overlays: 1w/1m level lines (widen/narrow color) + historic high/low/median anchors
+ * from full FRED-available span (anchors teach abnormal vs normal; plot stays a short window).
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -40,11 +42,17 @@ import { monitoringApi } from '../../../services/api/monitoring';
 import Logger from '../../../utils/logger';
 
 type SpreadStatus = 'Normal' | 'Elevated' | 'Warning' | 'Danger' | 'Crisis';
-type TimeRange = '1y' | '3y';
+type TimeRange = '1y' | '3y' | 'max';
 type DashboardTab = 'fred' | 'etf';
+type DeltaDirection = 'widen' | 'narrow' | 'flat';
 
 const FINANCE_DOMAIN = 'finance';
-const DAYS_MAP: Record<TimeRange, number> = { '1y': 365, '3y': 365 * 3 };
+/** Display windows only — historic anchors always come from full FRED-available span. */
+const DAYS_MAP: Record<TimeRange, number> = {
+  '1y': 365,
+  '3y': 365 * 3,
+  max: 365 * 40,
+};
 
 const STATUS_COLOR: Record<
   SpreadStatus,
@@ -55,6 +63,12 @@ const STATUS_COLOR: Record<
   Warning: 'warning',
   Danger: 'error',
   Crisis: 'error',
+};
+
+const DIRECTION_STROKE: Record<DeltaDirection, string> = {
+  widen: '#9a3412',
+  narrow: '#1b5e20',
+  flat: '#757575',
 };
 
 const HY_THRESHOLDS = [
@@ -93,6 +107,36 @@ type IndicatorRef = {
   bands?: IndicatorBand[];
 };
 
+type LagLevelRef = {
+  label: string;
+  lag_days: number;
+  date?: string;
+  bps: number;
+  delta_bps?: number | null;
+  direction?: DeltaDirection | null;
+};
+
+type HistoricExtremes = {
+  available_from?: string | null;
+  available_to?: string | null;
+  observation_count?: number;
+  span_days?: number;
+  history_limited?: boolean;
+  history_note?: string | null;
+  high?: { bps: number; date?: string | null };
+  low?: { bps: number; date?: string | null };
+  median_bps?: number;
+};
+
+type SeriesLevelRefs = {
+  series?: string;
+  latest_bps?: number | null;
+  as_of?: string;
+  week?: LagLevelRef | null;
+  month?: LagLevelRef | null;
+  historic?: HistoricExtremes | null;
+};
+
 type FredPayload = {
   hy_spread?: { date: string; value_bps: number }[];
   ig_spread?: { date: string; value_bps: number }[];
@@ -102,6 +146,10 @@ type FredPayload = {
     ig_bps?: number;
     hy_status?: SpreadStatus;
     ig_status?: SpreadStatus;
+  };
+  level_refs?: {
+    hy?: SeriesLevelRefs | null;
+    ig?: SeriesLevelRefs | null;
   };
   series_ids?: Record<string, string>;
   data_window_note?: string | null;
@@ -244,6 +292,19 @@ function bandForStatus(
   return String(status);
 }
 
+function formatDelta(delta?: number | null): string {
+  if (delta == null || Number.isNaN(delta)) return '';
+  const sign = delta > 0 ? '+' : '';
+  return `${sign}${delta.toFixed(0)}`;
+}
+
+function directionLabel(dir?: DeltaDirection | null): string {
+  if (dir === 'widen') return 'widen';
+  if (dir === 'narrow') return 'narrow';
+  if (dir === 'flat') return 'flat';
+  return '';
+}
+
 /** Compact warning/progress cue overlaid on a chart or metric panel */
 function ChartIndicatorCue({
   refItem,
@@ -287,6 +348,187 @@ function ChartIndicatorCue({
 
 function ChartCues({ children }: { children: React.ReactNode }) {
   return <div className='finance-chart-cues'>{children}</div>;
+}
+
+function LagChip({
+  prefix,
+  lag,
+}: {
+  prefix: string;
+  lag?: LagLevelRef | null;
+}) {
+  if (!lag) return null;
+  const dir = (lag.direction || 'flat') as DeltaDirection;
+  return (
+    <span className={`finance-level-chip is-${dir}`} title={lag.date || undefined}>
+      {prefix} {lag.label} {lag.bps.toFixed(0)} bps
+      {lag.delta_bps != null && (
+        <span className='finance-level-chip__delta'>
+          {' '}
+          ({formatDelta(lag.delta_bps)} · {directionLabel(dir)})
+        </span>
+      )}
+    </span>
+  );
+}
+
+function HistoricChip({
+  prefix,
+  historic,
+}: {
+  prefix: string;
+  historic?: HistoricExtremes | null;
+}) {
+  if (!historic?.high || !historic?.low) return null;
+  return (
+    <span className='finance-level-chip is-historic'>
+      {prefix} hi {historic.high.bps.toFixed(0)}
+      {historic.high.date ? ` (${historic.high.date.slice(0, 7)})` : ''} · lo{' '}
+      {historic.low.bps.toFixed(0)}
+      {historic.low.date ? ` (${historic.low.date.slice(0, 7)})` : ''}
+      {historic.median_bps != null && ` · med ${historic.median_bps.toFixed(0)}`}
+    </span>
+  );
+}
+
+/** Scannable strip of 1w/1m + historic anchors (pairs with plot ReferenceLines). */
+function LevelRefsStrip({
+  hy,
+  ig,
+}: {
+  hy?: SeriesLevelRefs | null;
+  ig?: SeriesLevelRefs | null;
+}) {
+  if (!hy && !ig) return null;
+  const limited = hy?.historic?.history_limited || ig?.historic?.history_limited;
+  const from = hy?.historic?.available_from || ig?.historic?.available_from;
+  return (
+    <div className='finance-level-refs' data-testid='credit-spread-level-refs'>
+      <div className='finance-level-refs__row'>
+        <LagChip prefix='HY' lag={hy?.week} />
+        <LagChip prefix='HY' lag={hy?.month} />
+        <HistoricChip prefix='HY' historic={hy?.historic} />
+      </div>
+      <div className='finance-level-refs__row'>
+        <LagChip prefix='IG' lag={ig?.week} />
+        <LagChip prefix='IG' lag={ig?.month} />
+        <HistoricChip prefix='IG' historic={ig?.historic} />
+      </div>
+      {limited && from && (
+        <p className='finance-level-refs__note'>
+          FRED ICE OAS history limited — anchors from {from} onward (not a full multi-decade
+          dump). ETF proxies are daily snapshots only.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function deltaStroke(dir?: DeltaDirection | null): string {
+  return DIRECTION_STROKE[(dir || 'flat') as DeltaDirection];
+}
+
+/** Horizontal ReferenceLines for 1w/1m (direction-colored) + HY historic anchors. */
+function SpreadLevelReferenceLines({
+  hy,
+  ig,
+}: {
+  hy?: SeriesLevelRefs | null;
+  ig?: SeriesLevelRefs | null;
+}) {
+  const lines: React.ReactNode[] = [];
+
+  const pushLag = (key: string, prefix: string, lag?: LagLevelRef | null) => {
+    if (!lag) return;
+    const stroke = deltaStroke(lag.direction);
+    const delta = formatDelta(lag.delta_bps);
+    const dir = directionLabel(lag.direction);
+    lines.push(
+      <ReferenceLine
+        key={key}
+        y={lag.bps}
+        stroke={stroke}
+        strokeWidth={1.5}
+        strokeDasharray={lag.label === '1w' ? '6 3' : '2 4'}
+        ifOverflow='extendDomain'
+        label={{
+          value: `${prefix} ${lag.label} ${lag.bps.toFixed(0)}${delta ? ` ${delta}` : ''}${
+            dir ? ` ${dir}` : ''
+          }`,
+          position: 'insideTopRight',
+          fontSize: 10,
+          fill: stroke,
+        }}
+      />
+    );
+  };
+
+  pushLag('hy-1w', 'HY', hy?.week);
+  pushLag('hy-1m', 'HY', hy?.month);
+  pushLag('ig-1w', 'IG', ig?.week);
+  pushLag('ig-1m', 'IG', ig?.month);
+
+  const hist = hy?.historic;
+  if (hist?.high?.bps != null) {
+    lines.push(
+      <ReferenceLine
+        key='hy-hi'
+        y={hist.high.bps}
+        stroke='#6d4c41'
+        strokeOpacity={0.85}
+        strokeDasharray='4 4'
+        ifOverflow='extendDomain'
+        label={{
+          value: `HY hi ${hist.high.bps.toFixed(0)}${
+            hist.high.date ? ` · ${hist.high.date.slice(0, 7)}` : ''
+          }`,
+          position: 'insideTopLeft',
+          fontSize: 10,
+          fill: '#6d4c41',
+        }}
+      />
+    );
+  }
+  if (hist?.low?.bps != null) {
+    lines.push(
+      <ReferenceLine
+        key='hy-lo'
+        y={hist.low.bps}
+        stroke='#455a64'
+        strokeOpacity={0.85}
+        strokeDasharray='4 4'
+        ifOverflow='extendDomain'
+        label={{
+          value: `HY lo ${hist.low.bps.toFixed(0)}${
+            hist.low.date ? ` · ${hist.low.date.slice(0, 7)}` : ''
+          }`,
+          position: 'insideBottomLeft',
+          fontSize: 10,
+          fill: '#455a64',
+        }}
+      />
+    );
+  }
+  if (hist?.median_bps != null) {
+    lines.push(
+      <ReferenceLine
+        key='hy-med'
+        y={hist.median_bps}
+        stroke='#78909c'
+        strokeOpacity={0.7}
+        strokeDasharray='1 3'
+        ifOverflow='extendDomain'
+        label={{
+          value: `HY med ${hist.median_bps.toFixed(0)}`,
+          position: 'insideBottomRight',
+          fontSize: 9,
+          fill: '#607d8b',
+        }}
+      />
+    );
+  }
+
+  return <>{lines}</>;
 }
 
 function mergeChartRows(
@@ -423,13 +665,38 @@ export default function CreditSpreadsPage() {
 
   const latest = tab === 'fred' ? fredData?.latest : etfData?.latest;
   const loading = tab === 'fred' ? loadingFred : loadingEtf;
+  const hyLevels = fredData?.level_refs?.hy;
+  const igLevels = fredData?.level_refs?.ig;
+
+  /** Include historic hi/lo so teaching lines stay on-plot even in a calm 1y window. */
+  const yDomain = useMemo((): [number, number] | ['auto', 'auto'] => {
+    const vals: number[] = [];
+    for (const row of chartData) {
+      if (row.hy_bps != null) vals.push(row.hy_bps);
+      if (row.ig_bps != null) vals.push(row.ig_bps);
+    }
+    for (const series of [hyLevels, igLevels]) {
+      const h = series?.historic;
+      if (h?.high?.bps != null) vals.push(h.high.bps);
+      if (h?.low?.bps != null) vals.push(h.low.bps);
+      if (h?.median_bps != null) vals.push(h.median_bps);
+      if (series?.week?.bps != null) vals.push(series.week.bps);
+      if (series?.month?.bps != null) vals.push(series.month.bps);
+    }
+    if (!vals.length) return ['auto', 'auto'];
+    const lo = Math.min(...vals);
+    const hi = Math.max(...vals);
+    const pad = Math.max(8, (hi - lo) * 0.06);
+    return [Math.floor(lo - pad), Math.ceil(hi + pad)];
+  }, [chartData, hyLevels, igLevels]);
 
   return (
     <div>
       <h1 className='finance-page-title'>Credit spreads</h1>
       <p className='finance-page-lede'>
         High-yield and investment-grade credit stress vs. Treasuries. Warning = widening;
-        progress = narrowing / stable. Cues sit on each chart with the series they describe.
+        progress = narrowing / stable. Chart lines mark last week / last month levels and
+        historic high·low·median from available FRED history — not a dense multi-decade dump.
       </p>
 
       {error && (
@@ -490,6 +757,7 @@ export default function CreditSpreadsPage() {
                 >
                   <ToggleButton value='1y'>1y</ToggleButton>
                   <ToggleButton value='3y'>3y</ToggleButton>
+                  <ToggleButton value='max'>max</ToggleButton>
                 </ToggleButtonGroup>
               }
             />
@@ -503,15 +771,16 @@ export default function CreditSpreadsPage() {
                   variant='context'
                 />
               </ChartCues>
+              <LevelRefsStrip hy={hyLevels} ig={igLevels} />
               {loadingFred ? (
-                <Skeleton variant='rectangular' height={320} sx={{ borderRadius: 1 }} />
+                <Skeleton variant='rectangular' height={360} sx={{ borderRadius: 1 }} />
               ) : chartData.length === 0 ? (
                 <Typography color='text.secondary'>
                   No FRED observations. Set FRED_API_KEY on the API host.
                 </Typography>
               ) : (
-                <ResponsiveContainer width='100%' height={320}>
-                  <LineChart data={chartData} margin={{ top: 8, right: 48, left: 0, bottom: 0 }}>
+                <ResponsiveContainer width='100%' height={360}>
+                  <LineChart data={chartData} margin={{ top: 12, right: 56, left: 0, bottom: 0 }}>
                     {(fredData?.recession_periods ?? []).map(p => (
                       <ReferenceArea
                         key={`${p.start}-${p.end}`}
@@ -522,26 +791,23 @@ export default function CreditSpreadsPage() {
                         ifOverflow='hidden'
                       />
                     ))}
-                    {HY_THRESHOLDS.map(t => (
+                    {/* Soft HY band guides — kept faint so 1w/1m + historic anchors read first */}
+                    {HY_THRESHOLDS.filter(t => t.bps <= 600).map(t => (
                       <ReferenceLine
-                        key={`hy-${t.bps}`}
+                        key={`hy-band-${t.bps}`}
                         y={t.bps}
                         stroke='#c62828'
-                        strokeOpacity={0.35}
+                        strokeOpacity={0.18}
                         strokeDasharray='3 4'
-                        label={{
-                          value: `HY ${t.label}`,
-                          position: 'right',
-                          fontSize: 9,
-                          fill: '#c62828',
-                        }}
                       />
                     ))}
+                    <SpreadLevelReferenceLines hy={hyLevels} ig={igLevels} />
                     <CartesianGrid strokeDasharray='3 3' stroke='#eee' />
                     <XAxis dataKey='date' tick={{ fontSize: 11 }} minTickGap={40} />
                     <YAxis
                       tick={{ fontSize: 11 }}
-                      domain={['auto', 'auto']}
+                      domain={yDomain}
+                      allowDataOverflow={false}
                       label={{ value: 'bps', angle: -90, position: 'insideLeft', offset: 8 }}
                     />
                     <Tooltip
@@ -573,7 +839,10 @@ export default function CreditSpreadsPage() {
                 </ResponsiveContainer>
               )}
               <Typography variant='caption' color='text.secondary' display='block' sx={{ mt: 1 }}>
-                Gray bands = NBER recession (USREC). Dashed red lines = HY status thresholds.
+                Colored dashed lines = last week / last month levels (brown = widen/stress, green =
+                narrow/relief, gray = flat). Brown/slate dashed = HY historic high · low · median
+                from available FRED span. Gray bands = NBER recession (USREC). Plot window is for
+                scanning recent path; anchors teach abnormal vs normal.
               </Typography>
             </CardContent>
           </Card>
@@ -582,6 +851,11 @@ export default function CreditSpreadsPage() {
 
       {tab === 'etf' && (
         <>
+          <Alert severity='info' sx={{ mb: 2 }}>
+            ETF calculator is a daily yield snapshot (HYG−TLT / LQD−TLT). Historic high/low and
+            1w/1m level lines live on the FRED tab — ETF history is shorter and not the teaching
+            signal here.
+          </Alert>
           <Grid container spacing={2} sx={{ mb: 3 }}>
             {(['hyg_tlt', 'lqd_tlt'] as const).map(key => {
               const row = etfData?.[key];

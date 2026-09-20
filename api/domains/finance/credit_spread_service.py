@@ -5,7 +5,8 @@ Credit spread dashboard — FRED OAS series + recession overlay + ETF yield spre
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+import statistics
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Literal
 
 from config.settings import FRED_API_KEY
@@ -18,8 +19,14 @@ FRED_HY_OAS_SERIES = "BAMLH0A0HYM2"
 FRED_IG_OAS_SERIES = "BAMLC0A0CM"
 FRED_RECESSION_SERIES = "USREC"
 
+# Chart display windows (days). Historic anchors always use max available FRED span.
+MAX_DISPLAY_DAYS = 365 * 40  # allow decade+ requests; FRED returns what it has
+ANCHOR_LOOKBACK_DAYS = 365 * 40
+FLAT_BPS_EPSILON = 1.0
+
 SpreadKind = Literal["hy", "ig"]
 SpreadStatus = Literal["Normal", "Elevated", "Warning", "Danger", "Crisis"]
+DeltaDirection = Literal["widen", "narrow", "flat"]
 
 HY_THRESHOLDS_BPS: list[tuple[float, SpreadStatus]] = [
     (300, "Normal"),
@@ -33,11 +40,6 @@ IG_THRESHOLDS_BPS: list[tuple[float, SpreadStatus]] = [
     (150, "Elevated"),
     (200, "Warning"),
 ]
-
-FRED_ICE_WINDOW_NOTE = (
-    "ICE BofA index series on FRED are limited to a rolling ~3-year window "
-    "(since April 2026). Longer history requires ICE Data Indices directly."
-)
 
 # Scannable legend for UI / API consumers. Only live-wired series + labeled futures.
 INDICATOR_REFS: list[dict[str, Any]] = [
@@ -235,9 +237,145 @@ def _latest_bps(observations: list[dict[str, Any]]) -> float | None:
     return observations[-1].get("value_bps")
 
 
-def _data_window_note(requested_days: int, hy: list, ig: list) -> str | None:
-    if requested_days > 365 * 3 and (hy or ig):
-        return FRED_ICE_WINDOW_NOTE
+def _observation_at_lag(
+    observations: list[dict[str, Any]], lag_days: int
+) -> dict[str, Any] | None:
+    """Last observation on or before (latest_date - lag_days)."""
+    if not observations:
+        return None
+    try:
+        end = date.fromisoformat(str(observations[-1]["date"]))
+    except (TypeError, ValueError):
+        return None
+    target = (end - timedelta(days=lag_days)).isoformat()
+    hit: dict[str, Any] | None = None
+    for row in observations:
+        row_date = row.get("date")
+        if not row_date:
+            continue
+        if str(row_date) <= target:
+            hit = row
+        else:
+            break
+    return hit
+
+
+def _delta_direction(latest_bps: float | None, ref_bps: float | None) -> DeltaDirection | None:
+    if latest_bps is None or ref_bps is None:
+        return None
+    delta = latest_bps - ref_bps
+    if abs(delta) < FLAT_BPS_EPSILON:
+        return "flat"
+    return "widen" if delta > 0 else "narrow"
+
+
+def _lag_level_ref(
+    observations: list[dict[str, Any]],
+    latest_bps: float | None,
+    lag_days: int,
+    label: str,
+) -> dict[str, Any] | None:
+    hit = _observation_at_lag(observations, lag_days)
+    if not hit or hit.get("value_bps") is None:
+        return None
+    ref_bps = float(hit["value_bps"])
+    delta = None if latest_bps is None else round(latest_bps - ref_bps, 2)
+    return {
+        "label": label,
+        "lag_days": lag_days,
+        "date": hit.get("date"),
+        "bps": ref_bps,
+        "delta_bps": delta,
+        "direction": _delta_direction(latest_bps, ref_bps),
+    }
+
+
+def _historic_extremes(
+    observations: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """High / low / median from the full available FRED span (anchors, not a dense plot)."""
+    if not observations:
+        return None
+    scored = [
+        (float(row["value_bps"]), row.get("date"))
+        for row in observations
+        if row.get("value_bps") is not None
+    ]
+    if not scored:
+        return None
+    high_bps, high_date = max(scored, key=lambda t: t[0])
+    low_bps, low_date = min(scored, key=lambda t: t[0])
+    values = [v for v, _ in scored]
+    available_from = str(observations[0].get("date") or "")
+    available_to = str(observations[-1].get("date") or "")
+    try:
+        span_days = (
+            date.fromisoformat(available_to) - date.fromisoformat(available_from)
+        ).days
+    except ValueError:
+        span_days = 0
+    # ICE BofA OAS on FRED currently starts ~2023-09; flag when well short of a decade.
+    history_limited = span_days < 365 * 8
+    note = None
+    if history_limited and available_from:
+        note = (
+            f"FRED history for this series currently starts {available_from} "
+            f"(~{max(1, round(span_days / 365))}y available). "
+            "High/low/median are from that span only — not a multi-decade ICE dump."
+        )
+    return {
+        "available_from": available_from or None,
+        "available_to": available_to or None,
+        "observation_count": len(scored),
+        "span_days": span_days,
+        "history_limited": history_limited,
+        "history_note": note,
+        "high": {"bps": high_bps, "date": high_date},
+        "low": {"bps": low_bps, "date": low_date},
+        "median_bps": round(float(statistics.median(values)), 2),
+    }
+
+
+def build_level_refs_for_series(
+    observations: list[dict[str, Any]],
+    *,
+    series_key: str,
+) -> dict[str, Any] | None:
+    """1w / 1m deltas + historic high/low/median anchors for one OAS series."""
+    if not observations:
+        return None
+    latest_bps = _latest_bps(observations)
+    week = _lag_level_ref(observations, latest_bps, 7, "1w")
+    month = _lag_level_ref(observations, latest_bps, 30, "1m")
+    historic = _historic_extremes(observations)
+    return {
+        "series": series_key,
+        "latest_bps": latest_bps,
+        "as_of": observations[-1].get("date"),
+        "week": week,
+        "month": month,
+        "historic": historic,
+    }
+
+
+def _slice_observations(
+    observations: list[dict[str, Any]], start: str, end: str
+) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in observations
+        if row.get("date") and start <= str(row["date"]) <= end
+    ]
+
+
+def _data_window_note(
+    requested_days: int,
+    hy: list,
+    ig: list,
+    *,
+    hy_historic: dict[str, Any] | None = None,
+    ig_historic: dict[str, Any] | None = None,
+) -> str | None:
     if not hy and not ig and requested_days > 0:
         if not FRED_API_KEY:
             return (
@@ -248,23 +386,40 @@ def _data_window_note(requested_days: int, hy: list, ig: list) -> str | None:
             "No FRED observations returned for HY/IG OAS. "
             "Verify FRED_API_KEY and series access (BAMLH0A0HYM2, BAMLC0A0CM)."
         )
+    notes: list[str] = []
+    for hist in (hy_historic, ig_historic):
+        if hist and hist.get("history_note"):
+            notes.append(str(hist["history_note"]))
+            break
+    if notes:
+        return notes[0]
     return None
 
 
 def build_fred_credit_spread_payload(days: int) -> dict[str, Any]:
-    """Build HY/IG OAS history with recession shading metadata."""
-    days = max(1, min(days, 365 * 10))
+    """Build HY/IG OAS history with recession shading + level/historic anchors.
+
+    Chart series follow ``days`` (display window). Level refs (1w/1m + historic
+    high/low/median) are computed from the full FRED-available span so anchors
+    teach abnormal vs normal without dumping decades of daily points on the plot.
+    """
+    days = max(1, min(int(days), MAX_DISPLAY_DAYS))
     end_dt = datetime.now(timezone.utc).date()
-    start_dt = end_dt - timedelta(days=days)
-    start = start_dt.strftime("%Y-%m-%d")
+    display_start = (end_dt - timedelta(days=days)).strftime("%Y-%m-%d")
     end = end_dt.strftime("%Y-%m-%d")
+    anchor_start = (end_dt - timedelta(days=ANCHOR_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
 
-    hy_spread = fetch_fred_spread_series(FRED_HY_OAS_SERIES, start, end)
-    ig_spread = fetch_fred_spread_series(FRED_IG_OAS_SERIES, start, end)
-    recession_periods = fetch_recession_periods(start, end)
+    # One long fetch per series → slice for chart; reuse for anchors.
+    hy_full = fetch_fred_spread_series(FRED_HY_OAS_SERIES, anchor_start, end)
+    ig_full = fetch_fred_spread_series(FRED_IG_OAS_SERIES, anchor_start, end)
+    hy_spread = _slice_observations(hy_full, display_start, end)
+    ig_spread = _slice_observations(ig_full, display_start, end)
 
-    hy_bps = _latest_bps(hy_spread)
-    ig_bps = _latest_bps(ig_spread)
+    # USREC has deep history; fetch for the display window (shading on the plot).
+    recession_periods = fetch_recession_periods(display_start, end)
+
+    hy_bps = _latest_bps(hy_full) if hy_full else _latest_bps(hy_spread)
+    ig_bps = _latest_bps(ig_full) if ig_full else _latest_bps(ig_spread)
     latest: dict[str, Any] = {}
     if hy_bps is not None:
         latest["hy_bps"] = hy_bps
@@ -273,18 +428,34 @@ def build_fred_credit_spread_payload(days: int) -> dict[str, Any]:
         latest["ig_bps"] = ig_bps
         latest["ig_status"] = compute_spread_status(ig_bps, "ig")
 
+    hy_refs = build_level_refs_for_series(hy_full, series_key="hy")
+    ig_refs = build_level_refs_for_series(ig_full, series_key="ig")
+    hy_historic = (hy_refs or {}).get("historic")
+    ig_historic = (ig_refs or {}).get("historic")
+
     return {
         "hy_spread": hy_spread,
         "ig_spread": ig_spread,
         "recession_periods": recession_periods,
         "latest": latest,
+        "level_refs": {
+            "hy": hy_refs,
+            "ig": ig_refs,
+        },
         "series_ids": {
             "hy_oas": FRED_HY_OAS_SERIES,
             "ig_oas": FRED_IG_OAS_SERIES,
             "recession": FRED_RECESSION_SERIES,
         },
         "days": days,
-        "data_window_note": _data_window_note(days, hy_spread, ig_spread),
+        "anchor_lookback_days": ANCHOR_LOOKBACK_DAYS,
+        "data_window_note": _data_window_note(
+            days,
+            hy_spread,
+            ig_spread,
+            hy_historic=hy_historic,
+            ig_historic=ig_historic,
+        ),
         "indicator_refs": indicator_refs_payload(),
     }
 

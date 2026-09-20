@@ -178,3 +178,70 @@
   color: var(--fin-muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* 1w/1m + historic high/low strip (pairs with chart ReferenceLines) */
+.finance-level-refs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0 0 0.75rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--fin-border);
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.finance-level-refs__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+  align-items: center;
+}
+
+.finance-level-refs__note {
+  margin: 0.15rem 0 0;
+  font-size: 0.72rem;
+  color: var(--fin-muted);
+  line-height: 1.35;
+}
+
+.finance-level-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.15rem;
+  padding: 0.12rem 0.45rem;
+  border-radius: 2px;
+  border: 1px solid var(--fin-border);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+  color: var(--fin-ink);
+  background: #fff;
+}
+
+.finance-level-chip.is-widen {
+  border-color: #c2410c;
+  color: #9a3412;
+  background: rgba(154, 52, 18, 0.06);
+}
+
+.finance-level-chip.is-narrow {
+  border-color: #2e7d32;
+  color: #1b5e20;
+  background: rgba(27, 94, 32, 0.06);
+}
+
+.finance-level-chip.is-flat {
+  border-color: #9e9e9e;
+  color: #616161;
+}
+
+.finance-level-chip.is-historic {
+  border-color: #8d6e63;
+  color: #5d4037;
+  background: rgba(109, 76, 65, 0.05);
+}
+
+.finance-level-chip__delta {
+  font-weight: 600;
+}
