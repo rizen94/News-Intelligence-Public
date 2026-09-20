@@ -58,33 +58,49 @@ export default function UsdPurchasingPowerPage() {
 
   if (loading) {
     return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-        <CircularProgress size={36} />
-      </Box>
+      <div>
+        <h1 className='finance-page-title'>USD purchasing power</h1>
+        <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+          <CircularProgress size={36} />
+        </Box>
+      </div>
     );
   }
 
   if (error) {
     return (
-      <Box sx={{ color: 'error.main', py: 2 }}>
-        <Typography variant='h6'>Error loading data</Typography>
-        <Typography>{error.message}</Typography>
-        <Button sx={{ mt: 1 }} onClick={() => void load(true)}>
-          Retry
-        </Button>
-      </Box>
+      <div>
+        <h1 className='finance-page-title'>USD purchasing power</h1>
+        <p className='finance-page-lede'>
+          CPI-based purchasing power (PDOLLAR), dollar strength, and gold — FRED-backed market
+          health tracker.
+        </p>
+        <Box sx={{ color: 'error.main', py: 2 }}>
+          <Typography variant='h6'>Error loading data</Typography>
+          <Typography>{error.message}</Typography>
+          <Typography variant='body2' color='text.secondary' sx={{ mt: 1 }}>
+            Requires the API on :8000 with FRED_API_KEY (or cached tracker JSON).
+          </Typography>
+          <Button sx={{ mt: 1 }} onClick={() => void load(true)}>
+            Retry
+          </Button>
+        </Box>
+      </div>
     );
   }
 
   if (!data) {
     return (
-      <Box sx={{ py: 2 }}>
-        <Typography variant='h6'>No data available</Typography>
-        <Typography color='text.secondary' sx={{ mb: 1 }}>
-          Set FRED_API_KEY on the API host, then refresh.
-        </Typography>
-        <Button onClick={() => void load(true)}>Refresh from FRED</Button>
-      </Box>
+      <div>
+        <h1 className='finance-page-title'>USD purchasing power</h1>
+        <Box sx={{ py: 2 }}>
+          <Typography variant='h6'>No data available</Typography>
+          <Typography color='text.secondary' sx={{ mb: 1 }}>
+            Set FRED_API_KEY on the API host, then refresh.
+          </Typography>
+          <Button onClick={() => void load(true)}>Refresh from FRED</Button>
+        </Box>
+      </div>
     );
   }
 
