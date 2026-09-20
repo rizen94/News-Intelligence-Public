@@ -1928,6 +1928,7 @@ Reply with ONLY a JSON object:
         save_to_db: bool = True,
         progress_callback=None,
         *,
+        article_limit: int | None = None,
         min_similarity: float | None = None,
         min_cluster_size: int | None = None,
     ) -> dict[str, Any]:
@@ -1936,6 +1937,8 @@ Reply with ONLY a JSON object:
 
         ``hours`` if set (>0) restricts to articles with ``created_at`` in the last N hours.
         Omit or pass None/0 for all-time (subject to ``STORYLINE_DISCOVERY_ARTICLE_LIMIT``).
+        ``article_limit`` caps rows fetched for this run (assembly passes
+        ``assembly_discovery_article_cap()``); default is ``STORYLINE_DISCOVERY_ARTICLE_LIMIT``.
         ``min_similarity`` / ``min_cluster_size`` override per-domain config for clustering.
 
         Per-domain defaults come from ``domain_synthesis_config.yaml`` (``clustering_similarity_threshold``,
@@ -2022,7 +2025,12 @@ Reply with ONLY a JSON object:
             f"[{domain}] Phase 1: Fetching articles with cache "
             f"({'all-time capped' if not hours or hours <= 0 else f'last {hours}h'})..."
         )
-        articles = self.fetch_recent_articles(domain, hours)
+        fetch_limit = (
+            max(100, min(int(STORYLINE_DISCOVERY_ARTICLE_LIMIT), int(article_limit)))
+            if article_limit is not None
+            else STORYLINE_DISCOVERY_ARTICLE_LIMIT
+        )
+        articles = self.fetch_recent_articles(domain, hours, limit=fetch_limit)
         pdf_contexts = self.fetch_pdf_contexts_for_domain(domain, hours=hours)
         if pdf_contexts:
             articles = articles + pdf_contexts
@@ -2042,7 +2050,7 @@ Reply with ONLY a JSON object:
             "duplicates_removed": dedup_count,
             "article_count": len(articles),
             "cached_embeddings": cached_count,
-            "article_limit_cap": STORYLINE_DISCOVERY_ARTICLE_LIMIT,
+            "article_limit_cap": fetch_limit,
         }
 
         if len(articles) < min_sz:
