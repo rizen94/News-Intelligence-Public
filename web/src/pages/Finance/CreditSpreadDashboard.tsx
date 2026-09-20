@@ -35,7 +35,6 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { useDomain } from '@/contexts/DomainContext';
 import { monitoringApi } from '@/services/api/monitoring';
 import Logger from '@/utils/logger';
 
@@ -178,14 +177,12 @@ function SpreadStatCard({
 }
 
 export default function CreditSpreadDashboard() {
-  const { domain } = useDomain();
-  if (domain !== FINANCE_DOMAIN) {
-    return <Navigate to={`/${FINANCE_DOMAIN}/credit-spread`} replace />;
-  }
-  return <CreditSpreadDashboardContent />;
+  // Classic page is unmounted from App routes; always send operators to Finance trackers.
+  return <Navigate to='/finance/trackers/credit-spreads' replace />;
 }
 
-function CreditSpreadDashboardContent() {
+/** Retained for reference / potential re-mount; prefer CreditSpreadsPage. */
+export function CreditSpreadDashboardContent() {
   const [tab, setTab] = useState<DashboardTab>('fred');
   const [timeRange, setTimeRange] = useState<TimeRange>('1y');
   const [loadingFred, setLoadingFred] = useState(true);

@@ -1,26 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { StoryUnit } from '../../components/StoryUnit';
-import { useV2Domain } from '../../hooks/useV2Domain';
-import { fetchReaderHome, type StoryUnit as StoryUnitData } from '../../services/readerApi';
+import { PaginationBar } from '../../components/PaginationBar';
+import { usePagedFeed } from '../../hooks/usePagedFeed';
 
 export default function CurrentPage() {
-  const domain = useV2Domain();
-  const [items, setItems] = useState<StoryUnitData[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchReaderHome(domain)
-      .then(res => {
-        if (!cancelled) setItems(res.current_events || []);
-      })
-      .catch(err => {
-        if (!cancelled) setError(err?.message || 'Failed to load current events');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [domain]);
+  const { items, pagination, error, pending } = usePagedFeed('current_events', 12);
 
   return (
     <div>
@@ -40,6 +24,10 @@ export default function CurrentPage() {
       </p>
       <hr className='v2-section-rule' />
       {error ? <p className='v2-empty'>{error}</p> : null}
+      {pending && !items.length ? <p className='v2-empty'>Loading…</p> : null}
+      {!error && !pending && items.length === 0 ? (
+        <p className='v2-empty'>No long-running arcs matched.</p>
+      ) : null}
       <div className='v2-rail-list'>
         {items.map(item => (
           <StoryUnit
@@ -49,6 +37,7 @@ export default function CurrentPage() {
           />
         ))}
       </div>
+      <PaginationBar pagination={pagination} ariaLabel='Current events pages' />
     </div>
   );
 }

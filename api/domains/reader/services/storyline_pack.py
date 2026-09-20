@@ -252,13 +252,21 @@ def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any
             except Exception:
                 conn.rollback()
 
-    lede = (editorial.get("lede") if isinstance(editorial, dict) else None) or ""
-    summary = (
+    from shared.llm_text_sanitize import sanitize_briefing_lede, sanitize_reader_dek
+
+    lede_raw = (editorial.get("lede") if isinstance(editorial, dict) else None) or ""
+    summary_raw = (
         (master_summary or "").strip()
         or (canonical_narrative or "").strip()
         or (timeline_narrative_briefing or "").strip()
         or (description or "").strip()
-        or lede
+        or lede_raw
+    )
+    lede = sanitize_reader_dek(lede_raw, title=title, max_length=400) or sanitize_briefing_lede(
+        lede_raw, max_length=400
+    )
+    summary = sanitize_reader_dek(summary_raw, title=title, max_length=600) or sanitize_briefing_lede(
+        summary_raw, max_length=600
     )
 
     dossier_tree = _build_dossier_tree(entities, relationships)

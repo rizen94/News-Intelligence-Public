@@ -47,6 +47,7 @@ from services.storyline_coherence_guardrails import (
 )
 from shared.domain_registry import first_active_domain_key, resolve_domain_schema
 from shared.pipeline_pass_marker import bulk_record_article_phase_pass, phase_backlog_uses_pass_marker
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +60,10 @@ def _schema_from_domain_key(domain: str) -> str:
     return resolve_domain_schema(d)
 
 # Configuration
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_URL = env_str("OLLAMA_URL", "http://localhost:11434")
 # Use dedicated embedding model for better quality and speed
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
-ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "llama3.1:8b")
+EMBEDDING_MODEL = env_str("EMBEDDING_MODEL", "nomic-embed-text")
+ANALYSIS_MODEL = env_str("ANALYSIS_MODEL", "llama3.1:8b")
 
 # Thresholds
 SIMILARITY_THRESHOLD = 0.70  # Slightly lower to catch more connections
@@ -83,8 +84,32 @@ SAME_WEEK_HOURS = 168  # Within 7 days = same week
 MAX_EMBEDDING_WORKERS = 8  # Concurrent embedding requests
 
 # Articles loaded per discovery run (newest first). O(n²) similarity — increase only with RAM headroom.
-STORYLINE_DISCOVERY_ARTICLE_LIMIT = int(os.getenv("STORYLINE_DISCOVERY_ARTICLE_LIMIT", "10000"))
-STORYLINE_DISCOVERY_PDF_CONTEXT_LIMIT = int(os.getenv("STORYLINE_DISCOVERY_PDF_CONTEXT_LIMIT", "500"))
+STORYLINE_DISCOVERY_ARTICLE_LIMIT = int(env_str("STORYLINE_DISCOVERY_ARTICLE_LIMIT", "10000"))
+STORYLINE_DISCOVERY_PDF_CONTEXT_LIMIT = int(env_str("STORYLINE_DISCOVERY_PDF_CONTEXT_LIMIT", "500"))
+DISCOVERY_MAX_CLUSTER_ARTICLES = max(
+    10, int(env_str("DISCOVERY_MAX_CLUSTER_ARTICLES", "250"))
+)
+# Scheduled assembly discovery uses a tighter default than the full discovery limit.
+_DEFAULT_ASSEMBLY_DISCOVERY_ARTICLE_CAP = 1500
+
+
+def assembly_discovery_article_cap() -> int:
+    """
+    Env-backed article load cap for scheduled assembly discovery windows.
+
+    Prefer ``STORYLINE_ASSEMBLY_DISCOVERY_ARTICLE_LIMIT``; otherwise a safer
+    assembly default (not the full 10k discovery limit) to bound O(n²) RAM.
+    Always clamped to ``[100, STORYLINE_DISCOVERY_ARTICLE_LIMIT]``.
+    """
+    try:
+        raw = env_str("STORYLINE_ASSEMBLY_DISCOVERY_ARTICLE_LIMIT", "").strip()
+        if raw:
+            value = int(raw)
+        else:
+            value = _DEFAULT_ASSEMBLY_DISCOVERY_ARTICLE_CAP
+    except (TypeError, ValueError):
+        value = _DEFAULT_ASSEMBLY_DISCOVERY_ARTICLE_CAP
+    return max(100, min(int(STORYLINE_DISCOVERY_ARTICLE_LIMIT), int(value)))
 
 
 @dataclass
@@ -874,6 +899,29 @@ class AIStorylineDiscovery:
 
         for root, indices in cluster_map.items():
             if len(indices) >= min_sz:
+                if len(indices) > DISCOVERY_MAX_CLUSTER_ARTICLES:
+                    logger.info(
+                        "Trimming oversized union-find component: %s -> %s articles (threshold=%.2f)",
+                        len(indices),
+                        DISCOVERY_MAX_CLUSTER_ARTICLES,
+                        sim_thresh,
+                    )
+                    embeddings_for_rank = [
+                        (i, articles[i].embedding)
+                        for i in indices
+                        if articles[i].embedding is not None
+                    ]
+                    if embeddings_for_rank:
+                        centroid = np.mean([e for _, e in embeddings_for_rank], axis=0)
+                        ranked = sorted(
+                            embeddings_for_rank,
+                            key=lambda pair: self.cosine_similarity(pair[1], centroid),
+                            reverse=True,
+                        )
+                        indices = [i for i, _ in ranked[:DISCOVERY_MAX_CLUSTER_ARTICLES]]
+                    else:
+                        indices = indices[:DISCOVERY_MAX_CLUSTER_ARTICLES]
+
                 cluster_articles = [articles[i] for i in indices]
 
                 # Calculate cluster metrics
@@ -1331,28 +1379,52 @@ Reply with ONLY a JSON object:
                 best_id = ex["id"]
         return best_id
 
+    def _admit_cluster_articles(
+        self,
+        conn,
+        *,
+        cluster: StorylineCluster,
+        storyline_id: int,
+        domain: str,
+        schema: str,
+    ) -> int:
+        """Admit cluster articles through membership_store (write-frozen safe)."""
+        from shared.membership_store import MembershipIntent, admit as membership_admit
+
+        blend = float(getattr(cluster, "avg_similarity", 0.0) or 0.0)
+        admitted = 0
+        for article in cluster.articles:
+            if article.article_id <= 0:
+                continue
+            ok, _reason = membership_admit(
+                conn,
+                domain_key=domain,
+                schema=schema,
+                episode_id=int(storyline_id),
+                article_id=int(article.article_id),
+                intent=MembershipIntent.DISCOVERY_SEED,
+                blend_score=blend,
+                added_by="storyline_discovery",
+            )
+            if ok:
+                admitted += 1
+        return admitted
+
     def _add_cluster_articles_to_storyline(
         self, cluster: StorylineCluster, storyline_id: int, domain: str
     ) -> int:
-        """Append cluster articles to an existing storyline; returns count added."""
+        """Append cluster articles via membership_store; returns count admitted."""
         conn = self.get_db_connection()
         added = 0
         try:
             schema = _schema_from_domain_key(domain)
-            with conn.cursor() as cur:
-                for article in cluster.articles:
-                    if article.article_id <= 0:
-                        continue  # v8: PDF context (negative id), not in storyline_articles
-                    cur.execute(
-                        f"""
-                        INSERT INTO {schema}.storyline_articles
-                        (storyline_id, article_id, relevance_score, created_at)
-                        VALUES (%s, %s, %s, NOW())
-                        ON CONFLICT DO NOTHING
-                    """,
-                        (storyline_id, article.article_id, cluster.avg_similarity),
-                    )
-                    added += 1 if cur.rowcount else 0
+            added = self._admit_cluster_articles(
+                conn,
+                cluster=cluster,
+                storyline_id=int(storyline_id),
+                domain=domain,
+                schema=schema,
+            )
             conn.commit()
         except Exception as e:
             logger.debug("_add_cluster_articles_to_storyline: %s", e)
@@ -1361,21 +1433,69 @@ Reply with ONLY a JSON object:
             conn.close()
         return added
 
+    @staticmethod
+    def _clamp_storyline_quality_score(raw: float) -> float:
+        """``quality_score`` must satisfy ``chk_storyline_scores`` (0..1 on Widow prod)."""
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return 0.0
+        if value > 1.0 and value <= 10.0:
+            value = value / 10.0
+        return max(0.0, min(1.0, value))
+
     def save_storyline_suggestion(self, cluster: StorylineCluster, domain: str) -> int | None:
         """Save a storyline suggestion to the database (columns aligned to silo storylines DDL)."""
         from services.storyline_assembly_service import get_storyline_automation_mode
 
         automation_mode = get_storyline_automation_mode(domain)
+        quality_score = self._clamp_storyline_quality_score(cluster.importance_score)
+        positive_ids = [a.article_id for a in cluster.articles if a.article_id > 0]
+        unique_positive = len(set(positive_ids))
         conn = self.get_db_connection()
         try:
             schema = _schema_from_domain_key(domain)
+            try:
+                from services.episode_merge_service import merge_if_duplicate_before_create
+
+                existing_id = merge_if_duplicate_before_create(
+                    conn,
+                    domain_key=domain,
+                    proposed_title=cluster.suggested_title or "",
+                    article_ids=positive_ids,
+                )
+                if existing_id:
+                    # Attach cluster members through membership_store (write-frozen guard).
+                    self._admit_cluster_articles(
+                        conn,
+                        cluster=cluster,
+                        storyline_id=int(existing_id),
+                        domain=domain,
+                        schema=schema,
+                    )
+                    conn.commit()
+                    logger.info(
+                        "[%s] episode_merge: discovery redirected %r -> episode %s",
+                        domain,
+                        (cluster.suggested_title or "")[:60],
+                        existing_id,
+                    )
+                    return int(existing_id)
+            except Exception as e:
+                logger.debug("[%s] episode_merge before save: %s", domain, e)
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
             meta = json.dumps(
                 {
                     "source": "storyline_discovery",
                     "importance_score": round(float(cluster.importance_score), 4),
+                    "quality_score": round(quality_score, 4),
                     "is_breaking_news": bool(cluster.is_breaking_news),
                 }
             )
+            storyline_id: int | None = None
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
@@ -1401,9 +1521,9 @@ Reply with ONLY a JSON object:
                         cluster.suggested_title,
                         cluster.suggested_description,
                         len(cluster.articles),
-                        len(cluster.articles),
+                        unique_positive,
                         cluster.is_breaking_news,
-                        float(cluster.importance_score),
+                        quality_score,
                         automation_mode,
                         meta,
                     ),
@@ -1411,33 +1531,28 @@ Reply with ONLY a JSON object:
 
                 result = cur.fetchone()
                 if result:
-                    storyline_id = result[0]
+                    storyline_id = int(result[0])
 
-                    for article in cluster.articles:
-                        if article.article_id <= 0:
-                            continue  # v8: PDF context, not in storyline_articles
-                        cur.execute(
-                            f"""
-                            INSERT INTO {schema}.storyline_articles
-                            (storyline_id, article_id, relevance_score, created_at)
-                            VALUES (%s, %s, %s, NOW())
-                            ON CONFLICT DO NOTHING
-                        """,
-                            (storyline_id, article.article_id, cluster.avg_similarity),
-                        )
+            if storyline_id is not None:
+                self._admit_cluster_articles(
+                    conn,
+                    cluster=cluster,
+                    storyline_id=storyline_id,
+                    domain=domain,
+                    schema=schema,
+                )
+                conn.commit()
+                try:
+                    from services.content_refinement_queue_service import (
+                        enqueue_initial_narrative_finisher,
+                    )
 
-                    conn.commit()
-                    try:
-                        from services.content_refinement_queue_service import (
-                            enqueue_initial_narrative_finisher,
-                        )
-
-                        enqueue_initial_narrative_finisher(
-                            domain, storyline_id, source="discovery_save_storyline_suggestion"
-                        )
-                    except Exception as enq_e:
-                        logger.warning("enqueue initial narrative finisher (discovery): %s", enq_e)
-                    return storyline_id
+                    enqueue_initial_narrative_finisher(
+                        domain, storyline_id, source="discovery_save_storyline_suggestion"
+                    )
+                except Exception as enq_e:
+                    logger.warning("enqueue initial narrative finisher (discovery): %s", enq_e)
+                return storyline_id
 
             conn.commit()
             return None
@@ -1841,6 +1956,7 @@ Reply with ONLY a JSON object:
         save_to_db: bool = True,
         progress_callback=None,
         *,
+        article_limit: int | None = None,
         min_similarity: float | None = None,
         min_cluster_size: int | None = None,
     ) -> dict[str, Any]:
@@ -1849,6 +1965,8 @@ Reply with ONLY a JSON object:
 
         ``hours`` if set (>0) restricts to articles with ``created_at`` in the last N hours.
         Omit or pass None/0 for all-time (subject to ``STORYLINE_DISCOVERY_ARTICLE_LIMIT``).
+        ``article_limit`` caps rows fetched for this run (assembly passes
+        ``assembly_discovery_article_cap()``); default is ``STORYLINE_DISCOVERY_ARTICLE_LIMIT``.
         ``min_similarity`` / ``min_cluster_size`` override per-domain config for clustering.
 
         Per-domain defaults come from ``domain_synthesis_config.yaml`` (``clustering_similarity_threshold``,
@@ -1935,7 +2053,12 @@ Reply with ONLY a JSON object:
             f"[{domain}] Phase 1: Fetching articles with cache "
             f"({'all-time capped' if not hours or hours <= 0 else f'last {hours}h'})..."
         )
-        articles = self.fetch_recent_articles(domain, hours)
+        fetch_limit = (
+            max(100, min(int(STORYLINE_DISCOVERY_ARTICLE_LIMIT), int(article_limit)))
+            if article_limit is not None
+            else STORYLINE_DISCOVERY_ARTICLE_LIMIT
+        )
+        articles = self.fetch_recent_articles(domain, hours, limit=fetch_limit)
         pdf_contexts = self.fetch_pdf_contexts_for_domain(domain, hours=hours)
         if pdf_contexts:
             articles = articles + pdf_contexts
@@ -1955,7 +2078,7 @@ Reply with ONLY a JSON object:
             "duplicates_removed": dedup_count,
             "article_count": len(articles),
             "cached_embeddings": cached_count,
-            "article_limit_cap": STORYLINE_DISCOVERY_ARTICLE_LIMIT,
+            "article_limit_cap": fetch_limit,
         }
 
         if len(articles) < min_sz:
@@ -2103,6 +2226,37 @@ Reply with ONLY a JSON object:
                             domain,
                             existing_id,
                             added,
+                        )
+                    continue
+                narrative_match = None
+                try:
+                    from services.narrative_first_linking_service import (
+                        find_narrative_storyline_match,
+                        narrative_linking_enabled,
+                    )
+
+                    if narrative_linking_enabled():
+                        narrative_match = find_narrative_storyline_match(
+                            domain,
+                            article_ids=cluster_article_ids,
+                            entity_names=cluster.common_entities,
+                            title_hint=cluster.suggested_title,
+                        )
+                except Exception as e:
+                    logger.debug("[%s] narrative-first link: %s", domain, e)
+                if narrative_match is not None:
+                    added = self._add_cluster_articles_to_storyline(
+                        cluster, narrative_match.storyline_id, domain
+                    )
+                    if added:
+                        logger.info(
+                            "[%s] Narrative-first: linked cluster %r -> storyline %s "
+                            "(%s articles, %s)",
+                            domain,
+                            (cluster.suggested_title or "")[:60],
+                            narrative_match.storyline_id,
+                            added,
+                            narrative_match.match_source,
                         )
                     continue
                 storyline_id = self.save_storyline_suggestion(cluster, domain)

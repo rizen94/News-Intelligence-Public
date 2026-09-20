@@ -78,6 +78,20 @@ const IG_LEVELS: { range: string; status: SpreadStatus }[] = [
   { range: '> 200 bps', status: 'Crisis' },
 ];
 
+type IndicatorBand = { range: string; status: string };
+
+type IndicatorRef = {
+  id: string;
+  label: string;
+  series_id?: string | null;
+  source?: string | null;
+  live: boolean;
+  what: string;
+  warning: string;
+  progress: string;
+  bands?: IndicatorBand[];
+};
+
 type FredPayload = {
   hy_spread?: { date: string; value_bps: number }[];
   ig_spread?: { date: string; value_bps: number }[];
@@ -90,6 +104,7 @@ type FredPayload = {
   };
   series_ids?: Record<string, string>;
   data_window_note?: string | null;
+  indicator_refs?: IndicatorRef[];
 };
 
 type EtfSpreadRow = {
@@ -111,7 +126,156 @@ type EtfPayload = {
     ig_status?: SpreadStatus;
   };
   formula?: string;
+  indicator_refs?: IndicatorRef[];
 };
+
+/** Fallback if an older API omits indicator_refs */
+const FALLBACK_INDICATOR_REFS: IndicatorRef[] = [
+  {
+    id: 'hy_oas',
+    label: 'HY OAS',
+    series_id: 'BAMLH0A0HYM2',
+    source: 'FRED / ICE BofA',
+    live: true,
+    what: 'Option-adjusted spread of US high-yield corporates over Treasuries.',
+    warning: 'Widening → credit stress, risk-off, refinancing pressure.',
+    progress: 'Narrowing / stable → relief, risk appetite, easier credit.',
+    bands: [
+      { range: '< 300 bps', status: 'Normal' },
+      { range: '300–450 bps', status: 'Elevated' },
+      { range: '450–600 bps', status: 'Warning' },
+      { range: '600–800 bps', status: 'Danger' },
+      { range: '> 800 bps', status: 'Crisis' },
+    ],
+  },
+  {
+    id: 'ig_oas',
+    label: 'IG OAS',
+    series_id: 'BAMLC0A0CM',
+    source: 'FRED / ICE BofA',
+    live: true,
+    what: 'Option-adjusted spread of US investment-grade corporates over Treasuries.',
+    warning: 'Widening → IG funding stress; often leads HY in calm→stress turns.',
+    progress: 'Narrowing / stable → IG credit normalising.',
+    bands: [
+      { range: '< 100 bps', status: 'Normal' },
+      { range: '100–150 bps', status: 'Elevated' },
+      { range: '150–200 bps', status: 'Warning' },
+      { range: '> 200 bps', status: 'Crisis' },
+    ],
+  },
+  {
+    id: 'usrec',
+    label: 'USREC (NBER)',
+    series_id: 'USREC',
+    source: 'FRED',
+    live: true,
+    what: 'Binary US recession indicator (NBER dates). Chart gray bands when active.',
+    warning: 'Active (=1) → recession window; treat as stress context, not a spread.',
+    progress: 'Inactive (=0) → expansion; remove recession shading.',
+    bands: [
+      { range: '0', status: 'Expansion' },
+      { range: '1', status: 'Recession' },
+    ],
+  },
+  {
+    id: 'hyg_tlt',
+    label: 'HYG − TLT',
+    live: true,
+    source: 'Yahoo / yfinance',
+    what: 'Daily ETF yield proxy: high-yield bond ETF minus long Treasury ETF.',
+    warning: 'Widening → same directional stress signal as HY OAS (noisier).',
+    progress: 'Narrowing / stable → relief vs Treasuries.',
+    bands: [
+      { range: '< 300 bps', status: 'Normal' },
+      { range: '300–450 bps', status: 'Elevated' },
+      { range: '450–600 bps', status: 'Warning' },
+      { range: '600–800 bps', status: 'Danger' },
+      { range: '> 800 bps', status: 'Crisis' },
+    ],
+  },
+  {
+    id: 'lqd_tlt',
+    label: 'LQD − TLT',
+    live: true,
+    source: 'Yahoo / yfinance',
+    what: 'Daily ETF yield proxy: IG corporate ETF minus long Treasury ETF.',
+    warning: 'Widening → IG stress proxy (can print near-zero/negative in calm markets).',
+    progress: 'Narrowing / stable → IG relief vs Treasuries.',
+    bands: [
+      { range: '< 100 bps', status: 'Normal' },
+      { range: '100–150 bps', status: 'Elevated' },
+      { range: '150–200 bps', status: 'Warning' },
+      { range: '> 200 bps', status: 'Crisis' },
+    ],
+  },
+  {
+    id: 'move',
+    label: 'MOVE (future)',
+    live: false,
+    what: 'ICE BofA US bond-market volatility index — not fetched yet.',
+    warning: 'Rising vol → rates/credit uncertainty (when wired).',
+    progress: 'Falling vol → calmer rates backdrop (when wired).',
+    bands: [],
+  },
+  {
+    id: 'sofr',
+    label: 'SOFR (future)',
+    live: false,
+    what: 'Secured Overnight Financing Rate — funding backdrop; not fetched yet.',
+    warning: 'Sharp rises → funding stress context (when wired).',
+    progress: 'Stable/easing → calmer funding (when wired).',
+    bands: [],
+  },
+];
+
+function IndicatorRefsLegend({ refs }: { refs: IndicatorRef[] }) {
+  return (
+    <section className='finance-indicator-legend' aria-label='Credit spread indicator reference'>
+      <h2 className='finance-section-title'>Indicator reference</h2>
+      <p className='finance-page-lede' style={{ marginBottom: '0.75rem' }}>
+        Widening spreads = warning. Narrowing or stable = progress / relief. Bands match the
+        status chips on this page.
+      </p>
+      <div className='finance-indicator-grid'>
+        {refs.map(ref => (
+          <article
+            key={ref.id}
+            className={`finance-indicator-card${ref.live ? '' : ' is-future'}`}
+          >
+            <header className='finance-indicator-card__head'>
+              <h3>{ref.label}</h3>
+              <span className={ref.live ? 'finance-live-tag' : 'finance-future-tag'}>
+                {ref.live ? 'Live' : 'Not live'}
+              </span>
+            </header>
+            {(ref.series_id || ref.source) && (
+              <p className='finance-indicator-meta'>
+                {[ref.series_id, ref.source].filter(Boolean).join(' · ')}
+              </p>
+            )}
+            <p className='finance-indicator-what'>{ref.what}</p>
+            <dl className='finance-indicator-signs'>
+              <div>
+                <dt>Warning</dt>
+                <dd>{ref.warning}</dd>
+              </div>
+              <div>
+                <dt>Progress</dt>
+                <dd>{ref.progress}</dd>
+              </div>
+            </dl>
+            {ref.bands && ref.bands.length > 0 && (
+              <p className='finance-indicator-bands'>
+                {ref.bands.map(b => `${b.range} ${b.status}`).join(' · ')}
+              </p>
+            )}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 function mergeChartRows(
   hy: { date: string; value_bps: number }[],
@@ -228,6 +392,11 @@ export default function CreditSpreadsPage() {
     [fredData]
   );
 
+  const indicatorRefs = useMemo(() => {
+    const fromApi = fredData?.indicator_refs ?? etfData?.indicator_refs;
+    return fromApi && fromApi.length > 0 ? fromApi : FALLBACK_INDICATOR_REFS;
+  }, [fredData, etfData]);
+
   const latest = tab === 'fred' ? fredData?.latest : etfData?.latest;
   const loading = tab === 'fred' ? loadingFred : loadingEtf;
 
@@ -263,6 +432,8 @@ export default function CreditSpreadsPage() {
           />
         </Grid>
       </Grid>
+
+      <IndicatorRefsLegend refs={indicatorRefs} />
 
       <Tabs
         value={tab}

@@ -55,17 +55,16 @@ def _parse_editorial(raw: Any) -> dict[str, Any]:
 
 
 def _dek_from_row(editorial: dict[str, Any], description: str | None, title: str) -> str:
-    lede = (editorial.get("lede") or "").strip()
-    if lede:
-        return lede
-    what = (editorial.get("what") or "").strip()
-    if what:
-        return what
-    desc = (description or "").strip()
-    if desc:
-        # First sentence-ish
-        cut = desc.find(". ")
-        return (desc[: cut + 1] if cut > 40 else desc)[:280]
+    from shared.llm_text_sanitize import sanitize_reader_dek
+
+    for raw in (
+        editorial.get("lede"),
+        editorial.get("what"),
+        description,
+    ):
+        cleaned = sanitize_reader_dek(raw, title=title, max_length=280)
+        if cleaned:
+            return cleaned
     return ""
 
 
@@ -393,13 +392,39 @@ def classify_and_build_feeds(
     current = [c for c in current if (c["domain"], c["storyline_id"]) not in news_ids]
 
     return {
-        "news": news[:40],
-        "current_events": current[:40],
-        "one_offs": one_offs[:40],
+        "news": news,
+        "current_events": current,
+        "one_offs": one_offs,
     }
 
 
-def build_reader_home(domain: str | None = None) -> dict[str, Any]:
+def _paginate(items: list[dict[str, Any]], *, page: int, page_size: int) -> dict[str, Any]:
+    total = len(items)
+    page = max(1, int(page or 1))
+    page_size = max(1, min(50, int(page_size or 12)))
+    pages = max(1, math.ceil(total / page_size)) if total else 1
+    if page > pages:
+        page = pages
+    start = (page - 1) * page_size
+    end = start + page_size
+    return {
+        "items": items[start:end],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": pages,
+        "has_prev": page > 1,
+        "has_next": page < pages,
+    }
+
+
+def build_reader_home(
+    domain: str | None = None,
+    *,
+    page: int = 1,
+    page_size: int = 12,
+    section: str | None = None,
+) -> dict[str, Any]:
     pairs = _resolve_domain_pairs(domain)
     now = _utcnow()
     all_rows: list[dict[str, Any]] = []
@@ -418,9 +443,77 @@ def build_reader_home(domain: str | None = None) -> dict[str, Any]:
 
             feeds = classify_and_build_feeds(all_rows, now=now, check_tracked=_tracked)
 
+    # Cap raw pools before paging (keeps classify cheap for UI)
+    news = feeds["news"][:80]
+    current = feeds["current_events"][:80]
+    one_offs = feeds["one_offs"][:80]
+
+    news_page = _paginate(news, page=page, page_size=page_size)
+    current_page = _paginate(current, page=page, page_size=page_size)
+    one_offs_page = _paginate(one_offs, page=page, page_size=page_size)
+
+    section_key = (section or "").strip().lower()
+    if section_key in ("news", "current", "current_events", "one_offs", "one-offs"):
+        if section_key in ("current", "current_events"):
+            paged = current_page
+            key = "current_events"
+        elif section_key in ("one_offs", "one-offs"):
+            paged = one_offs_page
+            key = "one_offs"
+        else:
+            paged = news_page
+            key = "news"
+        return {
+            "domain": domain,
+            "generated_at": now.isoformat(),
+            "news_window_hours": NEWS_WINDOW_HOURS,
+            "section": key,
+            key: paged["items"],
+            "pagination": {
+                "page": paged["page"],
+                "page_size": paged["page_size"],
+                "total": paged["total"],
+                "total_pages": paged["total_pages"],
+                "has_prev": paged["has_prev"],
+                "has_next": paged["has_next"],
+            },
+            "nav_ids": [
+                {"domain": it["domain"], "storyline_id": it["storyline_id"], "href": it["href"]}
+                for it in paged["items"]
+            ],
+        }
+
     return {
         "domain": domain,
         "generated_at": now.isoformat(),
         "news_window_hours": NEWS_WINDOW_HOURS,
-        **feeds,
+        "news": news_page["items"],
+        "current_events": current_page["items"],
+        "one_offs": one_offs_page["items"],
+        "pagination": {
+            "news": {
+                "page": news_page["page"],
+                "page_size": news_page["page_size"],
+                "total": news_page["total"],
+                "total_pages": news_page["total_pages"],
+                "has_prev": news_page["has_prev"],
+                "has_next": news_page["has_next"],
+            },
+            "current_events": {
+                "page": current_page["page"],
+                "page_size": current_page["page_size"],
+                "total": current_page["total"],
+                "total_pages": current_page["total_pages"],
+                "has_prev": current_page["has_prev"],
+                "has_next": current_page["has_next"],
+            },
+            "one_offs": {
+                "page": one_offs_page["page"],
+                "page_size": one_offs_page["page_size"],
+                "total": one_offs_page["total"],
+                "total_pages": one_offs_page["total_pages"],
+                "has_prev": one_offs_page["has_prev"],
+                "has_next": one_offs_page["has_next"],
+            },
+        },
     }

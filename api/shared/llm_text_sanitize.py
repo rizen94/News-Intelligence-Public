@@ -120,7 +120,16 @@ def _strip_llm_prose_preamble(text: str) -> str:
         if bold:
             if _is_meta_header_label(bold):
                 continue
-            headline_from_bold = bold
+            # Skip analysis-template labels (**Main Narrative Thread:** etc.)
+            if re.fullmatch(
+                r"(?:main\s+narrative\s+thread|narrative\s+thread|"
+                r"key\s+developments?|storyline\s+analysis)\s*:?",
+                bold.strip(),
+                flags=re.I,
+            ):
+                continue
+            if headline_from_bold is None:
+                headline_from_bold = bold
             kept.append(bold)
             continue
         kept.append(t)
@@ -240,3 +249,147 @@ def sanitize_briefing_lede(text: Optional[str], *, max_length: int = 500) -> str
     if "\n" not in s:
         s = re.sub(r"\s+", " ", s).strip()
     return strip_llm_wrapping_artifacts(s, max_length=max_length)
+
+
+# Structural headings LLM analysis templates stamp into storyline descriptions.
+_READER_LABEL_LINE_RE = re.compile(
+    r"^(?:"
+    r"storyline\s+analysis(?:\s*:.*)?"
+    r"|main\s+narrative\s+thread"
+    r"|narrative\s+thread"
+    r"|key\s+developments?"
+    r"|key\s+points?"
+    r"|background(?:\s+information)?"
+    r"|overview"
+    r"|analysis"
+    r"|summary"
+    r")\s*:?\s*$",
+    re.I,
+)
+_READER_INLINE_LABEL_RE = re.compile(
+    r"^(?:"
+    r"storyline\s+analysis\s*:\s*"
+    r"|storyline\s*:\s*"
+    r"|main\s+narrative\s+thread\s*:?\s*"
+    r"|the\s+main\s+narrative\s+thread\s+of\s+this\s+story\s+revolves\s+around\s+"
+    r"|key\s+developments?\s*:?\s*"
+    r")",
+    re.I,
+)
+_MD_BOLD_RE = re.compile(r"\*\*([^*]+)\*\*")
+_MD_EMPHASIS_RE = re.compile(r"(?<!\*)\*(?!\*)([^*]+)\*(?!\*)")
+
+
+def _truncate_at_word(text: str, max_length: int) -> str:
+    if max_length is None or len(text) <= max_length:
+        return text
+    cut = text[: max_length - 1]
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip(",;:—- ") + "…"
+
+
+def _sentence_case_start(text: str) -> str:
+    """Capitalize the first alphabetic character after stripping a mid-sentence preamble."""
+    if not text:
+        return text
+    for i, ch in enumerate(text):
+        if ch.isalpha():
+            if ch.islower():
+                return text[:i] + ch.upper() + text[i + 1 :]
+            return text
+    return text
+
+
+def sanitize_reader_dek(
+    text: Optional[str],
+    *,
+    title: Optional[str] = None,
+    max_length: int = 280,
+) -> str:
+    """
+    Broadsheet standfirst cleanup.
+
+    Storyline ``description`` / editorial blobs often look like::
+
+        **Storyline Analysis: Title Echo**
+
+        **Main Narrative Thread:**
+        The actual prose we want…
+
+    Strip markdown emphasis, drop structural labels and title echoes, keep prose.
+    """
+    if text is None:
+        return ""
+    raw = str(text).strip()
+    if not raw:
+        return ""
+
+    # Light fence/JSON unwrap without the bold-headline shortcut.
+    s = strip_json_fence(raw)
+    if s.startswith("{") and s.endswith("}"):
+        try:
+            obj: Any = json.loads(s)
+            if isinstance(obj, dict):
+                for key in ("lede", "summary", "what", "dek", "text", "content"):
+                    v = obj.get(key)
+                    if isinstance(v, str) and v.strip():
+                        s = v.strip()
+                        break
+        except json.JSONDecodeError:
+            pass
+
+    title_norm = re.sub(r"\s+", " ", (title or "").strip()).casefold()
+    paragraphs: list[str] = []
+    for block in re.split(r"\n\s*\n+", s):
+        lines: list[str] = []
+        for line in block.split("\n"):
+            t = line.strip()
+            if not t:
+                continue
+            t = _MD_BOLD_RE.sub(r"\1", t)
+            t = _MD_EMPHASIS_RE.sub(r"\1", t)
+            t = t.replace("**", "").strip()
+            t = re.sub(r"\s+", " ", t).strip()
+            if not t:
+                continue
+            label_candidate = t.rstrip(":").strip()
+            if _READER_LABEL_LINE_RE.match(label_candidate):
+                continue
+            if title_norm and re.sub(r"\s+", " ", t).casefold() == title_norm:
+                continue
+            # "**Storyline Analysis: Same As Title**" after unwrap
+            if title_norm and t.casefold().startswith("storyline analysis:"):
+                rest = t.split(":", 1)[1].strip()
+                if re.sub(r"\s+", " ", rest).casefold() == title_norm:
+                    continue
+                t = rest
+            t = _READER_INLINE_LABEL_RE.sub("", t).strip()
+            if not t or _READER_LABEL_LINE_RE.match(t.rstrip(":").strip()):
+                continue
+            lines.append(t)
+        if lines:
+            paragraphs.append(" ".join(lines))
+
+    if not paragraphs:
+        # Last resort: strip markers from original and take first sentence-ish.
+        flat = _MD_BOLD_RE.sub(r"\1", s)
+        flat = flat.replace("**", "")
+        flat = re.sub(r"\s+", " ", flat).strip()
+        flat = _READER_INLINE_LABEL_RE.sub("", flat).strip()
+        if title_norm and re.sub(r"\s+", " ", flat).casefold() == title_norm:
+            return ""
+        return _truncate_at_word(_sentence_case_start(flat), max_length) if flat else ""
+
+    # Prefer the first paragraph that looks like prose (not a short label leftover).
+    chosen = paragraphs[0]
+    for p in paragraphs:
+        if len(p) >= 40:
+            chosen = p
+            break
+
+    if title_norm and re.sub(r"\s+", " ", chosen).casefold() == title_norm:
+        return ""
+
+    chosen = _sentence_case_start(chosen)
+    return _truncate_at_word(chosen, max_length)
