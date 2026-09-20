@@ -1,94 +1,18 @@
 /**
- * Finance product chrome — utilitarian, separate from News broadsheet.
+ * Finance content tokens — denser pane inside shared AppShell chrome.
+ * Outer header / sidebar come from shell/productChrome.css.
  */
-:root {
-  --fin-bg: #f3f5f7;
-  --fin-surface: #ffffff;
-  --fin-ink: #1a2332;
-  --fin-muted: #5a6577;
-  --fin-accent: #0d5c63;
-  --fin-accent-soft: #d7ecee;
-  --fin-border: #d5dbe3;
-  --fin-nav-width: 220px;
-  --fin-font-display: 'Source Serif 4', 'Iowan Old Style', Georgia, serif;
-  --fin-font-body: 'IBM Plex Sans', 'Segoe UI', sans-serif;
-}
-
 .finance-app {
-  min-height: 100vh;
-  background:
-    radial-gradient(ellipse 80% 50% at 10% -10%, #d7ecee 0%, transparent 55%),
-    linear-gradient(180deg, #eef2f5 0%, var(--fin-bg) 40%, #eceff3 100%);
+  --fin-surface: #ffffff;
+  --fin-ink: var(--ni-chrome-ink, #1a1814);
+  --fin-muted: var(--ni-chrome-muted, #5c564c);
+  --fin-accent: var(--ni-chrome-accent, #b01030);
+  --fin-accent-soft: var(--ni-chrome-accent-soft, rgba(176, 16, 48, 0.08));
+  --fin-border: var(--ni-chrome-border, rgba(26, 24, 20, 0.16));
+  --fin-font-display: var(--ni-font-display, 'Source Serif 4', Georgia, serif);
+  --fin-font-body: var(--ni-font-ui, 'Source Sans 3', 'Helvetica Neue', sans-serif);
   color: var(--fin-ink);
   font-family: var(--fin-font-body);
-}
-
-.finance-header {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 0.75rem 1.25rem;
-  border-bottom: 1px solid var(--fin-border);
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(8px);
-  position: sticky;
-  top: 0;
-  z-index: 20;
-}
-
-.finance-app .ni-product-brand-sub {
-  color: var(--fin-accent);
-}
-
-.finance-shell {
-  display: flex;
-  min-height: calc(100vh - 56px);
-}
-
-.finance-nav {
-  width: var(--fin-nav-width);
-  flex-shrink: 0;
-  padding: 1rem 0.75rem;
-  border-right: 1px solid var(--fin-border);
-  background: rgba(255, 255, 255, 0.55);
-}
-
-.finance-nav-section {
-  margin-bottom: 1.25rem;
-}
-
-.finance-nav-label {
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--fin-muted);
-  padding: 0 0.65rem 0.35rem;
-}
-
-.finance-nav a {
-  display: block;
-  padding: 0.45rem 0.65rem;
-  border-radius: 6px;
-  color: var(--fin-ink);
-  text-decoration: none;
-  font-size: 0.92rem;
-  margin-bottom: 0.15rem;
-}
-
-.finance-nav a:hover {
-  background: var(--fin-accent-soft);
-}
-
-.finance-nav a.active {
-  background: var(--fin-accent);
-  color: #fff;
-}
-
-.finance-main {
-  flex: 1;
-  min-width: 0;
-  padding: 1.25rem 1.5rem 2.5rem;
 }
 
 .finance-hero {
@@ -122,15 +46,15 @@
   padding: 1.1rem 1.2rem;
   background: var(--fin-surface);
   border: 1px solid var(--fin-border);
-  border-radius: 8px;
+  border-radius: 4px;
   text-decoration: none;
   color: inherit;
-  transition: border-color 0.15s ease, transform 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .finance-link-card:hover {
   border-color: var(--fin-accent);
-  transform: translateY(-1px);
+  background: var(--fin-accent-soft);
 }
 
 .finance-link-card h2 {
@@ -157,32 +81,4 @@
   color: var(--fin-muted);
   margin: 0 0 1.25rem;
   max-width: 52rem;
-}
-
-@media (max-width: 800px) {
-  .finance-shell {
-    flex-direction: column;
-  }
-
-  .finance-nav {
-    width: 100%;
-    border-right: none;
-    border-bottom: 1px solid var(--fin-border);
-    display: flex;
-    gap: 0.5rem;
-    overflow-x: auto;
-    padding: 0.75rem;
-  }
-
-  .finance-nav-section {
-    margin: 0;
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-    flex-shrink: 0;
-  }
-
-  .finance-nav-label {
-    display: none;
-  }
 }

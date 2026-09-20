@@ -1,0 +1,434 @@
+"""Batched unified intake extraction drain for AutomationManager and catch-up."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from config.runtime import env_str
+
+logger = logging.getLogger(__name__)
+
+try:
+    from services.unified_intake_extraction_service import UnifiedIntakeExtractionService
+except ImportError as _uie_imp_err:
+    UnifiedIntakeExtractionService = None  # type: ignore[misc, assignment]
+    logger.error(
+        "unified_intake_extraction_service import failed — drain disabled: %s",
+        _uie_imp_err,
+    )
+
+try:
+    from shared.bulk_catchup_llm_routing import (
+        assign_extraction_lane,
+        create_lane_semaphores,
+        dual_lane_extraction_active,
+    )
+    from shared.domain_registry import pipeline_url_schema_pairs
+    from shared.pipeline_article_selection import (
+        sql_order_coalesce_pub_created,
+        sql_order_unified_intake_value_priority,
+        unified_intake_newest_first,
+        unified_intake_row_value_sort_key,
+        unified_intake_value_priority_order_enabled,
+    )
+    from shared.pipeline_batch_drain import (
+        DrainStallTracker,
+        RunBudget,
+        phase_batch_limit,
+        phase_run_budget_seconds,
+    )
+    from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
+    from shared.unified_intake_backlog import (
+        backfill_unified_pass_from_legacy_batch,
+        sql_actionable_unified_intake,
+        sql_unified_intake_base_eligible,
+        unified_intake_legacy_aware_backlog_enabled,
+    )
+    from shared.services.llm_service import pop_llm_execution_lane, push_llm_execution_lane
+except ImportError as _uie_deps_err:
+    logger.error("unified_intake_extraction_runner dependency import failed: %s", _uie_deps_err)
+    raise
+
+ArticleFailureHandler = Callable[[str, int, Exception], Awaitable[None]]
+
+
+async def run_unified_intake_extraction_batch_drain(
+    *,
+    articles_per_domain: int | None = None,
+    budget_seconds: int | None = None,
+    batch_size: int | None = None,
+    on_article_failure: ArticleFailureHandler | None = None,
+    on_batch_complete: Callable[[int, dict[str, Any]], Awaitable[None]] | None = None,
+    on_wave_complete: Callable[[int, dict[str, Any]], Awaitable[None]] | None = None,
+    use_spine_work_queues: bool | None = None,
+) -> dict[str, int]:
+    if UnifiedIntakeExtractionService is None:
+        logger.error("unified_intake_extraction drain skipped — service import unavailable")
+        return {"processed": 0, "errors": 1, "skipped": 1}
+    per_domain = articles_per_domain
+    if per_domain is None:
+        per_domain = phase_batch_limit("unified_intake_extraction", 40)
+    per_domain = max(5, min(120, int(per_domain)))
+
+    budget = RunBudget(
+        budget_seconds
+        if budget_seconds is not None
+        else phase_run_budget_seconds("unified_intake_extraction", 0)
+    )
+
+    llm_batch = batch_size
+    if llm_batch is None:
+        from config.runtime import unified_intake_extraction_batch_size
+
+        llm_batch = unified_intake_extraction_batch_size()
+    llm_batch = max(1, min(8, int(llm_batch)))
+
+    try:
+        from config.runtime import unified_intake_extraction_parallel
+
+        parallel = unified_intake_extraction_parallel()
+    except Exception:
+        try:
+            parallel = int(env_str("UNIFIED_INTAKE_EXTRACTION_PARALLEL", "8"))
+        except ValueError:
+            parallel = 8
+        parallel = max(1, min(16, parallel))
+
+    gpu_sem, cpu_sem, single_sem, gpu_p, cpu_p, dual = create_lane_semaphores(parallel=parallel)
+    dual = dual_lane_extraction_active()
+
+    svc = UnifiedIntakeExtractionService()
+    loop = asyncio.get_event_loop()
+    processed_count = 0
+    backfill_count = 0
+    batch_rounds = 0
+
+    pass_clause = ""
+    if phase_backlog_uses_pass_marker("unified_intake_extraction"):
+        pass_clause = f" AND ({sql_article_pass_null('unified_intake_extraction', 'a')}) "
+    from shared.article_signal_gate import (
+        article_signal_enabled,
+        defer_signal_light_unified_intake_batch,
+        sql_article_signal_full_lane_filter,
+    )
+
+    if article_signal_enabled():
+        defer_signal_light_unified_intake_batch(per_domain_limit=per_domain * 2)
+        from shared.article_signal_gate import defer_signal_light_phase_batch
+
+        defer_signal_light_phase_batch("topic_clustering", per_domain_limit=per_domain * 2)
+    value_priority = unified_intake_value_priority_order_enabled()
+    order = (
+        sql_order_unified_intake_value_priority("a")
+        if value_priority
+        else sql_order_coalesce_pub_created("a", newest_first=unified_intake_newest_first())
+    )
+    select_quality = (
+        ", COALESCE(a.quality_score, 0), "
+        "COALESCE(a.metadata #>> '{source_credibility,tier}', 'tier_3')"
+        if value_priority
+        else ""
+    )
+    domains = list(pipeline_url_schema_pairs())
+
+    def _backfill_legacy_complete() -> int:
+        if not unified_intake_legacy_aware_backlog_enabled():
+            return 0
+        n = 0
+        backfill_limit = max(per_domain * 4, 200)
+        for _domain_key, schema_name in domains:
+            try:
+                n += len(
+                    backfill_unified_pass_from_legacy_batch(
+                        schema_name=schema_name,
+                        limit=backfill_limit,
+                    )
+                )
+            except Exception as e:
+                logger.warning("unified_intake legacy backfill %s: %s", schema_name, e)
+        return n
+
+    from services.spine_work_queue_service import (
+        claim_fair_share_batch,
+        count_all_pending,
+        finalize_unified_intake_queue_round,
+        release_queue_item,
+        spine_work_queues_enabled,
+    )
+
+    queues_active = (
+        spine_work_queues_enabled()
+        if use_spine_work_queues is None
+        else bool(use_spine_work_queues)
+    )
+    if value_priority:
+        queues_active = False
+    queue_claim_batch = max(per_domain * max(1, len(domains)), 60)
+
+    def _fetch_one_schema(schema_name: str, article_ids: list[int] | None = None) -> list[tuple]:
+        sig = ""
+        if article_signal_enabled():
+            sig = f" AND ({sql_article_signal_full_lane_filter('a', schema_name)}) "
+        id_clause = ""
+        id_params: tuple[Any, ...] = ()
+        if article_ids:
+            id_clause = " AND a.id = ANY(%s) "
+            id_params = (article_ids,)
+        if unified_intake_legacy_aware_backlog_enabled():
+            where_sql = sql_actionable_unified_intake(schema_name, "a")
+        else:
+            where_sql = f"""
+                ({sql_unified_intake_base_eligible("a")})
+                {pass_clause}
+            """
+        limit_sql = "" if article_ids else f" LIMIT {per_domain}"
+        from shared.database.connection import get_db_connection_context
+
+        with get_db_connection_context() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT a.id, a.title, a.content, a.published_at,
+                           NULL::text AS storyline_id
+                           {select_quality}
+                    FROM {schema_name}.articles a
+                    WHERE {where_sql}
+                      {id_clause}
+                      {sig}
+                    ORDER BY {order}
+                    {limit_sql}
+                    """,
+                    id_params,
+                )
+                return cursor.fetchall()
+
+    def _fetch_domain_articles(claimed_by_schema: dict[str, list[int]] | None = None) -> dict[str, list[tuple]]:
+        """One short-lived connection per domain — release before LLM batches run."""
+        out: dict[str, list[tuple]] = {}
+
+        for _domain_key, schema_name in domains:
+            try:
+                ids = (claimed_by_schema or {}).get(schema_name)
+                out[schema_name] = _fetch_one_schema(
+                    schema_name,
+                    ids if ids else None,
+                )
+            except Exception as e:
+                logger.warning(
+                    "unified_intake_extraction query for %s: %s", schema_name, e
+                )
+                out[schema_name] = []
+        return out
+
+    stall = DrainStallTracker()
+
+    try:
+        lane_idx = 0
+        while not budget.expired():
+            round_backfill = await loop.run_in_executor(None, _backfill_legacy_complete)
+            backfill_count += round_backfill
+            claimed_by_schema: dict[str, list[int]] = {}
+            use_queue_round = False
+            if queues_active:
+                claimed_by_schema = await loop.run_in_executor(
+                    None,
+                    lambda: claim_fair_share_batch(
+                        "unified_intake_extraction", queue_claim_batch
+                    ),
+                )
+                use_queue_round = bool(claimed_by_schema)
+                if not use_queue_round:
+                    pending_q = await loop.run_in_executor(
+                        None,
+                        lambda: count_all_pending("unified_intake_extraction"),
+                    )
+                    if pending_q > 0:
+                        # Queue claim miss with SQL backlog — fall through to SQL selection
+                        # instead of spinning until budget expires.
+                        logger.info(
+                            "unified_intake: empty spine claim with pending=%s — SQL fallback",
+                            pending_q,
+                        )
+            domain_articles = await loop.run_in_executor(
+                None,
+                lambda c=claimed_by_schema if use_queue_round else None: _fetch_domain_articles(c),
+            )
+            if use_queue_round and claimed_by_schema:
+                fetched_ids = {
+                    int(row[0])
+                    for rows in domain_articles.values()
+                    for row in rows
+                }
+                for schema_name, ids in claimed_by_schema.items():
+                    for article_id in ids:
+                        if article_id not in fetched_ids:
+                            release_queue_item(
+                                schema_name,
+                                "unified_intake_extraction",
+                                article_id,
+                                error="not_actionable",
+                            )
+            pending_rows: list[tuple[str, str, tuple]] = []
+            for domain_key, schema_name in domains:
+                for row in domain_articles.get(schema_name, []):
+                    pending_rows.append((domain_key, schema_name, row))
+
+            if value_priority and pending_rows:
+                pending_rows.sort(key=lambda item: unified_intake_row_value_sort_key(item[2]))
+
+            if not pending_rows:
+                if round_backfill == 0:
+                    break
+                continue
+
+            batch_rounds += 1
+            round_ok = 0
+            wave_idx = 0
+
+            batch_slices = [
+                pending_rows[i : i + llm_batch]
+                for i in range(0, len(pending_rows), llm_batch)
+            ]
+
+            async def _process_batch(
+                batch_slice: list[tuple[str, str, tuple]],
+                batch_lane_idx: int,
+            ) -> tuple[list[tuple[str, str, tuple]], dict[int, dict[str, Any]]]:
+                articles_for_batch = [
+                    {
+                        "article_id": row[0],
+                        "title": row[1] or "",
+                        "content": row[2],
+                        "pub_date": row[3],
+                        "storyline_id": row[4],
+                        "schema": schema,
+                        "domain_key": dk,
+                    }
+                    for dk, schema, row in batch_slice
+                ]
+
+                lane = (
+                    assign_extraction_lane(batch_lane_idx, gpu_parallel=gpu_p, cpu_parallel=cpu_p)
+                    if dual
+                    else "gpu"
+                )
+                lane_sem = (
+                    gpu_sem
+                    if dual and lane == "gpu"
+                    else (cpu_sem if dual and lane == "cpu" else single_sem)
+                )
+
+                token = push_llm_execution_lane(lane)
+                try:
+                    if lane_sem is not None:
+                        async with lane_sem:
+                            results = await svc.extract_batch(articles_for_batch)
+                    else:
+                        results = await svc.extract_batch(articles_for_batch)
+                    return batch_slice, results
+                except Exception as e:
+                    logger.error("unified_intake_extraction batch failed: %s", e)
+                    return batch_slice, {}
+                finally:
+                    pop_llm_execution_lane(token)
+
+            for wave_start in range(0, len(batch_slices), parallel):
+                if budget.expired():
+                    break
+                wave = batch_slices[wave_start : wave_start + parallel]
+                wave_outcomes = await asyncio.gather(
+                    *[
+                        _process_batch(batch_slice, lane_idx + offset)
+                        for offset, batch_slice in enumerate(wave)
+                    ]
+                )
+                lane_idx += len(wave)
+
+                for batch_slice, results in wave_outcomes:
+                    schema_outcomes: dict[str, dict[int, bool]] = {}
+                    for dk, schema, row in batch_slice:
+                        article_id = row[0]
+                        result = results.get(article_id, {"success": False})
+                        ok = bool(result.get("success") or result.get("attempted"))
+                        if ok:
+                            round_ok += 1
+                        elif on_article_failure and not result.get("success"):
+                            await on_article_failure(
+                                schema,
+                                article_id,
+                                Exception(
+                                    result.get("error") or result.get("reason") or "failed"
+                                ),
+                            )
+                        if use_queue_round:
+                            schema_outcomes.setdefault(schema, {})[article_id] = ok
+                    if use_queue_round:
+                        for schema, outcomes in schema_outcomes.items():
+                            finalize_unified_intake_queue_round(schema, outcomes)
+
+                wave_idx += 1
+                if on_wave_complete is not None:
+                    await on_wave_complete(
+                        wave_idx,
+                        {
+                            "batch_round": batch_rounds,
+                            "wave_processed": len(wave),
+                            "round_processed": round_ok,
+                            "total_processed": processed_count + round_ok,
+                            "backfill_count": backfill_count,
+                        },
+                    )
+
+                if budget.expired():
+                    break
+
+            processed_count += round_ok
+            if on_batch_complete is not None:
+                await on_batch_complete(
+                    batch_rounds,
+                    {
+                        "round_processed": round_ok,
+                        "total_processed": processed_count,
+                        "backfill_count": backfill_count,
+                    },
+                )
+            had_pending = bool(pending_rows)
+            if stall.record_round(processed=round_ok, had_pending=had_pending):
+                break
+            if round_ok == 0 and round_backfill == 0:
+                break
+
+        logger.info(
+            "unified_intake_extraction batch drain: articles=%s backfilled=%s rounds=%s batch_size=%s dual_lane=%s",
+            processed_count,
+            backfill_count,
+            batch_rounds,
+            llm_batch,
+            dual,
+        )
+        if processed_count > 0 or backfill_count > 0:
+            try:
+                from services.backlog_metrics import invalidate_backlog_metrics_cache_throttled
+
+                # At most once per minute across productive drains (was every round).
+                invalidate_backlog_metrics_cache_throttled(min_interval_seconds=60.0)
+            except Exception:
+                try:
+                    from services.backlog_metrics import invalidate_backlog_metrics_cache
+
+                    invalidate_backlog_metrics_cache()
+                except Exception:
+                    pass
+        return {
+            "processed": processed_count + backfill_count,
+            "articles_processed": processed_count + backfill_count,
+            "llm_processed": processed_count,
+            "legacy_backfilled": backfill_count,
+            "batch_rounds": batch_rounds,
+        }
+    finally:
+        await svc.close()

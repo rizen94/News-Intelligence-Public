@@ -1,10 +1,10 @@
 /**
- * Finance product layout — denser content + shared product-root chrome.
+ * Finance product layout — denser content pane + shared AppShell chrome.
  */
 import React, { useEffect } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useDomain } from '../../contexts/DomainContext';
-import { ProductRootSwitcher } from '../../shell/ProductRootSwitcher';
+import AppShell from '../../shell/AppShell';
 import '../styles/finance.css';
 
 const NAV = [
@@ -45,33 +45,36 @@ export default function FinanceLayout() {
     setDomain('finance');
   }, [setDomain]);
 
-  return (
-    <div className='finance-app'>
-      <header className='finance-header'>
-        <ProductRootSwitcher subtitle='Finance' brandTo='/finance' />
-      </header>
-      <div className='finance-shell'>
-        <aside className='finance-nav' aria-label='Finance navigation'>
-          {NAV.map(section => (
-            <div key={section.id} className='finance-nav-section'>
-              <div className='finance-nav-label'>{section.label}</div>
-              {section.items.map(item => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.end}
-                  className={({ isActive }) => (isActive ? 'active' : undefined)}
-                >
-                  {item.label}
-                </NavLink>
-              ))}
-            </div>
+  const sidebar = (
+    <>
+      {NAV.map(section => (
+        <div key={section.id} className='ni-sidebar-section'>
+          <div className='ni-sidebar-label'>{section.label}</div>
+          {section.items.map(item => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              className={({ isActive }) => (isActive ? 'is-active' : undefined)}
+            >
+              {item.label}
+            </NavLink>
           ))}
-        </aside>
-        <main className='finance-main'>
-          <Outlet />
-        </main>
-      </div>
-    </div>
+        </div>
+      ))}
+    </>
+  );
+
+  return (
+    <AppShell
+      root='finance'
+      subtitle='Finance'
+      brandTo='/finance'
+      sidebar={sidebar}
+      sidebarLabel='Finance navigation'
+      className='finance-app'
+    >
+      <Outlet />
+    </AppShell>
   );
 }

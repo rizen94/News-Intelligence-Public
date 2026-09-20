@@ -9,20 +9,19 @@
 .v2-user {
   --v2-paper: #f3efe6;
   --v2-paper-deep: #ebe4d6;
-  --v2-ink: #1a1814;
-  --v2-ink-muted: #5c564c;
-  --v2-hairline: rgba(26, 24, 20, 0.18);
-  --v2-accent: #b01030;
-  --v2-accent-soft: rgba(176, 16, 48, 0.08);
+  --v2-ink: var(--ni-chrome-ink, #1a1814);
+  --v2-ink-muted: var(--ni-chrome-muted, #5c564c);
+  --v2-hairline: var(--ni-chrome-border, rgba(26, 24, 20, 0.18));
+  --v2-accent: var(--ni-chrome-accent, #b01030);
+  --v2-accent-soft: var(--ni-chrome-accent-soft, rgba(176, 16, 48, 0.08));
   --v2-measure: 42rem;
-  --v2-font-display: 'Source Serif 4', 'Source Serif Pro', Georgia, serif;
-  --v2-font-body: 'Source Sans 3', 'Source Sans Pro', 'Helvetica Neue', sans-serif;
-  --v2-nav-height: 3.25rem;
+  --v2-font-display: var(--ni-font-display, 'Source Serif 4', Georgia, serif);
+  --v2-font-body: var(--ni-font-ui, 'Source Sans 3', 'Helvetica Neue', sans-serif);
+  --v2-nav-height: var(--ni-chrome-header-height, 3.5rem);
 
-  background: var(--v2-paper);
+  /* Outer frame from AppShell; paper applies to .ni-app-main only */
   color: var(--v2-ink);
   font-family: var(--v2-font-body);
-  min-height: 100vh;
   line-height: 1.55;
 }
 
@@ -38,108 +37,71 @@
   text-underline-offset: 0.15em;
 }
 
+/* Chrome links keep shared accent; do not inherit content ink */
+.v2-user .ni-app-header a,
+.v2-user .ni-app-sidebar a,
+.v2-user .ni-product-brand,
+.v2-user .ni-root-switcher a,
+.v2-user .ni-classic-link {
+  text-decoration: none;
+  text-decoration-thickness: unset;
+}
+
+.v2-user .ni-product-brand {
+  color: var(--ni-chrome-accent, #b01030);
+}
+
+.v2-user .ni-product-brand:hover {
+  color: var(--ni-chrome-accent, #b01030);
+  opacity: 0.88;
+}
+
+.v2-user .ni-root-switcher a {
+  color: var(--ni-chrome-muted, #5c564c);
+}
+
+.v2-user .ni-root-switcher a.is-active {
+  color: #f7f3ea;
+}
+
+.v2-user .ni-classic-link {
+  color: var(--ni-chrome-muted, #5c564c);
+}
+
+.v2-user .ni-app-sidebar a {
+  color: var(--ni-chrome-ink, #1a1814);
+}
+
+.v2-user .ni-app-sidebar a.is-active {
+  color: var(--ni-chrome-accent, #b01030);
+}
+
 .v2-user a:hover {
   color: var(--v2-accent);
 }
 
-/* Masthead / sticky nav */
-.v2-masthead {
-  position: sticky;
-  top: 0;
-  z-index: 40;
-  background: color-mix(in srgb, var(--v2-paper) 92%, transparent);
-  backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--v2-hairline);
+.v2-user .ni-app-header a:hover,
+.v2-user .ni-app-sidebar a:hover {
+  color: inherit;
 }
 
-.v2-masthead-inner {
-  max-width: 72rem;
-  margin: 0 auto;
-  padding: 0.65rem 1.25rem;
-  display: flex;
-  align-items: center;
-  gap: 1.25rem;
-  flex-wrap: wrap;
+.v2-user .ni-product-brand:hover {
+  color: var(--ni-chrome-accent, #b01030);
 }
 
-.v2-brand {
-  font-family: var(--v2-font-display);
-  font-weight: 700;
-  font-size: 1.35rem;
-  letter-spacing: -0.02em;
-  color: var(--v2-accent);
-  text-decoration: none;
-  white-space:nowrap;
+.v2-user .ni-classic-link:hover {
+  color: var(--ni-chrome-accent, #b01030);
 }
 
-.v2-brand:hover {
-  color: var(--v2-accent);
-  opacity: 0.85;
+.v2-user .ni-root-switcher a:hover {
+  color: var(--ni-chrome-ink, #1a1814);
 }
 
-.v2-nav-primaries {
-  display: flex;
-  gap: 0.15rem 1rem;
-  flex: 1;
-  flex-wrap: wrap;
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.v2-user .ni-app-sidebar a:hover {
+  color: var(--ni-chrome-ink, #1a1814);
 }
 
-.v2-nav-primaries a {
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  text-decoration: none;
-  color: var(--v2-ink-muted);
-  padding: 0.35rem 0;
-  border-bottom: 2px solid transparent;
-  transition: color 160ms ease, border-color 160ms ease;
-}
-
-.v2-nav-primaries a:hover,
-.v2-nav-primaries a[aria-current='page'] {
-  color: var(--v2-ink);
-  border-bottom-color: var(--v2-accent);
-}
-
-.v2-chrome-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-left: auto;
-  font-size: 0.8rem;
-}
-
-.v2-switcher {
-  display: inline-flex;
-  border: 1px solid var(--v2-hairline);
-  overflow: hidden;
-}
-
-.v2-switcher a,
-.v2-switcher span {
-  padding: 0.25rem 0.55rem;
-  text-decoration: none;
-  font-weight: 600;
-  font-size: 0.72rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.v2-switcher a.is-active,
-.v2-switcher span.is-active {
-  background: var(--v2-ink);
-  color: var(--v2-paper);
-}
-
-.v2-classic-link {
-  color: var(--v2-ink-muted);
-  font-size: 0.75rem;
-}
-
+/* Legacy masthead helpers (chrome now lives in AppShell) */
 .v2-domain-select {
   font: inherit;
   font-size: 0.8rem;
@@ -150,9 +112,10 @@
 }
 
 .v2-page {
-  max-width: 72rem;
-  margin: 0 auto;
-  padding: 1.5rem 1.25rem 4rem;
+  /* Nested pages no longer own outer padding; AppShell main does */
+  max-width: none;
+  margin: 0;
+  padding: 0 0 1.5rem;
 }
 
 .v2-section-rule {
@@ -426,46 +389,24 @@
   margin: 0.75rem 0 1.25rem;
 }
 
-/* Admin utilitarian (no broadsheet paper) */
+/* Admin content panels — chrome frame from AppShell */
 .v2-admin {
-  --v2-admin-bg: #f5f5f5;
-  --v2-admin-ink: #212121;
-  --v2-admin-border: #d0d0d0;
-  --v2-admin-accent: #1565c0;
-  background: var(--v2-admin-bg);
+  --v2-admin-bg: var(--ni-chrome-shell, #f0ebe3);
+  --v2-admin-ink: var(--ni-chrome-ink, #1a1814);
+  --v2-admin-border: var(--ni-chrome-border, rgba(26, 24, 20, 0.16));
+  --v2-admin-accent: var(--ni-chrome-accent, #b01030);
   color: var(--v2-admin-ink);
-  font-family: 'Source Sans 3', system-ui, sans-serif;
-  min-height: 100vh;
-}
-
-.v2-admin-nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1rem;
-  align-items: center;
-  padding: 0.65rem 1.25rem;
-  background: #fff;
-  border-bottom: 1px solid var(--v2-admin-border);
-  position: sticky;
-  top: 0;
-  z-index: 30;
-}
-
-.v2-admin-main {
-  max-width: 80rem;
-  margin: 0 auto;
-  padding: 1.25rem;
+  font-family: var(--ni-font-ui, 'Source Sans 3', sans-serif);
 }
 
 .admin-monitor-embed {
-  /* Slim Monitor embeds inside Admin; keep MUI density readable on gray ops bg */
-  background: #fff;
+  background: var(--ni-chrome-surface, #fff);
   border: 1px solid var(--v2-admin-border);
   padding: 0.5rem 0.75rem 1rem;
 }
 
 .v2-admin-panel {
-  background: #fff;
+  background: var(--ni-chrome-surface, #fff);
   border: 1px solid var(--v2-admin-border);
   padding: 1rem;
   margin-bottom: 1rem;
@@ -474,6 +415,7 @@
 .v2-admin-panel h2 {
   margin: 0 0 0.75rem;
   font-size: 1.1rem;
+  font-family: var(--ni-font-ui, 'Source Sans 3', sans-serif);
 }
 
 .v2-admin-table {
@@ -491,11 +433,22 @@
 }
 
 .v2-admin-muted {
-  color: #666;
+  color: var(--ni-chrome-muted, #5c564c);
   font-size: 0.85rem;
 }
 
+.v2-admin a {
+  color: var(--v2-admin-accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.v2-admin a:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
 .v2-admin-error {
-  color: #b71c1c;
+  color: var(--ni-chrome-accent, #b01030);
   font-size: 0.9rem;
 }
