@@ -37,8 +37,68 @@
   text-underline-offset: 0.15em;
 }
 
+/* Chrome links keep shared accent; do not inherit content ink */
+.v2-user .ni-app-header a,
+.v2-user .ni-app-sidebar a,
+.v2-user .ni-product-brand,
+.v2-user .ni-root-switcher a,
+.v2-user .ni-classic-link {
+  text-decoration: none;
+  text-decoration-thickness: unset;
+}
+
+.v2-user .ni-product-brand {
+  color: var(--ni-chrome-accent, #b01030);
+}
+
+.v2-user .ni-product-brand:hover {
+  color: var(--ni-chrome-accent, #b01030);
+  opacity: 0.88;
+}
+
+.v2-user .ni-root-switcher a {
+  color: var(--ni-chrome-muted, #5c564c);
+}
+
+.v2-user .ni-root-switcher a.is-active {
+  color: #f7f3ea;
+}
+
+.v2-user .ni-classic-link {
+  color: var(--ni-chrome-muted, #5c564c);
+}
+
+.v2-user .ni-app-sidebar a {
+  color: var(--ni-chrome-ink, #1a1814);
+}
+
+.v2-user .ni-app-sidebar a.is-active {
+  color: var(--ni-chrome-accent, #b01030);
+}
+
 .v2-user a:hover {
   color: var(--v2-accent);
+}
+
+.v2-user .ni-app-header a:hover,
+.v2-user .ni-app-sidebar a:hover {
+  color: inherit;
+}
+
+.v2-user .ni-product-brand:hover {
+  color: var(--ni-chrome-accent, #b01030);
+}
+
+.v2-user .ni-classic-link:hover {
+  color: var(--ni-chrome-accent, #b01030);
+}
+
+.v2-user .ni-root-switcher a:hover {
+  color: var(--ni-chrome-ink, #1a1814);
+}
+
+.v2-user .ni-app-sidebar a:hover {
+  color: var(--ni-chrome-ink, #1a1814);
 }
 
 /* Legacy masthead helpers (chrome now lives in AppShell) */
@@ -375,6 +435,17 @@
 .v2-admin-muted {
   color: var(--ni-chrome-muted, #5c564c);
   font-size: 0.85rem;
+}
+
+.v2-admin a {
+  color: var(--v2-admin-accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.v2-admin a:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
 }
 
 .v2-admin-error {
