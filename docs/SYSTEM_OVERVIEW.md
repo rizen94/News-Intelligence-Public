@@ -361,7 +361,18 @@ All routes are mounted from `api/main.py`. Each domain router defines its own pr
 | GET | `/api/user_management/preferences/{id}` | Get preferences |
 | PUT | `/api/user_management/preferences/{id}` | Update preferences |
 
-### 3.9 v3 Compatibility Layer
+### 3.9 Reader (v2 broadsheet feeds)
+
+**Files:** `api/domains/reader/` — additive; does not change `/{domain}/storylines` contracts.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/reader/home?domain=` | News / Current Events / One-offs StoryUnits (optional domain filter) |
+| GET | `/api/reader/storylines/{id}?domain=` | Longform reader pack: summary, timeline, citations, dossier rail |
+
+**News heuristic:** material `updated_at` / refinement within 48h + non-empty dek. Membership-only `last_article_added_at` bumps are excluded.
+
+### 3.10 v3 Compatibility Layer
 
 **Retired:** The old flat `/api/...` router was removed from `main.py`; an archived copy for reference lives at `api/archive/legacy_api/legacy_global_api.py` (see `api/archive/legacy_api/README.md`). Use domain-scoped routes under `api/domains/*/routes`.
 
@@ -369,9 +380,21 @@ All routes are mounted from `api/main.py`. Each domain router defines its own pr
 
 ## 4. Web Interface Structure
 
-### 4.1 Route Map
+### 4.0 Dual SPA paths (side-by-side)
 
-All routes are under `/:domain/` where domain is `politics`, `finance`, or `science-tech`. Default redirect: `/` → `/politics/dashboard`.
+Until an explicit archive cutover, **two** client trees ship in the same build:
+
+| Tree | Prefix | Code | Notes |
+|------|--------|------|-------|
+| Legacy (default) | `/:domain/…` | `web/src/layout/MainLayout.tsx`, `web/src/pages/` | Domain is URL spine; Operations under `/:domain/monitor` |
+| v2 User | `/v2/…` | `web/src/v2/` | Modern Broadsheet; domain is `?domain=` filter |
+| v2 Admin | `/v2/admin/…` | `web/src/v2/pages/admin/` | Utilitarian ops; does **not** remove classic Operations |
+
+Cross-links: classic AppNav “Try new app” → `/v2`; v2 chrome “Classic app” → `/:domain/dashboard` (or monitor). User/Admin switcher lives inside v2 only (no auth yet).
+
+### 4.1 Route Map (legacy)
+
+All **legacy** routes are under `/:domain/` where domain is `politics`, `finance`, or `science-tech`. Default redirect: `/` → `/politics/dashboard`.
 
 | Path | Component | Description |
 |------|-----------|-------------|
@@ -395,9 +418,25 @@ All routes are under `/:domain/` where domain is `politics`, `finance`, or `scie
 | `/:domain/analysis/:taskId` | `FinancialAnalysisResult` | Financial analysis result |
 | `/:domain/commodity/:commodity` | `CommodityDashboard` | Commodity dashboard (gold, silver, platinum) |
 
+### 4.1b Route Map (v2)
+
+| Path | Component | Description |
+|------|-----------|-------------|
+| `/v2` | `v2/pages/Home/HomePage` | Hero + News cascade; Current / One-offs rails |
+| `/v2/news` | `NewsPage` | 48h material News |
+| `/v2/current` | `CurrentPage` | Long-running arcs |
+| `/v2/one-offs` | `OneOffsPage` | List + expected/announced calendar |
+| `/v2/storylines/:domain/:id` | `StorylineReaderPage` | Longform reader pack |
+| `/v2/entities/:id` | `EntityDossierPage` | Light dossier |
+| `/v2/admin` | `AdminOverviewPage` | Ops hub |
+| `/v2/admin/monitor` | `AdminMonitorPage` | Parallel Monitor |
+| `/v2/admin/work` | `AdminWorkPage` | process_run_summary / backlog / failures |
+| `/v2/admin/sql` | `AdminSqlPage` | SQL explorer |
+| `/v2/admin/audit` | `AdminAuditPage` | Side-by-side audit checklist |
+
 ### 4.2 Navigation (Sidebar)
 
-Located in `web/src/layout/AppNav.tsx` — persistent sidebar (220px desktop, drawer on mobile).
+Located in `web/src/layout/AppNav.tsx` — persistent sidebar (220px desktop, drawer on mobile). Includes a **Try new app** link to `/v2`.
 
 | Label | Path | Icon | Visibility |
 |-------|------|------|------------|
@@ -584,7 +623,8 @@ api/
 │   ├── intelligence_hub/routes/  # Intelligence, RAG, synthesis, briefings, context-centric
 │   ├── finance/routes/           # Finance analysis, commodities
 │   ├── user_management/routes/   # User CRUD, preferences
-│   └── system_monitoring/routes/ # Health, automation, pipeline, orchestrator
+│   ├── system_monitoring/routes/ # Health, automation, pipeline, orchestrator
+│   └── reader/                   # v2 broadsheet home + storyline pack APIs
 ├── services/                     # Business logic services
 ├── modules/ml/                   # ML pipeline, briefing, RAG, summarization
 ├── shared/
@@ -597,9 +637,14 @@ api/
 └── database/migrations/          # SQL migrations
 
 web/src/
-├── App.tsx                       # Route definitions, providers
-├── layout/AppNav.tsx             # Sidebar navigation
-├── pages/                        # Page components (see 4.3)
+├── App.tsx                       # Route definitions, providers (legacy + /v2)
+├── layout/AppNav.tsx             # Sidebar navigation (+ Try new app → /v2)
+├── pages/                        # Legacy page components (see 4.3)
+├── v2/                           # Parallel broadsheet User + Admin UI
+│   ├── layouts/                  # UserLayout, AdminLayout
+│   ├── pages/                    # Home, News, Current, OneOffs, reader, admin
+│   ├── components/StoryUnit.tsx
+│   └── styles/broadsheet.css
 ├── components/                   # Shared components
 ├── services/
 │   ├── api/                      # API modules (see 4.4)

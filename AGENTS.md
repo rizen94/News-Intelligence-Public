@@ -44,10 +44,15 @@ Context for AI assistants. Use project terminology consistently.
 | Frontend | `web/src/App.tsx` |
 | API client | `web/src/services/api/` + `apiService.ts` |
 | DB (single source) | `api/shared/database/connection.py` |
-| Domain layout / shell | `web/src/layout/MainLayout.tsx` (routes in `App.tsx`: `/:domain` with MainLayout) |
+| Domain layout / shell (legacy) | `web/src/layout/MainLayout.tsx` (routes in `App.tsx`: `/:domain` with MainLayout) — **default live app** |
+| v2 User (broadsheet) | `web/src/v2/` — routes `/v2`, `/v2/news`, `/v2/current`, `/v2/one-offs`, `/v2/storylines/:domain/:id` |
+| v2 Admin (ops) | `web/src/v2/` — routes `/v2/admin`, `/v2/admin/monitor`, `/work`, `/sql`, `/audit` |
+| Reader APIs (additive) | `api/domains/reader/` — `GET /api/reader/home`, `GET /api/reader/storylines/{id}` |
 | Background automation | `api/services/automation_manager.py` |
 | Human reviewer navigation | `docs/CODEBASE_MAP.md`, `docs/PIPELINE_AND_AUTOMATION.md`, `docs/CODE_REVIEW_AND_RUN_CAVEATS.md` |
 | Public HTTPS read-only demo | `docs/PUBLIC_DEPLOYMENT.md` (TLS, env, `NEWS_INTEL_DEMO_*`, `GET /api/public/demo_config`) |
+
+**Dual SPA paths (until cutover):** Legacy `/:domain/…` stays the default. v2 is opt-in via “Try new app” in classic AppNav or `/v2`. No redirects from legacy → v2. Archive legacy only after explicit review.
 
 ---
 
@@ -88,7 +93,8 @@ Context for AI assistants. Use project terminology consistently.
 |------|----------|
 | API routes | `api/domains/*/routes/` |
 | Services | `api/services/`, `api/domains/*/services/` |
-| Frontend pages | `web/src/pages/` |
+| Frontend pages (legacy) | `web/src/pages/` |
+| Frontend pages (v2) | `web/src/v2/pages/` |
 | Migrations | `api/database/migrations/` |
 
 **Deployment:** Bare metal on Widow — production API via **`news-intelligence-api-public.service`** (single uvicorn embeds AutomationManager). Do **not** run `start_system.sh` alongside the systemd API. See [docs/WIDOW_BOOT_RESILIENCE.md](docs/WIDOW_BOOT_RESILIENCE.md) and [PROJECT_STATUS.md](PROJECT_STATUS.md).

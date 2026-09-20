@@ -195,6 +195,21 @@ export function AppNav() {
           })}
         </List>
       ))}
+      <List dense sx={{ mt: 1, borderTop: 1, borderColor: 'divider', pt: 1 }}>
+        <ListItemButton
+          onClick={() => {
+            navigate('/v2');
+            setMobileOpen(false);
+          }}
+        >
+          <ListItemText
+            primary='Try new app'
+            secondary='Broadsheet /v2'
+            primaryTypographyProps={{ fontWeight: 600, fontSize: '0.875rem' }}
+            secondaryTypographyProps={{ fontSize: '0.7rem' }}
+          />
+        </ListItemButton>
+      </List>
     </Box>
   );
 

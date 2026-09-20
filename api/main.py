@@ -97,6 +97,7 @@ from domains.news_aggregation.routes import router as news_aggregation_router
 from domains.politics.routes import router as politics_router
 from domains.storyline_management.routes import router as storyline_management_router
 from domains.public_auth import public_auth_router
+from domains.reader import reader_router
 from domains.system_monitoring.routes import router as system_monitoring_router
 from domains.user_management.routes.user_management import router as user_management_router
 
@@ -965,6 +966,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # Include domain routers
 app.include_router(public_auth_router)
+app.include_router(reader_router)
 app.include_router(news_aggregation_router)
 app.include_router(politics_router)
 app.include_router(content_analysis_router)
