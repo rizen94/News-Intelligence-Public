@@ -42,12 +42,15 @@ Context for AI assistants. Use project terminology consistently.
 |------|------|
 | API | `api/main.py` |
 | Frontend | `web/src/App.tsx` |
+| Finance product (trackers / markets / reporting) | `web/src/finance/` — routes under `/finance/*` (parallel to classic `/:domain` and News `/v2`) |
 | API client | `web/src/services/api/` + `apiService.ts` |
 | DB (single source) | `api/shared/database/connection.py` |
 | Domain layout / shell | `web/src/layout/MainLayout.tsx` (routes in `App.tsx`: `/:domain` with MainLayout) |
 | Background automation | `api/services/automation_manager.py` |
 | Human reviewer navigation | `docs/CODEBASE_MAP.md`, `docs/PIPELINE_AND_AUTOMATION.md`, `docs/CODE_REVIEW_AND_RUN_CAVEATS.md` |
 | Public HTTPS read-only demo | `docs/PUBLIC_DEPLOYMENT.md` (TLS, env, `NEWS_INTEL_DEMO_*`, `GET /api/public/demo_config`) |
+
+**Product homes (do not mix):** News classic `/:domain/...` and News `/v2` (broadsheet) stay separate from **Finance** `/finance/trackers|markets|reporting`. Classic finance-domain pages (`/finance/commodity/...`, `/finance/analysis`, …) remain until cutover. Admin stays under `/v2/admin` when that tree is present.
 
 ---
 

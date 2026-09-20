@@ -35,6 +35,7 @@ This document maps the full system: API route structure, web interface structure
 |------|------|
 | API server | `api/main.py` |
 | Frontend app | `web/src/App.tsx` |
+| Finance product UI | `web/src/finance/` → `/finance/*` (Trackers, Markets, Reporting) |
 | API client layer | `web/src/services/api/` + `web/src/services/apiService.ts` |
 | Database (single source) | `api/shared/database/connection.py` |
 | LLM service | `api/shared/services/llm_service.py` |
@@ -288,6 +289,8 @@ All routes are mounted from `api/main.py`. Each domain router defines its own pr
 | GET | `/api/{domain}/finance/sources/status` | Source health |
 | GET | `/api/{domain}/finance/data-sources` | Data sources |
 | GET | `/api/{domain}/finance/market-data` | Market data |
+| GET | `/api/{domain}/finance/credit-spread` | Credit spreads (FRED OAS or ETF yields) |
+| GET | `/api/{domain}/finance/usd-purchasing-power-tracker` | USD purchasing power tracker |
 | GET | `/api/{domain}/finance/market-trends` | Market trends |
 | GET | `/api/{domain}/finance/market-patterns` | Market patterns |
 | GET | `/api/{domain}/finance/corporate-announcements` | Corporate announcements |
@@ -371,10 +374,18 @@ All routes are mounted from `api/main.py`. Each domain router defines its own pr
 
 ### 4.1 Route Map
 
-All routes are under `/:domain/` where domain is `politics`, `finance`, or `science-tech`. Default redirect: `/` → `/politics/dashboard`.
+All classic routes are under `/:domain/` where domain is `politics`, `finance`, or `science-tech`. Default redirect: `/` → `/politics/dashboard`.
+
+**Finance product** (separate chrome, does not replace classic): `/finance`, `/finance/trackers/*`, `/finance/markets/*`, `/finance/reporting/*`. See `web/src/finance/`. Classic `/finance/commodity/...` and `/finance/analysis` remain.
 
 | Path | Component | Description |
 |------|-----------|-------------|
+| `/finance` | `FinanceHomePage` | Finance product home (Trackers / Markets / Reporting) |
+| `/finance/trackers/usd-purchasing-power` | `UsdPurchasingPowerPage` | USD purchasing power tracker |
+| `/finance/trackers/credit-spreads` | `CreditSpreadsPage` | HY/IG credit spreads |
+| `/finance/markets/commodity/:commodity` | `CommodityMarketsPage` | Commodity series under Finance product |
+| `/finance/markets/macro` | `MacroMarketsPage` | Core FRED macro series |
+| `/finance/reporting/*` | reporting shell | Analysis / evidence / traces |
 | `/:domain/dashboard` | `Dashboard` | Intelligence dashboard: What's New, Active Investigations, System Intelligence |
 | `/:domain/discover` | `DiscoverPage` | Latest contexts, entity browser, event timeline |
 | `/:domain/discover/contexts/:id` | `ContextDetailPage` | Context detail |
@@ -391,9 +402,9 @@ All routes are under `/:domain/` where domain is `politics`, `finance`, or `scie
 | `/:domain/investigate/narrative-threads` | `NarrativeThreadsPage` | Narrative threads |
 | `/:domain/monitor` | `MonitorPage` | System monitoring, automation, pipeline |
 | `/:domain/analyze` | `AnalyzePage` | Analysis |
-| `/:domain/analysis` | `FinancialAnalysis` | Financial analysis form |
+| `/:domain/analysis` | `FinancialAnalysis` | Financial analysis form (classic) |
 | `/:domain/analysis/:taskId` | `FinancialAnalysisResult` | Financial analysis result |
-| `/:domain/commodity/:commodity` | `CommodityDashboard` | Commodity dashboard (gold, silver, platinum) |
+| `/:domain/commodity/:commodity` | `CommodityDashboard` | Commodity dashboard (classic; gold, silver, platinum, oil, gas) |
 
 ### 4.2 Navigation (Sidebar)
 
@@ -409,7 +420,8 @@ Located in `web/src/layout/AppNav.tsx` — persistent sidebar (220px desktop, dr
 | Investigate | `investigate` | SearchIcon | All domains |
 | Monitor | `monitor` | MonitorHeartIcon | All domains |
 | Analyze | `analyze` | AnalyticsIcon | All domains |
-| Commodity | `commodity/gold` | ShowChartIcon | **Finance only** |
+| Commodity | `commodity/gold` | ShowChartIcon | **Finance domain only** (classic) |
+| Finance product | `/finance` | ShowChartIcon | All domains (cross-link) |
 
 Domain selector in the header switches between politics, finance, science-tech.
 

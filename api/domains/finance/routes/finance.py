@@ -530,6 +530,40 @@ async def get_finance_market_data(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
+
+@router.get("/{domain}/finance/credit-spread")
+async def get_credit_spread(
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+    days: int = Query(365, ge=1, le=3650, description="History window for FRED view"),
+    view: str = Query("fred", description="fred | etf"),
+):
+    """Credit spread dashboard: FRED HY/IG OAS + recession bands, or ETF yield spreads."""
+    _check_domain(domain)
+    view_norm = (view or "fred").strip().lower()
+    try:
+        if view_norm == "etf":
+            from domains.finance.credit_spread_service import build_etf_credit_spread_payload
+
+            data = build_etf_credit_spread_payload()
+        elif view_norm == "fred":
+            from domains.finance.credit_spread_service import build_fred_credit_spread_payload
+
+            data = build_fred_credit_spread_payload(days=days)
+        else:
+            raise HTTPException(status_code=400, detail="view must be 'fred' or 'etf'")
+        return {
+            "success": True,
+            "data": data,
+            "view": view_norm,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error fetching credit spread: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/{domain}/finance/gold")  # Infrastructure: gold amalgam + SQLite
 async def get_gold_data(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
@@ -2089,6 +2123,77 @@ async def get_market_patterns(
         raise
     except Exception as e:
         logger.error(f"Error fetching market patterns: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+@router.get("/{domain}/finance/usd-purchasing-power-tracker")
+async def get_usd_purchasing_power_tracker(
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+    refresh: bool = Query(False, description="Fetch latest FRED observations before returning"),
+):
+    """Get USD Purchasing Power Tracker data (CPI / DXY / gold / PDOLLAR)."""
+    _check_domain(domain)
+    try:
+        from services.usd_purchasing_power_tracker_service import (
+            USDPurchasingPowerTrackerService,
+        )
+
+        tracker_service = USDPurchasingPowerTrackerService()
+        data = tracker_service.load_data()
+        series = data.get("series") or {}
+        if refresh or not series:
+            try:
+                tracker_service.update_tracker()
+                data = tracker_service.load_data()
+                series = data.get("series") or {}
+            except Exception as refresh_err:
+                logger.warning("USD tracker refresh failed: %s", refresh_err)
+
+        labels = {
+            "PDOLLAR": "Purchasing Power of $1",
+            "CPIAUCSL": "CPI All Items",
+            "CORECPIAUCSL": "Core CPI",
+            "DXY": "Dollar Strength",
+            "GD1CIAMDG": "Gold Price (USD/oz)",
+        }
+        formatted_series = {}
+        for key, value in series.items():
+            val = value.get("value", 0) if isinstance(value, dict) else 0
+            if key == "PDOLLAR":
+                status = "🟢" if val >= 80.0 else "🔴"
+            elif key == "DXY":
+                status = "🟢" if 90.0 <= val <= 110.0 else "🔴"
+            elif key == "GD1CIAMDG":
+                status = "🟢" if 1500.0 <= val <= 2500.0 else "🔴"
+            elif key in ("CPIAUCSL", "CORECPIAUCSL"):
+                status = "🟢"
+            else:
+                status = "⚪"
+            formatted_series[key] = {
+                "value": value.get("value") if isinstance(value, dict) else value,
+                "date": value.get("date") if isinstance(value, dict) else None,
+                "source": value.get("source") if isinstance(value, dict) else None,
+                "label": labels.get(key, key),
+                "status": status,
+                "change_1d": value.get("change_1d") if isinstance(value, dict) else None,
+                "change_7d": value.get("change_7d") if isinstance(value, dict) else None,
+                "change_30d": value.get("change_30d") if isinstance(value, dict) else None,
+            }
+
+        formatted_data = {
+            "last_updated": data.get("last_updated"),
+            "series": formatted_series,
+            "historical_references": data.get("historical_references", {}),
+        }
+        return {
+            "success": True,
+            "data": formatted_data,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error("Error fetching USD Purchasing Power Tracker: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

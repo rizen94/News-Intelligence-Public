@@ -37,6 +37,42 @@ import './utils/featureTestHelper';
 import MainLayout from './layout/MainLayout';
 import { getDefaultDomainKey } from './utils/domainHelper';
 
+const FinanceLayout = React.lazy(() => import('./finance/layouts/FinanceLayout'));
+const FinanceHomePage = React.lazy(() => import('./finance/pages/FinanceHomePage'));
+const TrackersIndexPage = React.lazy(
+  () => import('./finance/pages/trackers/TrackersIndexPage')
+);
+const UsdPurchasingPowerPage = React.lazy(
+  () => import('./finance/pages/trackers/UsdPurchasingPowerPage')
+);
+const CreditSpreadsPage = React.lazy(
+  () => import('./finance/pages/trackers/CreditSpreadsPage')
+);
+const MarketsIndexPage = React.lazy(
+  () => import('./finance/pages/markets/MarketsIndexPage')
+);
+const CommodityMarketsPage = React.lazy(
+  () => import('./finance/pages/markets/CommodityMarketsPage')
+);
+const MacroMarketsPage = React.lazy(
+  () => import('./finance/pages/markets/MacroMarketsPage')
+);
+const ReportingIndexPage = React.lazy(
+  () => import('./finance/pages/reporting/ReportingIndexPage')
+);
+const ReportingAnalysisPage = React.lazy(
+  () => import('./finance/pages/reporting/ReportingAnalysisPage')
+);
+const ReportingAnalysisResultPage = React.lazy(
+  () => import('./finance/pages/reporting/ReportingAnalysisResultPage')
+);
+const ReportingEvidencePage = React.lazy(
+  () => import('./finance/pages/reporting/ReportingEvidencePage')
+);
+const ReportingTracesPage = React.lazy(
+  () => import('./finance/pages/reporting/ReportingTracesPage')
+);
+
 const PageFallback = () => (
   <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
     <CircularProgress size={32} />
@@ -117,6 +153,70 @@ function App() {
                   path='/'
                   element={<Navigate to={defaultDomainPath} replace />}
                 />
+                {/* Finance product tree — parallel to classic /:domain and News /v2 */}
+                <Route path='/finance' element={<FinanceLayout />}>
+                  <Route index element={<FinanceHomePage />} />
+                  <Route path='trackers' element={<TrackersIndexPage />} />
+                  <Route
+                    path='trackers/usd-purchasing-power'
+                    element={<UsdPurchasingPowerPage />}
+                  />
+                  <Route
+                    path='trackers/credit-spreads'
+                    element={<CreditSpreadsPage />}
+                  />
+                  <Route path='markets' element={<MarketsIndexPage />} />
+                  <Route
+                    path='markets/commodity'
+                    element={<Navigate to='/finance/markets/commodity/gold' replace />}
+                  />
+                  <Route
+                    path='markets/commodity/:commodity'
+                    element={<CommodityMarketsPage />}
+                  />
+                  <Route path='markets/macro' element={<MacroMarketsPage />} />
+                  <Route path='reporting' element={<ReportingIndexPage />} />
+                  <Route
+                    path='reporting/analysis'
+                    element={
+                      <DemoRouteGuard>
+                        <ReportingAnalysisPage />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='reporting/analysis/:taskId'
+                    element={
+                      <DemoRouteGuard>
+                        <ReportingAnalysisResultPage />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='reporting/evidence'
+                    element={
+                      <DemoRouteGuard>
+                        <ReportingEvidencePage />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='reporting/traces'
+                    element={
+                      <DemoRouteGuard>
+                        <ReportingTracesPage />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='reporting/traces/:taskId'
+                    element={
+                      <DemoRouteGuard>
+                        <ReportingTracesPage />
+                      </DemoRouteGuard>
+                    }
+                  />
+                </Route>
                 <Route path='/:domain' element={<MainLayout />}>
                   <Route index element={<Navigate to='dashboard' replace />} />
                   <Route path='dashboard' element={<Dashboard />} />

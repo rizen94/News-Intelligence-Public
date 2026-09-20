@@ -1,0 +1,214 @@
+/**
+ * Finance product chrome — utilitarian, separate from News broadsheet.
+ */
+:root {
+  --fin-bg: #f3f5f7;
+  --fin-surface: #ffffff;
+  --fin-ink: #1a2332;
+  --fin-muted: #5a6577;
+  --fin-accent: #0d5c63;
+  --fin-accent-soft: #d7ecee;
+  --fin-border: #d5dbe3;
+  --fin-nav-width: 220px;
+  --fin-font-display: 'Source Serif 4', 'Iowan Old Style', Georgia, serif;
+  --fin-font-body: 'IBM Plex Sans', 'Segoe UI', sans-serif;
+}
+
+.finance-app {
+  min-height: 100vh;
+  background:
+    radial-gradient(ellipse 80% 50% at 10% -10%, #d7ecee 0%, transparent 55%),
+    linear-gradient(180deg, #eef2f5 0%, var(--fin-bg) 40%, #eceff3 100%);
+  color: var(--fin-ink);
+  font-family: var(--fin-font-body);
+}
+
+.finance-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1.25rem;
+  border-bottom: 1px solid var(--fin-border);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(8px);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.finance-brand {
+  font-family: var(--fin-font-display);
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--fin-ink);
+  text-decoration: none;
+}
+
+.finance-brand span {
+  color: var(--fin-accent);
+}
+
+.finance-cross-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.85rem;
+  font-size: 0.85rem;
+}
+
+.finance-cross-links a {
+  color: var(--fin-muted);
+  text-decoration: none;
+}
+
+.finance-cross-links a:hover {
+  color: var(--fin-accent);
+}
+
+.finance-shell {
+  display: flex;
+  min-height: calc(100vh - 56px);
+}
+
+.finance-nav {
+  width: var(--fin-nav-width);
+  flex-shrink: 0;
+  padding: 1rem 0.75rem;
+  border-right: 1px solid var(--fin-border);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.finance-nav-section {
+  margin-bottom: 1.25rem;
+}
+
+.finance-nav-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fin-muted);
+  padding: 0 0.65rem 0.35rem;
+}
+
+.finance-nav a {
+  display: block;
+  padding: 0.45rem 0.65rem;
+  border-radius: 6px;
+  color: var(--fin-ink);
+  text-decoration: none;
+  font-size: 0.92rem;
+  margin-bottom: 0.15rem;
+}
+
+.finance-nav a:hover {
+  background: var(--fin-accent-soft);
+}
+
+.finance-nav a.active {
+  background: var(--fin-accent);
+  color: #fff;
+}
+
+.finance-main {
+  flex: 1;
+  min-width: 0;
+  padding: 1.25rem 1.5rem 2.5rem;
+}
+
+.finance-hero {
+  max-width: 720px;
+  margin-bottom: 1.75rem;
+}
+
+.finance-hero h1 {
+  font-family: var(--fin-font-display);
+  font-size: clamp(1.75rem, 3vw, 2.35rem);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0 0 0.5rem;
+}
+
+.finance-hero p {
+  margin: 0;
+  color: var(--fin-muted);
+  font-size: 1.02rem;
+  line-height: 1.5;
+}
+
+.finance-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1rem;
+}
+
+.finance-link-card {
+  display: block;
+  padding: 1.1rem 1.2rem;
+  background: var(--fin-surface);
+  border: 1px solid var(--fin-border);
+  border-radius: 8px;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.finance-link-card:hover {
+  border-color: var(--fin-accent);
+  transform: translateY(-1px);
+}
+
+.finance-link-card h2 {
+  font-family: var(--fin-font-display);
+  font-size: 1.15rem;
+  margin: 0 0 0.35rem;
+}
+
+.finance-link-card p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--fin-muted);
+  line-height: 1.4;
+}
+
+.finance-page-title {
+  font-family: var(--fin-font-display);
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0 0 0.35rem;
+}
+
+.finance-page-lede {
+  color: var(--fin-muted);
+  margin: 0 0 1.25rem;
+  max-width: 52rem;
+}
+
+@media (max-width: 800px) {
+  .finance-shell {
+    flex-direction: column;
+  }
+
+  .finance-nav {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--fin-border);
+    display: flex;
+    gap: 0.5rem;
+    overflow-x: auto;
+    padding: 0.75rem;
+  }
+
+  .finance-nav-section {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex-shrink: 0;
+  }
+
+  .finance-nav-label {
+    display: none;
+  }
+}
