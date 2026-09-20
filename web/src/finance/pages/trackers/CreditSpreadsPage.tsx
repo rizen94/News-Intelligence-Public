@@ -1,6 +1,7 @@
 /**
  * Credit spreads tracker under /finance/trackers — adapted from classic CreditSpreadDashboard.
  * No redirect to classic domain routes; always calls finance API silo.
+ * Warning/progress cues render on each chart/metric panel (not a standalone legend grid).
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -229,52 +230,63 @@ const FALLBACK_INDICATOR_REFS: IndicatorRef[] = [
   },
 ];
 
-function IndicatorRefsLegend({ refs }: { refs: IndicatorRef[] }) {
+function refById(refs: IndicatorRef[], id: string): IndicatorRef | undefined {
+  return refs.find(r => r.id === id);
+}
+
+function bandForStatus(
+  bands: IndicatorBand[] | undefined,
+  status?: SpreadStatus | string
+): string | null {
+  if (!bands?.length || !status) return null;
+  const match = bands.find(b => b.status === status);
+  if (match) return `${match.status} (${match.range})`;
+  return String(status);
+}
+
+/** Compact warning/progress cue overlaid on a chart or metric panel */
+function ChartIndicatorCue({
+  refItem,
+  status,
+  variant = 'series',
+}: {
+  refItem?: IndicatorRef;
+  status?: SpreadStatus | string;
+  variant?: 'series' | 'context';
+}) {
+  if (!refItem) return null;
+  const bandLabel = bandForStatus(refItem.bands, status);
   return (
-    <section className='finance-indicator-legend' aria-label='Credit spread indicator reference'>
-      <h2 className='finance-section-title'>Indicator reference</h2>
-      <p className='finance-page-lede' style={{ marginBottom: '0.75rem' }}>
-        Widening spreads = warning. Narrowing or stable = progress / relief. Bands match the
-        status chips on this page.
-      </p>
-      <div className='finance-indicator-grid'>
-        {refs.map(ref => (
-          <article
-            key={ref.id}
-            className={`finance-indicator-card${ref.live ? '' : ' is-future'}`}
-          >
-            <header className='finance-indicator-card__head'>
-              <h3>{ref.label}</h3>
-              <span className={ref.live ? 'finance-live-tag' : 'finance-future-tag'}>
-                {ref.live ? 'Live' : 'Not live'}
-              </span>
-            </header>
-            {(ref.series_id || ref.source) && (
-              <p className='finance-indicator-meta'>
-                {[ref.series_id, ref.source].filter(Boolean).join(' · ')}
-              </p>
-            )}
-            <p className='finance-indicator-what'>{ref.what}</p>
-            <dl className='finance-indicator-signs'>
-              <div>
-                <dt>Warning</dt>
-                <dd>{ref.warning}</dd>
-              </div>
-              <div>
-                <dt>Progress</dt>
-                <dd>{ref.progress}</dd>
-              </div>
-            </dl>
-            {ref.bands && ref.bands.length > 0 && (
-              <p className='finance-indicator-bands'>
-                {ref.bands.map(b => `${b.range} ${b.status}`).join(' · ')}
-              </p>
-            )}
-          </article>
-        ))}
+    <div
+      className={`finance-chart-cue${variant === 'context' ? ' is-context' : ''}`}
+      data-indicator-id={refItem.id}
+    >
+      <div className='finance-chart-cue__head'>
+        <span className='finance-chart-cue__label'>{refItem.label}</span>
+        {status && <StatusChip status={status as SpreadStatus} />}
+        {(refItem.series_id || refItem.source) && (
+          <span className='finance-chart-cue__meta'>
+            {[refItem.series_id, refItem.source].filter(Boolean).join(' · ')}
+          </span>
+        )}
       </div>
-    </section>
+      <dl className='finance-chart-cue__signs'>
+        <div>
+          <dt className='cue-warn'>Warning</dt>
+          <dd>{refItem.warning}</dd>
+        </div>
+        <div>
+          <dt className='cue-progress'>Progress</dt>
+          <dd>{refItem.progress}</dd>
+        </div>
+      </dl>
+      {bandLabel && <p className='finance-chart-cue__band'>Status band: {bandLabel}</p>}
+    </div>
   );
+}
+
+function ChartCues({ children }: { children: React.ReactNode }) {
+  return <div className='finance-chart-cues'>{children}</div>;
 }
 
 function mergeChartRows(
@@ -295,6 +307,9 @@ function mergeChartRows(
 
 function StatusChip({ status }: { status?: SpreadStatus }) {
   if (!status) return null;
+  if (!(status in STATUS_COLOR)) {
+    return <Chip size='small' label={status} variant='outlined' />;
+  }
   return <Chip size='small' label={status} color={STATUS_COLOR[status]} />;
 }
 
@@ -397,6 +412,15 @@ export default function CreditSpreadsPage() {
     return fromApi && fromApi.length > 0 ? fromApi : FALLBACK_INDICATOR_REFS;
   }, [fredData, etfData]);
 
+  const hyRef = refById(indicatorRefs, 'hy_oas');
+  const igRef = refById(indicatorRefs, 'ig_oas');
+  const usrecRef = refById(indicatorRefs, 'usrec');
+  const hygRef = refById(indicatorRefs, 'hyg_tlt');
+  const lqdRef = refById(indicatorRefs, 'lqd_tlt');
+
+  const recessionActive = (fredData?.recession_periods?.length ?? 0) > 0;
+  const usrecStatus = recessionActive ? 'Recession' : 'Expansion';
+
   const latest = tab === 'fred' ? fredData?.latest : etfData?.latest;
   const loading = tab === 'fred' ? loadingFred : loadingEtf;
 
@@ -404,8 +428,8 @@ export default function CreditSpreadsPage() {
     <div>
       <h1 className='finance-page-title'>Credit spreads</h1>
       <p className='finance-page-lede'>
-        High-yield and investment-grade credit stress vs. Treasuries. FRED ICE BofA OAS with
-        NBER recession shading, or daily ETF yield spreads (HYG−TLT, LQD−TLT).
+        High-yield and investment-grade credit stress vs. Treasuries. Warning = widening;
+        progress = narrowing / stable. Cues sit on each chart with the series they describe.
       </p>
 
       {error && (
@@ -432,8 +456,6 @@ export default function CreditSpreadsPage() {
           />
         </Grid>
       </Grid>
-
-      <IndicatorRefsLegend refs={indicatorRefs} />
 
       <Tabs
         value={tab}
@@ -472,6 +494,15 @@ export default function CreditSpreadsPage() {
               }
             />
             <CardContent sx={{ pt: 0 }}>
+              <ChartCues>
+                <ChartIndicatorCue refItem={hyRef} status={fredData?.latest?.hy_status} />
+                <ChartIndicatorCue refItem={igRef} status={fredData?.latest?.ig_status} />
+                <ChartIndicatorCue
+                  refItem={usrecRef}
+                  status={usrecStatus}
+                  variant='context'
+                />
+              </ChartCues>
               {loadingFred ? (
                 <Skeleton variant='rectangular' height={320} sx={{ borderRadius: 1 }} />
               ) : chartData.length === 0 ? (
@@ -480,7 +511,7 @@ export default function CreditSpreadsPage() {
                 </Typography>
               ) : (
                 <ResponsiveContainer width='100%' height={320}>
-                  <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                  <LineChart data={chartData} margin={{ top: 8, right: 48, left: 0, bottom: 0 }}>
                     {(fredData?.recession_periods ?? []).map(p => (
                       <ReferenceArea
                         key={`${p.start}-${p.end}`}
@@ -489,6 +520,21 @@ export default function CreditSpreadsPage() {
                         fill='#bdbdbd'
                         fillOpacity={0.25}
                         ifOverflow='hidden'
+                      />
+                    ))}
+                    {HY_THRESHOLDS.map(t => (
+                      <ReferenceLine
+                        key={`hy-${t.bps}`}
+                        y={t.bps}
+                        stroke='#c62828'
+                        strokeOpacity={0.35}
+                        strokeDasharray='3 4'
+                        label={{
+                          value: `HY ${t.label}`,
+                          position: 'right',
+                          fontSize: 9,
+                          fill: '#c62828',
+                        }}
                       />
                     ))}
                     <CartesianGrid strokeDasharray='3 3' stroke='#eee' />
@@ -527,7 +573,7 @@ export default function CreditSpreadsPage() {
                 </ResponsiveContainer>
               )}
               <Typography variant='caption' color='text.secondary' display='block' sx={{ mt: 1 }}>
-                Gray bands = NBER recession periods (USREC).
+                Gray bands = NBER recession (USREC). Dashed red lines = HY status thresholds.
               </Typography>
             </CardContent>
           </Card>
@@ -540,11 +586,15 @@ export default function CreditSpreadsPage() {
             {(['hyg_tlt', 'lqd_tlt'] as const).map(key => {
               const row = etfData?.[key];
               const label = key === 'hyg_tlt' ? 'HYG − TLT' : 'LQD − TLT';
+              const cue = key === 'hyg_tlt' ? hygRef : lqdRef;
               return (
                 <Grid item xs={12} md={6} key={key}>
                   <Card variant='outlined'>
                     <CardHeader title={label} subheader={etfData?.formula} />
                     <CardContent>
+                      <ChartCues>
+                        <ChartIndicatorCue refItem={cue} status={row?.status} />
+                      </ChartCues>
                       {loadingEtf ? (
                         <Skeleton height={80} />
                       ) : row ? (
@@ -576,6 +626,12 @@ export default function CreditSpreadsPage() {
           <Card variant='outlined' sx={{ mb: 3 }}>
             <CardHeader title='HYG − TLT threshold bands (bps)' />
             <CardContent>
+              <ChartCues>
+                <ChartIndicatorCue
+                  refItem={hygRef}
+                  status={etfData?.hyg_tlt?.status}
+                />
+              </ChartCues>
               <ResponsiveContainer width='100%' height={200}>
                 <LineChart
                   data={[{ label: 'now', spread: etfData?.hyg_tlt?.spread_bps ?? 350 }]}
