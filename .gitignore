@@ -12,11 +12,7 @@ redis_data/
 # Docker volumes and data
 docker/data/
 volumes/
-# Data dirs, but NOT source packages named data/ (api/domains/finance/data is source).
-/data/
-/api/data/
-news-intelligence-kit/data/
-**/db_data/
+data/
 
 # Virtual environments
 venv/

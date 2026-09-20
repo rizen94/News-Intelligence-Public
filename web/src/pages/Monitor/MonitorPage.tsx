@@ -1,15 +1,17 @@
 /**
- * Monitor — live ops console: status, now, pulse, actions.
- * Historical trends / GPU / infra charts live in Homelab Grafana (Open Grafana link).
- * SQL explorer and Work executed stay on separate routes.
+ * Monitor — System health, connection status, live activity, processing pulse, pipeline status.
+ * Heavy DB-backed panels (backlog ETAs, run summary, phase timeline, DB sessions, etc.) were
+ * removed from this page to keep loads fast while the pipeline is busy.
  */
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { Link as RouterLink, useParams } from 'react-router-dom';
 import {
   Card,
+  CardHeader,
   CardContent,
   Typography,
   Box,
+  Paper,
   Stack,
   Chip,
   Skeleton,
@@ -18,6 +20,7 @@ import {
   ListItem,
   ListItemIcon,
   ListItemText,
+  Divider,
   Table,
   TableBody,
   TableCell,
@@ -29,22 +32,36 @@ import {
   MenuItem,
   Button,
   Link,
+  TextField,
 } from '@mui/material';
+import PushPinIcon from '@mui/icons-material/PushPin';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ApiIcon from '@mui/icons-material/Api';
 import StorageIcon from '@mui/icons-material/Storage';
 import PublicIcon from '@mui/icons-material/Public';
+import ScheduleIcon from '@mui/icons-material/Schedule';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from 'recharts';
 import apiService from '@/services/apiService';
-import { heroBarEventsStoredCount } from '@/services/api/contextCentric';
-import { getDefaultDomainKey } from '@/utils/domainHelper';
+import {
+  heroBarEventsStoredCount,
+} from '@/services/api/contextCentric';
+import { getDefaultDomainKey, getDomainKeysList } from '@/utils/domainHelper';
 import { useShellStatus } from '@/contexts/ShellStatusContext';
-import { getGrafanaOpsUrl } from '@/config/grafanaConfig';
+import { usePinnedThreads } from '@/hooks/usePinnedThreads';
 
-/** Poll interval for live Monitor bits (overview + pulse together). */
+/** Poll interval for full Monitor refresh (overview + pipeline + processing pulse together). */
 const POLL_INTERVAL_MS = 15000;
 
 function timeAgo(iso: string): string {
@@ -58,6 +75,7 @@ function timeAgo(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
+/** Wall-clock label so multiple runs are not all identical when timeAgo buckets to \"3d ago\". */
 function shortLocalDateTime(iso: string): string {
   try {
     return new Date(iso).toLocaleString(undefined, {
@@ -71,6 +89,7 @@ function shortLocalDateTime(iso: string): string {
   }
 }
 
+/** Format remaining / typical phase duration for Current activity (from overview API). */
 function activityRunEstimateSecondary(a: Record<string, unknown>): string | null {
   const typicalSec = a.typical_run_duration_seconds;
   const typicalMin = a.typical_run_duration_minutes;
@@ -89,29 +108,34 @@ function activityRunEstimateSecondary(a: Record<string, unknown>): string | null
   return `typical ~${typMin}m`;
 }
 
+type ProcessingPulseDimension = {
+  id?: string;
+  label?: string;
+  backlog?: number | null;
+  last_1h?: number;
+  last_24h?: number;
+  last_7d?: number;
+};
+
 type ProcessingPulsePhase = {
   phase_name?: string;
+  /** DB-backed count of records not yet processed for this phase (pending queue). */
   pending_records?: number;
+  /** ceil(unprocessed ÷ rows_per_run); null if no row-batch model. How many phase runs to drain the queue. */
   batches_to_drain?: number | null;
+  /** Modeled rows consumed per scheduled run (not measured from history). */
   estimated_batch_per_run?: number;
   runs_1h?: number;
   runs_24h?: number;
+  runs_7d?: number;
   successes_24h?: number;
   failures_24h?: number;
+  successes_7d?: number;
+  failures_7d?: number;
+  /** % of automation_run_history rows in window with success=true */
   pass_rate_24h?: number | null;
+  pass_rate_7d?: number | null;
   avg_duration_sec_24h?: number | null;
-};
-
-type ProcessingPulseState = {
-  success?: boolean;
-  data?: {
-    generated_at_utc?: string;
-    pending_metrics_included?: boolean;
-    pending_metrics_as_of_utc?: string;
-    phase_dashboard?: ProcessingPulsePhase[];
-    phases?: ProcessingPulsePhase[];
-  };
-  error?: string;
 };
 
 function formatPulseCount(n: number | null | undefined): string {
@@ -123,6 +147,33 @@ function formatPulseCount(n: number | null | undefined): string {
   }
   return `${n}`;
 }
+
+/**
+ * Heuristic only: compare the latest hour to a baseline that avoids double-counting that hour
+ * inside the 24h total. Baseline = mean completions over the other 23 hours in the rolling window;
+ * if those are too sparse, fall back to mean over full 24h (still a rough rate, not a formal test).
+ */
+type ProcessingPulseState = {
+  success?: boolean;
+  data?: {
+    generated_at_utc?: string;
+    pending_metrics_included?: boolean;
+    pending_metrics_as_of_utc?: string;
+    operator_metrics?: Record<string, unknown>;
+    reporting_definitions?: Record<string, string>;
+    dimensions?: ProcessingPulseDimension[];
+    phase_dashboard?: ProcessingPulsePhase[];
+    phases?: ProcessingPulsePhase[];
+    hourly_phase_ticks?: Array<{
+      hour_utc?: string;
+      phase_name?: string;
+      runs?: number;
+      failures?: number;
+    }>;
+    hourly_phase_tick_bucket_count?: number | null;
+  };
+  error?: string;
+};
 
 /** Keep backlog_metrics columns when a fast-path poll refreshes throughput/run counts. */
 function mergeProcessingPulseWithCachedPending(
@@ -164,14 +215,52 @@ function mergeProcessingPulseWithCachedPending(
       pending_metrics_included: true,
       pending_metrics_as_of_utc:
         cached.data.pending_metrics_as_of_utc ?? cached.data.generated_at_utc,
+      operator_metrics: cached.data.operator_metrics ?? fast.data.operator_metrics,
     },
+  };
+}
+
+function pulseTrendSymbol(
+  last1h: number,
+  last24h: number
+): { sym: string; title: string } {
+  const prev23 = Math.max(0, last24h - last1h);
+  const baselineFromPrior23 = prev23 / 23;
+  const baselineFrom24 = last24h / 24;
+  const usePrior23 = prev23 >= 12;
+  const baseline = usePrior23 ? baselineFromPrior23 : baselineFrom24;
+
+  if (last24h < 12)
+    return { sym: '·', title: 'Low 24h volume — comparison not meaningful' };
+
+  if (baseline <= 0)
+    return { sym: '·', title: 'No baseline rate for hourly comparison' };
+
+  const baselineLabel = usePrior23
+    ? 'avg over other 23h in window'
+    : 'avg over full 24h (fallback when rest of window sparse)';
+
+  if (last1h > baseline * 1.25)
+    return {
+      sym: '▲',
+      title: `Last hour above ${baselineLabel} (+25% band) — heuristic, not significance-tested`,
+    };
+  if (last1h < baseline * 0.75)
+    return {
+      sym: '▼',
+      title: `Last hour below ${baselineLabel} (−25% band) — heuristic, not significance-tested`,
+    };
+  return {
+    sym: '■',
+    title: `Within ±25% of ${baselineLabel}`,
   };
 }
 
 export default function MonitorPage() {
   const { domain: routeDomain } = useParams<{ domain: string }>();
   const navDomain = routeDomain ?? getDefaultDomainKey();
-  const grafanaUrl = getGrafanaOpsUrl();
+  const pinned = usePinnedThreads(navDomain);
+  const [pinStorylineInput, setPinStorylineInput] = useState('');
   const [overview, setOverview] = useState<{
     success?: boolean;
     connections?: Record<string, unknown>;
@@ -186,8 +275,17 @@ export default function MonitorPage() {
     data?: Record<string, unknown>;
     error?: string;
   } | null>(null);
+  const [gpuMetricHistory, setGpuMetricHistory] = useState<{
+    success?: boolean;
+    data?: {
+      hours?: number;
+      hourly?: Array<Record<string, unknown>>;
+    };
+    error?: string;
+  } | null>(null);
   const [processingPulse, setProcessingPulse] =
     useState<ProcessingPulseState | null>(null);
+  /** First full bundle (overview + pipeline + pulse) not yet finished. */
   const [initialLoad, setInitialLoad] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [triggerPhaseName, setTriggerPhaseName] = useState<string>('');
@@ -197,59 +295,55 @@ export default function MonitorPage() {
     message: string;
     warning?: string;
   } | null>(null);
-  const { ctxStatus: ccStatus } = useShellStatus();
+  const { ctxStatus: ccStatus, orchStatus: orchCollection } = useShellStatus();
+  /** From GET /api/system_monitoring/automation/status — confirms FIFO vs legacy LIFO batch ordering. */
   const [pipelineArticleSelection, setPipelineArticleSelection] = useState<{
     mode?: string;
     label?: string;
     sql_created_at?: string;
     order_env?: string;
   } | null>(null);
-  const [automationRunning, setAutomationRunning] = useState<boolean | null>(
-    null
-  );
-  const [pendingMetricsLoading, setPendingMetricsLoading] = useState(false);
 
+  /** Fast path: health + activity only — must not wait on pipeline/pulse (120s-class calls). */
   const refreshOverview = useCallback(async () => {
     const ov = await apiService.getMonitoringOverview();
     setOverview(ov ?? null);
     return ov;
   }, []);
 
+  /** Heavy panels: pipeline, pulse, GPU, automation — orchestrator/CC from ShellStatusContext. */
   const refreshHeavyPanels = useCallback(async () => {
     const results = await Promise.allSettled([
       apiService.getPipelineStatus(),
       apiService.getProcessingProgress({ includePendingMetrics: false }),
+      apiService.getGpuMetricHistory(72),
       apiService.getAutomationStatus().catch(() => null),
     ]);
     const settledErr = (r: PromiseSettledResult<unknown>, label: string) =>
       r.status === 'rejected'
-        ? {
-            success: false as const,
-            error: `${label}: ${(r.reason as Error)?.message ?? 'failed'}`,
-          }
+        ? { success: false as const, error: `${label}: ${(r.reason as Error)?.message ?? 'failed'}` }
         : null;
     const pipe =
-      results[0].status === 'fulfilled'
-        ? results[0].value
-        : settledErr(results[0], 'pipeline_status');
+      results[0].status === 'fulfilled' ? results[0].value : settledErr(results[0], 'pipeline_status');
     const pulse =
-      results[1].status === 'fulfilled'
-        ? results[1].value
-        : settledErr(results[1], 'processing_progress');
-    const autoEnvelope = results[2].status === 'fulfilled' ? results[2].value : null;
+      results[1].status === 'fulfilled' ? results[1].value : settledErr(results[1], 'processing_progress');
+    const gpuH = results[2].status === 'fulfilled' ? results[2].value : null;
+    const autoEnvelope = results[3].status === 'fulfilled' ? results[3].value : null;
     setPipeline(pipe ?? null);
     if (pulse && typeof pulse === 'object' && 'success' in pulse) {
       setProcessingPulse(prev =>
-        mergeProcessingPulseWithCachedPending(pulse as ProcessingPulseState, prev)
+        mergeProcessingPulseWithCachedPending(
+          pulse as ProcessingPulseState,
+          prev
+        )
       );
     } else {
       setProcessingPulse(pulse ?? null);
     }
+    setGpuMetricHistory(gpuH ?? null);
     const autoData = (
       autoEnvelope as {
         data?: {
-          running?: boolean;
-          is_running?: boolean;
           pipeline_article_selection?: {
             mode?: string;
             label?: string;
@@ -260,17 +354,11 @@ export default function MonitorPage() {
       } | null
     )?.data;
     setPipelineArticleSelection(autoData?.pipeline_article_selection ?? null);
-    if (autoData) {
-      if (typeof autoData.running === 'boolean') {
-        setAutomationRunning(autoData.running);
-      } else if (typeof autoData.is_running === 'boolean') {
-        setAutomationRunning(autoData.is_running);
-      } else {
-        setAutomationRunning(true);
-      }
-    }
   }, []);
 
+  const [pendingMetricsLoading, setPendingMetricsLoading] = useState(false);
+
+  /** Heavy backlog_metrics pass — populates phase pending_records / runs-to-clear columns. */
   const fetchPendingMetrics = useCallback(async () => {
     setPendingMetricsLoading(true);
     try {
@@ -293,10 +381,34 @@ export default function MonitorPage() {
     }
   }, []);
 
-  const refreshMonitor = useCallback(async () => {
-    await refreshOverview();
-    void refreshHeavyPanels();
-  }, [refreshOverview, refreshHeavyPanels]);
+  const lastCollectionTimes = useMemo(() => {
+    const raw = orchCollection?.last_collection_times as
+      | Record<string, string>
+      | undefined;
+    return raw && typeof raw === 'object' ? raw : {};
+  }, [orchCollection]);
+
+  const gpuChartRows = useMemo(() => {
+    const hourly = gpuMetricHistory?.data?.hourly;
+    if (!Array.isArray(hourly) || hourly.length === 0) return [];
+    return hourly.map((row: Record<string, unknown>) => ({
+      label: row.hour_utc
+        ? shortLocalDateTime(String(row.hour_utc))
+        : '—',
+      util:
+        typeof row.avg_gpu_utilization_percent === 'number'
+          ? row.avg_gpu_utilization_percent
+          : null,
+      vram:
+        typeof row.avg_gpu_vram_percent === 'number'
+          ? row.avg_gpu_vram_percent
+          : null,
+      temp:
+        typeof row.avg_gpu_temperature_c === 'number'
+          ? row.avg_gpu_temperature_c
+          : null,
+    }));
+  }, [gpuMetricHistory]);
 
   useEffect(() => {
     let cancelled = false;
@@ -307,6 +419,7 @@ export default function MonitorPage() {
       setInitialLoad(true);
       setError(null);
       try {
+        // Unblock health/activity UI as soon as overview returns (do not wait on 120s pipeline/pulse).
         const overviewPromise = refreshOverview().finally(() => {
           if (!cancelled) setInitialLoad(false);
         });
@@ -320,6 +433,7 @@ export default function MonitorPage() {
       }
       if (cancelled) return;
 
+      /** Wait for each tick to finish before scheduling the next (no overlapping bundles). */
       const schedulePoll = () => {
         pollTimeoutId = setTimeout(() => {
           void (async () => {
@@ -328,6 +442,7 @@ export default function MonitorPage() {
               await refreshOverview();
               void refreshHeavyPanels();
               pollTick += 1;
+              // Refresh queue depths ~every minute (backlog SQL is heavy for every 15s poll).
               if (pollTick % 4 === 0) void fetchPendingMetrics();
             } catch {
               /* monitoring APIs usually return { success: false }; guard anyway */
@@ -451,6 +566,7 @@ export default function MonitorPage() {
           variant='outlined'
           label={`${label} (not loaded)`}
           color='default'
+          sx={{ mr: 1 }}
         />
       );
     }
@@ -469,38 +585,166 @@ export default function MonitorPage() {
         label={unknown ? `${label} (checking…)` : label}
         color={color}
         variant='outlined'
+        sx={{ mr: 1 }}
       />
     );
   };
 
-  const phaseRows =
-    processingPulse?.data?.phase_dashboard ??
-    processingPulse?.data?.phases ??
-    [];
+  const pipelineStatusColor =
+    pipelineStatus === 'running'
+      ? 'info'
+      : pipelineStatus === 'error'
+      ? 'error'
+      : pipelineStatus === 'healthy'
+      ? 'success'
+      : 'default';
 
   return (
     <Box>
-      <Stack
-        direction={{ xs: 'column', sm: 'row' }}
-        alignItems={{ sm: 'baseline' }}
-        justifyContent='space-between'
-        gap={1}
-        sx={{ mb: 1 }}
-      >
-        <Typography variant='h5' sx={{ fontWeight: 600 }}>
-          Monitor
+      <Typography variant='h5' sx={{ mb: 2, fontWeight: 600 }}>
+        Monitor
+      </Typography>
+      <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
+        <Link
+          component={RouterLink}
+          to={`/${navDomain}/monitor/sql-explorer`}
+          underline='hover'
+        >
+          SQL explorer
+        </Link>{' '}
+        (read-only; enable with <code>NEWS_INTEL_SQL_EXPLORER=true</code> on the
+        API)
+      </Typography>
+
+      <Paper variant='outlined' sx={{ p: 2, mb: 2 }}>
+        <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 0.5 }}>
+          Pinned threads
         </Typography>
-        <Typography variant='body2' color='text.secondary'>
-          Live ops · history in Grafana ·{' '}
-          <Link
-            component={RouterLink}
-            to={`/${navDomain}/monitor/sql-explorer`}
-            underline='hover'
+        <Typography variant='caption' color='text.secondary' display='block' sx={{ mb: 1.5 }}>
+          Stored in this browser per domain — quick links into storylines you care
+          about while watching the pipeline. Phase 2: optional API filters on
+          processing_progress / backlog.
+        </Typography>
+        <Stack direction='row' flexWrap='wrap' gap={1} sx={{ mb: 2 }}>
+          {[...pinned.pinnedStorylineIds].length === 0 ? (
+            <Typography variant='body2' color='text.secondary'>
+              No pins yet — add a storyline ID below.
+            </Typography>
+          ) : (
+            [...pinned.pinnedStorylineIds].map(id => (
+              <Chip
+                key={id}
+                icon={<PushPinIcon />}
+                label={`Storyline ${id}`}
+                component={RouterLink}
+                to={`/${navDomain}/storylines/${id}`}
+                onDelete={e => {
+                  e.preventDefault();
+                  pinned.unpinStoryline(id);
+                }}
+                clickable
+                variant='outlined'
+              />
+            ))
+          )}
+        </Stack>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
+          <TextField
+            size='small'
+            label='Storyline ID'
+            type='number'
+            value={pinStorylineInput}
+            onChange={e => setPinStorylineInput(e.target.value)}
+            sx={{ maxWidth: 200 }}
+          />
+          <Button
+            size='small'
+            variant='outlined'
+            onClick={() => {
+              const n = parseInt(pinStorylineInput, 10);
+              if (!Number.isNaN(n) && n > 0) {
+                pinned.pinStoryline(n);
+                setPinStorylineInput('');
+              }
+            }}
           >
-            SQL explorer
-          </Link>
-        </Typography>
-      </Stack>
+            Pin storyline
+          </Button>
+        </Stack>
+      </Paper>
+
+      <Card variant='outlined' sx={{ mb: 3 }}>
+        <CardHeader
+          title='System intelligence'
+          subheader='Global corpus status & last collection by source (orchestrator)'
+        />
+        <CardContent>
+          {initialLoad ? (
+            <Skeleton variant='rectangular' height={120} />
+          ) : (
+            <>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
+                {ccStatus && (
+                  <>
+                    <Chip size='small' label={`Contexts: ${ccStatus.contexts}`} />
+                    <Chip
+                      size='small'
+                      label={`Entity Profiles: ${ccStatus.entity_profiles}`}
+                    />
+                    <Chip
+                      size='small'
+                      label={`Events: ${heroBarEventsStoredCount(ccStatus)}`}
+                    />
+                  </>
+                )}
+                {pipelineArticleSelection?.mode && (
+                  <Chip
+                    size='small'
+                    color={
+                      pipelineArticleSelection.mode === 'lifo'
+                        ? 'warning'
+                        : 'success'
+                    }
+                    variant='outlined'
+                    title={
+                      pipelineArticleSelection.sql_created_at
+                        ? `SQL ORDER BY created_at ${pipelineArticleSelection.sql_created_at} (PIPELINE_ARTICLE_SELECTION_ORDER=${pipelineArticleSelection.order_env ?? '—'})`
+                        : undefined
+                    }
+                    label={
+                      pipelineArticleSelection.mode === 'lifo'
+                        ? 'Batch order: LIFO (newest first)'
+                        : 'Batch order: FIFO (oldest first)'
+                    }
+                  />
+                )}
+              </Box>
+              <Typography variant='body2' color='text.secondary' gutterBottom>
+                Collection
+              </Typography>
+              {Object.keys(lastCollectionTimes).length === 0 ? (
+                <Typography variant='caption' color='text.secondary'>
+                  No collection times yet.
+                </Typography>
+              ) : (
+                <List dense disablePadding>
+                  {Object.entries(lastCollectionTimes).map(([source, time]) => (
+                    <ListItemText
+                      key={source}
+                      primary={source}
+                      secondary={
+                        time ? new Date(time).toLocaleString() : '—'
+                      }
+                      primaryTypographyProps={{ variant: 'body2' }}
+                      secondaryTypographyProps={{ variant: 'caption' }}
+                    />
+                  ))}
+                </List>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       {error && (
         <Alert severity='warning' sx={{ mb: 2 }} onClose={() => setError(null)}>
@@ -509,149 +753,109 @@ export default function MonitorPage() {
       )}
       {overviewLoadFailed && (overview?.error as string) && (
         <Alert severity='error' sx={{ mb: 2 }}>
-          Could not load monitoring overview.{' '}
-          <strong>
-            {String((overview?.error as string) || '').slice(0, 200)}
-          </strong>
+          Could not load monitoring overview (health + activity). The API may be down,
+          blocked by a proxy, or timing out.{' '}
+          <strong>{String((overview?.error as string) || '').slice(0, 200)}</strong>
         </Alert>
       )}
 
-      {/* 1. Status strip */}
+      {/* Connection status */}
       <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
-        Status
+        System health & connection status
       </Typography>
-      <Card variant='outlined' sx={{ mb: 3 }}>
-        <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
-          {initialLoad ? (
-            <Skeleton variant='rectangular' height={40} />
-          ) : (
-            <Stack direction='row' flexWrap='wrap' gap={1} alignItems='center'>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                <ApiIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
-                {statusChip(
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 3 }}>
+        <Card variant='outlined' sx={{ minWidth: 160 }}>
+          <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              <ApiIcon sx={{ mr: 1, color: 'text.secondary' }} />
+              {initialLoad ? (
+                <Skeleton width={80} height={24} />
+              ) : (
+                statusChip(
                   overviewLoadFailed
                     ? 'error'
                     : (apiStatus ?? (overview?.success ? 'ok' : undefined)),
                   overviewLoadFailed ? 'API (no response)' : 'API'
-                )}
-              </Box>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                <StorageIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
-                {statusChip(
+                )
+              )}
+            </Box>
+            <Typography variant='caption' color='text.secondary'>
+              Backend API
+            </Typography>
+          </CardContent>
+        </Card>
+        <Card variant='outlined' sx={{ minWidth: 160 }}>
+          <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              <StorageIcon sx={{ mr: 1, color: 'text.secondary' }} />
+              {initialLoad ? (
+                <Skeleton width={80} height={24} />
+              ) : (
+                statusChip(
                   overviewLoadFailed ? 'not_loaded' : dbStatus,
                   'Database'
-                )}
-              </Box>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                <PublicIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
-                {statusChip(
+                )
+              )}
+            </Box>
+            <Typography variant='caption' color='text.secondary'>
+              PostgreSQL
+            </Typography>
+          </CardContent>
+        </Card>
+        <Card variant='outlined' sx={{ minWidth: 160 }}>
+          <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              <PublicIcon sx={{ mr: 1, color: 'text.secondary' }} />
+              {initialLoad ? (
+                <Skeleton width={80} height={24} />
+              ) : (
+                statusChip(
                   overviewLoadFailed ? 'not_loaded' : wsStatus,
-                  'Web'
-                )}
-              </Box>
-              <Chip
-                size='small'
-                variant='outlined'
-                color={
-                  automationRunning === false
-                    ? 'error'
-                    : automationRunning === true
-                      ? 'success'
-                      : 'default'
-                }
-                label={
-                  automationRunning === false
-                    ? 'Automation stopped'
-                    : automationRunning === true
-                      ? 'Automation running'
-                      : 'Automation …'
-                }
-              />
-              {pipelineStatus && (
-                <Chip
-                  size='small'
-                  variant='outlined'
-                  color={
-                    pipelineStatus === 'error'
-                      ? 'error'
-                      : pipelineStatus === 'running'
-                        ? 'info'
-                        : pipelineStatus === 'healthy'
-                          ? 'success'
-                          : 'default'
-                  }
-                  label={`Pipeline: ${pipelineStatus}`}
-                />
+                  'Web server'
+                )
               )}
-              {pipelineArticleSelection?.mode && (
-                <Chip
-                  size='small'
-                  color={
-                    pipelineArticleSelection.mode === 'lifo'
-                      ? 'warning'
-                      : 'success'
-                  }
-                  variant='outlined'
-                  title={
-                    pipelineArticleSelection.sql_created_at
-                      ? `SQL ORDER BY created_at ${pipelineArticleSelection.sql_created_at}`
-                      : undefined
-                  }
-                  label={
-                    pipelineArticleSelection.mode === 'lifo'
-                      ? 'Batch: LIFO'
-                      : 'Batch: FIFO'
-                  }
-                />
+            </Box>
+            <Typography variant='caption' color='text.secondary'>
+              Frontend / proxy
+            </Typography>
+            {wsStatus !== 'ok' &&
+              wsStatus !== 'healthy' &&
+              (webserver?.error as string) && (
+                <Typography
+                  variant='caption'
+                  display='block'
+                  color='error.main'
+                  sx={{ mt: 0.5 }}
+                >
+                  {(webserver?.error as string).slice(0, 60)}
+                </Typography>
               )}
-              {ccStatus && (
-                <>
-                  <Chip size='small' label={`Contexts ${ccStatus.contexts}`} />
-                  <Chip
-                    size='small'
-                    label={`Entities ${ccStatus.entity_profiles}`}
-                  />
-                  <Chip
-                    size='small'
-                    label={`Events ${heroBarEventsStoredCount(ccStatus)}`}
-                  />
-                </>
-              )}
-              {wsStatus !== 'ok' &&
-                wsStatus !== 'healthy' &&
-                (webserver?.error as string) && (
-                  <Typography variant='caption' color='error.main'>
-                    {(webserver?.error as string).slice(0, 80)}
-                  </Typography>
-                )}
-            </Stack>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </Box>
 
-      {/* 2. Now */}
+      {/* Current activities */}
       <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
-        Now
+        Current activity
       </Typography>
       <Card variant='outlined' sx={{ mb: 3 }}>
         <CardContent sx={{ py: 1.5 }}>
-          <Typography
-            variant='caption'
-            color='text.secondary'
-            display='block'
-            sx={{ mb: 1 }}
-          >
-            Current activity
-          </Typography>
           {initialLoad && currentActivities.length === 0 ? (
-            <Skeleton variant='rectangular' height={48} sx={{ borderRadius: 1 }} />
+            <Skeleton
+              variant='rectangular'
+              height={60}
+              sx={{ borderRadius: 1 }}
+            />
           ) : overviewLoadFailed ? (
             <Typography color='text.secondary' variant='body2'>
-              Current activity could not be loaded.
+              Current activity could not be loaded — same failure as monitoring
+              overview above (often network, CORS, or API URL).
             </Typography>
           ) : currentActivities.length === 0 ? (
             <Typography color='text.secondary' variant='body2'>
-              No background tasks running right now.
+              No background tasks running right now. The system will show items
+              like &quot;Running RSS collection&quot; or &quot;Processing
+              storyline X&quot; when work is in progress.
             </Typography>
           ) : (
             <List dense disablePadding>
@@ -675,9 +879,14 @@ export default function MonitorPage() {
                             justifyContent: 'space-between',
                             gap: 1,
                             width: '100%',
+                            pr: 0.5,
                           }}
                         >
-                          <Typography variant='body2' component='span'>
+                          <Typography
+                            variant='body2'
+                            component='span'
+                            sx={{ minWidth: 0 }}
+                          >
                             {(a.message as string) || 'Working…'}
                           </Typography>
                           <Chip
@@ -688,7 +897,15 @@ export default function MonitorPage() {
                                 ? a.running_instances
                                 : 1
                             }`}
-                            sx={{ height: 22 }}
+                            sx={{
+                              flexShrink: 0,
+                              height: 22,
+                              '& .MuiChip-label': {
+                                px: 0.75,
+                                py: 0,
+                                fontSize: '0.7rem',
+                              },
+                            }}
                           />
                         </Box>
                       }
@@ -722,32 +939,32 @@ export default function MonitorPage() {
               })}
             </List>
           )}
+        </CardContent>
+      </Card>
 
-          {recentActivities.length > 0 && (
-            <>
-              <Typography
-                variant='caption'
-                color='text.secondary'
-                display='block'
-                sx={{ mt: 2, mb: 1 }}
-              >
-                Recent
-              </Typography>
+      {/* Recent activity */}
+      {recentActivities.length > 0 && (
+        <>
+          <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
+            Recent activity
+          </Typography>
+          <Card variant='outlined' sx={{ mb: 3 }}>
+            <CardContent sx={{ py: 1.5 }}>
               <List dense disablePadding>
-                {recentActivities.slice(0, 8).map((a, i) => (
+                {recentActivities.slice(0, 10).map((a, i) => (
                   <ListItem
                     key={(a.id as string) || i}
                     disablePadding
-                    sx={{ py: 0.25 }}
+                    sx={{ py: 0.5 }}
                   >
                     <ListItemIcon sx={{ minWidth: 36 }}>
                       {(a.success as boolean) !== false ? (
                         <CheckCircleOutlineIcon
-                          sx={{ color: 'success.main', fontSize: 18 }}
+                          sx={{ color: 'success.main', fontSize: 20 }}
                         />
                       ) : (
                         <ErrorOutlineIcon
-                          sx={{ color: 'error.main', fontSize: 18 }}
+                          sx={{ color: 'error.main', fontSize: 20 }}
                         />
                       )}
                     </ListItemIcon>
@@ -764,137 +981,343 @@ export default function MonitorPage() {
                   </ListItem>
                 ))}
               </List>
-            </>
-          )}
-        </CardContent>
-      </Card>
+            </CardContent>
+          </Card>
+        </>
+      )}
 
-      {/* 3. Pulse */}
+      {/* Processing pulse: dimension throughput + phase run history (DB + automation_run_history) */}
       <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 0.5 }}>
-        Pulse
+        Processing pulse (7-day window)
       </Typography>
-      <Typography
-        variant='caption'
-        color='text.secondary'
-        display='block'
-        sx={{ mb: 1 }}
-      >
-        Phase queues and recent pass/fail. Highlighted when fails &gt; 0 or runs
-        to clear &gt; 1. Trends and GPU history → Grafana.
+      <Typography variant='caption' color='text.secondary' display='block' sx={{ mb: 1 }}>
+        <strong>Phase queue (three numbers):</strong> (1){' '}
+        <strong>Unprocessed rows</strong> — database records still waiting for that phase. (2){' '}
+        <strong>Rows per run (est.)</strong> — how many of those rows each scheduled run is{' '}
+        <em>modeled</em> to take from the queue (from backlog_metrics; default 1 for unknown phases via{' '}
+        <code style={{ fontSize: '0.85em' }}>BACKLOG_METRICS_DEFAULT_BATCH_SIZE</code>). (3){' '}
+        <strong>Runs to clear (est.)</strong> —{' '}
+        <code style={{ fontSize: '0.85em' }}>ceil(unprocessed ÷ rows per run)</code>;{' '}
+        <strong>&gt; 1</strong> means you need more than one run to drain today&apos;s queue. If rows
+        per run is 0 (no row-batch model for that phase), runs to clear shows —. <strong>Runs</strong> count{' '}
+        <code style={{ fontSize: '0.85em' }}>automation_run_history</code> rows; for{' '}
+        <strong>claim_extraction</strong> with drain, one row is recorded per completed batch (not one per
+        scheduler task). <strong>Pass %</strong> ={' '}
+        <code style={{ fontSize: '0.85em' }}>100 × successes ÷ completions</code> in the window; SQL
+        treats non-TRUE <code style={{ fontSize: '0.85em' }}>success</code> (FALSE or NULL) as not passed —
+        a sample proportion, not a confidence interval. Chip arrows compare the last hour to a baseline
+        rate (see tooltips; heuristic only). Dimension chips are SQL throughputs, not mutually exclusive
+        pipeline stages.
       </Typography>
       <Card variant='outlined' sx={{ mb: 3 }}>
         <CardContent sx={{ py: 1.5 }}>
           {processingPulse?.success && processingPulse.data ? (
-            <Box>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               {processingPulse.data.pending_metrics_included === false && (
-                <Alert severity='info' sx={{ py: 0.5, mb: 1.5 }}>
+                <Alert severity='info' sx={{ py: 0.5 }}>
                   {pendingMetricsLoading ? (
-                    <>Loading unprocessed row counts…</>
+                    <>
+                      Loading <strong>unprocessed row</strong> counts from backlog_metrics…
+                    </>
                   ) : (
                     <>
-                      Queue depths load in the background (~every minute). Run
-                      counts still refresh every 15s.
+                      Per-phase <strong>unprocessed rows</strong> are not loaded yet (fast path
+                      refresh). Throughput chips and run counts still reflect the last 7 days. Queue
+                      depths load in the background and refresh ~every minute.
                     </>
                   )}
                 </Alert>
               )}
-              {processingPulse.data.pending_metrics_as_of_utc && (
-                <Typography
-                  variant='caption'
-                  color='text.secondary'
-                  display='block'
-                  sx={{ mb: 1 }}
-                >
-                  Queues as of{' '}
-                  {shortLocalDateTime(
-                    processingPulse.data.pending_metrics_as_of_utc
-                  )}
+              {processingPulse.data.pending_metrics_included === true &&
+                processingPulse.data.pending_metrics_as_of_utc && (
+                  <Typography variant='caption' color='text.secondary'>
+                    Queue depths as of{' '}
+                    {shortLocalDateTime(processingPulse.data.pending_metrics_as_of_utc)} — throughput
+                    and run counts update every 15s
+                  </Typography>
+                )}
+              <Typography variant='caption' color='text.secondary'>
+                Generated{' '}
+                {processingPulse.data.generated_at_utc
+                  ? shortLocalDateTime(processingPulse.data.generated_at_utc)
+                  : '—'}{' '}
+                (UTC clock)
+              </Typography>
+              <Box>
+                <Typography variant='caption' color='text.secondary' sx={{ display: 'block', mb: 0.75 }}>
+                  Pipeline throughput ticker
                 </Typography>
-              )}
-              <Table size='small' sx={{ '& td': { py: 0.5 } }}>
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Phase</TableCell>
-                    <TableCell align='right'>Pending</TableCell>
-                    <TableCell align='right'>Runs to clear</TableCell>
-                    <TableCell align='right'>Fail 24h</TableCell>
-                    <TableCell align='right'>Runs 24h</TableCell>
-                    <TableCell align='right'>Pass % 24h</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {phaseRows.slice(0, 40).map(p => {
-                    const stuck =
-                      (p.failures_24h ?? 0) > 0 ||
-                      (p.batches_to_drain != null && p.batches_to_drain > 1);
+                <Stack spacing={1} alignItems='stretch'>
+                  {(processingPulse.data.dimensions ?? []).map((d, i) => {
+                    const t = pulseTrendSymbol(
+                      d.last_1h ?? 0,
+                      d.last_24h ?? 0
+                    );
+                    const bl =
+                      d.backlog != null ? `backlog ${formatPulseCount(d.backlog)} · ` : '';
                     return (
-                      <TableRow
-                        key={p.phase_name}
-                        sx={
-                          stuck
-                            ? { bgcolor: 'action.hover' }
-                            : undefined
-                        }
-                      >
-                        <TableCell>{p.phase_name}</TableCell>
-                        <TableCell align='right'>
-                          {formatPulseCount(p.pending_records ?? 0)}
-                        </TableCell>
-                        <TableCell align='right'>
-                          {p.batches_to_drain == null ? (
-                            '—'
-                          ) : (p.batches_to_drain ?? 0) > 1 ? (
-                            <Typography
-                              component='span'
-                              variant='body2'
-                              color='warning.main'
-                            >
-                              {formatPulseCount(p.batches_to_drain)}
-                            </Typography>
-                          ) : (
-                            formatPulseCount(p.batches_to_drain)
-                          )}
-                        </TableCell>
-                        <TableCell align='right'>
-                          {(p.failures_24h ?? 0) > 0 ? (
-                            <Typography
-                              component='span'
-                              variant='body2'
-                              color='error.main'
-                            >
-                              {p.failures_24h}
-                            </Typography>
-                          ) : (
-                            '0'
-                          )}
-                        </TableCell>
-                        <TableCell align='right'>{p.runs_24h ?? 0}</TableCell>
-                        <TableCell align='right'>
-                          {p.pass_rate_24h != null
-                            ? `${p.pass_rate_24h}%`
-                            : '—'}
-                        </TableCell>
-                      </TableRow>
+                      <Chip
+                        key={d.id || i}
+                        size='small'
+                        variant='outlined'
+                        sx={{
+                          borderColor: 'primary.light',
+                          height: 'auto',
+                          alignSelf: 'stretch',
+                          '& .MuiChip-label': {
+                            px: 1,
+                            py: 0.75,
+                            whiteSpace: 'normal',
+                            display: 'block',
+                            textAlign: 'left',
+                          },
+                        }}
+                        label={`${t.sym} ${d.label || d.id} · 1h ${formatPulseCount(d.last_1h)} · 24h ${formatPulseCount(d.last_24h)} · 7d ${formatPulseCount(d.last_7d)}`}
+                        title={`${t.title}\n${d.label}\n${bl}1h ${d.last_1h ?? '—'} · 24h ${d.last_24h ?? '—'} · 7d ${d.last_7d ?? '—'}`}
+                      />
                     );
                   })}
-                </TableBody>
-              </Table>
-              {phaseRows.length > 40 && (
-                <Typography
-                  variant='caption'
-                  color='text.secondary'
-                  sx={{ mt: 0.5, display: 'block' }}
-                >
-                  Showing 40 phases.
+                </Stack>
+              </Box>
+              <Divider />
+              <Box>
+                <Typography variant='caption' color='text.secondary' sx={{ display: 'block', mb: 0.75 }}>
+                  Data-plane row backlogs (same SQL family as backlog ETAs)
                 </Typography>
-              )}
+                <Table size='small' sx={{ '& td': { py: 0.5 } }}>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Queue</TableCell>
+                      <TableCell align='right'>Rows waiting</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {(processingPulse.data.dimensions ?? [])
+                      .filter(d => d.backlog != null && d.backlog > 0)
+                      .map(d => (
+                        <TableRow key={d.id}>
+                          <TableCell>{d.label || d.id}</TableCell>
+                          <TableCell align='right'>
+                            {formatPulseCount(d.backlog ?? 0)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    {(processingPulse.data.dimensions ?? []).every(
+                      d => d.backlog == null || d.backlog <= 0
+                    ) && (
+                      <TableRow>
+                        <TableCell colSpan={2}>
+                          <Typography variant='body2' color='text.secondary'>
+                            No positive dimension backlogs in this snapshot (or all at zero).
+                          </Typography>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </Box>
+              <Divider />
+              <Box>
+                <Typography variant='caption' color='text.secondary' sx={{ display: 'block', mb: 0.75 }}>
+                  Automation phases — unprocessed DB rows, modeled rows per run, estimated runs to clear the
+                  queue; then pass/fail when the phase completes
+                </Typography>
+                <Table size='small' sx={{ '& td': { py: 0.5 } }}>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Phase</TableCell>
+                      <TableCell
+                        align='right'
+                        title='Count of database records not yet processed for this phase (pending queue)'
+                      >
+                        Unprocessed rows
+                      </TableCell>
+                      <TableCell
+                        align='right'
+                        title='Modeled number of queue rows each scheduled run takes (backlog_metrics; not measured from last run)'
+                      >
+                        Rows/run (est.)
+                      </TableCell>
+                      <TableCell
+                        align='right'
+                        title='ceil(unprocessed ÷ rows per run). How many phase runs to drain the queue; >1 means backlog needs multiple runs'
+                      >
+                        Runs to clear (est.)
+                      </TableCell>
+                      <TableCell align='right'>Runs 1h</TableCell>
+                      <TableCell align='right'>Runs 24h</TableCell>
+                      <TableCell align='right'>Runs 7d</TableCell>
+                      <TableCell align='right'>Pass 24h</TableCell>
+                      <TableCell align='right'>Fail 24h</TableCell>
+                      <TableCell align='right'>Pass % 24h</TableCell>
+                      <TableCell align='right'>Pass % 7d</TableCell>
+                      <TableCell align='right'>Avg s</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {(
+                      processingPulse.data.phase_dashboard ??
+                      processingPulse.data.phases ??
+                      []
+                    )
+                      .slice(0, 40)
+                      .map(p => (
+                        <TableRow key={p.phase_name}>
+                          <TableCell>{p.phase_name}</TableCell>
+                          <TableCell align='right'>
+                            {formatPulseCount(p.pending_records ?? 0)}
+                          </TableCell>
+                          <TableCell align='right'>
+                            {formatPulseCount(p.estimated_batch_per_run ?? 0)}
+                          </TableCell>
+                          <TableCell align='right'>
+                            {p.batches_to_drain == null ? (
+                              '—'
+                            ) : (p.batches_to_drain ?? 0) > 1 ? (
+                              <Typography
+                                component='span'
+                                variant='body2'
+                                color='warning.main'
+                              >
+                                {formatPulseCount(p.batches_to_drain)}
+                              </Typography>
+                            ) : (
+                              formatPulseCount(p.batches_to_drain)
+                            )}
+                          </TableCell>
+                          <TableCell align='right'>{p.runs_1h ?? 0}</TableCell>
+                          <TableCell align='right'>{p.runs_24h ?? 0}</TableCell>
+                          <TableCell align='right'>{p.runs_7d ?? 0}</TableCell>
+                          <TableCell align='right'>{p.successes_24h ?? 0}</TableCell>
+                          <TableCell align='right'>
+                            {(p.failures_24h ?? 0) > 0 ? (
+                              <Typography
+                                component='span'
+                                variant='body2'
+                                color='error.main'
+                              >
+                                {p.failures_24h}
+                              </Typography>
+                            ) : (
+                              '0'
+                            )}
+                          </TableCell>
+                          <TableCell align='right'>
+                            {p.pass_rate_24h != null ? `${p.pass_rate_24h}%` : '—'}
+                          </TableCell>
+                          <TableCell align='right'>
+                            {p.pass_rate_7d != null ? `${p.pass_rate_7d}%` : '—'}
+                          </TableCell>
+                          <TableCell align='right'>
+                            {p.avg_duration_sec_24h != null
+                              ? Math.round(p.avg_duration_sec_24h)
+                              : '—'}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                  </TableBody>
+                </Table>
+                {(processingPulse.data.phase_dashboard ?? processingPulse.data.phases ?? [])
+                  .length > 40 && (
+                  <Typography variant='caption' color='text.secondary' sx={{ mt: 0.5, display: 'block' }}>
+                    Showing 40 rows sorted by pending+backlog, then 7d runs.
+                  </Typography>
+                )}
+              </Box>
+              <Divider />
+              <Box>
+                <Typography variant='caption' color='text.secondary' sx={{ display: 'block', mb: 0.5 }}>
+                  Hourly activity (last 72h, sparse — for charts / exports)
+                </Typography>
+                <Typography variant='caption' color='text.secondary' sx={{ display: 'block', mb: 0.5 }}>
+                  {processingPulse.data.hourly_phase_tick_bucket_count ??
+                    (processingPulse.data.hourly_phase_ticks ?? []).length}{' '}
+                  bucket rows (72h)
+                </Typography>
+              </Box>
+              <Divider />
+              <Box>
+                <Typography variant='caption' color='text.secondary' sx={{ display: 'block', mb: 0.75 }}>
+                  GPU / VRAM (hourly averages, last 72h)
+                </Typography>
+                <Typography variant='caption' color='text.secondary' sx={{ display: 'block', mb: 1 }}>
+                  Samples from <code style={{ fontSize: '0.85em' }}>nvidia-smi</code> (throttled). History
+                  fills as Monitor and health endpoints run. Apply migration{' '}
+                  <code style={{ fontSize: '0.85em' }}>209_gpu_metric_samples.sql</code> if the chart stays
+                  empty.
+                </Typography>
+                {gpuMetricHistory?.success === false && (
+                  <Typography variant='body2' color='text.secondary' sx={{ mb: 1 }}>
+                    {gpuMetricHistory?.error || 'GPU history unavailable.'}
+                  </Typography>
+                )}
+                {gpuChartRows.length > 0 ? (
+                  <Box sx={{ width: '100%', height: 280 }}>
+                    <ResponsiveContainer>
+                      <LineChart
+                        data={gpuChartRows}
+                        margin={{ top: 8, right: 16, left: 0, bottom: 8 }}
+                      >
+                        <CartesianGrid strokeDasharray='3 3' />
+                        <XAxis dataKey='label' tick={{ fontSize: 11 }} interval='preserveStartEnd' />
+                        <YAxis
+                          yAxisId='pct'
+                          domain={[0, 100]}
+                          tick={{ fontSize: 11 }}
+                          label={{ value: '%', angle: 0, position: 'insideLeft' }}
+                        />
+                        <YAxis
+                          yAxisId='temp'
+                          orientation='right'
+                          domain={[0, 100]}
+                          tick={{ fontSize: 11 }}
+                          label={{ value: '°C', angle: 0, position: 'insideRight' }}
+                        />
+                        <Tooltip />
+                        <Legend />
+                        <Line
+                          yAxisId='pct'
+                          type='monotone'
+                          dataKey='util'
+                          name='GPU util %'
+                          stroke='#1976d2'
+                          dot={false}
+                          strokeWidth={2}
+                          connectNulls
+                        />
+                        <Line
+                          yAxisId='pct'
+                          type='monotone'
+                          dataKey='vram'
+                          name='VRAM %'
+                          stroke='#ed6c02'
+                          dot={false}
+                          strokeWidth={2}
+                          connectNulls
+                        />
+                        <Line
+                          yAxisId='temp'
+                          type='monotone'
+                          dataKey='temp'
+                          name='Temp °C'
+                          stroke='#2e7d32'
+                          dot={false}
+                          strokeWidth={1}
+                          connectNulls
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </Box>
+                ) : (
+                  <Typography variant='body2' color='text.secondary'>
+                    No hourly GPU samples yet — open Monitor for a few minutes after migration 209, or check
+                    that <code style={{ fontSize: '0.85em' }}>nvidia-smi</code> works on the API host.
+                  </Typography>
+                )}
+              </Box>
             </Box>
           ) : initialLoad ? (
-            <Skeleton
-              variant='rectangular'
-              height={120}
-              sx={{ borderRadius: 1 }}
-            />
+            <Skeleton variant='rectangular' height={120} sx={{ borderRadius: 1 }} />
           ) : (
             <Typography color='text.secondary' variant='body2'>
               {processingPulse?.error || 'Processing pulse not available.'}
@@ -903,21 +1326,82 @@ export default function MonitorPage() {
         </CardContent>
       </Card>
 
-      {/* 4. Actions */}
+      <Divider sx={{ my: 2 }} />
+
       <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
-        Actions
+        Pipeline status
       </Typography>
-      <Card variant='outlined' sx={{ mb: 3 }}>
-        <CardContent sx={{ py: 1.5 }}>
-          <Stack
-            direction={{ xs: 'column', sm: 'row' }}
-            spacing={2}
-            alignItems={{ sm: 'center' }}
-            flexWrap='wrap'
-            useFlexGap
-          >
-            {apiService.triggerPhase && (
-              <>
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 2 }}>
+        <Card sx={{ minWidth: 260 }}>
+          <CardHeader
+            title='Traces and processing'
+            subheader='Orchestrator pipeline'
+            avatar={<ScheduleIcon />}
+          />
+          <CardContent>
+            {initialLoad && !pipeline?.data ? (
+              <Skeleton variant='rectangular' height={80} />
+            ) : (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Chip
+                    size='small'
+                    color={pipelineStatusColor}
+                    label={pipelineStatus ?? '—'}
+                  />
+                  {typeof pipelineData?.success_rate === 'number' && (
+                    <Typography variant='body2' color='text.secondary'>
+                      Success rate: {pipelineData.success_rate}%
+                    </Typography>
+                  )}
+                </Box>
+                <Typography variant='caption' color='text.secondary'>
+                  Articles processed:{' '}
+                  {String(pipelineData?.articles_processed ?? '—')} · Analyzed:{' '}
+                  {String(pipelineData?.articles_analyzed ?? '—')} · Recent (1h):{' '}
+                  {String(pipelineData?.recent_articles ?? '—')}
+                </Typography>
+                {pipeline?.success === false && pipeline.error && (
+                  <Typography variant='caption' color='error' display='block'>
+                    {pipeline.error}
+                  </Typography>
+                )}
+                {pipelineData?.active_traces != null &&
+                  Number(pipelineData.active_traces) > 0 && (
+                    <Typography variant='caption' color='info.main'>
+                      Active traces: {String(pipelineData.active_traces)}
+                    </Typography>
+                  )}
+              </Box>
+            )}
+          </CardContent>
+        </Card>
+        <Card sx={{ minWidth: 260 }}>
+          <CardHeader title='Active domains' subheader='Registry / nav' />
+          <CardContent>
+            <Typography variant='body2'>
+              {getDomainKeysList().join(', ') || '—'}
+            </Typography>
+          </CardContent>
+        </Card>
+      </Box>
+
+      {/* Run phase (optional) */}
+      {apiService.triggerPhase && (
+        <Box sx={{ mb: 3 }}>
+          <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
+            Run phase now
+          </Typography>
+          <Card variant='outlined'>
+            <CardContent sx={{ py: 1.5 }}>
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 2,
+                  flexWrap: 'wrap',
+                }}
+              >
                 <FormControl size='small' sx={{ minWidth: 220 }}>
                   <InputLabel>Phase</InputLabel>
                   <Select
@@ -940,58 +1424,41 @@ export default function MonitorPage() {
                   onClick={handleTriggerPhase}
                   disabled={!triggerPhaseName || triggering}
                 >
-                  {triggering ? 'Requesting…' : 'Run phase now'}
+                  {triggering ? 'Requesting…' : 'Run now'}
                 </Button>
-              </>
-            )}
-            {grafanaUrl ? (
-              <Button
-                size='small'
-                variant='outlined'
-                startIcon={<OpenInNewIcon />}
-                href={grafanaUrl}
-                target='_blank'
-                rel='noopener noreferrer'
-              >
-                Open Grafana
-              </Button>
-            ) : (
-              <Typography variant='caption' color='text.secondary'>
-                Set <code>VITE_NEWS_INTEL_GRAFANA_URL</code> (or{' '}
-                <code>NEWS_INTEL_GRAFANA_URL</code> in docs) for the Homelab NI
-                Ops deep link.
-              </Typography>
-            )}
-          </Stack>
-          {triggerResult && (
-            <Box sx={{ mt: 1.5 }}>
-              <Alert
-                severity={triggerResult.success ? 'success' : 'error'}
-                onClose={() => setTriggerResult(null)}
-              >
-                {triggerResult.message}
-              </Alert>
-              {triggerResult.success && triggerResult.warning && (
-                <Alert
-                  severity='warning'
-                  sx={{ mt: 1 }}
-                  onClose={() => setTriggerResult(null)}
-                >
-                  {triggerResult.warning}
-                </Alert>
+              </Box>
+              {triggerResult && (
+                <Box sx={{ mt: 1.5 }}>
+                  <Alert
+                    severity={triggerResult.success ? 'success' : 'error'}
+                    onClose={() => setTriggerResult(null)}
+                  >
+                    {triggerResult.message}
+                  </Alert>
+                  {triggerResult.success && triggerResult.warning && (
+                    <Alert
+                      severity='warning'
+                      sx={{ mt: 1 }}
+                      onClose={() => setTriggerResult(null)}
+                    >
+                      {triggerResult.warning}
+                    </Alert>
+                  )}
+                </Box>
               )}
-            </Box>
-          )}
-          <Typography
-            variant='caption'
-            color='text.secondary'
-            sx={{ display: 'block', mt: 1 }}
-          >
-            Phase trigger enqueues work on AutomationManager. Running phases out
-            of order may process incomplete data.
-          </Typography>
-        </CardContent>
-      </Card>
+              <Typography
+                variant='caption'
+                color='text.secondary'
+                sx={{ display: 'block', mt: 1 }}
+              >
+                Enqueues the phase; it will appear under Current activity when
+                it runs. Running phases out of order may process incomplete data
+                (e.g. run collection_cycle before analysis phases).
+              </Typography>
+            </CardContent>
+          </Card>
+        </Box>
+      )}
     </Box>
   );
 }

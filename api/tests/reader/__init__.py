@@ -1,1 +1,0 @@
-"""Reader domain tests."""

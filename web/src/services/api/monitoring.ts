@@ -1099,23 +1099,6 @@ export const monitoringApi = {
     }
   },
 
-
-  async getCreditSpread(
-    params: { days?: number; view?: 'fred' | 'etf' } = {},
-    domain?: string
-  ) {
-    try {
-      const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(
-        `/api/${domainKey}/finance/credit-spread`,
-        { params }
-      );
-      return response.data;
-    } catch (error) {
-      Logger.apiError('Failed to fetch credit spread data', error as Error);
-      return { success: false, error: (error as any).message };
-    }
-  },
   async triggerFredFetch(
     params: { symbol: string; start_date?: string; end_date?: string },
     domain?: string

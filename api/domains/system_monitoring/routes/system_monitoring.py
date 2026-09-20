@@ -2199,34 +2199,6 @@ def get_dashboard_metrics():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/prometheus")
-async def get_prometheus_metrics(request: Request, force: bool = Query(False)):
-    """Prometheus text exposition for Homelab Grafana (Monitor-parity + DB inventory)."""
-    from fastapi.responses import PlainTextResponse
-    from services.ni_prometheus_metrics_service import (
-        build_prometheus_metrics,
-        is_enabled,
-        scrape_token,
-    )
-
-    if not is_enabled():
-        raise HTTPException(status_code=404, detail="NI Prometheus metrics disabled")
-    expected = scrape_token()
-    if expected:
-        got = (request.headers.get("X-NI-Scrape-Token") or "").strip()
-        if got != expected:
-            raise HTTPException(status_code=401, detail="Invalid scrape token")
-    try:
-        body = await asyncio.to_thread(build_prometheus_metrics, force=bool(force))
-    except Exception as e:
-        logger.exception("prometheus metrics failed")
-        raise HTTPException(status_code=500, detail=str(e)) from e
-    return PlainTextResponse(
-        content=body,
-        media_type="text/plain; version=0.0.4; charset=utf-8",
-    )
-
-
 @router.post("/apply_migration_128")
 async def apply_migration_128():
     """
