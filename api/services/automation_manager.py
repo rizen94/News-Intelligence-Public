@@ -1012,13 +1012,16 @@ class AutomationManager:
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["longitudinal_matview_refresh"],
             },
             # PHASE 2.6: Entity dossier compile (articles + storylines + relationships -> entity_dossiers)
+            # No hard depends_on: profile_sync is often multi-hour / cron-offloaded; requiring it
+            # starved this phase for months (last regular runs ended 2026-07-03). Shells from sync
+            # are enough; compile is no-LLM and safe to run on its interval.
             "entity_dossier_compile": {
-                "interval": 3600,  # 1 hour - compile dossiers for entities missing or stale
+                "interval": 1800,  # 30 min — drain ~ENTITY_DOSSIER_COMPILE_MAX per run
                 "last_run": None,
                 "enabled": True,
                 "priority": TaskPriority.NORMAL,
                 "phase": 2,
-                "depends_on": ["entity_profile_sync"],
+                "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["entity_dossier_compile"],
             },
             # PHASE 2: Entity position tracker (stances, votes, policy from articles -> entity_positions)
@@ -4128,17 +4131,29 @@ class AutomationManager:
         except Exception:
             pass
         import asyncio
+        import os
 
         from services.dossier_compiler_service import _run_scheduled_dossier_compiles
+
+        try:
+            max_dossiers = int(os.environ.get("ENTITY_DOSSIER_COMPILE_MAX", "20") or "20")
+        except ValueError:
+            max_dossiers = 20
+        max_dossiers = max(1, min(200, max_dossiers))
+        try:
+            stale_days = int(os.environ.get("ENTITY_DOSSIER_STALE_DAYS", "7") or "7")
+        except ValueError:
+            stale_days = 7
+        stale_days = max(0, min(365, stale_days))
 
         try:
             loop = asyncio.get_event_loop()
             compiled = await loop.run_in_executor(
                 self._executor,
                 _run_scheduled_dossier_compiles,
-                20,  # max_dossiers_per_run
+                max_dossiers,
                 None,  # get_db_connection_fn -> use default
-                7,  # stale_days
+                stale_days,
             )
             if compiled > 0:
                 logger.info(f"Entity dossier compile: {compiled} dossiers compiled")
