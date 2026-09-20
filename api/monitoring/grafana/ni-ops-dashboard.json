@@ -1,0 +1,252 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "ni-ops",
+    "title": "News Intelligence Ops",
+    "tags": ["news-intelligence", "ni-ops", "homelab"],
+    "timezone": "browser",
+    "schemaVersion": 39,
+    "version": 1,
+    "refresh": "1m",
+    "time": { "from": "now-24h", "to": "now" },
+    "annotations": { "list": [] },
+    "templating": { "list": [] },
+    "panels": [
+      {
+        "id": 1,
+        "type": "timeseries",
+        "title": "Queue depth by phase",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "ni_queue_depth",
+            "legendFormat": "{{phase}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "custom": { "drawStyle": "line", "fillOpacity": 10, "spanNulls": true }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "type": "timeseries",
+        "title": "Scheduling backlog by phase",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "ni_scheduling_backlog",
+            "legendFormat": "{{phase}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "custom": { "drawStyle": "line", "fillOpacity": 10, "spanNulls": true }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "type": "stat",
+        "title": "DB size",
+        "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "ni_db_size_bytes",
+            "legendFormat": "news_intel",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": { "unit": "bytes" }
+        }
+      },
+      {
+        "id": 4,
+        "type": "stat",
+        "title": "Intake catchup within SLA",
+        "gridPos": { "h": 4, "w": 6, "x": 6, "y": 8 },
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "ni_intake_catchup_within_sla",
+            "legendFormat": "within SLA",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              { "type": "value", "options": { "0": { "text": "Breach", "color": "red" }, "1": { "text": "OK", "color": "green" } } }
+            ]
+          }
+        }
+      },
+      {
+        "id": 5,
+        "type": "timeseries",
+        "title": "Intake catchup latency (hours)",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "ni_intake_catchup_latency_hours",
+            "legendFormat": "p{{quantile}}",
+            "refId": "A"
+          },
+          {
+            "expr": "ni_intake_catchup_sla_hours",
+            "legendFormat": "SLA",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "h",
+            "custom": { "drawStyle": "line", "spanNulls": true }
+          }
+        }
+      },
+      {
+        "id": 6,
+        "type": "timeseries",
+        "title": "Table live rows (curated)",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "ni_table_live_rows",
+            "legendFormat": "{{schema}}.{{table}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "custom": { "drawStyle": "line", "spanNulls": true }
+          }
+        }
+      },
+      {
+        "id": 7,
+        "type": "timeseries",
+        "title": "Table size (bytes)",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "ni_table_size_bytes",
+            "legendFormat": "{{schema}}.{{table}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bytes",
+            "custom": { "drawStyle": "line", "spanNulls": true }
+          }
+        }
+      },
+      {
+        "id": 8,
+        "type": "timeseries",
+        "title": "Automation runs (24h ok / fail)",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "ni_automation_runs{window=\"24h\",outcome=\"ok\"}",
+            "legendFormat": "{{phase}} ok",
+            "refId": "A"
+          },
+          {
+            "expr": "ni_automation_runs{window=\"24h\",outcome=\"fail\"}",
+            "legendFormat": "{{phase}} fail",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "custom": { "drawStyle": "line", "spanNulls": true }
+          }
+        }
+      },
+      {
+        "id": 9,
+        "type": "timeseries",
+        "title": "Content object counts",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "ni_content_rows",
+            "legendFormat": "{{kind}}{{window}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "custom": { "drawStyle": "line", "spanNulls": true }
+          }
+        }
+      },
+      {
+        "id": 10,
+        "type": "timeseries",
+        "title": "Articles created (24h) by domain",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "ni_articles_created{window=\"24h\"}",
+            "legendFormat": "{{domain}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "custom": { "drawStyle": "line", "spanNulls": true }
+          }
+        }
+      },
+      {
+        "id": 11,
+        "type": "stat",
+        "title": "RSS feeds (active)",
+        "gridPos": { "h": 4, "w": 12, "x": 12, "y": 32 },
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "ni_rss_feeds{status=\"active\"}",
+            "legendFormat": "{{domain}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": { "unit": "short" }
+        }
+      },
+      {
+        "id": 12,
+        "type": "text",
+        "title": "Ownership",
+        "gridPos": { "h": 4, "w": 24, "x": 0, "y": 40 },
+        "options": {
+          "mode": "markdown",
+          "content": "**Monitor (in-app)** = live health, current activity, phase pulse, Run phase now.\n\n**This Grafana dashboard** = queue/DB/SLA/run-rate history from `GET /api/system_monitoring/prometheus` (`ni_*`).\n\nGPU / host panels: add node_exporter / DCGM on Widow separately — not part of the NI API scrape.\n\nDeep link UID: `ni-ops`."
+        }
+      }
+    ]
+  }
+}

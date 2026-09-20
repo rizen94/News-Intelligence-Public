@@ -32,6 +32,8 @@ Context for AI assistants. Use project terminology consistently.
 | API routes | **`/api/{domain}/...`** (domain-scoped), **`/api/...`** (global) | `/api/v4/...` (legacy, removed) |
 | DB config | **get_db_config**, **get_db_connection**, **get_db** | getDatabaseConfig |
 | System health | **system_monitoring** | monitoring (ambiguous) |
+| Live ops console | **Monitor** (in-app) | Grafana (history/infra) |
+| History / infra charts | **Homelab Grafana** (`ni_*` scrape) | embedding Grafana into Monitor |
 | Intelligence features | **intelligence_hub** | intelligence hub |
 
 ---
@@ -47,6 +49,7 @@ Context for AI assistants. Use project terminology consistently.
 | Domain layout / shell | `web/src/layout/MainLayout.tsx` (routes in `App.tsx`: `/:domain` with MainLayout) |
 | Background automation | `api/services/automation_manager.py` |
 | Human reviewer navigation | `docs/CODEBASE_MAP.md`, `docs/PIPELINE_AND_AUTOMATION.md`, `docs/CODE_REVIEW_AND_RUN_CAVEATS.md` |
+| Monitor vs Grafana | `docs/MONITOR_REPORTING_AND_METRICS.md`, `api/monitoring/grafana/README.md` |
 | Public HTTPS read-only demo | `docs/PUBLIC_DEPLOYMENT.md` (TLS, env, `NEWS_INTEL_DEMO_*`, `GET /api/public/demo_config`) |
 
 ---
@@ -67,7 +70,7 @@ Context for AI assistants. Use project terminology consistently.
 - **Active pipeline domains** (June 2026): `politics` and `finance` per `public.domains` / `PIPELINE_INCLUDE`. `science-tech` remains in the registry but is **inactive** until enabled in the domain registry and YAML — do not expect RSS or automation for it while excluded.
 - **After changing YAML:** restart API and worker processes — `DOMAIN_PATH_PATTERN` and `ACTIVE_DOMAIN_KEYS` are computed at import time.
 - **Per-domain:** `articles`, `storylines`, `topics`, `rss_feeds`, `events`.
-- **Global:** watchlist, monitoring (`system_monitoring`), health.
+- **Global:** watchlist, monitoring (`system_monitoring`), health. **Monitor** = live/action ops console; **Homelab Grafana** = history/infra via `GET /api/system_monitoring/prometheus` (`ni_*`).
 
 ---
 

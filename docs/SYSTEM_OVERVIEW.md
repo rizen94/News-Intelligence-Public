@@ -316,6 +316,7 @@ All routes are mounted from `api/main.py`. Each domain router defines its own pr
 | GET | `/api/system_monitoring/status` | System status |
 | GET | `/api/system_monitoring/dashboard` | Dashboard |
 | GET | `/api/system_monitoring/monitoring/overview` | Monitoring overview |
+| GET | `/api/system_monitoring/prometheus` | Prometheus `ni_*` for Homelab Grafana |
 | GET | `/api/system_monitoring/fast_stats` | Fast stats |
 | GET | `/api/system_monitoring/metrics` | Metrics |
 | GET | `/api/system_monitoring/performance` | Performance metrics |
@@ -389,7 +390,7 @@ All routes are under `/:domain/` where domain is `politics`, `finance`, or `scie
 | `/:domain/investigate/search` | `SearchPage` | Context-centric search |
 | `/:domain/investigate/documents` | `ProcessedDocumentsPage` | Processed documents |
 | `/:domain/investigate/narrative-threads` | `NarrativeThreadsPage` | Narrative threads |
-| `/:domain/monitor` | `MonitorPage` | System monitoring, automation, pipeline |
+| `/:domain/monitor` | `MonitorPage` | Live ops: status / now / pulse / actions; Grafana for history |
 | `/:domain/analyze` | `AnalyzePage` | Analysis |
 | `/:domain/analysis` | `FinancialAnalysis` | Financial analysis form |
 | `/:domain/analysis/:taskId` | `FinancialAnalysisResult` | Financial analysis result |
