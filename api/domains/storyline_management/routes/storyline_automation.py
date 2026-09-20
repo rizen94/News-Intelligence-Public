@@ -11,7 +11,7 @@ import json
 import psycopg2.extras
 
 from shared.database.connection import get_db_connection
-from shared.domain_registry import resolve_domain_schema
+from shared.domain_registry import resolve_domain_schema, DOMAIN_PATH_PATTERN
 from shared.services.domain_aware_service import validate_domain
 from services.storyline_automation_service import StorylineAutomationService
 
@@ -98,7 +98,7 @@ _SUGGESTION_QUEUE_SELECT = """
 
 @router.get("/{domain}/storylines/review-queue/count")
 async def get_review_queue_count(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
 ):
     """Pending suggestion count for nav badges."""
     if not validate_domain(domain):
@@ -125,7 +125,7 @@ async def get_review_queue_count(
 
 @router.get("/{domain}/storylines/review-queue")
 async def get_domain_review_queue(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     status: Optional[str] = Query("pending"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -194,7 +194,7 @@ async def get_domain_review_queue(
 
 @router.get("/{domain}/storylines/{storyline_id}/automation/settings")
 async def get_domain_automation_settings(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID")
 ):
     """Get automation settings for a storyline in a specific domain"""
@@ -263,7 +263,7 @@ async def get_domain_automation_settings(
 
 @router.put("/{domain}/storylines/{storyline_id}/automation/settings")
 async def update_domain_automation_settings(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID"),
     settings: Dict[str, Any] = Body(...)
 ):
@@ -340,7 +340,7 @@ async def update_domain_automation_settings(
 
 @router.post("/{domain}/storylines/{storyline_id}/automation/discover")
 async def discover_domain_articles(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID"),
     force_refresh: bool = Query(False)
 ):
@@ -367,7 +367,7 @@ async def discover_domain_articles(
 
 @router.get("/{domain}/storylines/{storyline_id}/automation/suggestions")
 async def get_domain_article_suggestions(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID"),
     status: Optional[str] = Query(None)
 ):
@@ -425,7 +425,7 @@ async def get_domain_article_suggestions(
 
 @router.post("/{domain}/storylines/{storyline_id}/automation/suggestions/{suggestion_id}/approve")
 async def approve_domain_suggestion(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID"),
     suggestion_id: int = Path(..., description="Suggestion ID")
 ):
@@ -509,7 +509,7 @@ async def approve_domain_suggestion(
 
 @router.post("/{domain}/storylines/{storyline_id}/automation/suggestions/{suggestion_id}/reject")
 async def reject_domain_suggestion(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID"),
     suggestion_id: int = Path(..., description="Suggestion ID"),
     reason: Optional[str] = Query(None),

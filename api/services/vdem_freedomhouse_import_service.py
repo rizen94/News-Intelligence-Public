@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from services.macro_series_service import upsert_macro_observations
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +64,8 @@ def _parse_annual_csv(
 
 
 def import_vdem_freedom_house_from_config() -> dict[str, Any]:
-    vdem_path = Path(os.environ.get("VDEM_CSV_PATH", str(_DEFAULT_VDEM)))
-    fh_path = Path(os.environ.get("FREEDOM_HOUSE_CSV_PATH", str(_DEFAULT_FH)))
+    vdem_path = Path(env_str("VDEM_CSV_PATH", str(_DEFAULT_VDEM)))
+    fh_path = Path(env_str("FREEDOM_HOUSE_CSV_PATH", str(_DEFAULT_FH)))
     vdem_rows = _parse_annual_csv(
         vdem_path,
         series_prefix="VDEM_POLYARCHY",

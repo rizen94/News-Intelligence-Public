@@ -4,11 +4,14 @@ Shared selection rules for pipeline phases (ML, quality scoring, intelligence.co
 Aligns automation_manager queries, backlog_metrics, and context_processor_service so
 backlog counts match what each phase actually processes.
 
-**Strict enrichment (optional):** set env ``STRICT_ARTICLE_ENRICHMENT_GATES_SINCE`` to an
-ISO-8601 UTC instant (e.g. ``2026-03-24T00:00:00+00:00``). Articles with ``created_at >=``
-that time no longer qualify for ML on ``NULL enrichment_status + long RSS body`` alone;
-context backfill requires a terminal enrichment status (enriched / failed / inaccessible),
-not merely LENGTH >= 500. Older rows keep legacy rules.
+**Fulltext-first preprocess:** ``enriched`` and UIE/entity mapping require a real
+article body (≥ ``FULLTEXT_MIN_CHARS``, default 900, or ``RSS_FULLTEXT_FETCH_THRESHOLD_CHARS``).
+Short RSS teasers stay ``pending`` until ``content_enrichment`` fetches the page;
+a fetch that cannot produce that body is ``failed`` (not deleted on first miss).
+Failed / inaccessible / headline-only rows never enter unified intake extraction.
+
+**Strict enrichment (optional legacy):** set env ``STRICT_ARTICLE_ENRICHMENT_GATES_SINCE``
+to an ISO-8601 UTC instant. Prefer fulltext helpers below for new call sites.
 
 See docs/PIPELINE_INGESTION_AND_PROCESS_METHODOLOGY.md (section **Quality-first phase contracts** for success, skip, and handoff semantics).
 """
@@ -18,6 +21,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +29,23 @@ logger = logging.getLogger(__name__)
 SUBSTANTIAL_CONTENT_LENGTH = 500
 MIN_CONTENT_LENGTH_ML = 100
 MIN_CONTENT_LENGTH_CONTEXT = 100
+DEFAULT_FULLTEXT_MIN_CHARS = 900
+
+
+def fulltext_min_chars() -> int:
+    """Minimum plaintext length to count as a full article (enriched + entity mapping)."""
+    raw = env_str("FULLTEXT_MIN_CHARS", "").strip() or env_str(
+        "RSS_FULLTEXT_FETCH_THRESHOLD_CHARS", str(DEFAULT_FULLTEXT_MIN_CHARS)
+    )
+    try:
+        return max(200, int(raw))
+    except ValueError:
+        return DEFAULT_FULLTEXT_MIN_CHARS
+
+
+def body_is_fulltext(text: str | None) -> bool:
+    """True when stored/fetched plaintext is a real article, not a headline/teaser."""
+    return len((text or "").strip()) >= fulltext_min_chars()
 
 
 def strict_enrichment_cutoff_utc() -> datetime | None:
@@ -32,7 +53,7 @@ def strict_enrichment_cutoff_utc() -> datetime | None:
     If ``STRICT_ARTICLE_ENRICHMENT_GATES_SINCE`` is set to a valid ISO-8601 datetime,
     articles at or after this instant use stricter enrichment gates. Unset = legacy only.
     """
-    raw = os.getenv("STRICT_ARTICLE_ENRICHMENT_GATES_SINCE", "").strip()
+    raw = env_str("STRICT_ARTICLE_ENRICHMENT_GATES_SINCE", "").strip()
     if not raw:
         return None
     s = raw.replace("Z", "+00:00")

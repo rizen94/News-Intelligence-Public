@@ -1,12 +1,14 @@
 # News Intelligence System — Agent Guidance
 
-> **HOST GUARDRAILS (read first)**  
-> - **Migration complete (June 2026).** All NI development and queries belong on **Widow** (`192.168.93.101`).  
-> - **Dev workspace:** `/home/pete/Documents/projects/News Intelligence` on Widow  
-> - **Production runtime:** `/opt/news-intelligence` on Widow (API may run from here)  
-> - **PopOS local copy** (`192.168.93.99`) is headed for NAS cold storage — do not treat it as authoritative.  
-> - **Database:** NI owns `news_intel` on Widow `:5432`. Homelab Postgres MCP on PopOS reads it read-only — that is **not** Homelab's local Postgres on `:15432`.  
-> - See [PROJECT_STATUS.md](PROJECT_STATUS.md) and [../PROJECT_BOUNDARIES.md](../PROJECT_BOUNDARIES.md).
+> **HOST GUARDRAILS (read first)**
+> - **Migration complete (June 2026).** Authoritative NI code/deploy: **Widow** (`192.168.93.101`) for API + DB; heavy phase drains prefer **PopOS** worker (`192.168.93.99`).
+> - **Dev workspace:** `/home/pete/Documents/projects/News Intelligence` (Widow or mirrored checkout)
+> - **Production runtime:** `/opt/news-intelligence` on Widow (API); PopOS worker uses the same tree + `.env.popos_worker`
+> - **PopOS** also hosts Homelab / Caddy / 5090 Ollama — cold-storage “NI copy” does not replace the PopOS phase worker role
+> - **Database:** NI owns `news_intel` on Widow. **Apps** (Widow API + PopOS worker) use PgBouncer **`DB_PORT=6432`**; **admin/migrations** use direct Postgres **`:5432`**. Homelab Postgres MCP remains **read-only** (`mcp_reader`) — not Homelab `:15432`
+> - See [PROJECT_STATUS.md](PROJECT_STATUS.md), [docs/POPOS_PHASE_WORKER.md](docs/POPOS_PHASE_WORKER.md), and [../PROJECT_BOUNDARIES.md](../PROJECT_BOUNDARIES.md).
+
+> **v10.1 (release/10.1):** Pipeline Exclusive Paths — feature registry, admission control, queue-based spine, conductor-only scheduling. Version SSOT: repo-root `VERSION`. New backend features must register in `api/config/features.yaml`. See [docs/UPGRADE_10.1.md](docs/UPGRADE_10.1.md) and [docs/FEATURE_REGISTRY.md](docs/FEATURE_REGISTRY.md).
 
 Context for AI assistants. Use project terminology consistently.
 
@@ -24,15 +26,59 @@ Context for AI assistants. Use project terminology consistently.
 
 | Concept | Use This | Avoid |
 |---------|----------|-------|
-| Evolving news clusters | **storylines** | stories, threads |
+| Evolving news clusters | **storylines** (domain shape via `story_kind`) | proteins, chemistry metaphors; “stories/threads” unless UI label for research kinds |
+| Domain storyline shape | **`story_kind`** (`event_narrative`, `research_topic`, …) | universal “narrative cluster”; “protein” |
+| Assembly mental model | **matching → related-event chains → storyline → editorial package** — see [docs/ASSEMBLY_MODEL.md](docs/ASSEMBLY_MODEL.md) | chemistry / beaker / bonds as product vocabulary |
+| Article preprocess band | **intake spine** (`content_enrichment` → `unified_intake_extraction` → `spine_sql_tail`) | bare “spine” in UI/docs |
+| Longitudinal timeline UI | **arc chronicle** (`/{domain}/arcs/:id/chronicle`) | “arc spine” (legacy alias only) |
+| FtM / Wikidata identity DB | **identity spine** (`api/nri_core/spine/`, Investigate spine browser) | bare “spine” for entities |
+| Medicine / AI storyline UX | **research subject** / ailment ledger (`evidence_thread`, `research_topic`) | forcing linear arc chronicles; “protein UX” |
+| Legal storyline UX | **matter docket** ledger (`matter_docket`) + **legal_status** | geopolitics-style arc chapters |
+| Attach / membership scoring profile | **`link_score_profile`** | politics-only weights |
+| Link confidence (operator) | provisional → promising → established / quarantined | chemistry “bonds”; binary linked/unlinked only |
+| Link confidence (DB enum) | **`inference_stage`** (`hypothesized`/`candidate`/`established`/`quarantined`) — keep code names; prefer operator labels above in docs/UI | promoting enum tokens as product names |
+| Exploratory pair sampling (legacy phase) | matching support; code may still say **`collision_sampling`** | “chemistry collisions” as a product |
+| Selective PDF/chunk pull (legacy phase) | evidence pull when a link needs more source text; code may still say **`stimulus_rag`** / `rag_evidence_pull_queue` | bulk deep-research of all papers; chemistry “stimulus” product |
+| Strengthen links (legacy phase) | promote link confidence / enqueue refinement; code may still say **`protein_harden`** | heat-only RAG census; “harden proteins” as product language |
+| Storyline deep-analysis status | **`ml_processing_status`** (`pending`/`completed`) | `processing_status` alone (create-flag; explorers often misread all-pending as stuck) |
+| Storyline entities (audit) | **`story_entity_index`**, **`article_entities`** | `key_entities` JSONB alone (discovery keywords) |
+| Main timeline events | **`public.chronological_events`** (say **timeline events**) | “atoms”; legacy per-domain `timeline_events` (off unless `LEGACY_TIMELINE_EVENTS_WRITES=1`) |
+| Longer-lived follow object | **`intelligence.tracked_events`** (say **tracked events**) | “megathread” |
+| Same-event multi-source cluster | **`event_cluster_id`** / `intelligence.event_coreference_links` | one-shot dedup without soft links |
+| Attach / proposal score blend | **`blend_link_score`** (semantic + entity + canonical IDs + temporal) | fixed 0.80/0.20 only; separate “chemistry score” product |
 | Per-domain silos | **domains** | sections, buckets |
-| Domain keys | **politics**, **finance**, **science-tech** | Politics, FINANCE |
+| Domain keys | **legal**, **medicine**, **artificial-intelligence**, **politics**, **finance**; **neurodiversity** (corpus-mode, v11) | Politics, FINANCE, science-tech (retired) |
 | Feed storage | **rss_feeds** | rssFeeds, RSS Feeds table |
-| Content clusters | **topics** | clusters, themes |
+| Content clusters | **topic_clusters** (pipeline); legacy **topics** (read-only CRUD) | clusters, themes |
 | API routes | **`/api/{domain}/...`** (domain-scoped), **`/api/...`** (global) | `/api/v4/...` (legacy, removed) |
 | DB config | **get_db_config**, **get_db_connection**, **get_db** | getDatabaseConfig |
 | System health | **system_monitoring** | monitoring (ambiguous) |
 | Intelligence features | **intelligence_hub** | intelligence hub |
+| Investigation (FtM resolver) | **investigation** / `api/nri_core/` | NRI, nri-api |
+| Investigation API | **`/api/investigation/*`** | — |
+| Tracking discovery API | **`GET /api/tracking/discovery`** | Widow headless + OWUI thin client |
+| Event reconciliation API | **`GET /api/event_reconciliation`** | Read-only tracked ↔ chronological ↔ storyline |
+| Per-phase queue depth (Monitor, bulk catch-up) | **`queue_depth`** / `pipeline_queue_counts.get_all_phase_queue_depths()` | `pending_records`, `pending_counts`, spine queue depth |
+| Scheduler excess backlog | **`scheduling_backlog`** / `get_all_backlog_counts()` | summing phase queues |
+| Unified LLM work remaining | **`actionable_unified_intake`** | `inventory_missing_pass`, `total_missing_unified_pass` (inventory) |
+| Spine queue table depth | **`spine_queue_depth`** (informational) | using as operator ETA |
+| AutomationManager task queues | **`in_memory_queue_depth`** | DB `queue_depth` |
+| Realtime urgent ingest queue | **`urgent_queue_depth`** | pipeline `queue_depth` |
+| Domain processing band | **`processing_mode`** (`corpus` \| `research`) on `public.domains` | blunt `PIPELINE_EXCLUDE_DOMAIN_KEYS` for intake-only silos |
+| Corpus phase band | **`CORPUS_PHASES`** / intake → appraisal → index | running storyline assembly / matching on corpus domains |
+| Research phase band | **`RESEARCH_PHASES`** / storylines + matching/assembly + narratives | counting research backlog for corpus domains |
+| Evidence grade ladder | **`evidence_grade`** (`strong`…`unsubstantiated`) | treating unverified LLM prose as facts |
+| Paper-owned support | **`paper_support`** + quote refusal contract | corroboration-count-only “verification” for literature |
+| Replication / follow-up | **`replication_status`** incl. **`needs_follow_up`** | conflating thin evidence with `contradicted` / false |
+| Corpus findings API | **`GET /api/research/{domain}/findings`** | storyline explorers for corpus-only silos |
+| Editorial package (modal handoff artifact) | **`editorial_package`** / `intelligence.editorial_packages` | passing raw storylines or free-form LLM blobs between modals |
+| Reader longform product | **`news_story`** / `intelligence.news_stories` (bound to `package_id`) | raw storyline prose as the published product |
+| Post-processing modals | **Research** / **Narrative** / **Reduction** / **Editor** (`post_processing_modals.yaml`) | domain silos as process stages |
+| Reduction prune pass | **`editorial_reduction_pass`** (LLM + geo/entity hints → uncouple members/links from the package only → route back; sources kept) | deleting articles/events; manual-only Clear without prune |
+| Narrative assembly pass | **`editorial_narrative_pass`** (attach events/entities/links → Reduction; both-zero or max rounds → Editor) | treating storyline bags as finished reader prose; deleting sources |
+| Research assembly pass | **`editorial_research_pass`** (package-scoped extract→facts→appraise + LLM attach/link → Reduction; both-zero or max rounds → Editor) | finance Quiver/EDGAR in Research modal; deleting sources |
+| Legacy desk editorial (columns remain; writers archived) | `storylines.editorial_document` / desk promote (flag-off) / `api/_archived/editorial/` | confusing with v11 Editor `news_stories` |
+| Local v11 dev DB | **`news_intel_dev`** + `.env.dev` + `dev_guard` | pointing PopOS checkout `.env` at Widow while developing |
 
 ---
 
@@ -46,8 +92,69 @@ Context for AI assistants. Use project terminology consistently.
 | DB (single source) | `api/shared/database/connection.py` |
 | Domain layout / shell | `web/src/layout/MainLayout.tsx` (routes in `App.tsx`: `/:domain` with MainLayout) |
 | Background automation | `api/services/automation_manager.py` |
+| Catch-up env defaults | `api/config/catchup_defaults.py`, `scripts/catchup_env.sh` |
+| Automation extraction routing (PopOS GPU) | `api/shared/automation_llm_routing.py` |
+| Pipeline resource policy (phase host/tier/batch) | `api/shared/pipeline_resource_policy.py` |
+| Unified intake extraction (batched LLM fan-out) | `api/services/unified_intake_extraction_service.py` |
+| Unified intake extraction runner | `api/shared/unified_intake_extraction_runner.py` |
+| Spine SQL tail | `api/services/spine_sql_tail_service.py` |
+| Pipeline controller (scheduling SSOT) | `api/services/pipeline_controller.py` |
+| PopOS phase worker (UIE / owned drains) | `scripts/run_popos_phase_worker.py`, `docs/POPOS_PHASE_WORKER.md` |
+| Remote phase ownership | `api/shared/remote_phase_worker.py` |
+| Monitor run vocabulary (activity ↔ run history SSOT) | `api/shared/monitor_run_vocabulary.py`, `docs/MONITOR_REPORTING_AND_METRICS.md`, `docs/monitor_alignment/` |
+| Pipeline queue depth vocabulary (queue_depth SSOT) | `api/shared/pipeline_queue_vocabulary.py`, `api/shared/pipeline_queue_counts.py`, `api/shared/monitor_dimension_metrics.py`, `scripts/verify_pipeline_queue_alignment.py` |
+| High-churn PhaseSpec (adaptive bounds / batch / skip overlay) | `api/shared/phase_spec.py` → overlays `adaptive_batch_policy` + `backlog_metrics` |
+| Adaptive batch auto-tune (default on) | `api/shared/adaptive_batch_policy.py` — `resolve_adaptive_batch` / `AUTOMATION_ADAPTIVE_BATCH_ENABLED` |
+| Event coreference (cluster + soft links) | `api/services/event_coreference_service.py`, `api/services/event_deduplication_service.py`, migration `276_event_coreference_clusters.sql` |
+| Chronological events catchup (post-flush CE restore) | `api/services/chronological_events_catchup_service.py`, `api/scripts/backfill_chronological_events_from_uie.py`, automation `chronological_events_catchup` |
+| Narrative-first storyline lookback | `NARRATIVE_FIRST_STORYLINE_LOOKBACK_DAYS` (default 365) in `narrative_first_linking_service.py` |
+| Domain processing mode (corpus vs research) | `api/shared/domain_processing_mode.py`, migration `282_domain_processing_mode.sql` |
+| Evidence appraisal (corpus) | `api/shared/evidence_grade.py`, `api/services/claim_evidence_appraisal_service.py`, `docs/EVIDENCE_APPRAISAL.md` |
+| Neurodiversity corpus silo | `api/config/domains/specs/neurodiversity.domain.json`, migration `283_neurodiversity_domain_silo.sql` |
+| Editorial packages / news stories (v11) | `api/services/editorial_package_service.py`, `news_story_service.py`, `modal_handoff_service.py`, routes `/api/editorial/*`, migrations `285`–`290`, seed `api/scripts/backfill_editorial_packages_from_legacy.py` |
+| Assembly mental model (operator SSOT) | `docs/ASSEMBLY_MODEL.md` — timeline events → related-event chains → storyline → editorial packages; chemistry metaphors retired |
+| Critical-path phase handoffs | `api/shared/pipeline_handoffs.py` — after UIE/catchup/coref/continuation/editorial batches, `request_phase` next owner; backlog + flat scheduler priority in `backlog_metrics` / `pipeline_admission` |
+| Reduction modality (LLM uncouple + route-back) | `api/services/editorial_package_reduction_service.py`, prompt `api/config/prompts/reduction/package_reduction.md`, automation task `editorial_reduction_pass`, `POST /api/editorial/packages/{id}/reduction/run` — package membership only; never deletes source rows |
+| Narrative modality (LLM assemble + cycle escape) | `api/services/editorial_package_narrative_service.py`, prompt `api/config/prompts/narrative/package_narrative.md`, automation `editorial_narrative_pass`, `POST /api/editorial/packages/{id}/narrative/run` — changes→Reduction; both-zero/max rounds→Editor |
+| Research modality (spine + LLM assemble + cycle escape) | `api/services/editorial_package_research_service.py`, prompt `api/config/prompts/research/package_research.md`, automation `editorial_research_pass`, `POST /api/editorial/packages/{id}/research/run` — extract/promote/appraise scoped to package; changes→Reduction; Research↔Reduction both-zero/max rounds→Editor |
+| Post-processing modal allowlists | `api/config/post_processing_modals.yaml`, `api/shared/post_processing_modals.py` |
+| v11 cutover (do not run on Widow yet) | `docs/V11_CUTOVER_RUNBOOK.md`, `scripts/dev/bootstrap_local_db.sh` |
+| Spine conductor (drain helpers) | `api/services/spine_pipeline_conductor.py` |
+| Link indexer (post-spine pass 0) | `api/services/link_indexer_service.py` |
+| Assembly conductor (drain helpers) | `api/services/assembly_conductor_service.py` |
+| Editorial room loop (archived) | `api/_archived/editorial/editorial_room_loop_service.py` via `api/shared/legacy_editorial_rollback.py` |
+| Assembly phase order / retired phases | `api/shared/assembly_phase_order.py` |
+| Unified intake backlog (actionable vs legacy backfill) | `api/shared/unified_intake_backlog.py` |
+| Signal-first article lanes | `api/shared/article_signal_gate.py`, `docs/SIGNAL_FIRST_OPS.md` |
+| Title-link fulltext pull gate (CT.gov) | `api/shared/fulltext_pull_gate.py`, `api/services/clinicaltrials_study_fetch.py` |
+| Signal investigation + arc briefs (facts first) | `docs/SIGNAL_INVESTIGATION_PLAYBOOK.md`, `api/services/investigation_report_service.py`, `api/services/slow_report_service.py` |
+| Intake catchup latency (≤6h SLA; preprocess ≤1h) | `api/shared/intake_catchup_latency.py`, `api/scripts/intake_catchup_latency.py` (`CATCHUP_SLA_HOURS`, `PREPROCESS_SLA_HOURS`) |
+| Desk schedule (Widow vs PopOS GPU) | `api/services/pipeline_schedule_service.py` — heavy 01–06 / morning 06–10 / desk 10–01; desk defers GPU only |
+| RSS feed health / silencing | `api/services/rss_feed_health_service.py`, `api/scripts/rss_feed_yield_report.py` |
+| Batched event extraction (legacy rollback) | `api/_archived/intake/event_extraction_runner.py` via `LEGACY_INTAKE_EXTRACTION_ENABLED` |
+| Batched entity extraction (legacy rollback) | `api/_archived/intake/entity_extraction_runner.py` via `LEGACY_INTAKE_EXTRACTION_ENABLED` |
+| Archived legacy intake / retired phases | `api/_archived/intake/`, `api/_archived/automation/retired_phase_handlers.py` |
+| Legacy intake rollback loader | `api/shared/legacy_intake_rollback.py` |
+| Entity resolution routes | `api/domains/intelligence_hub/routes/entity_resolution.py` |
+| Entity service facade | `api/services/entity_service_facade.py` |
+| Shared kernel | `api/shared/kernel/`, `api/shared/services/article_query_service.py` |
+| API deprecation helper | `api/shared/api_deprecation.py` (HTTP 410 for retired global routes) |
+| Investigation package | `api/nri_core/` |
+| Config kernel | `api/config/runtime.py`, `database_targets.py`, `investigation_tables.py`, `schedulers.yaml` |
+| Investigation docs | `docs/INVESTIGATION.md`, `docs/UNIFICATION_CUTOVER.md`, `docs/NRI_LOOP_OPERATOR_GUIDE.md` |
+| Agent domain DB queries | `docs/AGENT_DOMAIN_DB_INSIGHTS.md` (Postgres MCP, per-silo SQL) |
+| Open WebUI DB explorer | Homelab `docs/NEWS_DB_EXPLORER_AGENT.md` — model `news-db-explorer` |
 | Human reviewer navigation | `docs/CODEBASE_MAP.md`, `docs/PIPELINE_AND_AUTOMATION.md`, `docs/CODE_REVIEW_AND_RUN_CAVEATS.md` |
 | Public HTTPS read-only demo | `docs/PUBLIC_DEPLOYMENT.md` (TLS, env, `NEWS_INTEL_DEMO_*`, `GET /api/public/demo_config`) |
+| USD Purchasing Power Tracker | `api/services/usd_purchasing_power_tracker_service.py`, `api/services/scheduler_service.py` |
+| USD Purchasing Power Tracker Data | `data/tracker_data/USD_purchasing_power.json` |
+| USD Purchasing Power Tracker Documentation | `40_Reference/Trackers/USD_Purchasing_Power_Tracker.md` |
+| Phase retry / auto-silence | `api/services/phase_retry_silence_service.py`, `orchestrator_governance.yaml` → `phase_retry_policy` |
+| Typed causal edges + reasoning | `api/services/causal_edges_service.py`, `api/services/narrative_reasoning_service.py`, `GET /api/causal_edges`, `GET /api/reasoning/...` |
+| Rolling 12m arcs | `api/services/rolling_arc_service.py`, `rolling_arc_refresh` schedule, `GET /api/rolling_arcs` |
+| Trading signals (HITL) | `api/services/trading_signals_service.py`, `GET /api/signals`, `api/scripts/backtest_event_ticker_impacts.py` |
+
+---
 
 ---
 
@@ -63,22 +170,26 @@ Context for AI assistants. Use project terminology consistently.
 
 ## Domain Structure
 
-- **Domains:** `politics`, `finance`, `science-tech` (built-in); optional domains via `api/config/domains/*.yaml` and [`docs/DOMAIN_EXTENSION_TEMPLATE.md`](docs/DOMAIN_EXTENSION_TEMPLATE.md).
-- **Active pipeline domains** (June 2026): `politics` and `finance` per `public.domains` / `PIPELINE_INCLUDE`. `science-tech` remains in the registry but is **inactive** until enabled in the domain registry and YAML — do not expect RSS or automation for it while excluded.
-- **After changing YAML:** restart API and worker processes — `DOMAIN_PATH_PATTERN` and `ACTIVE_DOMAIN_KEYS` are computed at import time.
-- **Per-domain:** `articles`, `storylines`, `topics`, `rss_feeds`, `events`.
+- **Pipeline-active domains** (June 2026, Widow): `legal`, `medicine`, `artificial-intelligence`, `politics`, `finance` — all `is_active=true` in `public.domains`. **`get_pipeline_active_domain_keys()`** returns the same five unless `PIPELINE_INCLUDE_DOMAIN_KEYS` / `PIPELINE_EXCLUDE_DOMAIN_KEYS` is set in env.
+- **Corpus-mode (v11, local first):** `neurodiversity` uses `processing_mode=corpus` (intake + evidence appraisal + index only). Do not activate on Widow until [docs/V11_CUTOVER_RUNBOOK.md](docs/V11_CUTOVER_RUNBOOK.md).
+- **Registry vs pipeline:** **Registry active** = `public.domains.is_active`. **Pipeline active** = env-filtered subset via `get_pipeline_active_domain_keys()`. On Widow prod both sets are identical (no `PIPELINE_*` filter).
+- **`science-tech` retired:** schema dropped (migration 212). See [`docs/LEGACY_DOMAIN_RETIREMENT.md`](docs/LEGACY_DOMAIN_RETIREMENT.md) — do not reference as an active silo.
+- **YAML provisioning:** new silos via `api/config/domains/*.yaml` and [`docs/DOMAIN_EXTENSION_TEMPLATE.md`](docs/DOMAIN_EXTENSION_TEMPLATE.md).
+- **After changing YAML or registry:** the registry is cached per process for **`DOMAIN_REGISTRY_CACHE_TTL_SECONDS`** (default 60), so edits appear within one TTL; `provision_domain.py` invalidates immediately via `activate_domain_row()`. Restart API and worker processes for **`domain_key` / `schema_name` renames**. `DOMAIN_PATH_PATTERN` is **shape-only** and `ACTIVE_DOMAIN_KEYS` is a **lazy back-compat alias** (no longer an import-time DB read) — prefer **`get_active_domain_keys()`**. See [docs/DOMAIN_REGISTRY_AND_PROVISIONING_2026_03.md](docs/DOMAIN_REGISTRY_AND_PROVISIONING_2026_03.md).
+- **Per-domain:** `articles`, `storylines`, `topic_clusters`, `article_topic_clusters`, `rss_feeds`, `events` (legacy `topics` read-only).
 - **Global:** watchlist, monitoring (`system_monitoring`), health.
 
 ---
 
 ## Key Flows
 
-1. **Article:** RSS → processing → storyline linking → event extraction.
-2. **Storyline:** create → add articles → queued refinement (`intelligence.content_refinement_queue`).
-3. **Events (v5):** extract → deduplicate → story continuation → alerts.
-4. **Ollama:** Model routing via `api/shared/services/ollama_model_caller.py`. **Widow** (`OLLAMA_HOST`, `:11434`) runs all normal CPU- and GPU-lane work (8B, Qwen extraction, topic clustering, etc.). **PopOS** (`OLLAMA_POP_OS_HOST`, RTX 5090) is **GPU overflow only** — `:70b` narrative finisher and other models too large for Widow's GTX 1080. Do not enable `OLLAMA_DUAL_HOST_ROUTING_ENABLED` unless deliberately splitting lanes across two Ollama hosts.
-5. **Public HTTPS:** PopOS Caddy → Widow nginx — see [docs/WIDOW_PUBLIC_STACK.md](docs/WIDOW_PUBLIC_STACK.md).
-5. **Widow (post-migration):** Full stack on Widow. AutomationManager runs on Widow API host. DB-adjacent cron per `docs/WIDOW_DB_ADJACENT_CRON.md`.
+1. **Article:** RSS → enrichment → storyline linking → intake extraction (unified or legacy per-phase).
+2. **Unified intake (`UNIFIED_INTAKE_EXTRACTION_ENABLED=true`, default):** one batched PopOS LLM pass fans out to entities, events, claims, sentiment/quality; inline context on enrich via `sync_context_from_article_after_content_change`. **Fast NER pre-pass** (`FAST_NER_ENABLED`, spaCy + optional GLiNER) seeds entities before LLM. **Context chunking** (`CONTEXT_CHUNKING_ENABLED`, default **off**): when enabled, splits long articles into `article` + `article_chunk` contexts; otherwise one full-body context per article. Legacy per-phase intake runs only when `LEGACY_INTAKE_EXTRACTION_ENABLED=true`. **Legacy-aware backlog** (`UNIFIED_INTAKE_LEGACY_AWARE_BACKLOG=true`, default): Monitor/automation count only articles still needing unified LLM; legacy-complete rows get pass-marker backfill without re-extraction (`api/shared/unified_intake_backlog.py`, `api/scripts/backfill_unified_intake_pass_from_legacy.py`). See [docs/PIPELINE_AND_AUTOMATION.md](docs/PIPELINE_AND_AUTOMATION.md).
+3. **Storyline:** create → add articles → queued refinement (`intelligence.content_refinement_queue`).
+4. **Events (v5):** extract → deduplicate → story continuation → alerts.
+5. **Ollama:** Model routing via `api/shared/services/ollama_model_caller.py`. **Widow does not run Ollama** — all LLM HTTP from the Widow API targets **PopOS** (`OLLAMA_HOST` / `OLLAMA_POP_OS_HOST` → `http://192.168.93.99:11434`, RTX 5090). Dual-host CPU/GPU split is off on Widow (`OLLAMA_DUAL_HOST_ROUTING_ENABLED=false`). PopOS phase workers still use local `127.0.0.1:11434` on that host.
+6. **Public HTTPS:** PopOS Caddy → Widow nginx — see [docs/WIDOW_PUBLIC_STACK.md](docs/WIDOW_PUBLIC_STACK.md).
+7. **Widow (post-migration):** Full stack on Widow. AutomationManager runs on Widow API host. DB-adjacent cron per `docs/WIDOW_DB_ADJACENT_CRON.md`.
 
 ---
 
@@ -95,10 +206,23 @@ Context for AI assistants. Use project terminology consistently.
 
 ---
 
+## SSOT enforcement (NI + Investigation unification)
+
+1. **`os.environ.get` only in `api/config/runtime.py`** (exception: test fixtures).
+2. **DB access** via `shared.database.connection` or `database_targets.*_dsn()` for spine.
+3. **No qualified `nri.` SQL literals** — import from `api/config/investigation_tables.py`.
+4. **No new top-level `nri_*` service files** — code goes in `api/nri_core/`.
+5. **Investigation routes** in `api/domains/intelligence_hub/routes/investigation.py`.
+6. **CI lint:** `python3 scripts/verify_single_source_of_truth.py`
+
+---
+
 ## Database
 
 - **Single module:** `shared.database.connection` — pooled psycopg2 + SQLAlchemy.
-- **Canonical:** Widow `localhost:5432`, database `news_intel`, user `newsapp`.
+- **Apps (API, workers):** Widow `localhost:6432` via PgBouncer (`DB_PORT=6432` in prod `.env`).
+- **Admin / migrations / maintenance scripts:** direct Postgres `localhost:5432` (or `DB_MAINTENANCE_PORT`).
+- **Database:** `news_intel`, user `newsapp`.
 - **See:** [docs/DATABASE.md](docs/DATABASE.md) for schema and connection rules.
 
 ### Database Connection Rules (MUST FOLLOW)
@@ -106,7 +230,9 @@ Context for AI assistants. Use project terminology consistently.
 1. **Always close connections.** Use `get_db_connection_context()` or `try/finally`.
 2. **Three pools exist** — Worker, UI, SQLAlchemy. Don't mix or use raw `psycopg2.connect()`.
 3. **Don't hold connections across slow I/O** — close before LLM calls, HTTP, sleeps.
-4. See `docs/CODING_STYLE_GUIDE.md` for pool env vars and lifecycle details.
+4. **Prod pool sizes** (Widow `/opt/news-intelligence/.env`): `DB_POOL_WORKER_MAX=12`, `DB_POOL_UI_MAX=12` — tune vs `max_connections` before raising.
+5. **Backlog cache:** `BACKLOG_CACHE_TTL_SECONDS` (default 90) + single-flight lock in `backlog_metrics._refresh_cache()`; unified stats cached separately (`UNIFIED_INTAKE_BACKLOG_STATS_TTL_SECONDS`, default 300).
+6. See `docs/CODING_STYLE_GUIDE.md` for pool env vars and lifecycle details.
 
 ---
 
@@ -114,8 +240,17 @@ Context for AI assistants. Use project terminology consistently.
 
 When you change API routes or core behaviour, update `AGENTS.md`, relevant `docs/*.md`, and [PROJECT_STATUS.md](PROJECT_STATUS.md) if host/path authority changes.
 
+For the USD Purchasing Power Tracker, ensure the following documentation stays updated:
+- `40_Reference/Trackers/USD_Purchasing_Power_Tracker.md` - Main tracker documentation
+- API documentation for the scheduler service and tracker service
+- Any relevant sections in `docs/PIPELINE_AND_AUTOMATION.md` if integrating with pipeline schedules
+
 ---
 
 ## Cross-project boundary
 
-News Intelligence is separate from **HomeLab AI Stack**. Homelab's `postgres-mcp` reads NI data read-only. Do not confuse Homelab local Postgres (`:15432`) with NI's `news_intel` (`:5432` on Widow). See [../PROJECT_BOUNDARIES.md](../PROJECT_BOUNDARIES.md).
+News Intelligence is separate from **HomeLab AI Stack**. Homelab's `postgres-mcp` reads NI data read-only. Do not confuse Homelab local Postgres (`:15432`) with NI's `news_intel` (apps `:6432` PgBouncer, Postgres `:5432` on Widow). See [../PROJECT_BOUNDARIES.md](../PROJECT_BOUNDARIES.md).
+
+---
+
+*Last verified against Widow ground truth: 2026-07-04 — see [docs/DOCUMENTATION_FACT_CHECK_2026-06.md](docs/DOCUMENTATION_FACT_CHECK_2026-06.md) and [docs/generated/WIDOW_GROUND_TRUTH_2026-06-22.md](docs/generated/WIDOW_GROUND_TRUTH_2026-06-22.md). Recent improvements include event-driven eligibility for dossier/profile/RAG phases, entity organizer domain_key=None fix, and enhanced JSON parsing robustness in entity extraction services.*

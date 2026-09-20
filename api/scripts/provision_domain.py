@@ -268,7 +268,7 @@ def main() -> None:
 
     if not schema_name.replace("_", "").isalnum() or not schema_name.islower():
         raise SystemExit("schema_name must be lowercase snake_case alphanumerics only")
-    if domain_key == "science-tech":
+    if domain_key in ("science-tech", "science_tech"):
         raise SystemExit(
             "Refusing: retired domain key science-tech — use artificial-intelligence, medicine, or other YAML silos."
         )

@@ -43,6 +43,7 @@ import { isValidDomain, type DomainKey } from '@/utils/domainHelper';
 import ProvenancePanel, {
   entityDossierProvenanceRows,
 } from '@/components/ProvenancePanel/ProvenancePanel';
+import { FtmBridgePanel } from '@/components/nri/FtmBridgePanel';
 
 function entityIcon(type: string) {
   switch (type) {
@@ -204,6 +205,9 @@ export default function EntityDossierPage() {
   const narrative = (dossier?.metadata?.narrative_summary as string) ?? null;
   const articles = synthesis?.articles ?? [];
   const positions = synthesis?.positions ?? [];
+  const bridgeUnverified = bridge && bridge.qa_status && bridge.qa_status !== 'ok';
+  const visiblePositions =
+    bridge?.qa_status === 'mismatch' ? [] : positions;
   const relationships = synthesis?.relationships ?? [];
   const profileSections = profile?.sections;
   const stats = synthesis?.statistics;
@@ -282,15 +286,6 @@ export default function EntityDossierPage() {
                     variant='outlined'
                   />
                   <Chip label={domainKey} size='small' variant='outlined' />
-                  {bridge && (
-                    <Chip
-                      label={`FtM ${bridge.ftm_id.slice(0, 12)}…`}
-                      size='small'
-                      color='secondary'
-                      variant='outlined'
-                      title={bridge.caption ?? bridge.ftm_id}
-                    />
-                  )}
                   {entity.aliases?.length > 0 && (
                     <Typography variant='caption' color='text.secondary'>
                       aka {entity.aliases.slice(0, 3).join(', ')}
@@ -345,6 +340,13 @@ export default function EntityDossierPage() {
               </Stack>
             </Box>
           </Paper>
+
+          {/* FtM identity bridge */}
+          {bridge && (
+            <Box sx={{ mb: 3 }}>
+              <FtmBridgePanel bridge={bridge} />
+            </Box>
+          )}
 
           {/* Narrative summary */}
           {narrative && (
@@ -411,7 +413,7 @@ export default function EntityDossierPage() {
 
           {/* Tabbed sections */}
           <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2 }}>
-            <Tab label={`Positions (${positions.length})`} />
+            <Tab label={`Positions (${visiblePositions.length})`} />
             <Tab label={`Articles (${articles.length})`} />
             <Tab label={`Relationships (${relationships.length})`} />
             {dossier?.patterns &&
@@ -429,14 +431,21 @@ export default function EntityDossierPage() {
           {/* Positions tab */}
           {tab === 0 && (
             <Box>
-              {positions.length === 0 ? (
+              {bridgeUnverified && (
+                <Alert severity='warning' sx={{ mb: 2 }}>
+                  FtM link is {bridge?.qa_status} — stances may attach to the wrong global
+                  identity. Verify the bridge before using positions for decisions.
+                </Alert>
+              )}
+              {visiblePositions.length === 0 ? (
                 <Typography color='text.secondary' sx={{ py: 2 }}>
-                  No positions tracked yet. Entity position tracking runs
-                  automatically.
+                  {bridge?.qa_status === 'mismatch'
+                    ? 'Positions hidden while FtM bridge is a mismatch.'
+                    : 'No positions tracked yet. Entity position tracking runs automatically.'}
                 </Typography>
               ) : (
                 <Stack spacing={1.5}>
-                  {positions.map((p, i) => (
+                  {visiblePositions.map((p, i) => (
                     <Paper key={i} variant='outlined' sx={{ p: 2 }}>
                       <Box
                         sx={{ display: 'flex', alignItems: 'center', gap: 1 }}

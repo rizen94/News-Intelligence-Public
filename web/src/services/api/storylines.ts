@@ -13,7 +13,40 @@ export interface GetStorylinesParams {
   status?: string;
 }
 
+export interface DomainStoryKindInfo {
+  domain: string;
+  story_kind: string;
+  is_chemistry_kind: boolean;
+  display_label: string;
+  link_score_profile?: {
+    relevance_weight?: number;
+    semantic_weight?: number;
+    keyword_weight?: number;
+    quality_weight?: number;
+    auto_approve_combined?: number;
+    aggressive_membership?: boolean;
+    allow_storyline_merge?: boolean;
+  };
+}
+
 export const storylinesApi = {
+  async getDomainStoryKind(
+    domain?: string
+  ): Promise<{ success: boolean; data?: DomainStoryKindInfo; message?: string }> {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get<{
+        success: boolean;
+        data?: DomainStoryKindInfo;
+        message?: string;
+      }>(`/api/${domainKey}/storylines/story_kind`, { timeout: 30000 });
+      return response.data;
+    } catch (e) {
+      Logger.warn('getDomainStoryKind failed', e);
+      return { success: false, message: String(e) };
+    }
+  },
+
   async getStorylines(
     params: GetStorylinesParams = {},
     domain?: string
@@ -220,6 +253,8 @@ export const storylinesApi = {
       save?: boolean;
       minSimilarity?: number;
       minArticles?: number;
+      /** Full historical backlog — use async kickoff (sync exceeds proxy/client timeouts). */
+      async?: boolean;
     } = {},
     domain?: string
   ) {
@@ -232,15 +267,35 @@ export const storylinesApi = {
         queryParams.min_similarity = params.minSimilarity;
       if (params.minArticles != null)
         queryParams.min_cluster_size = params.minArticles;
+
+      if (params.async) {
+        const response = await getApi().post(
+          `/api/${domainKey}/storylines/discover_async`,
+          {},
+          { params: queryParams, timeout: 30000 }
+        );
+        return { ...response.data, async: true };
+      }
+
+      // Bounded windows can still take 1–2 min (embeddings + cluster).
+      // Keep under nginx proxy_read_timeout (120s) for general /api.
       const response = await getApi().post(
         `/api/${domainKey}/storylines/discover`,
         {},
-        { params: queryParams }
+        { params: queryParams, timeout: 110000 }
       );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to discover storylines', error as Error);
-      return { success: false, error: (error as any).message };
+      const msg = (error as any)?.message || String(error);
+      const timedOut =
+        /timeout/i.test(msg) || (error as any)?.code === 'ECONNABORTED';
+      return {
+        success: false,
+        error: timedOut
+          ? 'Discovery timed out. Use a shorter time window, or enable Full backlog (runs in the background).'
+          : msg,
+      };
     }
   },
 
@@ -683,6 +738,67 @@ export const storylinesApi = {
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to bulk reject', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  async getMembershipActions(
+    options: {
+      domain?: string;
+      status?: string;
+      limit?: number;
+      offset?: number;
+    } = {}
+  ) {
+    try {
+      const domainKey = options.domain || getCurrentDomain();
+      const params = new URLSearchParams();
+      if (options.status) params.set('status', options.status);
+      if (options.limit != null) params.set('limit', String(options.limit));
+      if (options.offset != null) params.set('offset', String(options.offset));
+      const qs = params.toString();
+      const response = await getApi().get(
+        `/api/${domainKey}/storylines/membership-actions${qs ? `?${qs}` : ''}`
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to get membership actions', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  async resolveMembershipAction(
+    domain: string,
+    actionId: number,
+    approve: boolean
+  ) {
+    try {
+      const response = await getApi().post(
+        `/api/${domain}/storylines/membership-actions/${actionId}/resolve`,
+        { approve }
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to resolve membership action', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  async runMembershipReview(
+    domain: string,
+    options: { limit?: number; dry_run?: boolean } = {}
+  ) {
+    try {
+      const params = new URLSearchParams();
+      if (options.limit != null) params.set('limit', String(options.limit));
+      if (options.dry_run != null) params.set('dry_run', String(options.dry_run));
+      const qs = params.toString();
+      const response = await getApi().post(
+        `/api/${domain}/storylines/membership-review/run${qs ? `?${qs}` : ''}`
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to run membership review', error as Error);
       return { success: false, error: (error as any).message };
     }
   },

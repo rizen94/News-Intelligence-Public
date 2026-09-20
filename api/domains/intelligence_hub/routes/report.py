@@ -27,8 +27,8 @@ def _domain_keys_matching_path(path_domain: str) -> list[str]:
     try:
         schema = domain_key_to_schema(path_domain)
     except KeyError:
-        if path_domain == "science_tech":
-            keys.extend(["artificial-intelligence", "science-tech"])
+        if path_domain in ("science_tech", "science-tech"):
+            return ["artificial-intelligence"]
         return list(dict.fromkeys(keys))
     for dk in schema_to_domain_key(schema):
         keys.append(dk)

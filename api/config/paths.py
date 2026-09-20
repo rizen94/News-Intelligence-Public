@@ -37,6 +37,12 @@ CHROMA_DIR = DATA_DIR / "chroma"
 # Orchestrator coordination (state DB)
 ORCHESTRATOR_STATE_DB = DATA_DIR / "orchestrator_state.db"
 
+# Investigation / vault (unified product paths)
+VAULT_DIR = Path(
+    os.environ.get("NRI_VAULT_PATH", str(DATA_DIR_ROOT / "vault"))
+)
+SPINE_DATA_DIR = DATA_DIR / "spine"
+
 # Finance domain (siloed)
 FINANCE_DATA_DIR = DATA_DIR / "finance"
 FINANCE_CACHE_DB = FINANCE_DATA_DIR / "api_cache.db"

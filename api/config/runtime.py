@@ -1,0 +1,318 @@
+"""
+Single source for environment variables (investigation / NRI unification).
+
+Application code should import from here instead of os.environ.get.
+Scripts may load dotenv before importing config modules.
+"""
+
+from __future__ import annotations
+
+import os
+from functools import lru_cache
+from typing import Any
+
+# Structural protection: development mode must never target Widow production.
+# Import-time check runs whenever ENVIRONMENT=development|dev|local.
+try:
+    from shared.dev_guard import DevGuardError, enforce_dev_guard_from_environ
+
+    enforce_dev_guard_from_environ()
+except ImportError:  # pragma: no cover — early bootstrap / circular during install
+    pass
+except Exception as _dev_guard_exc:  # noqa: BLE001 — re-raise guard failures only
+    try:
+        from shared.dev_guard import DevGuardError as _DG
+    except ImportError:
+        raise _dev_guard_exc from None
+    if isinstance(_dev_guard_exc, _DG):
+        raise
+    raise
+
+
+def _env(name: str, default: str = "") -> str:
+    return os.environ.get(name, default).strip()
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = _env(name)
+    if not raw:
+        return default
+    return raw.lower() in ("1", "true", "yes", "on")
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(_env(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(_env(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+@lru_cache(maxsize=1)
+def get_runtime_config() -> dict[str, Any]:
+    """Merged runtime settings for NI + investigation (nri_core)."""
+    return {
+        # news_intel pool (see database_targets for DSN builders)
+        "db_host": _env("DB_HOST", "localhost"),
+        "db_port": _env_int("DB_PORT", 5432),
+        "db_name": _env("DB_NAME", "news_intel"),
+        "db_user": _env("DB_USER", "newsapp"),
+        "db_password": _env("DB_PASSWORD", ""),
+        "db_maintenance_port": _env_int("DB_MAINTENANCE_PORT", 5432),
+        # identity_spine (separate database)
+        "identity_spine_host": _env("IDENTITY_SPINE_HOST", _env("DB_HOST", "localhost")),
+        "identity_spine_port": _env_int("IDENTITY_SPINE_PORT", 5432),
+        "identity_spine_db": _env("IDENTITY_SPINE_DB", "identity_spine"),
+        "identity_spine_user": _env("IDENTITY_SPINE_USER", _env("DB_USER", "newsapp")),
+        "identity_spine_password": _env(
+            "IDENTITY_SPINE_PASSWORD", _env("DB_PASSWORD", "")
+        ),
+        # Investigation schema (pre-migration: nri; post-migration: intelligence + prefix)
+        "investigation_schema": _env("INVESTIGATION_SCHEMA", _env("NRI_SCHEMA", "nri")),
+        "investigation_table_prefix": _env("INVESTIGATION_TABLE_PREFIX", ""),
+        "use_investigation_prefixed_tables": _env_bool(
+            "USE_INVESTIGATION_PREFIXED_TABLES", False
+        ),
+        # Legacy proxy (deprecated after unification)
+        "nri_api_url": _env("NRI_API_URL", "http://127.0.0.1:8010").rstrip("/"),
+        # Feature flags
+        "nri_loop_enabled": _env_bool("NRI_LOOP_ENABLED", False),
+        "nri_vault_write": _env_bool("NRI_VAULT_WRITE", False),
+        "nri_vault_path": _env("NRI_VAULT_PATH", ""),
+        "nri_lazy_mint_enabled": _env_bool("NRI_LAZY_MINT_ENABLED", True),
+        "nri_skip_subject_mentions": _env_bool("NRI_SKIP_SUBJECT_MENTIONS", True),
+        "nri_write_resolved_mentions": _env_bool("NRI_WRITE_RESOLVED_MENTIONS", True),
+        "nri_allow_prod_news_intel": _env_bool("NRI_ALLOW_PROD_NEWS_INTEL", True),
+        "nri_opensanctions_lazy_enabled": _env_bool("NRI_OPENSANCTIONS_LAZY_ENABLED", True),
+        # FTM match thresholds (mention resolver / spine matcher)
+        "ftm_auto_link_threshold": _env_float("FTM_AUTO_LINK_THRESHOLD", 0.92),
+        "ftm_park_threshold": _env_float("FTM_PARK_THRESHOLD", 0.85),
+        "nas_datasets_root": _env(
+            "NAS_DATASETS_ROOT", "/mnt/nas/Data Lake Storage/nri/datasets"
+        ),
+        # Mention resolver / automation
+        "mention_resolve_batch_limit": _env_int("NRI_MENTION_RESOLVE_BATCH_LIMIT", 500),
+        "mention_resolve_budget_seconds": _env_float(
+            "NRI_MENTION_RESOLVE_BUDGET_SECONDS", 1800.0
+        ),
+        "mention_resolution_run_budget_seconds": _env_float(
+            "MENTION_RESOLUTION_RUN_BUDGET_SECONDS",
+            _env_float("NRI_MENTION_RESOLVE_BUDGET_SECONDS", 1800.0),
+        ),
+        # Cap when lazy-mint is on (Wikidata); raise for catch-up vs historical 100.
+        "mention_resolve_lazy_mint_batch_cap": _env_int(
+            "NRI_MENTION_RESOLVE_LAZY_MINT_BATCH_CAP", 250
+        ),
+        # Ollama
+        "ollama_host": _env("OLLAMA_HOST", "http://localhost:11434"),
+        "ollama_url": _env("OLLAMA_URL", _env("OLLAMA_HOST", "http://localhost:11434")),
+        "ollama_pop_os_host": _env("OLLAMA_POP_OS_HOST", "http://192.168.93.99:11434"),
+        "ollama_timeout": _env_int("OLLAMA_TIMEOUT", 300),
+        "ollama_dual_host_routing_enabled": _env_bool(
+            "OLLAMA_DUAL_HOST_ROUTING_ENABLED", True
+        ),
+        # Quiver Quantitative API
+        "quiver_api_key": _env("QUIVER_API_KEY", ""),
+        "quiver_api_base_url": _env("QUIVER_API_BASE_URL", "https://api.quiverquant.com/beta"),
+        "quiver_collector_enabled": _env_bool("QUIVER_COLLECTOR_ENABLED", True),
+        "quiver_collection_interval_hours": _env_int("QUIVER_COLLECTION_INTERVAL_HOURS", 6),
+    }
+
+
+def investigation_schema() -> str:
+    cfg = get_runtime_config()
+    if cfg["use_investigation_prefixed_tables"]:
+        return "intelligence"
+    return str(cfg["investigation_schema"])
+
+
+def investigation_table_prefix() -> str:
+    cfg = get_runtime_config()
+    if cfg["use_investigation_prefixed_tables"]:
+        return str(cfg["investigation_table_prefix"] or "investigation_")
+    return ""
+
+
+def mention_resolve_batch_limit() -> int:
+    return max(50, min(5000, get_runtime_config()["mention_resolve_batch_limit"]))
+
+
+def mention_resolve_budget_seconds() -> float:
+    return max(0.0, float(get_runtime_config()["mention_resolve_budget_seconds"]))
+
+
+def mention_resolve_lazy_mint_batch_cap() -> int:
+    return max(50, min(2000, int(get_runtime_config()["mention_resolve_lazy_mint_batch_cap"])))
+
+
+def ollama_host() -> str:
+    return str(get_runtime_config()["ollama_host"])
+
+
+def ollama_url() -> str:
+    return str(get_runtime_config()["ollama_url"])
+
+
+def ollama_pop_os_host() -> str:
+    return str(get_runtime_config()["ollama_pop_os_host"])
+
+
+def ollama_timeout_seconds() -> int:
+    return int(get_runtime_config()["ollama_timeout"])
+
+
+def ollama_dual_host_routing_enabled() -> bool:
+    return bool(get_runtime_config()["ollama_dual_host_routing_enabled"])
+
+
+def validate_runtime_config() -> list[str]:
+    """Return human-readable config problems (empty list = OK)."""
+    cfg = get_runtime_config()
+    issues: list[str] = []
+    if not cfg["db_name"]:
+        issues.append("DB_NAME is empty")
+    if not cfg["db_user"]:
+        issues.append("DB_USER is empty")
+    if not cfg["db_password"]:
+        issues.append("DB_PASSWORD is empty")
+    if int(cfg["db_port"]) <= 0:
+        issues.append("DB_PORT must be positive")
+    if not str(cfg["ollama_host"]).startswith("http"):
+        issues.append("OLLAMA_HOST must be an http(s) URL")
+    return issues
+
+
+# Public env accessors — use these instead of os.environ in application code.
+def env_str(name: str, default: str = "") -> str:
+    return _env(name, default)
+
+
+def env_bool(name: str, default: bool = False) -> bool:
+    return _env_bool(name, default)
+
+
+def env_int(name: str, default: int) -> int:
+    return _env_int(name, default)
+
+
+def env_float(name: str, default: float) -> float:
+    return _env_float(name, default)
+
+
+def env_set(name: str, value: str) -> None:
+    os.environ[name] = value
+
+
+def env_pop(name: str, default: str | None = None) -> str | None:
+    return os.environ.pop(name, default)
+
+
+def env_setdefault(name: str, value: str) -> str:
+    return os.environ.setdefault(name, value)
+
+
+def unified_intake_extraction_batch_size() -> int:
+    """Steady-state LLM batch for unified intake (default 6, cap 8)."""
+    try:
+        n = int(env_str("UNIFIED_INTAKE_EXTRACTION_BATCH_SIZE", "6"))
+    except (TypeError, ValueError):
+        n = 6
+    return max(1, min(8, n))
+
+
+def unified_intake_extraction_parallel() -> int:
+    """
+    Concurrent LLM waves for unified intake.
+
+    Caps to measured PopOS GPU concurrency (``OLLAMA_GPU_CONCURRENCY`` /
+    ``AUTOMATION_GPU_PARALLEL``) so waves do not queue-bomb Ollama.
+    """
+    try:
+        n = int(env_str("UNIFIED_INTAKE_EXTRACTION_PARALLEL", "8"))
+    except (TypeError, ValueError):
+        n = 8
+    caps: list[int] = []
+    for key in ("OLLAMA_GPU_CONCURRENCY", "AUTOMATION_GPU_PARALLEL"):
+        raw = env_str(key, "").strip()
+        if not raw:
+            continue
+        try:
+            caps.append(max(1, int(raw)))
+        except (TypeError, ValueError):
+            continue
+    if caps:
+        n = min(n, min(caps))
+    return max(1, min(16, n))
+
+
+# --- Pulse digest ---
+
+
+def pulse_default_window_hours() -> int:
+    return max(1, min(168, env_int("PULSE_WINDOW_HOURS", 48)))
+
+
+def pulse_default_limit() -> int:
+    return max(5, min(100, env_int("PULSE_LIMIT", 20)))
+
+
+def pulse_bonus_lifecycle_active() -> float:
+    return max(0.0, env_float("PULSE_BONUS_LIFECYCLE_ACTIVE", 3.0))
+
+
+def pulse_bonus_reactivation() -> float:
+    return max(0.0, env_float("PULSE_BONUS_REACTIVATION", 5.0))
+
+
+def pulse_bonus_new_episode() -> float:
+    return max(0.0, env_float("PULSE_BONUS_NEW_EPISODE", 2.0))
+
+
+def pulse_bonus_cross_domain() -> float:
+    return max(0.0, env_float("PULSE_BONUS_CROSS_DOMAIN", 1.5))
+
+
+def follow_living_cap() -> int:
+    return max(1, min(50, env_int("FOLLOW_LIVING_CAP", 15)))
+
+
+def living_republish_min_hours() -> int:
+    return max(1, env_int("LIVING_REPUBLISH_MIN_HOURS", 20))
+
+
+def living_republish_min_new_members() -> int:
+    return max(1, env_int("LIVING_REPUBLISH_MIN_NEW_MEMBERS", 3))
+
+
+def living_cooling_days() -> int:
+    return max(1, env_int("LIVING_COOLING_DAYS", 14))
+
+
+def pulse_stubs_enabled() -> bool:
+    return env_bool("PULSE_STUBS_ENABLED", False)
+
+
+def pulse_stubs_top_n() -> int:
+    return max(1, min(20, env_int("PULSE_STUBS_TOP_N", 10)))
+
+
+def external_research_ingest_enabled() -> bool:
+    return env_bool("EXTERNAL_RESEARCH_INGEST_ENABLED", True)
+
+
+def pulse_digest_enabled() -> bool:
+    return env_bool("PULSE_DIGEST_ENABLED", True)
+
+
+def follow_registry_enabled() -> bool:
+    return env_bool("FOLLOW_REGISTRY_ENABLED", True)
+
+
+def living_stories_enabled() -> bool:
+    return env_bool("LIVING_STORIES_ENABLED", True)

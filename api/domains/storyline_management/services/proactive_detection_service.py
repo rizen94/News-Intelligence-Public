@@ -3,6 +3,7 @@
 Proactive Detection Service
 Detects emerging storylines and predicts story developments
 """
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 import asyncio
 import json
@@ -43,11 +44,11 @@ class ProactiveDetectionService(DomainAwareService):
         self.min_confidence = pro.promote_min_confidence
         self.promote_min_articles = pro.promote_min_articles
         self.promote_min_confidence = pro.promote_min_confidence
-        if os.getenv("PROACTIVE_PROMOTE_MIN_ARTICLES"):
-            self.promote_min_articles = int(os.getenv("PROACTIVE_PROMOTE_MIN_ARTICLES", "4"))
-        if os.getenv("PROACTIVE_PROMOTE_MIN_CONFIDENCE"):
+        if env_str("PROACTIVE_PROMOTE_MIN_ARTICLES"):
+            self.promote_min_articles = int(env_str("PROACTIVE_PROMOTE_MIN_ARTICLES", "4"))
+        if env_str("PROACTIVE_PROMOTE_MIN_CONFIDENCE"):
             self.promote_min_confidence = float(
-                os.getenv("PROACTIVE_PROMOTE_MIN_CONFIDENCE", "0.55")
+                env_str("PROACTIVE_PROMOTE_MIN_CONFIDENCE", "0.55")
             )
 
     async def detect_emerging_storylines(
@@ -359,7 +360,7 @@ class ProactiveDetectionService(DomainAwareService):
         # Headline + description via AIStorylineDiscovery (same LLM path as full discovery)
         title = "Emerging Story"
         description = f"Emerging storyline detected from {len(articles)} articles"
-        use_llm = os.getenv("PROACTIVE_STORYLINE_TITLE_LLM", "1") != "0"
+        use_llm = env_str("PROACTIVE_STORYLINE_TITLE_LLM", "1") != "0"
         try:
             from services.ai_storyline_discovery import get_discovery_service
 
@@ -499,6 +500,75 @@ class ProactiveDetectionService(DomainAwareService):
             return False
 
         title = (emerging.get("title") or "Emerging story")[:300]
+        key_kw = emerging.get("key_keywords") or []
+        key_ent = emerging.get("key_entities") or []
+
+        try:
+            from services.narrative_first_linking_service import (
+                attach_articles_to_storyline,
+                find_narrative_storyline_match,
+                narrative_linking_enabled,
+            )
+
+            if narrative_linking_enabled():
+                narrative_match = find_narrative_storyline_match(
+                    self.domain,
+                    article_ids=unlinked,
+                    entity_names=key_ent,
+                    title_hint=title,
+                )
+                if narrative_match is not None:
+                    added = attach_articles_to_storyline(
+                        self.domain,
+                        narrative_match.storyline_id,
+                        unlinked,
+                        relevance_score=min(0.95, 0.55 + 0.05 * len(unlinked)),
+                    )
+                    if added:
+                        logger.info(
+                            "Proactive narrative-first: linked %s articles to storyline %s (%s)",
+                            added,
+                            narrative_match.storyline_id,
+                            narrative_match.match_source,
+                        )
+                        cur.execute(
+                            """
+                            UPDATE public.emerging_storylines
+                            SET status = 'confirmed',
+                                merged_into_storyline_id = %s,
+                                last_updated_at = NOW(),
+                                metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb
+                            WHERE id = %s
+                            """,
+                            (
+                                narrative_match.storyline_id,
+                                json.dumps(
+                                    {
+                                        "domain_schema": self.schema,
+                                        "storyline_id": narrative_match.storyline_id,
+                                        "narrative_first": True,
+                                        "match_source": narrative_match.match_source,
+                                    }
+                                ),
+                                emerging_row_id,
+                            ),
+                        )
+                        try:
+                            from services.storyline_automation_service import (
+                                StorylineAutomationService,
+                            )
+
+                            svc = StorylineAutomationService(domain=self.domain)
+                            for aid in unlinked:
+                                svc._merge_article_entities_to_storyline(
+                                    cur, narrative_match.storyline_id, aid
+                                )
+                        except Exception as merge_err:
+                            logger.debug("narrative-first entity merge: %s", merge_err)
+                        return True
+        except Exception as e:
+            logger.debug("Proactive narrative-first: %s", e)
+
         cur.execute(
             f"""
             SELECT 1 FROM {self.schema}.storylines
@@ -513,8 +583,6 @@ class ProactiveDetectionService(DomainAwareService):
             return False
 
         desc = emerging.get("description") or ""
-        key_kw = emerging.get("key_keywords") or []
-        key_ent = emerging.get("key_entities") or []
         settings_json = json.dumps({"min_quality_tier": 2, "source": "proactive_detection_promote"})
 
         automation_mode = "auto_approve"
@@ -587,7 +655,7 @@ class ProactiveDetectionService(DomainAwareService):
             except Exception as sa_err:
                 logger.debug("storyline_articles insert %s/%s: %s", storyline_id, aid, sa_err)
 
-        if os.getenv("PROACTIVE_HEADLINE_70B_REFINE", "0") == "1":
+        if env_str("PROACTIVE_HEADLINE_70B_REFINE", "0") == "1":
             try:
                 from services.storyline_narrative_finisher_service import (
                     refine_storyline_headline_with_70b,

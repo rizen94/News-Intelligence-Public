@@ -49,6 +49,11 @@ import {
   Link,
   ToggleButton,
   ToggleButtonGroup,
+  Tabs,
+  Tab,
+  Menu,
+  MenuItem,
+  ListSubheader,
 } from '@mui/material';
 import {
   Timeline,
@@ -59,24 +64,34 @@ import {
   TimelineDot,
   TimelineOppositeContent,
 } from '@mui/lab';
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 
 import apiService from '../../services/apiService';
+import { contextCentricApi } from '../../services/api/contextCentric';
 import StorylineManagementDialog from '../../components/StorylineManagementDialog';
-import StorylineAutomationDialog from '../../components/StorylineAutomationDialog';
 import ArticleSuggestionsDialog from '../../components/ArticleSuggestionsDialog';
 import EntityCard from '../../components/EntityCard/EntityCard';
 import ProvenancePanel, {
   storylineProvenanceRows,
 } from '../../components/ProvenancePanel/ProvenancePanel';
 import StorylineAuditCard from '../../components/StorylineAuditCard/StorylineAuditCard';
+import ReasoningPanel from '@/components/ReasoningPanel';
+import { PageShell } from '@/components/ui';
 import { Link as RouterLink } from 'react-router-dom';
 import { useDomainNavigation } from '../../hooks/useDomainNavigation';
 import { useDomainRoute } from '../../hooks/useDomainRoute';
 import { getDefaultDomainKey } from '../../utils/domainHelper';
+import { statusLabel } from '../../utils/statusLabel';
 import { usePublicDemoMode } from '../../contexts/PublicDemoContext';
 import type { StorylineDetail as StorylineDetailType } from '../../types';
+import { displayStorylineTitle } from '../../utils/sanitizeDisplayText';
+import type { ModalKey } from '@/services/api/editorial';
+import {
+  defaultModalForDomain,
+  ensurePackageForStoryline,
+  modalPackagePath,
+} from '@/components/Editorial/storylinePackageBridge';
 
 function pickStorylineAnalysisDisplay(storyline: StorylineDetailType | null) {
   if (!storyline) return null;
@@ -94,13 +109,14 @@ const StorylineDetail = () => {
   const { domain } = useDomainRoute();
   const { readonly: demoReadonly } = usePublicDemoMode();
   const effectiveDomain = domain || getDefaultDomainKey();
+  const [storyKindLabel, setStoryKindLabel] = useState<string | null>(null);
   const [storyline, setStoryline] = useState(null);
+  const [membershipSource, setMembershipSource] = useState<string | null>(null);
   const [articles, setArticles] = useState([]);
   const [timelineData, setTimelineData] = useState(null); // { events, gaps, milestones, time_span, event_count, source_count }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showEditDialog, setShowEditDialog] = useState(false);
-  const [showAutomationDialog, setShowAutomationDialog] = useState(false);
   const [showSuggestionsDialog, setShowSuggestionsDialog] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [headlineRefining, setHeadlineRefining] = useState(false);
@@ -129,10 +145,17 @@ const StorylineDetail = () => {
       link_reason: string;
     }>
   >([]);
+  const [eventReconciliation, setEventReconciliation] = useState<{
+    tracked_events?: Array<{ tracked_event_id: number; tracked_event_name?: string }>;
+    chronological_events?: Array<{ chronological_event_id: number; event_title?: string }>;
+  } | null>(null);
   const [showFullSynthesis, setShowFullSynthesis] = useState(false);
   const [detailDepth, setDetailDepth] = useState<
     'narrative' | 'structured' | 'raw'
   >('narrative');
+  const [detailTab, setDetailTab] = useState(0);
+  const [opsMenuAnchor, setOpsMenuAnchor] = useState<null | HTMLElement>(null);
+  const [editorialBridgeLoading, setEditorialBridgeLoading] = useState(false);
   const [processingStatus, setProcessingStatus] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStartTime, setProcessingStartTime] = useState(null);
@@ -165,6 +188,31 @@ const StorylineDetail = () => {
 
   const distinctSourceCount = sourceCoverageRows.length;
   const singleSourceOnly = distinctSourceCount === 1 && sourceCoverageRows[0]?.article_count > 0;
+
+  const showStructuredLayer =
+    detailDepth === 'structured' || detailDepth === 'raw';
+  const showEvidenceLayer = detailDepth === 'raw';
+  /** Tabs only for Structured / Evidence depths */
+  const useDrillTabs = showStructuredLayer;
+  const tabOverview = !useDrillTabs || detailTab === 0;
+  const tabArticles = useDrillTabs && detailTab === 1;
+  const tabEvents = useDrillTabs && detailTab === 2;
+  const tabClaims = useDrillTabs && detailTab === 3;
+  const tabProvenance = useDrillTabs && detailTab === 4;
+
+  const synopsisText = useMemo(() => {
+    const sl = storyline as StorylineDetailType | null;
+    if (!sl) return '';
+    const ed = sl.editorial_document as { lede?: string } | undefined;
+    if (ed?.lede) return String(ed.lede);
+    if (analysisDisplay?.text) return String(analysisDisplay.text).slice(0, 400);
+    return (sl.description || '').trim();
+  }, [storyline, analysisDisplay]);
+
+  const heroTitle = useMemo(
+    () => displayStorylineTitle(storyline as StorylineDetailType | null, id),
+    [storyline, id]
+  );
 
   const startProcessingPoll = () => {
     if (!id) return null;
@@ -223,6 +271,24 @@ const StorylineDetail = () => {
   // Track when processing starts so we can show elapsed time
   const prevProcessingRef = useRef(false);
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { storylinesApi } = await import('../../services/api/storylines');
+        const res = await storylinesApi.getDomainStoryKind(effectiveDomain);
+        if (!cancelled && res.success && res.data) {
+          setStoryKindLabel(res.data.display_label || null);
+        }
+      } catch {
+        if (!cancelled) setStoryKindLabel(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveDomain]);
+
+  useEffect(() => {
     if (isProcessing && !prevProcessingRef.current) {
       setProcessingStartTime(Date.now());
     }
@@ -263,6 +329,13 @@ const StorylineDetail = () => {
     if (id) {
       loadStoryline();
       const pollInterval = startProcessingPoll();
+      const sid = parseInt(id, 10);
+      if (!Number.isNaN(sid) && effectiveDomain) {
+        contextCentricApi
+          .getEventReconciliationForStoryline(effectiveDomain, sid)
+          .then(setEventReconciliation)
+          .catch(() => setEventReconciliation(null));
+      }
       return () => {
         mountedRef.current = false;
         if (pollInterval) clearInterval(pollInterval);
@@ -400,6 +473,14 @@ const StorylineDetail = () => {
       if (!mountedRef.current) return;
       setError(null);
       setStoryline(storylineData);
+      const ms =
+        (storylineData as { membership_source?: string })?.membership_source ||
+        (sr as { membership_source?: string }).membership_source ||
+        (
+          (sr.data || {}) as { membership_source?: string }
+        ).membership_source ||
+        null;
+      setMembershipSource(ms ? String(ms) : null);
       setArticles(articlesData);
 
       // Set timeline data from parallel fetch (events, gaps, milestones, time_span)
@@ -570,6 +651,39 @@ const StorylineDetail = () => {
       setWatchLoading(false);
     }
   };
+
+  /** Ensure editorial_package for this storyline, then open the modal workspace. */
+  const openEditorialModal = useCallback(
+    async (modal: ModalKey, opts?: { refreshMembers?: boolean }) => {
+      if (!id || !effectiveDomain) return;
+      setEditorialBridgeLoading(true);
+      setError(null);
+      setOpsMenuAnchor(null);
+      try {
+        const pkg = await ensurePackageForStoryline({
+          domainKey: effectiveDomain,
+          storylineId: id,
+          targetModal: modal,
+          refreshMembers: opts?.refreshMembers,
+        });
+        const path = modalPackagePath(effectiveDomain, modal, pkg.id);
+        setProcessingStatus(
+          pkg.created
+            ? `Created editorial package #${pkg.id} — opening ${modal}…`
+            : `Opening ${modal} with package #${pkg.id}…`
+        );
+        navigate(path);
+      } catch (err) {
+        setError(
+          (err as Error)?.message ||
+            'Failed to open editorial package for this storyline'
+        );
+      } finally {
+        setEditorialBridgeLoading(false);
+      }
+    },
+    [id, effectiveDomain, navigate]
+  );
 
   const handleRefineHeadline = async () => {
     try {
@@ -916,258 +1030,398 @@ const StorylineDetail = () => {
   }
 
   return (
-    <Box>
+    <>
+    <PageShell
+      title={heroTitle}
+      subtitle={`${storyline?.article_count ?? articles?.length ?? 0} articles · ${storyKindLabel || 'episode'}${
+        membershipSource === 'eel'
+          ? ''
+          : membershipSource === 'storyline_articles'
+            ? ' · membership via legacy bag'
+            : ''
+      }`}
+      breadcrumbs={[
+        { label: 'Home', to: `/${effectiveDomain}` },
+        { label: effectiveDomain, to: `/${effectiveDomain}` },
+        { label: 'Episodes', to: `/${effectiveDomain}/storylines` },
+        {
+          label:
+            heroTitle.length > 42 ? `${heroTitle.slice(0, 39).trimEnd()}…` : heroTitle,
+        },
+      ]}
+      actions={
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <ToggleButtonGroup
+            size='small'
+            value={detailDepth}
+            exclusive
+            onChange={(_, value) => {
+              if (!value) return;
+              setDetailDepth(value);
+              setDetailTab(0);
+            }}
+            aria-label='Reading depth'
+          >
+            <ToggleButton value='narrative'>Narrative</ToggleButton>
+            <ToggleButton value='structured'>Structured</ToggleButton>
+            <ToggleButton value='raw'>Evidence</ToggleButton>
+          </ToggleButtonGroup>
+        </Box>
+      }
+    >
       {demoReadonly && (
         <Alert severity='info' sx={{ mb: 2 }}>
           Public demo: view only. Editing, queues, and automation are disabled
           on this deployment.
         </Alert>
       )}
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3, flexWrap: 'wrap' }}>
-        <Button
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigateToDomain('/storylines')}
-        >
-          Back to Storylines
-        </Button>
-        {!demoReadonly && (
-          <>
-            <Button
-              startIcon={<Edit />}
-              variant='outlined'
-              onClick={() => setShowEditDialog(true)}
-            >
-              Edit Storyline
-            </Button>
-            <Button
-              variant='outlined'
-              color='secondary'
-              onClick={handleAnalyzeStoryline}
-              disabled={analyzing || articles.length === 0}
-            >
-              {analyzing ? 'Queuing…' : 'Queue deep analysis'}
-            </Button>
-            <Button
-              variant='outlined'
-              color='secondary'
-              onClick={handleRefineHeadline}
-              disabled={headlineRefining || articles.length === 0}
-              title='Editorial headline pass using linked articles (~70B)'
-            >
-              {headlineRefining ? 'Queuing…' : 'Refine headline'}
-            </Button>
-          </>
-        )}
-        {(storyline.refinement_jobs_pending || []).length > 0 && !demoReadonly && (
-          <Chip
-            size='small'
-            color='warning'
-            label={`Queued: ${(storyline.refinement_jobs_pending || []).join(
-              ', '
-            )}`}
-          />
-        )}
-        {!demoReadonly && (
-          <>
-            <Button
-              startIcon={<SettingsIcon />}
-              variant='outlined'
-              color='secondary'
-              onClick={() => setShowAutomationDialog(true)}
-            >
-              Automation Settings
-            </Button>
-            <Button
-              startIcon={<AutoAwesomeIcon />}
-              variant='contained'
-              color='primary'
-              onClick={() => setShowSuggestionsDialog(true)}
-            >
-              Find Articles
-            </Button>
-          </>
-        )}
-        <Button
-          variant='outlined'
-          color='info'
-          onClick={() =>
-            navigate(`/${effectiveDomain}/storylines/${id}/timeline`)
-          }
-        >
-          Interactive Timeline
-        </Button>
-        {!demoReadonly && (
-          <Button
-            variant={isWatched ? 'contained' : 'outlined'}
-            color={isWatched ? 'warning' : 'inherit'}
-            onClick={handleToggleWatch}
-            disabled={watchLoading}
+
+      {(storyline as { episode_state?: string })?.episode_state === 'forming' ||
+      (membershipSource === 'eel' &&
+        (articles?.length ?? 0) === 0 &&
+        (storyline?.article_count ?? 0) === 0) ? (
+        <Alert severity='info' sx={{ mb: 2 }}>
+          Waiting for events.
+          {(storyline as { attach_block_reason?: string })?.attach_block_reason
+            ? ` Last attach: ${(storyline as { attach_block_reason?: string }).attach_block_reason}.`
+            : ' Articles appear here once events link to this episode.'}
+        </Alert>
+      ) : null}
+
+      {/* Summary banner */}
+      <Card variant='outlined' sx={{ mb: 2 }}>
+        <CardContent>
+          <Box
+            sx={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'flex-start',
+              gap: 2,
+              flexWrap: 'wrap',
+              mb: 1.5,
+            }}
           >
-            {watchLoading ? 'Updating...' : isWatched ? 'Watching' : 'Watch'}
-          </Button>
-        )}
-        {!demoReadonly ? (
-          <>
-            <Button
-              startIcon={
-                synthesisLoading ? (
-                  <CircularProgress size={20} />
-                ) : (
-                  <SynthesisIcon />
-                )
-              }
-              variant='contained'
-              color='secondary'
-              onClick={() =>
-                synthesis?.has_synthesis
-                  ? setShowFullSynthesis(true)
-                  : handleGenerateSynthesis()
-              }
-              disabled={synthesisLoading || articles.length === 0}
-            >
-              {synthesisLoading
-                ? 'Generating...'
-                : synthesis?.has_synthesis
-                ? 'View Full Article'
-                : 'Generate Article'}
-            </Button>
-            {synthesis?.has_synthesis && (
-              <Tooltip title='Regenerate synthesis'>
-                <span>
-                  <IconButton
-                    onClick={() => handleGenerateSynthesis(true)}
-                    disabled={synthesisLoading}
+            <Box sx={{ flex: 1, minWidth: 240 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1, flexWrap: 'wrap' }}>
+                <Chip
+                  label={statusLabel(storyline.status) || 'Unknown'}
+                  color={getStatusColor(storyline.status)}
+                  size='small'
+                />
+                {storyline.category && (
+                  <Chip label={storyline.category} size='small' variant='outlined' />
+                )}
+              </Box>
+              {synopsisText ? (
+                <Typography variant='body1' color='text.secondary' sx={{ mb: 1.5 }}>
+                  {synopsisText.slice(0, 480)}
+                  {synopsisText.length > 480 ? '…' : ''}
+                </Typography>
+              ) : (
+                <Typography variant='body2' color='text.secondary' sx={{ mb: 1.5 }}>
+                  No synopsis yet — open Structured depth for articles and events, or
+                  generate a narrative.
+                </Typography>
+              )}
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
+                <Chip
+                  size='small'
+                  label={`${storyline?.article_count ?? articles?.length ?? 0} articles`}
+                />
+                <Chip
+                  size='small'
+                  label={`${timelineData?.event_count ?? storyline?.total_events ?? 0} events`}
+                  variant='outlined'
+                />
+                {storyline.quality_score != null && (
+                  <Chip
+                    size='small'
+                    color={
+                      storyline.quality_score >= 0.8
+                        ? 'success'
+                        : storyline.quality_score >= 0.6
+                          ? 'warning'
+                          : 'default'
+                    }
+                    label={`Quality ${Math.round(storyline.quality_score * 100)}%`}
+                  />
+                )}
+                {storyline.sentiment_score != null && (
+                  <Tooltip title='Legacy ternary mood score — not frame / tone-precedence (v12 G3)'>
+                    <Chip
+                      size='small'
+                      variant='outlined'
+                      color='default'
+                      label={`Mood ${Number(storyline.sentiment_score).toFixed(2)}`}
+                    />
+                  </Tooltip>
+                )}
+              </Box>
+            </Box>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 180 }}>
+              {!demoReadonly ? (
+                <Button
+                  variant='contained'
+                  color='primary'
+                  disabled={editorialBridgeLoading || !id}
+                  onClick={() =>
+                    openEditorialModal(defaultModalForDomain(effectiveDomain))
+                  }
+                >
+                  {editorialBridgeLoading
+                    ? 'Opening package…'
+                    : `Open in ${defaultModalForDomain(effectiveDomain) === 'research' ? 'Research' : 'Narrative'}`}
+                </Button>
+              ) : null}
+              {!demoReadonly ? (
+                <Button
+                  startIcon={
+                    synthesisLoading ? (
+                      <CircularProgress size={18} />
+                    ) : (
+                      <SynthesisIcon />
+                    )
+                  }
+                  variant='outlined'
+                  color='secondary'
+                  onClick={() => {
+                    if (synthesis?.has_synthesis) {
+                      navigateToDomain(`/storylines/${id}/synthesized`);
+                      return;
+                    }
+                    handleGenerateSynthesis();
+                  }}
+                  disabled={synthesisLoading || articles.length === 0}
+                >
+                  {synthesisLoading
+                    ? 'Generating…'
+                    : synthesis?.has_synthesis
+                      ? 'Legacy synthesized view'
+                      : 'Legacy generate narrative'}
+                </Button>
+              ) : (
+                synthesis?.has_synthesis && (
+                  <Button
+                    startIcon={<SynthesisIcon />}
+                    variant='outlined'
+                    color='secondary'
+                    onClick={() =>
+                      navigateToDomain(`/storylines/${id}/synthesized`)
+                    }
                   >
-                    <RefreshIcon />
-                  </IconButton>
-                </span>
-              </Tooltip>
-            )}
-          </>
-        ) : (
-          synthesis?.has_synthesis && (
-            <Button
-              startIcon={<SynthesisIcon />}
-              variant='contained'
-              color='secondary'
-              onClick={() => setShowFullSynthesis(true)}
-            >
-              View Full Article
-            </Button>
-          )
-        )}
-      </Box>
+                    Legacy synthesized view
+                  </Button>
+                )
+              )}
+              <Button
+                variant='outlined'
+                onClick={() =>
+                  navigate(`/${effectiveDomain}/storylines/${id}/timeline`)
+                }
+              >
+                Interactive timeline
+              </Button>
+              <Button
+                size='small'
+                onClick={() => navigateToDomain('/storylines')}
+                startIcon={<ArrowBackIcon />}
+              >
+                Back to list
+              </Button>
+              {(showStructuredLayer || !demoReadonly) && (
+                <>
+                  <Button
+                    size='small'
+                    variant='text'
+                    onClick={e => setOpsMenuAnchor(e.currentTarget)}
+                    disabled={editorialBridgeLoading}
+                  >
+                    More actions
+                  </Button>
+                  <Menu
+                    anchorEl={opsMenuAnchor}
+                    open={Boolean(opsMenuAnchor)}
+                    onClose={() => setOpsMenuAnchor(null)}
+                  >
+                    {!demoReadonly && (
+                      <ListSubheader disableSticky>
+                        Editorial modals
+                      </ListSubheader>
+                    )}
+                    {!demoReadonly && (
+                      <MenuItem
+                        onClick={() => openEditorialModal('research')}
+                        disabled={editorialBridgeLoading}
+                      >
+                        Send to Research
+                      </MenuItem>
+                    )}
+                    {!demoReadonly && (
+                      <MenuItem
+                        onClick={() => openEditorialModal('narrative')}
+                        disabled={editorialBridgeLoading}
+                      >
+                        Send to Narrative
+                      </MenuItem>
+                    )}
+                    {!demoReadonly && (
+                      <MenuItem
+                        onClick={() => openEditorialModal('reduction')}
+                        disabled={editorialBridgeLoading}
+                      >
+                        Send to Reduction
+                      </MenuItem>
+                    )}
+                    {!demoReadonly && (
+                      <MenuItem
+                        onClick={() => openEditorialModal('editor')}
+                        disabled={editorialBridgeLoading}
+                      >
+                        Open in Editor (package)
+                      </MenuItem>
+                    )}
+                    {!demoReadonly && (
+                      <MenuItem
+                        onClick={() =>
+                          openEditorialModal(
+                            defaultModalForDomain(effectiveDomain),
+                            { refreshMembers: true }
+                          )
+                        }
+                        disabled={editorialBridgeLoading}
+                      >
+                        Refresh package members
+                      </MenuItem>
+                    )}
+
+                    {!demoReadonly && (
+                      <ListSubheader disableSticky>
+                        Episode membership
+                      </ListSubheader>
+                    )}
+                    {!demoReadonly && (
+                      <MenuItem
+                        onClick={() => {
+                          setOpsMenuAnchor(null);
+                          setShowEditDialog(true);
+                        }}
+                      >
+                        Edit episode
+                      </MenuItem>
+                    )}
+                    {!demoReadonly && (
+                      <MenuItem
+                        onClick={() => {
+                          setOpsMenuAnchor(null);
+                          setShowSuggestionsDialog(true);
+                        }}
+                      >
+                        Find related articles
+                      </MenuItem>
+                    )}
+                    {!demoReadonly && (
+                      <MenuItem
+                        onClick={() => {
+                          setOpsMenuAnchor(null);
+                          handleToggleWatch();
+                        }}
+                        disabled={watchLoading}
+                      >
+                        {isWatched ? 'Stop watching' : 'Watch'}
+                      </MenuItem>
+                    )}
+
+                    {!demoReadonly && (
+                      <ListSubheader disableSticky>
+                        Analysis jobs
+                      </ListSubheader>
+                    )}
+                    {!demoReadonly && (
+                      <MenuItem
+                        onClick={() => {
+                          setOpsMenuAnchor(null);
+                          handleAnalyzeStoryline();
+                        }}
+                        disabled={analyzing || articles.length === 0}
+                      >
+                        Queue deep analysis
+                      </MenuItem>
+                    )}
+                    {!demoReadonly && (
+                      <MenuItem
+                        onClick={() => {
+                          setOpsMenuAnchor(null);
+                          handleRefineHeadline();
+                        }}
+                        disabled={headlineRefining || articles.length === 0}
+                      >
+                        Refine headline
+                      </MenuItem>
+                    )}
+                    {synthesis?.has_synthesis && !demoReadonly && (
+                      <MenuItem
+                        onClick={() => {
+                          setOpsMenuAnchor(null);
+                          handleGenerateSynthesis(true);
+                        }}
+                        disabled={synthesisLoading}
+                      >
+                        Regenerate synthesis (legacy)
+                      </MenuItem>
+                    )}
+                    <MenuItem
+                      onClick={() => {
+                        setOpsMenuAnchor(null);
+                        navigateToDomain(`/storylines/${id}/synthesized`);
+                      }}
+                    >
+                      Open synthesized page (legacy)
+                    </MenuItem>
+                  </Menu>
+                </>
+              )}
+            </Box>
+          </Box>
+          {(storyline.refinement_jobs_pending || []).length > 0 && !demoReadonly && (
+            <Chip
+              size='small'
+              color='warning'
+              sx={{ mt: 1 }}
+              label={`Queued: ${(storyline.refinement_jobs_pending || []).join(', ')}`}
+            />
+          )}
+        </CardContent>
+      </Card>
+
+      {useDrillTabs && (
+        <Tabs
+          value={detailTab}
+          onChange={(_, v) => setDetailTab(v)}
+          variant='scrollable'
+          allowScrollButtonsMobile
+          sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}
+        >
+          <Tab label='Overview' />
+          <Tab label={`Articles (${articles.length})`} />
+          <Tab label='Events' />
+          <Tab label='Claims' />
+          {showEvidenceLayer && <Tab label='Provenance' />}
+        </Tabs>
+      )}
 
       <Grid container spacing={3}>
-        {/* Storyline Info */}
+        {/* Storyline Info / Events reconciliation */}
+        {(tabOverview ||
+          (tabEvents &&
+            eventReconciliation &&
+            ((eventReconciliation.tracked_events?.length ?? 0) > 0 ||
+              (eventReconciliation.chronological_events?.length ?? 0) > 0))) && (
         <Grid item xs={12}>
           <Card>
             <CardContent>
-              <ProvenancePanel
-                title='Provenance & pipeline'
-                subtitle='Storyline record, status, and links for audits'
-                rows={storylineProvenanceRows(storyline, effectiveDomain, id)}
-              />
-              <StorylineAuditCard
-                domain={effectiveDomain}
-                audit={storyAudit}
-                loading={storyAuditLoading}
-                error={storyAuditErr}
-              />
-              <Paper
-                variant='outlined'
-                sx={{ p: 2, mb: 2, bgcolor: 'grey.50' }}
-              >
-                <Box
-                  sx={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: 2,
-                    flexWrap: 'wrap',
-                  }}
-                >
-                  <Typography variant='subtitle2'>Reading depth</Typography>
-                  <ToggleButtonGroup
-                    size='small'
-                    value={detailDepth}
-                    exclusive
-                    onChange={(_, value) => value && setDetailDepth(value)}
-                  >
-                    <ToggleButton value='narrative'>Narrative</ToggleButton>
-                    <ToggleButton value='structured'>Structured</ToggleButton>
-                    <ToggleButton value='raw'>Raw</ToggleButton>
-                  </ToggleButtonGroup>
-                </Box>
-                {detailDepth === 'narrative' && (
-                  <Typography
-                    variant='body2'
-                    color='text.secondary'
-                    sx={{ mt: 1 }}
-                  >
-                    Reader-first view: editorial summary, storyline analysis,
-                    and synthesis.
-                  </Typography>
-                )}
-                {detailDepth === 'structured' && (
-                  <Typography
-                    variant='body2'
-                    color='text.secondary'
-                    sx={{ mt: 1 }}
-                  >
-                    Audit view: storyline status, article counts, timeline
-                    signals, and event-level metadata.
-                  </Typography>
-                )}
-                {detailDepth === 'raw' && (
-                  <Accordion
-                    disableGutters
-                    sx={{
-                      mt: 1,
-                      bgcolor: 'transparent',
-                      boxShadow: 'none',
-                      '&:before': { display: 'none' },
-                    }}
-                  >
-                    <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                      <Typography variant='body2'>
-                        Technical fields (JSON)
-                      </Typography>
-                    </AccordionSummary>
-                    <AccordionDetails>
-                      <Typography
-                        variant='caption'
-                        sx={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}
-                      >
-                        {JSON.stringify(
-                          { storyline, storyAudit, timelineData },
-                          null,
-                          2
-                        )}
-                      </Typography>
-                    </AccordionDetails>
-                  </Accordion>
-                )}
-              </Paper>
-              <Box
-                sx={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'flex-start',
-                  mb: 2,
-                }}
-              >
-                <Typography variant='h4' component='h1'>
-                  {storyline.title || 'Untitled Storyline'}
-                </Typography>
-                <Chip
-                  label={storyline.status?.toUpperCase() || 'UNKNOWN'}
-                  color={getStatusColor(storyline.status)}
-                  variant='outlined'
-                />
-              </Box>
-
-              {storyline.description && (
+              {tabOverview &&
+                storyline.description &&
+                storyline.description.trim() !== synopsisText.trim() && (
                 <Typography
                   variant='body1'
                   color='text.secondary'
@@ -1177,7 +1431,46 @@ const StorylineDetail = () => {
                 </Typography>
               )}
 
-              {articles.length > 0 && sourceCoverageRows.length > 0 && (
+              {showStructuredLayer &&
+                (tabOverview || tabEvents) &&
+                eventReconciliation &&
+                ((eventReconciliation.tracked_events?.length ?? 0) > 0 ||
+                  (eventReconciliation.chronological_events?.length ?? 0) > 0) && (
+                  <Paper variant='outlined' sx={{ p: 2, mb: 2, bgcolor: 'grey.50' }}>
+                    <Typography variant='subtitle2' fontWeight={600} sx={{ mb: 1 }}>
+                      Tracked event & timeline reconciliation
+                    </Typography>
+                    {(eventReconciliation.tracked_events?.length ?? 0) > 0 && (
+                      <Typography variant='body2' sx={{ mb: 1 }}>
+                        Tracked events:{' '}
+                        {eventReconciliation.tracked_events?.map(te => (
+                          <Chip
+                            key={te.tracked_event_id}
+                            label={te.tracked_event_name || `#${te.tracked_event_id}`}
+                            size='small'
+                            sx={{ mr: 0.5 }}
+                            onClick={() =>
+                              navigate(
+                                `/${effectiveDomain}/investigate/events/${te.tracked_event_id}`
+                              )
+                            }
+                          />
+                        ))}
+                      </Typography>
+                    )}
+                    {(eventReconciliation.chronological_events?.length ?? 0) > 0 && (
+                      <Typography variant='body2' color='text.secondary'>
+                        {eventReconciliation.chronological_events?.length} chronological
+                        Events linked to this episode.
+                      </Typography>
+                    )}
+                  </Paper>
+                )}
+
+              {showStructuredLayer &&
+                tabOverview &&
+                articles.length > 0 &&
+                sourceCoverageRows.length > 0 && (
                 <Paper variant='outlined' sx={{ p: 2, mb: 2, bgcolor: 'grey.50' }}>
                   <Typography variant='subtitle2' fontWeight={600} sx={{ mb: 1 }}>
                     Coverage balance
@@ -1218,7 +1511,7 @@ const StorylineDetail = () => {
                 </Paper>
               )}
 
-              {crossRelatedStorylines.length > 0 && (
+              {tabOverview && crossRelatedStorylines.length > 0 && (
                 <Paper variant='outlined' sx={{ p: 2, mb: 2, bgcolor: 'grey.50' }}>
                   <Typography variant='subtitle2' fontWeight={600} sx={{ mb: 1 }}>
                     Related in other domains
@@ -1246,7 +1539,8 @@ const StorylineDetail = () => {
               )}
 
               {/* Editorial Summary (5W1H or legacy) */}
-              {storyline.editorial_document &&
+              {tabOverview &&
+                storyline.editorial_document &&
                 typeof storyline.editorial_document === 'object' && (
                   <Paper
                     variant='outlined'
@@ -1528,7 +1822,8 @@ const StorylineDetail = () => {
               ) : null}
 
               {/* Analysis Summary Section (analysis_summary || master_summary) */}
-              {analysisDisplay ? (
+              {tabOverview &&
+                (analysisDisplay ? (
                 <Box
                   sx={{
                     mb: 2,
@@ -1659,8 +1954,9 @@ const StorylineDetail = () => {
                     processing finishes (refresh or wait for auto-reload).
                   </Typography>
                 </Alert>
-              )}
+              ))}
 
+              {tabOverview && (
               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
                 <Typography variant='body2' color='text.secondary'>
                   <strong>Articles:</strong>{' '}
@@ -1679,12 +1975,15 @@ const StorylineDetail = () => {
                   <strong>Created:</strong> {formatDate(storyline.created_at)}
                 </Typography>
               </Box>
+              )}
             </CardContent>
           </Card>
         </Grid>
+        )}
 
         {/* Key Actors sidebar */}
-        {storyline.entities &&
+        {tabOverview &&
+          storyline.entities &&
           Array.isArray(storyline.entities) &&
           storyline.entities.length > 0 && (
             <Grid item xs={12} md={4}>
@@ -1724,6 +2023,7 @@ const StorylineDetail = () => {
           )}
 
         {/* Timeline Section - temporal and extracted events */}
+        {tabOverview && (
         <Grid item xs={12} md={storyline.entities?.length ? 8 : 12}>
           <Card>
             <CardContent>
@@ -1757,12 +2057,14 @@ const StorylineDetail = () => {
                     />
                   )}
                   {timelineData?.source_count > 1 && (
-                    <Chip
-                      label={`${timelineData.source_count} sources`}
-                      size='small'
-                      variant='outlined'
-                      color='secondary'
-                    />
+                    <Tooltip title='Raw cite count — not independence-corrected (v12 C4). Do not read as corroboration.'>
+                      <Chip
+                        label={`${timelineData.source_count} sources`}
+                        size='small'
+                        variant='outlined'
+                        color='default'
+                      />
+                    </Tooltip>
                   )}
                   {timelineData?.milestones?.length > 0 && (
                     <Chip
@@ -1868,12 +2170,14 @@ const StorylineDetail = () => {
                                 />
                               )}
                               {evt.source_count > 1 && (
-                                <Chip
-                                  label={`${evt.source_count} sources`}
-                                  size='small'
-                                  color='info'
-                                  variant='outlined'
-                                />
+                                <Tooltip title='Raw cite count — not independence-corrected (v12 C4). Do not read as corroboration.'>
+                                  <Chip
+                                    label={`${evt.source_count} sources`}
+                                    size='small'
+                                    color='default'
+                                    variant='outlined'
+                                  />
+                                </Tooltip>
                               )}
                               {evt.is_ongoing && (
                                 <Chip
@@ -1952,9 +2256,11 @@ const StorylineDetail = () => {
             </CardContent>
           </Card>
         </Grid>
+        )}
 
         {/* Articles in Storyline */}
-        <Grid item xs={12} md={storyline.entities?.length ? 8 : 12}>
+        {(tabArticles || (!useDrillTabs && showStructuredLayer)) && (
+        <Grid item xs={12}>
           <Card>
             <CardContent>
               <Box
@@ -1968,9 +2274,10 @@ const StorylineDetail = () => {
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <Article color='primary' />
                   <Typography variant='h6'>
-                    Articles in this Storyline ({articles.length})
+                    Articles in this episode ({articles.length})
                   </Typography>
                 </Box>
+                {!demoReadonly && (
                 <Button
                   variant='outlined'
                   startIcon={<AddIcon />}
@@ -1982,6 +2289,7 @@ const StorylineDetail = () => {
                 >
                   Add Articles
                 </Button>
+                )}
               </Box>
 
               {articles.length > 0 ? (
@@ -2028,6 +2336,7 @@ const StorylineDetail = () => {
                           }
                         />
                         <ListItemSecondaryAction>
+                          {!demoReadonly && (
                           <Tooltip title='Remove from storyline'>
                             <IconButton
                               edge='end'
@@ -2038,6 +2347,7 @@ const StorylineDetail = () => {
                               <DeleteIcon />
                             </IconButton>
                           </Tooltip>
+                          )}
                         </ListItemSecondaryAction>
                       </ListItem>
                       {index < articles.length - 1 && <Divider />}
@@ -2052,7 +2362,142 @@ const StorylineDetail = () => {
             </CardContent>
           </Card>
         </Grid>
+        )}
+
+        {tabClaims && (
+          <Grid item xs={12}>
+            <Card>
+              <CardContent>
+                <Typography variant='h6' sx={{ mb: 1 }}>
+                  Claims
+                </Typography>
+                <Typography variant='body2' color='text.secondary'>
+                  Claims extracted for this storyline appear here when available.
+                  Open linked articles or Evidence depth for pipeline provenance
+                  while claim attachment to storylines is completed.
+                </Typography>
+              </CardContent>
+            </Card>
+          </Grid>
+        )}
+
+        {tabProvenance && showEvidenceLayer && (
+          <Grid item xs={12}>
+            <Card>
+              <CardContent>
+                <Typography variant='h6' sx={{ mb: 2 }}>
+                  Provenance
+                </Typography>
+                <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
+                  Article → narrative chain for audits. Click article rows below
+                  or open Evidence JSON for raw fields.
+                </Typography>
+                <ProvenancePanel
+                  title='Provenance & pipeline'
+                  subtitle='Episode record, status, and links for audits'
+                  rows={storylineProvenanceRows(storyline, effectiveDomain, id)}
+                />
+                <StorylineAuditCard
+                  domain={effectiveDomain}
+                  audit={storyAudit}
+                  loading={storyAuditLoading}
+                  error={storyAuditErr}
+                />
+                <Box sx={{ mt: 2 }}>
+                  <ReasoningPanel domain={effectiveDomain} storylineId={Number(id)} />
+                </Box>
+                <Accordion sx={{ mt: 2 }}>
+                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                    <Typography variant='body2'>
+                      Chain: articles → events → narrative
+                    </Typography>
+                  </AccordionSummary>
+                  <AccordionDetails>
+                    <List dense>
+                      <ListItem>
+                        <ListItemText
+                          primary={`Articles (${articles.length})`}
+                          secondary='Linked sources that built this story'
+                        />
+                      </ListItem>
+                      <ListItem>
+                        <ListItemText
+                          primary={`Events (${timelineData?.event_count ?? 0})`}
+                          secondary='Timeline atoms and tracked events'
+                        />
+                      </ListItem>
+                      <ListItem>
+                        <ListItemText
+                          primary='Narrative'
+                          secondary={
+                            synthesis?.has_synthesis
+                              ? 'Synthesized editorial available — use Read narrative'
+                              : 'Generate narrative from the banner CTA'
+                          }
+                        />
+                      </ListItem>
+                    </List>
+                    {articles.slice(0, 12).map((article: { id: number; title?: string }) => (
+                      <Chip
+                        key={article.id}
+                        size='small'
+                        label={article.title || `Article #${article.id}`}
+                        sx={{ mr: 0.5, mb: 0.5 }}
+                        onClick={() => navigateToDomain(`/articles/${article.id}`)}
+                      />
+                    ))}
+                  </AccordionDetails>
+                </Accordion>
+                <Accordion
+                  disableGutters
+                  sx={{
+                    mt: 2,
+                    bgcolor: 'grey.50',
+                    boxShadow: 'none',
+                    '&:before': { display: 'none' },
+                  }}
+                >
+                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                    <Typography variant='body2'>Technical fields (JSON)</Typography>
+                  </AccordionSummary>
+                  <AccordionDetails>
+                    <Typography
+                      variant='caption'
+                      sx={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}
+                    >
+                      {JSON.stringify(
+                        { storyline, storyAudit, timelineData },
+                        null,
+                        2
+                      )}
+                    </Typography>
+                  </AccordionDetails>
+                </Accordion>
+              </CardContent>
+            </Card>
+          </Grid>
+        )}
+
+        {tabEvents &&
+          showStructuredLayer &&
+          !(
+            eventReconciliation &&
+            ((eventReconciliation.tracked_events?.length ?? 0) > 0 ||
+              (eventReconciliation.chronological_events?.length ?? 0) > 0)
+          ) && (
+            <Grid item xs={12}>
+              <Card>
+                <CardContent>
+                  <Typography variant='body2' color='text.secondary'>
+                    No linked tracked or chronological events in the reconciliation
+                    window yet.
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+          )}
       </Grid>
+    </PageShell>
 
       {/* Add Articles Dialog */}
       <Dialog
@@ -2170,17 +2615,6 @@ const StorylineDetail = () => {
         storyline={storyline}
         domain={effectiveDomain}
         onStorylineUpdated={handleStorylineUpdated}
-      />
-
-      {/* Automation Settings Dialog */}
-      <StorylineAutomationDialog
-        open={showAutomationDialog}
-        onClose={() => setShowAutomationDialog(false)}
-        storylineId={id}
-        onSettingsUpdated={() => {
-          loadStoryline({ background: true });
-          setShowAutomationDialog(false);
-        }}
       />
 
       {/* Article Suggestions Dialog */}
@@ -2475,7 +2909,7 @@ const StorylineDetail = () => {
           </Button>
         </DialogActions>
       </Dialog>
-    </Box>
+    </>
   );
 };
 

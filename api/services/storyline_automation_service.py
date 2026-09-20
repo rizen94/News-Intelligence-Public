@@ -11,11 +11,142 @@ from typing import Any
 
 from shared.database.connection import get_db_connection
 from shared.services.domain_aware_service import DomainAwareService
+from shared.storyline_article_counts import sync_counts_update_sql
 
-from services.domain_synthesis_config import get_domain_synthesis_config
+from services.domain_synthesis_config import (
+    combined_attach_score,
+    get_domain_synthesis_config,
+)
 from services.quality_monitoring_service import get_quality_monitoring_service
 
 logger = logging.getLogger(__name__)
+
+# Legacy automation_settings often pin min_quality_tier=2; corpus is ~all tier 3.
+# Stricter than 3 rejects every candidate → suggest_only stores nothing.
+_AUTOMATION_MIN_QUALITY_TIER_FLOOR = 3
+
+# Mega-thread attach hardening (see plan: mega harden + core dissimilar drop)
+_HITL_ARTICLE_CAP_DEFAULT = 150
+_MULTI_ENTITY_ABSORB_AT_DEFAULT = 80
+
+
+def hitl_article_cap() -> int:
+    from shared.storyline_attach_caps import narrative_hitl_cap
+
+    return narrative_hitl_cap()
+
+
+def multi_entity_absorb_at() -> int:
+    from config.runtime import env_int
+
+    return max(20, env_int("STORYLINE_MULTI_ENTITY_ABSORB_AT", _MULTI_ENTITY_ABSORB_AT_DEFAULT))
+
+
+def effective_auto_add_threshold(
+    *,
+    base_min_relevance: float,
+    auto_approve_combined: float,
+    article_count: int,
+    magnet_title: bool = False,
+) -> float:
+    """Suggestion floor only — size bumps retired (Event→Episode rebuild).
+
+    Kept for callers that still score proposals; does not admit membership.
+    """
+    return max(float(base_min_relevance or 0.0), float(auto_approve_combined or 0.0))
+
+
+def is_shell_title(title: str | None) -> bool:
+    """
+    Kitchen-sink / magnet titles that attract weak ILIKE absorb.
+
+    Includes Ongoing:, LIVE UPDATES, Global Update, and bare country/entity shells.
+    Permanent gate — not freeze-only.
+    """
+    import re
+
+    t = (title or "").strip()
+    if not t:
+        return False
+    lower = t.lower()
+    if lower.startswith("ongoing:") or lower.startswith("ongoing "):
+        return True
+    if "live update" in lower:
+        return True
+    if "global update" in lower:
+        return True
+    try:
+        from services.storyline_core_prune_service import title_looks_mega_bag
+
+        if title_looks_mega_bag(t):
+            return True
+    except Exception:
+        pass
+    # Single-token / bare country-ish shells (very short titles)
+    words = [w for w in re.findall(r"[A-Za-z]{2,}", t) if w.lower() not in {"the", "and", "of"}]
+    return len(words) <= 2 and len(t) <= 40
+
+
+def _matched_entity_names(article: dict[str, Any]) -> list[str]:
+    matched_raw = article.get("matched_entities") or article.get("matched_keywords") or []
+    if isinstance(matched_raw, int):
+        return []
+    if isinstance(matched_raw, (list, tuple)):
+        return [str(m) for m in matched_raw if m]
+    if matched_raw:
+        return [str(matched_raw)]
+    return []
+
+
+def candidate_passes_absorb_gate(
+    article: dict[str, Any],
+    *,
+    storyline_title: str,
+    article_count: int = 0,
+    kitchen_sink: bool = False,
+) -> bool:
+    """
+    Permanent absorb gate for shell/magnet titles and large storylines.
+
+    - Large or shell: reject single-token country/entity ILIKE (need multi-entity
+      or canonical overlap).
+    - Shell / kitchen-sink: additionally require title-anchor overlap AND
+      multi-entity (or strong canonical) so bare-country magnets cannot flood
+      suggestions / SEI via auto paths.
+    """
+    matched = _matched_entity_names(article)
+    n_matched = len(matched)
+    can_j = float(article.get("canonical_jaccard") or 0)
+    shell = is_shell_title(storyline_title)
+    large = int(article_count or 0) >= multi_entity_absorb_at()
+    if not (shell or kitchen_sink or large):
+        return True
+
+    # Reject single-token ILIKE glue
+    if n_matched < 2 and can_j <= 0:
+        return False
+
+    if not (shell or kitchen_sink):
+        return True
+
+    # Shell / kitchen-sink: multi-entity + title-anchor (both)
+    has_multi = n_matched >= 2 or can_j > 0.15
+    if not has_multi:
+        return False
+    try:
+        from services.storyline_core_prune_service import (
+            distinctive_title_anchors,
+            member_matches_title_anchor,
+        )
+
+        anchors = distinctive_title_anchors(storyline_title or "")
+        art_ents = {m.lower() for m in matched if m}
+        return member_matches_title_anchor(
+            anchors, article.get("title") or "", art_ents
+        )
+    except Exception:
+        # Fail closed for shells without prune helpers
+        return False
 
 
 def _hours_since_db_timestamp(last_run: datetime) -> float:
@@ -29,6 +160,50 @@ def _hours_since_db_timestamp(last_run: datetime) -> float:
     else:
         lr = last_run.astimezone(timezone.utc)
     return (now - lr).total_seconds() / 3600.0
+
+
+def _parse_quality_metrics(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            return dict(parsed) if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _zero_yield_backoff_hours(streak: int) -> float:
+    """Exponential backoff for consecutive zero-yield discovery runs."""
+    from config.runtime import env_float
+
+    base = max(1.0, env_float("STORYLINE_AUTOMATION_ZERO_YIELD_BACKOFF_BASE_HOURS", 12.0))
+    cap = max(base, env_float("STORYLINE_AUTOMATION_ZERO_YIELD_BACKOFF_MAX_HOURS", 168.0))
+    n = max(1, int(streak))
+    return min(cap, base * (2 ** (n - 1)))
+
+
+def _zero_yield_until_active(metrics: dict[str, Any]) -> datetime | None:
+    """Return timezone-aware until-time if still in zero-yield backoff, else None."""
+    raw = metrics.get("zero_yield_until")
+    if not raw or not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        until = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    if until > now:
+        return until
+    return None
 
 
 class StorylineAutomationService(DomainAwareService):
@@ -53,11 +228,18 @@ class StorylineAutomationService(DomainAwareService):
             "exclude_duplicates": True,  # Skip duplicate content
             "use_rag_expansion": True,  # Use RAG query expansion
             "rerank_results": True,  # Re-rank with multiple signals
-            "min_quality_tier": 2,  # 1=best, 4=worst; filter out worse
+            "min_quality_tier": 3,  # 1=best, 4=worst; filter out worse (was 2, too strict)
             "clickbait_threshold": 0.6,  # Reject if clickbait_probability > this
             "min_fact_density": 0.15,  # Reject if fact_density < this (when present)
             "require_named_sources": False,
         }
+        auto_cfg = self.domain_config.storyline_development.automation
+        if auto_cfg.min_relevance_score is not None:
+            self.default_settings["min_relevance_score"] = float(auto_cfg.min_relevance_score)
+        if auto_cfg.min_semantic_score is not None:
+            self.default_settings["min_semantic_score"] = float(auto_cfg.min_semantic_score)
+        if auto_cfg.min_quality_tier is not None:
+            self.default_settings["min_quality_tier"] = int(auto_cfg.min_quality_tier)
 
     def _apply_quality_gates(
         self,
@@ -68,7 +250,7 @@ class StorylineAutomationService(DomainAwareService):
         Filter articles by quality gates and compute quality_score for scoring.
         Returns (filtered_articles, filter_stats).
         """
-        min_tier = settings.get("min_quality_tier", 2)
+        min_tier = settings.get("min_quality_tier", 3)
         clickbait_threshold = settings.get("clickbait_threshold", 0.6)
         min_fact_density = settings.get("min_fact_density", 0.15)
         require_named_sources = settings.get("require_named_sources", False)
@@ -114,10 +296,227 @@ class StorylineAutomationService(DomainAwareService):
         return filtered, stats
 
     def _final_score(self, article: dict[str, Any]) -> float:
-        """final_score = relevance*0.7 + quality*0.3"""
-        rel = article.get("relevance_score", 0.6)
-        qual = article.get("quality_score", 0.5)
-        return round(rel * 0.7 + qual * 0.3, 4)
+        """Domain-aware attach score from link_score_profile (chemistry model)."""
+        rel = float(article.get("relevance_score") or 0.0)
+        sem = float(article.get("semantic_score") or 0.0)
+        kw = float(article.get("keyword_score") or 0.0)
+        if kw <= 0 and rel > 0:
+            # Legacy rows often cloned relevance into keyword; prefer focus overlap when set.
+            kw = float(article.get("focus_keyword_score") or rel * 0.5)
+        qual = float(article.get("quality_score") or 0.5)
+        temporal = 1.0
+        can_j = float(article.get("canonical_jaccard") or 0.0)
+        # Temporal: article published_at vs storyline last material when available
+        try:
+            from services.domain_synthesis_config import temporal_proximity_score
+            from services.embedding_link_candidate_service import days_apart
+
+            art_date = article.get("published_at") or article.get("created_at")
+            sl_date = article.get("storyline_anchor_date")
+            if art_date is not None:
+                gap = days_apart(art_date, sl_date) if sl_date is not None else 0.0
+                half = float(
+                    self.domain_config.link_score_profile.temporal_half_life_days
+                )
+                temporal = temporal_proximity_score(gap, half_life_days=half)
+        except Exception:
+            temporal = 1.0
+        return combined_attach_score(
+            self.domain,
+            relevance=rel,
+            semantic=sem,
+            keyword=kw,
+            quality=qual,
+            temporal=temporal,
+            canonical_jaccard=can_j,
+        )
+
+    def _auto_approve_threshold(self) -> float:
+        return float(self.domain_config.link_score_profile.auto_approve_combined)
+
+    def _load_article_specific_subjects(
+        self, cur, article_id: int
+    ) -> list[tuple[str, int | None]]:
+        """Subject-type entities that should not glue articles onto unrelated storylines."""
+        if not article_id:
+            return []
+        generic = {
+            "outbreak",
+            "epidemic",
+            "pandemic",
+            "crisis",
+            "war",
+            "conflict",
+            "scandal",
+            "investigation",
+            "election",
+            "protest",
+        }
+        try:
+            cur.execute(
+                f"""
+                SELECT entity_name, canonical_entity_id
+                FROM {self.schema}.article_entities
+                WHERE article_id = %s
+                  AND LOWER(COALESCE(entity_type, '')) IN ('subject', 'other', 'event')
+                  AND LENGTH(TRIM(entity_name)) >= 5
+                ORDER BY confidence DESC NULLS LAST
+                LIMIT 12
+                """,
+                (int(article_id),),
+            )
+            out: list[tuple[str, int | None]] = []
+            for name, cid in cur.fetchall():
+                n = (name or "").strip()
+                if not n:
+                    continue
+                key = n.lower()
+                if key in generic:
+                    continue
+                # Bare "outbreak" already filtered; keep "cyclospora outbreak"
+                out.append((n, int(cid) if cid is not None else None))
+            return out
+        except Exception as e:
+            logger.debug("load article subjects: %s", e)
+            return []
+
+    def _storyline_entity_fingerprint(
+        self, cur, storyline_id: int
+    ) -> tuple[set[str], set[int]]:
+        """Names (lower) + canonical IDs known for a storyline."""
+        names: set[str] = set()
+        cids: set[int] = set()
+        try:
+            cur.execute(
+                f"""
+                SELECT entity_name, canonical_entity_id
+                FROM {self.schema}.story_entity_index
+                WHERE storyline_id = %s
+                """,
+                (int(storyline_id),),
+            )
+            for name, cid in cur.fetchall():
+                if name:
+                    names.add(str(name).strip().lower())
+                if cid is not None:
+                    cids.add(int(cid))
+        except Exception:
+            pass
+        try:
+            cur.execute(
+                f"""
+                SELECT DISTINCT ae.entity_name, ae.canonical_entity_id
+                FROM {self.schema}.storyline_articles sa
+                JOIN {self.schema}.article_entities ae ON ae.article_id = sa.article_id
+                WHERE sa.storyline_id = %s
+                LIMIT 400
+                """,
+                (int(storyline_id),),
+            )
+            for name, cid in cur.fetchall():
+                if name:
+                    names.add(str(name).strip().lower())
+                if cid is not None:
+                    cids.add(int(cid))
+        except Exception:
+            pass
+        # Include explicit search_entities / keywords from storyline row
+        try:
+            cur.execute(
+                f"""
+                SELECT search_entities, search_keywords, title
+                FROM {self.schema}.storylines WHERE id = %s
+                """,
+                (int(storyline_id),),
+            )
+            row = cur.fetchone()
+            if row:
+                for col in (row[0], row[1]):
+                    if isinstance(col, (list, tuple)):
+                        for x in col:
+                            if x:
+                                names.add(str(x).strip().lower())
+                if row[2]:
+                    for w in str(row[2]).lower().replace("→", " ").split():
+                        if len(w) >= 5:
+                            names.add(w)
+        except Exception:
+            pass
+        return names, cids
+
+    def _subject_specificity_blocks_attach(
+        self, cur, storyline_id: int, article: dict[str, Any]
+    ) -> bool:
+        """
+        Reject kitchen-sink attach: article has a distinctive subject (e.g. cyclospora)
+        that does not appear on the target storyline, even if FDA/CDC keyword scores are high.
+        """
+        aid = article.get("id")
+        if not aid:
+            return False
+        subjects = self._load_article_specific_subjects(cur, int(aid))
+        if not subjects:
+            return False
+        sl_names, sl_cids = self._storyline_entity_fingerprint(cur, int(storyline_id))
+        if not sl_names and not sl_cids:
+            return False
+        try:
+            from services.entity_resolution_service import normalize_entity_match_key
+        except Exception:
+            normalize_entity_match_key = None  # type: ignore[assignment]
+
+        for name, cid in subjects:
+            if cid is not None and cid in sl_cids:
+                return False
+            nl = name.lower()
+            if nl in sl_names:
+                return False
+            # Substring / token overlap (cyclospora vs Cyclospora outbreak)
+            if any(nl in sn or sn in nl for sn in sl_names if len(sn) >= 5 and len(nl) >= 5):
+                return False
+            if normalize_entity_match_key:
+                try:
+                    art_key = normalize_entity_match_key(name, "subject")
+                    for sn in sl_names:
+                        if normalize_entity_match_key(sn, "subject") == art_key:
+                            return False
+                except Exception:
+                    pass
+        logger.info(
+            "Subject specificity gate: block article %s → storyline %s (subjects=%s)",
+            aid,
+            storyline_id,
+            [s[0] for s in subjects[:5]],
+        )
+        return True
+
+    def _keyword_score_for_article(
+        self, article: dict[str, Any], *, search_query: str = ""
+    ) -> float:
+        """Focus-area / query token overlap — not a clone of relevance."""
+        existing = article.get("keyword_score")
+        if existing is not None and float(existing) > 0 and article.get("focus_keyword_score"):
+            return float(existing)
+        text = " ".join(
+            str(x or "")
+            for x in (
+                article.get("title"),
+                article.get("summary"),
+                article.get("content"),
+            )
+        ).lower()
+        tokens: set[str] = set()
+        for area in self.domain_config.focus_areas[:12]:
+            for w in str(area).lower().replace(",", " ").split():
+                if len(w) >= 4:
+                    tokens.add(w)
+        for w in (search_query or "").lower().split():
+            if len(w) >= 4:
+                tokens.add(w)
+        if not tokens or not text:
+            return float(article.get("relevance_score") or 0.0) * 0.4
+        hits = sum(1 for t in tokens if t in text)
+        return round(min(1.0, hits / max(3, min(8, len(tokens)))), 4)
 
     async def discover_articles_for_storyline(
         self,
@@ -155,7 +554,8 @@ class StorylineAutomationService(DomainAwareService):
                         SELECT s.id, s.title, s.description, s.analysis_summary,
                                s.automation_enabled, s.automation_mode, s.automation_settings,
                                s.search_keywords, s.search_entities, s.search_exclude_keywords,
-                               s.article_count, s.last_automation_run, s.automation_frequency_hours
+                               s.article_count, s.last_automation_run, s.automation_frequency_hours,
+                               s.quality_metrics
                         FROM {self.schema}.storylines s
                         WHERE s.id = %s
                     """,
@@ -180,11 +580,13 @@ class StorylineAutomationService(DomainAwareService):
                         article_count,
                         last_automation_run,
                         automation_frequency_hours,
+                        quality_metrics_raw,
                     ) = storyline
+                    prior_quality_metrics = _parse_quality_metrics(quality_metrics_raw)
 
                     # Fetch key_entities and quality columns if they exist
                     key_entities = None
-                    min_quality_tier = 2
+                    min_quality_tier = 3  # Default to 3 (allow 1,2,3) instead of 2
                     try:
                         cur.execute(
                             f"""
@@ -196,7 +598,9 @@ class StorylineAutomationService(DomainAwareService):
                         if row and row[0]:
                             key_entities = row[0]
                         if row and len(row) > 1 and row[1] is not None:
-                            min_quality_tier = int(row[1])
+                            # Database default is 2, but for automation we want 3 as minimum
+                            db_tier = int(row[1])
+                            min_quality_tier = max(3, db_tier)  # Use 3 as floor for automation
                     except Exception:
                         try:
                             cur.execute(
@@ -222,8 +626,19 @@ class StorylineAutomationService(DomainAwareService):
                     else:
                         automation_settings = {}
                     settings = {**self.default_settings, **automation_settings}
+                    # Use storyline's min_quality_tier if not explicitly set in automation_settings
                     if "min_quality_tier" not in automation_settings:
                         settings["min_quality_tier"] = min_quality_tier
+                    # Never allow legacy settings (tier=2) to be stricter than the automation floor.
+                    try:
+                        configured_tier = int(
+                            settings.get("min_quality_tier", _AUTOMATION_MIN_QUALITY_TIER_FLOOR)
+                        )
+                    except (TypeError, ValueError):
+                        configured_tier = _AUTOMATION_MIN_QUALITY_TIER_FLOOR
+                    settings["min_quality_tier"] = max(
+                        _AUTOMATION_MIN_QUALITY_TIER_FLOOR, configured_tier
+                    )
                     if enrichment_mode:
                         settings["full_history"] = True
 
@@ -233,10 +648,68 @@ class StorylineAutomationService(DomainAwareService):
                         if hours_since_run < (automation_frequency_hours or 24):
                             return {
                                 "success": True,
+                                "skipped_frequency": True,
                                 "message": "Recent discovery run exists, use force_refresh=true to run again",
                                 "last_run": last_automation_run.isoformat(),
                                 "articles": [],
+                                "articles_found": 0,
+                                "articles_added": 0,
                             }
+
+                    # Zero-yield backoff: skip expensive rediscovery when recent runs stored/added nothing
+                    if not force_refresh and not enrichment_mode:
+                        until = _zero_yield_until_active(prior_quality_metrics)
+                        if until is not None:
+                            return {
+                                "success": True,
+                                "skipped_zero_yield_backoff": True,
+                                "message": "Zero-yield backoff active; use force_refresh=true to run again",
+                                "zero_yield_until": until.isoformat(),
+                                "articles": [],
+                                "articles_found": 0,
+                                "articles_added": 0,
+                            }
+
+                    # Freeze during narrative_finisher / core_prune / RAG — no silent re-pollution
+                    try:
+                        from services.storyline_membership_ops_lock import (
+                            is_membership_frozen,
+                            refinement_job_holds_membership,
+                        )
+
+                        frozen, freeze_reason = is_membership_frozen(
+                            prior_quality_metrics
+                        )
+                        if not frozen:
+                            frozen = refinement_job_holds_membership(
+                                self.domain, storyline_id, conn=conn
+                            )
+                            freeze_reason = freeze_reason or "refinement_processing"
+                        if frozen:
+                            logger.info(
+                                "Storyline %s membership frozen (%s) — suggest_only / skip auto-add",
+                                storyline_id,
+                                freeze_reason,
+                            )
+                            if (automation_mode or "manual") == "auto_approve":
+                                automation_mode = "suggest_only"
+                            # Skip discovery entirely for shell megas under freeze
+                            # (ILIKE absorb is the mid-regen failure mode).
+                            if is_shell_title(title) or int(article_count or 0) >= hitl_article_cap():
+                                return {
+                                    "success": True,
+                                    "skipped_membership_freeze": True,
+                                    "message": (
+                                        f"Membership frozen during {freeze_reason}; "
+                                        "skip discovery until finish/prune completes"
+                                    ),
+                                    "freeze_reason": freeze_reason,
+                                    "articles": [],
+                                    "articles_found": 0,
+                                    "articles_added": 0,
+                                }
+                    except Exception as freeze_e:
+                        logger.debug("membership freeze check: %s", freeze_e)
 
                     # Get existing article IDs to exclude from domain schema
                     cur.execute(
@@ -258,6 +731,7 @@ class StorylineAutomationService(DomainAwareService):
                         search_entities,
                         search_keywords,
                     )
+
                     search_query = self._build_search_query(
                         title, description, analysis_summary, search_keywords, search_entities
                     )
@@ -357,6 +831,10 @@ class StorylineAutomationService(DomainAwareService):
                         discovered_articles, settings
                     )
                     for a in discovered_articles:
+                        a["keyword_score"] = self._keyword_score_for_article(
+                            a, search_query=title or ""
+                        )
+                        a["focus_keyword_score"] = a["keyword_score"]
                         a["combined_score"] = self._final_score(a)
 
                     import re
@@ -367,7 +845,8 @@ class StorylineAutomationService(DomainAwareService):
                         discovered_articles = [
                             a
                             for a in discovered_articles
-                            if float(a.get("combined_score") or 0) >= 0.75
+                            if float(a.get("combined_score") or 0)
+                            >= self._auto_approve_threshold()
                         ]
                         if before and not discovered_articles:
                             logger.info(
@@ -379,10 +858,151 @@ class StorylineAutomationService(DomainAwareService):
                     store_filter_stats: dict[str, int] = {}
                     suggestions_count = 0
                     added_count = 0
-                    if automation_mode == "auto_approve":
-                        added_count = await self._auto_add_articles(
-                            conn, storyline_id, discovered_articles, settings
+                    article_count_n = int(article_count or 0)
+                    from shared.storyline_attach_caps import attach_hard_cap
+
+                    hitl_cap = attach_hard_cap(self.domain)
+                    force_suggest = article_count_n >= hitl_cap
+                    kitchen_sink = False
+                    if not force_suggest and is_shell_title(title):
+                        # Shell magnets: always HITL (no silent auto-add), any size
+                        force_suggest = True
+                    try:
+                        from services.storyline_coherence_guardrails import (
+                            assess_kitchen_sink_risk,
                         )
+
+                        ks, _ks_reason = assess_kitchen_sink_risk(
+                            title, discovered_articles[:40]
+                        )
+                        kitchen_sink = bool(ks)
+                        if ks and article_count_n >= 80:
+                            force_suggest = True
+                    except Exception:
+                        pass
+
+                    # Permanent shell/magnet absorb gate for suggestions / bag paths.
+                    # Locked auto_approve episodes append via signature — keep candidates.
+                    use_episode_append = False
+                    try:
+                        from shared.episode_attach_gate import episode_container_assembly_enabled
+
+                        if (
+                            episode_container_assembly_enabled()
+                            and (automation_mode or "") == "auto_approve"
+                        ):
+                            with conn.cursor() as _lc:
+                                _lc.execute(
+                                    f"""
+                                    SELECT signature_locked_at IS NOT NULL
+                                    FROM {self.schema}.storylines WHERE id = %s
+                                    """,
+                                    (int(storyline_id),),
+                                )
+                                _lr = _lc.fetchone()
+                                use_episode_append = bool(_lr and _lr[0])
+                    except Exception:
+                        use_episode_append = False
+
+                    before_absorb = len(discovered_articles)
+                    if not use_episode_append:
+                        discovered_articles = [
+                            a
+                            for a in discovered_articles
+                            if candidate_passes_absorb_gate(
+                                a,
+                                storyline_title=title or "",
+                                article_count=article_count_n,
+                                kitchen_sink=kitchen_sink,
+                            )
+                        ]
+                        if before_absorb and len(discovered_articles) < before_absorb:
+                            logger.info(
+                                "Storyline %s shell/magnet absorb gate: %s → %s candidates "
+                                "(shell=%s kitchen_sink=%s count=%s)",
+                                storyline_id,
+                                before_absorb,
+                                len(discovered_articles),
+                                is_shell_title(title),
+                                kitchen_sink,
+                                article_count_n,
+                            )
+
+                    effective_mode = automation_mode or "manual"
+                    if force_suggest and effective_mode == "auto_approve":
+                        effective_mode = "suggest_only"
+                        logger.info(
+                            "Storyline %s article_count=%s ≥ HITL/shell/kitchen-sink gate — "
+                            "routing to suggestions (no silent auto-add)",
+                            storyline_id,
+                            article_count_n,
+                        )
+                    try:
+                        from shared.assembly_link_funnel import automation_auto_attach_enabled
+                        from shared.episode_attach_gate import episode_container_assembly_enabled
+
+                        # Bag absorb stays off. Episode assembly may still auto-append
+                        # to locked existing episodes via signature-gated admit.
+                        if (
+                            effective_mode == "auto_approve"
+                            and not automation_auto_attach_enabled()
+                            and not episode_container_assembly_enabled()
+                        ):
+                            effective_mode = "suggest_only"
+                            logger.info(
+                                "Storyline %s STORYLINE_AUTOMATION_AUTO_ATTACH=0 — "
+                                "suggestions only",
+                                storyline_id,
+                            )
+                    except Exception:
+                        pass
+
+                    if effective_mode == "auto_approve":
+                        try:
+                            from shared.episode_attach_gate import (
+                                episode_container_assembly_enabled,
+                            )
+
+                            if episode_container_assembly_enabled():
+                                added_count = await self._append_articles_to_episode(
+                                    conn,
+                                    storyline_id,
+                                    discovered_articles,
+                                    settings,
+                                    article_count=article_count_n,
+                                    storyline_title=title or "",
+                                    kitchen_sink=kitchen_sink,
+                                )
+                            else:
+                                added_count = await self._auto_add_articles(
+                                    conn,
+                                    storyline_id,
+                                    discovered_articles,
+                                    settings,
+                                    article_count=article_count_n,
+                                    storyline_title=title or "",
+                                    kitchen_sink=kitchen_sink,
+                                )
+                        except Exception as append_err:
+                            logger.warning(
+                                "Storyline %s episode append failed: %s — falling back to suggestions",
+                                storyline_id,
+                                append_err,
+                            )
+                            added_count = 0
+                            store_result = await self._store_suggestions(
+                                conn,
+                                storyline_id,
+                                discovered_articles,
+                                settings,
+                                search_query,
+                            )
+                            if isinstance(store_result, dict):
+                                suggestions_count = int(store_result.get("stored", 0))
+                                store_filter_stats = store_result.get("skip_reasons") or {}
+                            else:
+                                suggestions_count = int(store_result or 0)
+                                store_filter_stats = {}
                     else:
                         store_result = await self._store_suggestions(
                             conn, storyline_id, discovered_articles, settings, search_query
@@ -394,20 +1014,48 @@ class StorylineAutomationService(DomainAwareService):
                             suggestions_count = int(store_result or 0)
                             store_filter_stats = {}
 
+                    # When episode append ran, still suggest leftovers that did not attach
+                    # only if auto_approve produced zero adds and mode wants visibility —
+                    # skip: append path already logged; avoid re-fanout.
+
                     try:
                         conn.rollback()
                     except Exception:
                         pass
 
                     # Update last automation run and quality_metrics (when column exists)
-                    now = datetime.now()
+                    now = datetime.now(timezone.utc)
+                    yield_count = int(suggestions_count or 0) + int(added_count or 0)
                     quality_metrics = {
                         "last_run": now.isoformat(),
                         "filter_stats": filter_stats,
                         "articles_passed": len(discovered_articles),
+                        "articles_suggested": suggestions_count,
+                        "articles_added": added_count,
+                        # Always replace so stale skip_reasons do not linger via jsonb ||
+                        "store_filter_stats": store_filter_stats or {},
                     }
-                    if store_filter_stats:
-                        quality_metrics["store_filter_stats"] = store_filter_stats
+                    if yield_count > 0:
+                        quality_metrics["zero_yield_streak"] = 0
+                        quality_metrics["zero_yield_until"] = None
+                    else:
+                        try:
+                            streak = int(prior_quality_metrics.get("zero_yield_streak") or 0) + 1
+                        except (TypeError, ValueError):
+                            streak = 1
+                        backoff_h = _zero_yield_backoff_hours(streak)
+                        until = now + timedelta(hours=backoff_h)
+                        quality_metrics["zero_yield_streak"] = streak
+                        quality_metrics["zero_yield_until"] = until.isoformat()
+                        quality_metrics["zero_yield_backoff_hours"] = backoff_h
+                        logger.info(
+                            "Storyline %s domain=%s zero-yield streak=%s backoff=%.1fh until=%s",
+                            storyline_id,
+                            self.domain,
+                            streak,
+                            backoff_h,
+                            until.isoformat(),
+                        )
                     if discovered_articles:
                         tiers = [
                             a.get("quality_tier")
@@ -443,10 +1091,10 @@ class StorylineAutomationService(DomainAwareService):
                         )
                     conn.commit()
 
-                    if automation_mode == "auto_approve":
+                    if effective_mode == "auto_approve":
                         return {
                             "success": True,
-                            "mode": "auto_approve",
+                            "mode": effective_mode,
                             "articles_found": len(discovered_articles),
                             "articles_added": added_count,
                             "articles": discovered_articles[:added_count],
@@ -454,7 +1102,7 @@ class StorylineAutomationService(DomainAwareService):
                         }
                     return {
                         "success": True,
-                        "mode": automation_mode or "manual",
+                        "mode": effective_mode,
                         "articles_found": len(discovered_articles),
                         "articles_suggested": suggestions_count,
                         "articles": discovered_articles,
@@ -486,28 +1134,41 @@ class StorylineAutomationService(DomainAwareService):
         entities: list[str] | None,
     ) -> str:
         """Build search query from storyline context"""
-        query_parts = []
 
-        # Use title as primary query
-        if title:
-            query_parts.append(title)
+        def _as_str(value: Any) -> str | None:
+            if value is None:
+                return None
+            if isinstance(value, dict):
+                # YAML / JSON weirdness: {"Label": "detail"} → "Label: detail"
+                parts = [f"{k}: {v}" for k, v in value.items()]
+                text = "; ".join(parts).strip()
+                return text or None
+            text = str(value).strip()
+            return text or None
 
-        # Add explicit keywords
+        query_parts: list[str] = []
+
+        title_s = _as_str(title)
+        if title_s:
+            query_parts.append(title_s)
+
         if keywords:
-            query_parts.extend(keywords)
+            for kw in keywords:
+                s = _as_str(kw)
+                if s:
+                    query_parts.append(s)
 
-        # Add entities
         if entities:
-            query_parts.extend(entities)
+            for ent in entities:
+                s = _as_str(ent)
+                if s:
+                    query_parts.append(s)
 
-        # Use description/summary for context expansion
-        if description:
-            query_parts.append(description[:200])  # First 200 chars
+        desc_s = _as_str(description)
+        if desc_s:
+            query_parts.append(desc_s[:200])
 
-        # Combine into search query
-        query = " ".join(query_parts[:10])  # Limit to 10 terms
-
-        return query
+        return " ".join(query_parts[:10])
 
     def _collect_storyline_entities(
         self,
@@ -647,10 +1308,16 @@ class StorylineAutomationService(DomainAwareService):
                 date_threshold = datetime.now() - timedelta(
                     days=settings.get("date_range_days", 90)
                 )
-                exclude_ids = list(existing_article_ids) if existing_article_ids else [-1]
+                # Only integer article ids may appear in a.id NOT IN (...).
+                exclude_ids = [
+                    int(x)
+                    for x in (existing_article_ids or [])
+                    if x is not None and str(x).strip().lstrip("-").isdigit()
+                ] or [-1]
 
                 entity_conditions = []
-                params = [date_threshold]
+                # SQL placeholder order: published_at, exclude ids, entity ILIKEs, exclude-keyword ILIKEs
+                params: list[Any] = [date_threshold, *exclude_ids]
 
                 for entity in entities[:20]:
                     pattern = f"%{entity}%"
@@ -674,7 +1341,6 @@ class StorylineAutomationService(DomainAwareService):
                     if exclude_ids
                     else ""
                 )
-                params_with_exclude = params + exclude_ids
 
                 # Include quality columns when present (migration 164)
                 try:
@@ -690,7 +1356,7 @@ class StorylineAutomationService(DomainAwareService):
                         ORDER BY a.published_at DESC, a.quality_score DESC
                         LIMIT %s
                     """,
-                        params_with_exclude + [max_results],
+                        params + [max_results],
                     )
                 except Exception as inner_exc:
                     logger.debug(
@@ -712,7 +1378,7 @@ class StorylineAutomationService(DomainAwareService):
                         ORDER BY a.published_at DESC, a.quality_score DESC
                         LIMIT %s
                     """,
-                        params_with_exclude + [max_results],
+                        params + [max_results],
                     )
                 rows = cur.fetchall()
 
@@ -808,10 +1474,15 @@ class StorylineAutomationService(DomainAwareService):
                 date_threshold = datetime.now() - timedelta(
                     days=settings.get("date_range_days", 90)
                 )
-                exclude_ids = list(existing_article_ids) if existing_article_ids else [-1]
+                exclude_ids = [
+                    int(x)
+                    for x in (existing_article_ids or [])
+                    if x is not None and str(x).strip().lstrip("-").isdigit()
+                ] or [-1]
                 placeholders = ",".join(["%s"] * len(canonical_entity_ids))
                 exclude_sql = f"AND a.id NOT IN ({','.join(['%s'] * len(exclude_ids))})"
-                params = [date_threshold] + canonical_entity_ids + exclude_ids
+                # Placeholder order follows SQL appearance: JOIN IN (...), published_at, NOT IN, keyword ILIKEs
+                params: list[Any] = list(canonical_entity_ids) + [date_threshold] + exclude_ids
                 exclude_clause = ""
                 if exclude_keywords:
                     for kw in exclude_keywords[:5]:
@@ -1217,7 +1888,7 @@ class StorylineAutomationService(DomainAwareService):
             return False, "below_quality"
 
         semantic_raw = article.get("semantic_score")
-        if semantic_raw is not None and source == "rag":
+        if semantic_raw is not None:
             if float(semantic_raw) < min_semantic:
                 return False, "below_semantic"
 
@@ -1258,10 +1929,84 @@ class StorylineAutomationService(DomainAwareService):
                         skip_reasons[reason or "rejected"] = skip_reasons.get(reason or "rejected", 0) + 1
                         continue
 
+                    art_id = article.get("id")
+                    if not art_id:
+                        skipped += 1
+                        skip_reasons["missing_id"] = skip_reasons.get("missing_id", 0) + 1
+                        continue
+
+                    # Already on this storyline — nothing to queue
+                    cur.execute(
+                        f"""
+                        SELECT 1 FROM {self.schema}.storyline_articles
+                        WHERE storyline_id = %s AND article_id = %s
+                        LIMIT 1
+                        """,
+                        (int(storyline_id), int(art_id)),
+                    )
+                    if cur.fetchone():
+                        skipped += 1
+                        skip_reasons["already_member"] = skip_reasons.get("already_member", 0) + 1
+                        continue
+
                     relevance = float(article.get("relevance_score", 0.6) or 0.6)
                     quality = float(article.get("quality_score", 0.5) or 0.5)
                     semantic = float(article.get("semantic_score", relevance) or relevance)
+                    keyword = float(
+                        article.get("keyword_score")
+                        or self._keyword_score_for_article(
+                            article, search_query=search_query
+                        )
+                    )
+                    article["keyword_score"] = keyword
                     combined = float(article.get("combined_score") or self._final_score(article))
+
+                    # Cross-storyline fan-out: if this article is already pending on
+                    # another storyline with ≥ this score, skip (one best home).
+                    cur.execute(
+                        """
+                        SELECT storyline_id, combined_score
+                        FROM public.storyline_article_suggestions
+                        WHERE domain_key = %s
+                          AND article_id = %s
+                          AND status = 'pending'
+                          AND storyline_id <> %s
+                        ORDER BY combined_score DESC NULLS LAST
+                        LIMIT 1
+                        """,
+                        (self.domain, int(art_id), int(storyline_id)),
+                    )
+                    other = cur.fetchone()
+                    if other and float(other[1] or 0) >= combined:
+                        skipped += 1
+                        skip_reasons["pending_elsewhere"] = (
+                            skip_reasons.get("pending_elsewhere", 0) + 1
+                        )
+                        continue
+
+                    # Near-dupe title already pending on this storyline
+                    title = (article.get("title") or "").strip().lower()
+                    if len(title) >= 12:
+                        cur.execute(
+                            f"""
+                            SELECT 1
+                            FROM public.storyline_article_suggestions s
+                            JOIN {self.schema}.articles a ON a.id = s.article_id
+                            WHERE s.domain_key = %s
+                              AND s.storyline_id = %s
+                              AND s.status = 'pending'
+                              AND s.article_id <> %s
+                              AND lower(trim(a.title)) = %s
+                            LIMIT 1
+                            """,
+                            (self.domain, int(storyline_id), int(art_id), title),
+                        )
+                        if cur.fetchone():
+                            skipped += 1
+                            skip_reasons["near_dupe_title"] = (
+                                skip_reasons.get("near_dupe_title", 0) + 1
+                            )
+                            continue
 
                     matched_raw = (
                         article.get("matched_entities")
@@ -1303,10 +2048,10 @@ class StorylineAutomationService(DomainAwareService):
                             (
                                 self.domain,
                                 storyline_id,
-                                article.get("id"),
+                                int(art_id),
                                 round(relevance, 2),
                                 round(semantic, 2),
-                                round(relevance, 2),
+                                round(keyword, 2),
                                 round(quality, 2),
                                 round(combined, 2),
                                 reasoning,
@@ -1360,38 +2105,60 @@ class StorylineAutomationService(DomainAwareService):
 
     def _merge_article_entities_to_storyline(self, cur, storyline_id: int, article_id: int) -> None:
         """Merge article_entities into story_entity_index when article added to storyline."""
-        type_map = {
-            "person": "person",
-            "organization": "organization",
-            "subject": "other",
-            "recurring_event": "event",
-            "family": "family",
-        }
+        from shared.story_entity_index import map_entity_type_for_sei
+
         for sei_schema in [self.schema, "public"]:
             try:
                 cur.execute(
                     f"""
-                    SELECT entity_name, entity_type FROM {self.schema}.article_entities
+                    SELECT entity_name, entity_type, canonical_entity_id
+                    FROM {self.schema}.article_entities
                     WHERE article_id = %s AND entity_name IS NOT NULL
                 """,
                     (article_id,),
                 )
                 rows = cur.fetchall()
-                for name, ae_type in rows:
+                try:
+                    from shared.story_entity_index import resolve_entity_role_for_sei
+                except Exception:
+                    resolve_entity_role_for_sei = None  # type: ignore
+                for name, ae_type, cid in rows:
                     if not name or len(name.strip()) < 2:
                         continue
-                    sei_type = type_map.get(ae_type, "other")
+                    sei_type = map_entity_type_for_sei(ae_type)
+                    erole = None
+                    if resolve_entity_role_for_sei is not None:
+                        erole, _hk = resolve_entity_role_for_sei(
+                            domain_key=self.domain,
+                            entity_name=name,
+                            entity_type=ae_type,
+                        )
                     try:
                         cur.execute(
                             f"""
                             INSERT INTO {sei_schema}.story_entity_index
-                            (storyline_id, entity_name, entity_type, mention_count, last_seen_at)
-                            VALUES (%s, %s, %s, 1, NOW())
+                            (storyline_id, entity_name, entity_type, entity_role,
+                             mention_count, last_seen_at, canonical_entity_id)
+                            VALUES (%s, %s, %s, %s, 1, NOW(), %s)
                             ON CONFLICT (storyline_id, entity_name, entity_type) DO UPDATE SET
                                 mention_count = story_entity_index.mention_count + 1,
-                                last_seen_at = NOW()
+                                last_seen_at = NOW(),
+                                entity_role = COALESCE(
+                                    NULLIF(EXCLUDED.entity_role, ''),
+                                    {sei_schema}.story_entity_index.entity_role
+                                ),
+                                canonical_entity_id = COALESCE(
+                                    story_entity_index.canonical_entity_id,
+                                    EXCLUDED.canonical_entity_id
+                                )
                         """,
-                            (storyline_id, name.strip()[:255], sei_type),
+                            (
+                                storyline_id,
+                                name.strip()[:255],
+                                sei_type,
+                                erole,
+                                int(cid) if cid is not None else None,
+                            ),
                         )
                     except Exception as e:
                         logger.debug(f"story_entity_index merge skip: {e}")
@@ -1400,66 +2167,489 @@ class StorylineAutomationService(DomainAwareService):
                 logger.debug(f"article_entities/story_entity_index merge: {e}")
                 continue
 
-    async def _auto_add_articles(
-        self, conn, storyline_id: int, articles: list[dict[str, Any]], settings: dict[str, Any]
+    async def _append_articles_to_episode(
+        self,
+        conn,
+        storyline_id: int,
+        articles: list[dict[str, Any]],
+        settings: dict[str, Any],
+        *,
+        article_count: int = 0,
+        storyline_title: str = "",
+        kitchen_sink: bool = False,
     ) -> int:
-        """Auto-add articles that meet threshold criteria"""
+        """
+        Append matching articles onto an existing locked episode (signature-gated).
+
+        Uses ``admit_article_to_episode_or_storyline`` so Mode B / event→episode is
+        the admit path — not bag absorb. Containers and unlocked bags are skipped.
+        """
+        from shared.episode_attach_gate import admit_article_to_episode_or_storyline
+
+        append_conn = get_db_connection()
+        if not append_conn:
+            logger.error("episode append: no database connection")
+            return 0
+
+        added = 0
         try:
-            added_count = 0
-            min_score = settings.get("min_relevance_score", 0.7)  # Higher threshold for auto-add
+            with append_conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT signature_locked_at IS NOT NULL,
+                           COALESCE(story_kind, ''),
+                           COALESCE(is_mega_storyline, FALSE),
+                           COALESCE(article_count, 0)
+                    FROM {self.schema}.storylines
+                    WHERE id = %s
+                    """,
+                    (int(storyline_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return 0
+                locked, skind, is_mega, live_count = (
+                    bool(row[0]),
+                    str(row[1] or ""),
+                    bool(row[2]),
+                    int(row[3] or 0),
+                )
+            if is_mega or skind == "container_index":
+                logger.info(
+                    "Storyline %s skip episode append — container/mega",
+                    storyline_id,
+                )
+                return 0
+            if not locked:
+                logger.info(
+                    "Storyline %s skip episode append — signature not locked "
+                    "(use suggestions until locked)",
+                    storyline_id,
+                )
+                return 0
 
-            with conn.cursor() as cur:
-                for article in articles:
-                    relevance = float(article.get("relevance_score", 0.6) or 0.6)
-                    quality = float(article.get("quality_score", 0.5) or 0.5)
-                    combined = article.get("combined_score")
-                    if combined is None:
-                        combined = relevance * 0.7 + quality * 0.3
-                    if combined >= min_score:
-                        # Auto-add article to domain schema
-                        try:
-                            cur.execute(
-                                f"""
-                                INSERT INTO {self.schema}.storyline_articles
-                                (storyline_id, article_id, added_at, relevance_score)
-                                VALUES (%s, %s, %s, %s)
-                                ON CONFLICT (storyline_id, article_id) DO NOTHING
-                            """,
-                                (storyline_id, article.get("id"), datetime.now(), relevance),
-                            )
+            # Locked episodes: kitchen_sink / soft shell flags must not block append —
+            # signature admit (and signature overlap fallback) is the real gate.
+            if is_shell_title(storyline_title) and len((storyline_title or "").split()) <= 3:
+                logger.info(
+                    "Storyline %s bare shell title — skip episode append",
+                    storyline_id,
+                )
+                return 0
 
-                            if cur.rowcount > 0:
-                                added_count += 1
-                                self._merge_article_entities_to_storyline(
-                                    cur, storyline_id, article.get("id")
-                                )
-                                
-                                # Check if this article should trigger consolidation
-                                # This is a simple check - in a real implementation, 
-                                # you might want to check article frequency or other criteria
-                                if added_count % 10 == 0:  # Every 10 articles, run consolidation
-                                    try:
-                                        from services.storyline_consolidation_service import consolidation_task
-                                        consolidation_task()
-                                    except Exception as consolidation_error:
-                                        logger.warning(f"Error running consolidation: {consolidation_error}")
-                        except Exception as e:
-                            logger.warning(f"Error adding article {article.get('id')}: {e}")
-                            continue
+            min_score = float(self._auto_approve_threshold() or 0.75)
+            for article in articles:
+                art_id = article.get("id")
+                if not art_id:
+                    continue
+                combined = float(
+                    article.get("combined_score")
+                    or article.get("relevance_score")
+                    or 0.0
+                )
+                if combined < min_score:
+                    continue
+                # Prefer event→episode admit
+                ok, reason = admit_article_to_episode_or_storyline(
+                    append_conn,
+                    domain_key=self.domain,
+                    schema=self.schema,
+                    storyline_id=int(storyline_id),
+                    article_id=int(art_id),
+                    blend_score=combined,
+                    added_by="storyline_automation_episode_append",
+                )
+                if not ok:
+                    # Fallback: article entity/title overlaps locked identity signature
+                    if self._article_matches_locked_signature(
+                        append_conn, int(storyline_id), int(art_id), article
+                    ):
+                        ok, reason = self._insert_derived_membership(
+                            append_conn,
+                            int(storyline_id),
+                            int(art_id),
+                            combined,
+                            reason="signature_overlap_append",
+                        )
+                if ok:
+                    added += 1
+                    live_count += 1
+                    logger.info(
+                        "episode append storyline=%s article=%s (%s)",
+                        storyline_id,
+                        art_id,
+                        reason,
+                    )
+                else:
+                    logger.debug(
+                        "episode append skip storyline=%s article=%s: %s",
+                        storyline_id,
+                        art_id,
+                        reason,
+                    )
 
-                # Only touch storyline.updated_at when membership actually changed (avoids "daily
-                # updates" when automation scores articles but adds nothing).
-                if added_count > 0:
+            if added:
+                with append_conn.cursor() as cur:
                     cur.execute(
                         f"""
                         UPDATE {self.schema}.storylines
                         SET article_count = (
-                            SELECT COUNT(*) FROM {self.schema}.storyline_articles WHERE storyline_id = %s
-                        ),
+                                SELECT COUNT(*) FROM {self.schema}.storyline_articles
+                                WHERE storyline_id = %s
+                            ),
+                            total_articles = (
+                                SELECT COUNT(*) FROM {self.schema}.storyline_articles
+                                WHERE storyline_id = %s
+                            ),
+                            updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (int(storyline_id), int(storyline_id), int(storyline_id)),
+                    )
+                append_conn.commit()
+            else:
+                append_conn.rollback()
+            return added
+        except Exception as e:
+            logger.error("Error episode-appending articles: %s", e)
+            try:
+                append_conn.rollback()
+            except Exception:
+                pass
+            return 0
+        finally:
+            try:
+                append_conn.close()
+            except Exception:
+                pass
+
+    def _article_matches_locked_signature(
+        self,
+        conn,
+        storyline_id: int,
+        article_id: int,
+        article: dict[str, Any] | None = None,
+    ) -> bool:
+        """True when article entities/title overlap locked episode identity (≥1 name/cid)."""
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT anchor_signature, signature_locked_at
+                    FROM {self.schema}.storylines WHERE id = %s
+                    """,
+                    (int(storyline_id),),
+                )
+                row = cur.fetchone()
+                if not row or not row[1] or not isinstance(row[0], dict):
+                    return False
+                ident = [
+                    str(x).strip().lower()
+                    for x in (row[0].get("identity") or [])
+                    if x and str(x).strip()
+                ]
+                if not ident:
+                    return False
+                name_idents = [t for t in ident if not t.startswith("cid:")]
+                cid_idents: list[int] = []
+                for t in ident:
+                    if t.startswith("cid:"):
+                        try:
+                            cid_idents.append(int(t.split(":", 1)[1]))
+                        except (TypeError, ValueError):
+                            pass
+                cur.execute(
+                    f"""
+                    SELECT lower(entity_name), canonical_entity_id
+                    FROM {self.schema}.article_entities
+                    WHERE article_id = %s
+                    """,
+                    (int(article_id),),
+                )
+                ae_names: set[str] = set()
+                ae_cids: set[int] = set()
+                for ename, cid in cur.fetchall() or []:
+                    if ename:
+                        ae_names.add(str(ename).strip().lower())
+                    if cid is not None:
+                        try:
+                            ae_cids.add(int(cid))
+                        except (TypeError, ValueError):
+                            pass
+                title = ""
+                if article:
+                    title = str(article.get("title") or "").lower()
+                if not title:
+                    cur.execute(
+                        f"SELECT lower(title) FROM {self.schema}.articles WHERE id = %s",
+                        (int(article_id),),
+                    )
+                    tr = cur.fetchone()
+                    title = str((tr or [""])[0] or "")
+                for n in name_idents:
+                    if len(n) < 4:
+                        continue
+                    if n in ae_names or (n in title):
+                        return True
+                    # partial: "john healey" vs entity "healey"
+                    if any(n in ae or ae in n for ae in ae_names if len(ae) >= 4):
+                        return True
+                if cid_idents and ae_cids.intersection(cid_idents):
+                    return True
+        except Exception as e:
+            logger.debug("signature overlap check: %s", e)
+        return False
+
+    def _insert_derived_membership(
+        self,
+        conn,
+        storyline_id: int,
+        article_id: int,
+        blend: float,
+        *,
+        reason: str,
+    ) -> tuple[bool, str]:
+        from shared.membership_store import insert_derived_bag_row
+
+        try:
+            with conn.cursor() as cur:
+                inserted = insert_derived_bag_row(
+                    cur,
+                    schema=self.schema,
+                    storyline_id=int(storyline_id),
+                    article_id=int(article_id),
+                    relevance_score=float(blend or 0.0),
+                    added_by="storyline_automation_episode_append",
+                    metadata={"derived_from": reason},
+                )
+                if inserted:
+                    return True, reason
+                return False, "already_member"
+        except Exception:
+            return False, "insert_failed"
+
+    async def _auto_add_articles(
+        self,
+        conn,
+        storyline_id: int,
+        articles: list[dict[str, Any]],
+        settings: dict[str, Any],
+        *,
+        article_count: int = 0,
+        storyline_title: str = "",
+        kitchen_sink: bool = False,
+    ) -> int:
+        """Legacy silent bag attach — retired. Returns 0; use suggestions/context only.
+
+        Event→Episode rebuild: articles never auto-INSERT into storyline_articles.
+        Re-enable only with STORYLINE_AUTOMATION_AUTO_ATTACH=1 (not recommended).
+        Prefer ``_append_articles_to_episode`` when episode assembly is on.
+        """
+        try:
+            from shared.assembly_link_funnel import (
+                automation_auto_attach_enabled,
+                storyline_articles_write_allowed,
+            )
+
+            if not automation_auto_attach_enabled():
+                logger.info(
+                    "Storyline %s skip _auto_add_articles — bag absorb off "
+                    "(suggestions/context only; episode links via continuation)",
+                    storyline_id,
+                )
+                return 0
+            if not storyline_articles_write_allowed():
+                logger.info(
+                    "Storyline %s skip _auto_add_articles — storyline_articles write blocked "
+                    "(episode mode without dual-write)",
+                    storyline_id,
+                )
+                return 0
+        except Exception:
+            logger.info(
+                "Storyline %s skip _auto_add_articles — absorb kill-switch unavailable",
+                storyline_id,
+            )
+            return 0
+
+        try:
+            try:
+                from services.storyline_membership_ops_lock import (
+                    is_membership_frozen,
+                    refinement_job_holds_membership,
+                )
+
+                with conn.cursor() as _fc:
+                    _fc.execute(
+                        f"SELECT quality_metrics FROM {self.schema}.storylines WHERE id = %s",
+                        (storyline_id,),
+                    )
+                    _qm = (_fc.fetchone() or (None,))[0]
+                frozen, reason = is_membership_frozen(_qm)
+                if not frozen and refinement_job_holds_membership(
+                    self.domain, storyline_id, conn=conn
+                ):
+                    frozen, reason = True, "refinement_processing"
+                if frozen:
+                    logger.info(
+                        "Storyline %s skip silent auto-add — membership frozen (%s)",
+                        storyline_id,
+                        reason,
+                    )
+                    return 0
+            except Exception:
+                pass
+
+            from shared.storyline_attach_caps import attach_hard_cap, storyline_at_or_over_attach_cap
+
+            hard_cap = attach_hard_cap(self.domain)
+            if storyline_at_or_over_attach_cap(self.domain, int(article_count or 0)):
+                logger.info(
+                    "Storyline %s at attach hard cap (%s, domain=%s) — skipping silent auto-add",
+                    storyline_id,
+                    hard_cap,
+                    self.domain,
+                )
+                return 0
+
+            if is_shell_title(storyline_title) or kitchen_sink:
+                logger.info(
+                    "Storyline %s shell/kitchen-sink title — skipping silent auto-add",
+                    storyline_id,
+                )
+                return 0
+
+            added_count = 0
+            # Score collapse: use auto_approve_combined as suggestion floor only —
+            # no size-bump effective_auto_add_threshold, no relevance×quality proxy.
+            min_score = float(self._auto_approve_threshold() or 0.75)
+
+            with conn.cursor() as cur:
+                for article in articles:
+                    relevance = float(article.get("relevance_score", 0.6) or 0.6)
+                    combined = article.get("combined_score")
+                    if combined is None:
+                        combined = float(relevance)
+                    if float(combined) < min_score:
+                        continue
+                    if not candidate_passes_absorb_gate(
+                        article,
+                        storyline_title=storyline_title or "",
+                        article_count=int(article_count or 0),
+                        kitchen_sink=kitchen_sink,
+                    ):
+                        continue
+                    if self._subject_specificity_blocks_attach(cur, storyline_id, article):
+                        continue
+                    art_id = article.get("id")
+                    # Mode B funnel: membership_store admit (hub-exclude + blend floor + cap)
+                    try:
+                        from shared.membership_store import MembershipIntent, admit as membership_admit
+
+                        # Event-core: rare anchors must found/own a TE — never silent mega absorb
+                        try:
+                            from services.event_core_membership_service import (
+                                event_core_membership_enabled,
+                                found_and_attach_rare_anchors,
+                                should_block_mega_absorb,
+                            )
+
+                            if event_core_membership_enabled():
+                                block, ec_reason, _anchors = should_block_mega_absorb(
+                                    cur,
+                                    domain_key=self.domain,
+                                    storyline_id=int(storyline_id),
+                                    article=article,
+                                )
+                                if block:
+                                    found_and_attach_rare_anchors(
+                                        cur,
+                                        domain_key=self.domain,
+                                        article=article,
+                                        storyline_id=None,
+                                    )
+                                    logger.info(
+                                        "Event-core blocked mega absorb storyline=%s article=%s (%s)",
+                                        storyline_id,
+                                        art_id,
+                                        ec_reason,
+                                    )
+                                    continue
+                                try:
+                                    found_and_attach_rare_anchors(
+                                        cur,
+                                        domain_key=self.domain,
+                                        article=article,
+                                        storyline_id=int(storyline_id),
+                                    )
+                                except Exception:
+                                    pass
+                        except Exception as _ec_err:
+                            logger.debug("event-core absorb gate: %s", _ec_err)
+
+                        ok, gate_reason = membership_admit(
+                            conn,
+                            domain_key=self.domain,
+                            schema=self.schema,
+                            episode_id=int(storyline_id),
+                            article_id=int(art_id),
+                            intent=MembershipIntent.AUTOMATION,
+                            blend_score=float(relevance or 0.0),
+                            added_by="storyline_automation",
+                        )
+                        if not ok:
+                            logger.info(
+                                "auto_attach_blocked storyline=%s article=%s (%s)",
+                                storyline_id,
+                                art_id,
+                                gate_reason,
+                            )
+                            continue
+                        added_count += 1
+                        try:
+                            from services.event_core_membership_service import (
+                                sei_widen_allowed_on_silent_attach,
+                            )
+
+                            allow_sei = sei_widen_allowed_on_silent_attach()
+                        except Exception:
+                            allow_sei = True
+                        if allow_sei:
+                            self._merge_article_entities_to_storyline(
+                                cur, storyline_id, article.get("id")
+                            )
+
+                        if added_count % 10 == 0:
+                            try:
+                                from config.runtime import env_bool
+
+                                inline_cons = env_bool(
+                                    "STORYLINE_AUTOMATION_INLINE_CONSOLIDATION",
+                                    False,
+                                )
+                                if inline_cons:
+                                    from services.storyline_consolidation_service import (
+                                        consolidation_task,
+                                    )
+
+                                    consolidation_task()
+                            except Exception as consolidation_error:
+                                logger.warning(
+                                    "Error running consolidation: %s", consolidation_error
+                                )
+                    except Exception as e:
+                        logger.warning(f"Error adding article {article.get('id')}: {e}")
+                        continue
+
+                if added_count > 0:
+                    cur.execute(
+                        f"""
+                        UPDATE {self.schema}.storylines
+                        SET {sync_counts_update_sql(self.schema)},
                         updated_at = %s
                         WHERE id = %s
                         """,
-                        (storyline_id, datetime.now(), storyline_id),
+                        (storyline_id, storyline_id, datetime.now(), storyline_id),
                     )
 
                 conn.commit()

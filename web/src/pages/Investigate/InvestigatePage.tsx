@@ -119,9 +119,14 @@ export default function InvestigatePage() {
           mb: 2,
         }}
       >
-        <Typography variant='h5' sx={{ fontWeight: 600 }}>
-          Investigate
-        </Typography>
+        <Box>
+          <Typography variant='h5' sx={{ fontWeight: 600 }}>
+            Investigate
+          </Typography>
+          <Typography variant='body2' color='text.secondary'>
+            Tracked events and entities — cross-domain investigative threads
+          </Typography>
+        </Box>
         <Box sx={{ display: 'flex', gap: 1 }}>
           <Button
             variant='contained'
@@ -164,7 +169,14 @@ export default function InvestigatePage() {
             size='small'
             onClick={() => navigate(`/${domain}/investigate/entity-resolution`)}
           >
-            Entity resolution (NRI)
+            Entity resolution
+          </Button>
+          <Button
+            variant='outlined'
+            size='small'
+            onClick={() => navigate(`/${domain}/investigate/spine-browser`)}
+          >
+            Spine browser
           </Button>
           <Button
             variant='outlined'

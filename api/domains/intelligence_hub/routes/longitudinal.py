@@ -157,6 +157,37 @@ async def arc_spine(arc_id: str):
     )
 
 
+@router.get("/arcs/{arc_id}/chronicle")
+async def arc_chronicle(arc_id: str):
+    """Spine ribbon plus linear supporting episodes / bonds for curated arcs."""
+    arc = get_arc_definition(arc_id)
+    if not arc:
+        raise HTTPException(status_code=404, detail="Arc not found")
+    events = list_reference_events(arc_id=arc_id, limit=500)
+    chapter = resolve_current_chapter(arc_id)
+    from services.arc_chronicle_attachment_service import load_chronicle_protein_attachments
+
+    attachments = load_chronicle_protein_attachments(arc_id)
+    if not attachments.get("success"):
+        raise HTTPException(
+            status_code=404, detail=attachments.get("error") or "Chronicle attachments failed"
+        )
+    return APIResponse(
+        success=True,
+        data={
+            "arc": arc,
+            "reference_events": events,
+            "current_chapter": chapter,
+            "supporting_proteins": attachments.get("supporting_proteins") or [],
+            "established_bonds": attachments.get("established_bonds") or [],
+            "established_bond_count": int(attachments.get("established_bond_count") or 0),
+            "tracked_events": attachments.get("tracked_events") or [],
+            "protein_count": int(attachments.get("protein_count") or 0),
+        },
+        message="Arc chronicle data",
+    )
+
+
 @router.get("/arcs/{arc_id}/heatmap")
 async def tension_heatmap(arc_id: str, months: int = Query(24, ge=6, le=60)):
     arc = get_arc_definition(arc_id)

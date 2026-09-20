@@ -3,6 +3,7 @@
 Storyline Articles Routes
 Managing articles within storylines (add, remove, list available)
 """
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 import logging
 import math
@@ -11,6 +12,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
 from shared.database.connection import get_db_connection
+from shared.storyline_article_counts import sync_counts_update_sql, sync_storyline_derived_metrics
 from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
 from shared.services.domain_aware_service import validate_domain
 
@@ -85,19 +87,18 @@ async def add_article_to_domain_storyline(
                 cur.execute(
                     f"""
                     UPDATE {schema}.storylines
-                    SET article_count = (
-                        SELECT COUNT(*) FROM {schema}.storyline_articles
-                        WHERE storyline_id = %s
-                    ),
+                    SET {sync_counts_update_sql(schema)},
                     updated_at = %s
                     WHERE id = %s
                 """,
-                    (storyline_id, datetime.now(), storyline_id),
+                    (storyline_id, storyline_id, datetime.now(), storyline_id),
                 )
+
+                sync_storyline_derived_metrics(cur, schema, storyline_id)
 
                 conn.commit()
 
-                if os.getenv("STORYLINE_ENQUEUE_FINISHER_ON_NEW_ARTICLE", "1") == "1":
+                if env_str("STORYLINE_ENQUEUE_FINISHER_ON_NEW_ARTICLE", "1") == "1":
                     try:
                         from services.content_refinement_queue_service import (
                             JOB_NARRATIVE_FINISHER,
@@ -194,15 +195,14 @@ async def remove_article_from_domain_storyline(
                 cur.execute(
                     f"""
                     UPDATE {schema}.storylines
-                    SET article_count = (
-                        SELECT COUNT(*) FROM {schema}.storyline_articles
-                        WHERE storyline_id = %s
-                    ),
+                    SET {sync_counts_update_sql(schema)},
                     updated_at = %s
                     WHERE id = %s
                 """,
-                    (storyline_id, datetime.now(), storyline_id),
+                    (storyline_id, storyline_id, datetime.now(), storyline_id),
                 )
+
+                sync_storyline_derived_metrics(cur, schema, storyline_id)
 
                 conn.commit()
 

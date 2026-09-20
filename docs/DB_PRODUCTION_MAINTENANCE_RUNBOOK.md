@@ -21,6 +21,7 @@ Use this for **staging first**, then **production**, when executing assessment c
 
 - Use distinct `DB_HOST` / credentials in `.env` or deployment secrets.
 - Record each migration in `public.applied_migrations` via `api/scripts/register_applied_migration.py` after successful apply.
+- **`run_migration.py` may apply SQL without a ledger row** — after manual or scripted applies (e.g. migrations 241–245), register each id: `PYTHONPATH=api python3 api/scripts/register_applied_migration.py NNN --notes "..." --file api/database/migrations/NNN_*.sql`
 - Compare ledger to repo SQL (active + `archive/historical`): `PYTHONPATH=api uv run python api/scripts/migration_ledger_report.py`. Layout: `api/database/migrations/README.md`.
 - **Exposure:** If the API is reachable outside a trusted LAN, follow [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md) (`NEWS_INTEL_ENV`, CORS, trusted hosts).
 

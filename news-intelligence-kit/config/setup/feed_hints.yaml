@@ -1,0 +1,18 @@
+general:
+  - https://feeds.bbci.co.uk/news/rss.xml
+  - https://www.reutersagency.com/feed/
+sports:
+  - https://www.espn.com/espn/rss/news
+  - https://feeds.bbci.co.uk/sport/rss.xml
+entertainment:
+  - https://variety.com/feed/
+  - https://www.hollywoodreporter.com/feed/
+pop culture:
+  - https://www.billboard.com/feed/
+  - https://www.rollingstone.com/feed/
+technology:
+  - https://feeds.arstechnica.com/arstechnica/index
+  - https://www.theverge.com/rss/index.xml
+science:
+  - https://www.nature.com/nature.rss
+  - https://feeds.npr.org/1007/rss.xml

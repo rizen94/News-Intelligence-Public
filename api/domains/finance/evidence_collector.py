@@ -68,17 +68,15 @@ def collect(
                 result["rss_snippets"] = shortlist_to_rss_snippets(shortlist)
             else:
                 from config.settings import finance_postgres_content_domain_key
-                from domains.news_aggregation.services.article_service import ArticleService
+                from shared.services.article_query_service import get_recent_domain_articles
 
-                article_svc = ArticleService(domain=finance_postgres_content_domain_key())
                 published_after = datetime.now(timezone.utc) - timedelta(hours=hours)
-                res = article_svc.get_articles(
+                articles = get_recent_domain_articles(
+                    finance_postgres_content_domain_key(),
+                    published_after=published_after,
                     limit=max_rss,
-                    offset=0,
                     include_content=True,
-                    filters={"published_after": published_after},
                 )
-                articles = (res.get("data") or {}).get("articles") or []
                 for a in articles:
                     snippet = (a.get("summary") or a.get("content") or "")[:400]
                     pub = a.get("published_at") or a.get("published_date")

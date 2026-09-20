@@ -1,0 +1,104 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-news_intel}
+      POSTGRES_USER: ${DB_USER:-newsapp}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change_me}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./migrations/001_baseline.sql:/docker-entrypoint-initdb.d/01-baseline.sql:ro
+      - ./migrations/002_kit_schema_version.sql:/docker-entrypoint-initdb.d/02-kit-version.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-newsapp} -d ${DB_NAME:-news_intel}"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ./data/ollama:/root/.ollama
+    ports:
+      - "${OLLAMA_HOST_PORT:-11435}:11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  api:
+    build:
+      context: ..
+      dockerfile: news-intelligence-kit/Dockerfile.api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+      OLLAMA_HOST: http://ollama:11434
+      NRI_VAULT_PATH: /data/vault
+      PYTHONPATH: /app/api:/app
+    volumes:
+      - ./config:/app/kit/config
+      - ./data/vault:/data/vault
+      - ./scripts:/app/kit/scripts:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/setup/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  intake-web:
+    build:
+      context: ..
+      dockerfile: news-intelligence-kit/Dockerfile.web
+    restart: unless-stopped
+    ports:
+      - "${INTAKE_WEB_PORT:-8080}:80"
+    volumes:
+      - ./setup/dist:/usr/share/nginx/html/setup:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/setup/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    restart: unless-stopped
+    ports:
+      - "${OPENWEBUI_PORT:-3001}:8080"
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      WEBUI_AUTH: "false"
+    volumes:
+      - ./data/open-webui:/app/backend/data
+      - ./open-webui/tools:/app/backend/data/tools:ro
+    depends_on:
+      ollama:
+        condition: service_started
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+networks:
+  default:
+    name: news-intelligence-kit

@@ -1,0 +1,24 @@
+# Build from News Intelligence repo root
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl libpq-dev gcc && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY api/requirements.txt /app/api/requirements.txt
+RUN pip install --no-cache-dir -r /app/api/requirements.txt feedparser
+
+COPY api /app/api
+COPY news-intelligence-kit/kit_api /app/kit_api
+COPY news-intelligence-kit/config /app/kit/config
+COPY news-intelligence-kit/scripts /app/kit/scripts
+
+ENV PYTHONPATH=/app/api:/app
+ENV NEWS_INTEL_KIT_MODE=true
+ENV KIT_ROOT=/app/kit
+
+RUN mkdir -p /app/api/logs /app/kit_api/logs
+
+WORKDIR /app/kit_api
+CMD ["python", "-m", "uvicorn", "main_kit:app", "--host", "0.0.0.0", "--port", "8000"]

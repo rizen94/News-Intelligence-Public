@@ -9,11 +9,24 @@ from __future__ import annotations
 
 import logging
 import math
+import time
+import json
+from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
+
+PendingMetricsSource = Literal["none", "live", "snapshot"]
 
 from shared.database.connection import get_ui_db_connection as get_db_connection
 from shared.domain_registry import get_schema_names_active, pipeline_url_schema_pairs
+from shared.monitor_run_vocabulary import (
+    MEANINGFUL_DURATION_SEC,
+    MONITOR_SCHEMA_VERSION,
+    RUN_HISTORY_SKIP_STATUSES,
+    query_measured_rows_per_run_by_phase,
+    run_history_measurable_sql,
+    throughput_from_payload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,11 +37,70 @@ _BACKLOG_WORKLOAD_WINDOW_DAYS = 4
 _PROCESSING_PROGRESS_EXCLUDED_PHASES = frozenset({"nightly_enrichment_context"})
 
 
+def _processing_progress_excluded_phases() -> frozenset[str]:
+    """Hide inactive intake modes and unified-superseded phases from Monitor pulse."""
+    excluded = set(_PROCESSING_PROGRESS_EXCLUDED_PHASES)
+    try:
+        from shared.pipeline_resource_policy import (
+            intake_extraction_suppressed,
+            legacy_intake_extraction_phases,
+            unified_superseded_automation_phases,
+        )
+
+        if intake_extraction_suppressed():
+            excluded |= set(legacy_intake_extraction_phases())
+            excluded |= set(unified_superseded_automation_phases())
+        else:
+            excluded.add("unified_intake_extraction")
+    except Exception:
+        pass
+    return frozenset(excluded)
+
+
+def _phase_scheduling_status(phase_name: str) -> str:
+    """active | suppressed (intake mode) | retired (post-spine)."""
+    name = (phase_name or "").strip()
+    if not name:
+        return "active"
+    try:
+        from shared.assembly_phase_order import post_spine_scheduling_suppressed
+
+        if post_spine_scheduling_suppressed(name):
+            return "retired"
+    except Exception:
+        pass
+    try:
+        from shared.pipeline_resource_policy import intake_phase_scheduled
+
+        if not intake_phase_scheduled(name):
+            return "suppressed"
+    except Exception:
+        pass
+    return "active"
+
+
+def _monitor_pulse_visible_phase(name: str) -> bool:
+    """Monitor pulse table/ticks: hide retired post-spine phases (not scheduled)."""
+    if not name or name in _processing_progress_excluded_phases():
+        return False
+    return _phase_scheduling_status(name) != "retired"
+
+
 def _rollback_conn(conn) -> None:
     try:
         conn.rollback()
     except Exception:
         pass
+
+
+def _unified_pending_count(
+    phase_name: str,
+    pending_m: dict[str, int],
+    wq: dict[str, Any],
+) -> int:
+    """queue_depth from backlog_metrics kernel (work-queue breakdown is first_pass/retry only)."""
+    _ = wq
+    return int(pending_m.get(phase_name, 0) or 0)
 
 
 def _norm_phase_name(raw: Any) -> str | None:
@@ -46,6 +118,61 @@ def _norm_phase_name(raw: Any) -> str | None:
     return s or None
 
 
+_TERMINAL_BATCH_STATUSES = frozenset({"drain_finished", "phase_finished"})
+_SKIP_BATCH_STATUSES = RUN_HISTORY_SKIP_STATUSES | frozenset({"phase_failed"})
+
+
+def _measured_count_from_payload(payload: dict[str, Any]) -> int | None:
+    # wave_processed is parallel batch slots, not articles cleared — ignore wave-only rows.
+    if payload.get("wave") is not None and throughput_from_payload(payload) <= 0:
+        return None
+    n = throughput_from_payload(payload)
+    return n if n > 0 else None
+
+
+def _measured_batch_per_run_by_phase(
+    rows: list[tuple[Any, Any]],
+) -> dict[str, tuple[int, str, int]]:
+    """Fallback parser when SQL aggregation unavailable (tests / legacy error_message payloads)."""
+    terminal_samples: dict[str, list[int]] = defaultdict(list)
+    fallback_samples: dict[str, list[int]] = defaultdict(list)
+    for raw_name, err in rows:
+        norm = _norm_phase_name(raw_name)
+        if not norm or not err:
+            continue
+        try:
+            payload = json.loads(err)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(payload, dict) or not payload.get("batch"):
+            continue
+        status = str(payload.get("status") or "").strip().lower()
+        if status in _SKIP_BATCH_STATUSES:
+            continue
+        n = _measured_count_from_payload(payload)
+        if n is None:
+            continue
+        if status in _TERMINAL_BATCH_STATUSES:
+            terminal_samples[norm].append(n)
+        elif status in ("batch_round", "phase_finished") or payload.get("batch_round") is not None:
+            fallback_samples[norm].append(n)
+        elif status not in _SKIP_BATCH_STATUSES and status:
+            fallback_samples[norm].append(n)
+
+    out: dict[str, tuple[int, str, int]] = {}
+    for phase in set(terminal_samples) | set(fallback_samples):
+        vals = terminal_samples.get(phase) or fallback_samples[phase]
+        avg = max(1, int(round(sum(vals) / len(vals))))
+        source = (
+            "measured_24h_terminal"
+            if phase in terminal_samples and len(terminal_samples[phase]) >= 1
+            else ("measured_24h" if len(vals) >= 3 else "measured_24h_small_sample")
+        )
+        out[phase] = (avg, source, len(vals))
+
+    return out
+
+
 def _json_safe_float(value: Any, *, ndigits: int = 1) -> float | None:
     """Starlette JSONResponse uses allow_nan=False; drop NaN/Inf so encoding never raises."""
     if value is None:
@@ -59,10 +186,209 @@ def _json_safe_float(value: Any, *, ndigits: int = 1) -> float | None:
     return round(f, ndigits)
 
 
+def _build_dimension_throughput(cur) -> list[dict[str, Any]]:
+    """Heavy cross-schema throughput counts (Monitor fast path skips this)."""
+    from shared.monitor_dimension_metrics import apply_dimension_backlogs
+    from shared.pipeline_queue_counts import get_all_phase_queue_depths
+
+    queue_depths = get_all_phase_queue_depths()
+    dimensions: list[dict[str, Any]] = []
+    enriched_1h = enriched_24h = enriched_7d = 0
+    for schema in get_pipeline_schema_names_active():
+        try:
+            cur.execute(
+                f"""
+                SELECT
+                    COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '1 hour'),
+                    COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '24 hours'),
+                    COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '7 days')
+                FROM {schema}.articles
+                WHERE enrichment_status = 'enriched' AND url IS NOT NULL AND url != ''
+                """
+            )
+            r = cur.fetchone()
+            if r:
+                enriched_1h += r[0] or 0
+                enriched_24h += r[1] or 0
+                enriched_7d += r[2] or 0
+        except Exception:
+            pass
+
+    dimensions.append(
+        {
+            "id": "articles_enriched",
+            "label": "Articles enriched",
+            "backlog": 0,
+            "last_1h": enriched_1h,
+            "last_24h": enriched_24h,
+            "last_7d": enriched_7d,
+        }
+    )
+
+    context_backlog_breakdown: dict[str, int] = {}
+    ctx_claim_1h = ctx_claim_24h = ctx_claim_7d = 0
+    ctx_created_1h = ctx_created_24h = ctx_created_7d = 0
+    try:
+        try:
+            from services.claim_extraction_service import get_context_claim_backlog_stats
+
+            context_backlog_breakdown = get_context_claim_backlog_stats()
+        except Exception:
+            context_backlog_breakdown = {}
+        cur.execute(
+            """
+            SELECT
+                COUNT(DISTINCT context_id) FILTER (WHERE ec.created_at >= NOW() - INTERVAL '1 hour'),
+                COUNT(DISTINCT context_id) FILTER (WHERE ec.created_at >= NOW() - INTERVAL '24 hours'),
+                COUNT(DISTINCT context_id) FILTER (WHERE ec.created_at >= NOW() - INTERVAL '7 days')
+            FROM intelligence.extracted_claims ec
+            """
+        )
+        r = cur.fetchone()
+        if r:
+            ctx_claim_1h, ctx_claim_24h, ctx_claim_7d = (r[0] or 0), (r[1] or 0), (r[2] or 0)
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 hour'),
+                COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours'),
+                COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')
+            FROM intelligence.contexts
+            """
+        )
+        r2 = cur.fetchone()
+        if r2:
+            ctx_created_1h, ctx_created_24h, ctx_created_7d = (
+                r2[0] or 0,
+                r2[1] or 0,
+                r2[2] or 0,
+            )
+    except Exception:
+        pass
+
+    dimensions.append(
+        {
+            "id": "contexts_claimed",
+            "label": "Contexts → claims (actionable queue)",
+            "backlog": 0,
+            "backlog_breakdown": context_backlog_breakdown or None,
+            "backlog_note": (
+                "backlog = queue_depth(claim_extraction); matches automation eligibility. "
+                "backlog_breakdown.total_no_claims is terminal inventory, not work to do"
+            ),
+            "last_1h": ctx_claim_1h,
+            "last_24h": ctx_claim_24h,
+            "last_7d": ctx_claim_7d,
+        }
+    )
+    dimensions.append(
+        {
+            "id": "contexts_created",
+            "label": "Contexts created",
+            "backlog": None,
+            "last_1h": ctx_created_1h,
+            "last_24h": ctx_created_24h,
+            "last_7d": ctx_created_7d,
+        }
+    )
+
+    ep_any_1h = ep_any_24h = ep_any_7d = 0
+    try:
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '1 hour'),
+                COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '24 hours'),
+                COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '7 days')
+            FROM intelligence.entity_profiles
+            """
+        )
+        r = cur.fetchone()
+        if r:
+            ep_any_1h, ep_any_24h, ep_any_7d = (r[0] or 0), (r[1] or 0), (r[2] or 0)
+    except Exception:
+        pass
+
+    dimensions.append(
+        {
+            "id": "entity_profiles_touched",
+            "label": "Entity profiles updated",
+            "backlog": 0,
+            "last_1h": ep_any_1h,
+            "last_24h": ep_any_24h,
+            "last_7d": ep_any_7d,
+        }
+    )
+
+    docs_1h = docs_24h = docs_7d = 0
+    try:
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '1 hour'),
+                COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '24 hours'),
+                COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '7 days')
+            FROM intelligence.processed_documents
+            WHERE extracted_sections IS NOT NULL AND extracted_sections != '[]'::jsonb
+            """
+        )
+        r = cur.fetchone()
+        if r:
+            docs_1h, docs_24h, docs_7d = (r[0] or 0), (r[1] or 0), (r[2] or 0)
+    except Exception:
+        pass
+
+    dimensions.append(
+        {
+            "id": "documents_extracted",
+            "label": "PDFs / documents extracted",
+            "backlog": 0,
+            "last_1h": docs_1h,
+            "last_24h": docs_24h,
+            "last_7d": docs_7d,
+        }
+    )
+
+    syn_1h = syn_24h = syn_7d = 0
+    for _dk, schema in pipeline_url_schema_pairs():
+        try:
+            cur.execute(
+                f"""
+                SELECT
+                    COUNT(*) FILTER (WHERE synthesized_at >= NOW() - INTERVAL '1 hour'),
+                    COUNT(*) FILTER (WHERE synthesized_at >= NOW() - INTERVAL '24 hours'),
+                    COUNT(*) FILTER (WHERE synthesized_at >= NOW() - INTERVAL '7 days')
+                FROM {schema}.storylines
+                WHERE synthesized_at IS NOT NULL
+                """
+            )
+            r = cur.fetchone()
+            if r:
+                syn_1h += r[0] or 0
+                syn_24h += r[1] or 0
+                syn_7d += r[2] or 0
+        except Exception:
+            pass
+
+    dimensions.append(
+        {
+            "id": "storylines_synthesized",
+            "label": "Storylines synthesized",
+            "backlog": 0,
+            "last_1h": syn_1h,
+            "last_24h": syn_24h,
+            "last_7d": syn_7d,
+        }
+    )
+    return apply_dimension_backlogs(dimensions, queue_depths)
+
+
 def compute_processing_progress_response(
     *,
     include_hourly_tick_rows: bool = False,
     include_pending_metrics: bool = False,
+    include_dimension_throughput: bool = True,
+    pending_metrics_source: PendingMetricsSource = "none",
 ) -> dict[str, Any]:
     """
     Build JSON for GET /api/system_monitoring/processing_progress.
@@ -71,13 +397,19 @@ def compute_processing_progress_response(
     hourly bucket rows; set ``hourly_phase_tick_bucket_count`` via a single COUNT query
     so the Monitor page stays light on JSON size and encoding time.
 
-    ``include_pending_metrics``: when False, skip ``backlog_metrics`` (dozens of heavy
-    COUNT queries). Phases still show run/pass history from ``automation_run_history``;
-    ``pending_records`` / ``batches_to_drain`` are 0/zeroed. Use for Monitor + reverse
-    proxies with ~60s read timeouts; full queues remain on ``GET .../backlog_status``.
+    ``include_pending_metrics``: when False, skip live ``backlog_metrics`` unless
+    ``pending_metrics_source`` is ``snapshot`` (precomputed index in automation_state).
+
+    ``pending_metrics_source``: ``none`` | ``live`` | ``snapshot``. ``snapshot`` reads
+    ``monitor_backlog_snapshot`` refreshed every ~15 minutes for fast Monitor page load.
 
     See resource_dashboard route docstring / AGENTS.md for field meanings.
     """
+    if include_pending_metrics:
+        pending_metrics_source = "live"
+    elif pending_metrics_source not in ("none", "live", "snapshot"):
+        pending_metrics_source = "none"
+    measured_batch_rows: list[tuple[Any, Any]] = []
     try:
         conn = get_db_connection()
     except Exception as e:
@@ -97,262 +429,64 @@ def compute_processing_progress_response(
         except Exception:
             _rollback_conn(conn)
 
-        article_backlog = 0
-        enriched_1h = enriched_24h = enriched_7d = 0
-        for schema in get_schema_names_active():
+        if include_dimension_throughput:
             try:
-                cur.execute(
-                    f"""
-                    SELECT COUNT(*) FROM {schema}.articles
-                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
-                      AND COALESCE(enrichment_attempts, 0) < 3
-                      AND url IS NOT NULL AND url != ''
-                    """
-                )
-                article_backlog += cur.fetchone()[0] or 0
-                cur.execute(
-                    f"""
-                    SELECT
-                        COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '1 hour'),
-                        COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '24 hours'),
-                        COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '7 days')
-                    FROM {schema}.articles
-                    WHERE enrichment_status = 'enriched' AND url IS NOT NULL AND url != ''
-                    """
-                )
-                r = cur.fetchone()
-                if r:
-                    enriched_1h += r[0] or 0
-                    enriched_24h += r[1] or 0
-                    enriched_7d += r[2] or 0
-            except Exception:
+                dimensions = _build_dimension_throughput(cur)
+            except Exception as e:
+                logger.debug("processing_progress dimensions: %s", e)
                 _rollback_conn(conn)
 
-        dimensions.append(
-            {
-                "id": "articles_enriched",
-                "label": "Articles enriched",
-                "backlog": article_backlog,
-                "last_1h": enriched_1h,
-                "last_24h": enriched_24h,
-                "last_7d": enriched_7d,
-            }
-        )
-
-        context_backlog = 0
-        ctx_claim_1h = ctx_claim_24h = ctx_claim_7d = 0
-        ctx_created_1h = ctx_created_24h = ctx_created_7d = 0
         try:
+            min_dur = MEANINGFUL_DURATION_SEC
+            measurable = run_history_measurable_sql()
             cur.execute(
-                """
-                SELECT COUNT(*) FROM intelligence.contexts c
-                LEFT JOIN intelligence.extracted_claims ec ON ec.context_id = c.id
-                WHERE ec.id IS NULL
-                """
-            )
-            context_backlog = cur.fetchone()[0] or 0
-            cur.execute(
-                """
-                SELECT
-                    COUNT(DISTINCT context_id) FILTER (WHERE ec.created_at >= NOW() - INTERVAL '1 hour'),
-                    COUNT(DISTINCT context_id) FILTER (WHERE ec.created_at >= NOW() - INTERVAL '24 hours'),
-                    COUNT(DISTINCT context_id) FILTER (WHERE ec.created_at >= NOW() - INTERVAL '7 days')
-                FROM intelligence.extracted_claims ec
-                """
-            )
-            r = cur.fetchone()
-            if r:
-                ctx_claim_1h, ctx_claim_24h, ctx_claim_7d = (r[0] or 0), (r[1] or 0), (r[2] or 0)
-            cur.execute(
-                """
-                SELECT
-                    COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 hour'),
-                    COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours'),
-                    COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')
-                FROM intelligence.contexts
-                """
-            )
-            r2 = cur.fetchone()
-            if r2:
-                ctx_created_1h, ctx_created_24h, ctx_created_7d = (
-                    r2[0] or 0,
-                    r2[1] or 0,
-                    r2[2] or 0,
-                )
-        except Exception:
-            _rollback_conn(conn)
-
-        dimensions.append(
-            {
-                "id": "contexts_claimed",
-                "label": "Contexts → claims",
-                "backlog": context_backlog,
-                "last_1h": ctx_claim_1h,
-                "last_24h": ctx_claim_24h,
-                "last_7d": ctx_claim_7d,
-            }
-        )
-        dimensions.append(
-            {
-                "id": "contexts_created",
-                "label": "Contexts created",
-                "backlog": None,
-                "last_1h": ctx_created_1h,
-                "last_24h": ctx_created_24h,
-                "last_7d": ctx_created_7d,
-            }
-        )
-
-        ep_backlog = ep_any_1h = ep_any_24h = ep_any_7d = 0
-        try:
-            cur.execute(
-                """
-                SELECT COUNT(*) FROM intelligence.entity_profiles ep
-                WHERE ep.sections = '[]'::jsonb OR ep.sections IS NULL
-                   OR ep.updated_at < NOW() - INTERVAL '7 days'
-                """
-            )
-            ep_backlog = cur.fetchone()[0] or 0
-            cur.execute(
-                """
-                SELECT
-                    COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '1 hour'),
-                    COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '24 hours'),
-                    COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '7 days')
-                FROM intelligence.entity_profiles
-                """
-            )
-            r = cur.fetchone()
-            if r:
-                ep_any_1h, ep_any_24h, ep_any_7d = (r[0] or 0), (r[1] or 0), (r[2] or 0)
-        except Exception:
-            _rollback_conn(conn)
-
-        dimensions.append(
-            {
-                "id": "entity_profiles_touched",
-                "label": "Entity profiles updated",
-                "backlog": ep_backlog,
-                "last_1h": ep_any_1h,
-                "last_24h": ep_any_24h,
-                "last_7d": ep_any_7d,
-            }
-        )
-
-        docs_backlog = docs_1h = docs_24h = docs_7d = 0
-        try:
-            cur.execute(
-                """
-                SELECT COUNT(*) FROM intelligence.processed_documents
-                WHERE (extracted_sections IS NULL OR extracted_sections = '[]')
-                  AND (metadata IS NULL OR (metadata->'processing'->>'permanent_failure') IS DISTINCT FROM 'true')
-                """
-            )
-            docs_backlog = cur.fetchone()[0] or 0
-            cur.execute(
-                """
-                SELECT
-                    COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '1 hour'),
-                    COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '24 hours'),
-                    COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '7 days')
-                FROM intelligence.processed_documents
-                WHERE extracted_sections IS NOT NULL AND extracted_sections != '[]'::jsonb
-                """
-            )
-            r = cur.fetchone()
-            if r:
-                docs_1h, docs_24h, docs_7d = (r[0] or 0), (r[1] or 0), (r[2] or 0)
-        except Exception:
-            _rollback_conn(conn)
-
-        dimensions.append(
-            {
-                "id": "documents_extracted",
-                "label": "PDFs / documents extracted",
-                "backlog": docs_backlog,
-                "last_1h": docs_1h,
-                "last_24h": docs_24h,
-                "last_7d": docs_7d,
-            }
-        )
-
-        storyline_backlog = syn_1h = syn_24h = syn_7d = 0
-        for _dk, schema in pipeline_url_schema_pairs():
-            try:
-                cur.execute(
-                    f"""
-                    SELECT COUNT(*) FROM {schema}.storylines s
-                    JOIN (SELECT storyline_id, COUNT(*) AS c FROM {schema}.storyline_articles GROUP BY storyline_id) sa
-                      ON sa.storyline_id = s.id AND sa.c >= 3
-                    WHERE s.synthesized_content IS NULL
-                       OR EXISTS (
-                         SELECT 1 FROM {schema}.storyline_articles sa2
-                         JOIN {schema}.articles a ON a.id = sa2.article_id
-                         WHERE sa2.storyline_id = s.id
-                         AND a.created_at > COALESCE(s.synthesized_at, '1970-01-01'::timestamptz)
-                       )
-                    """
-                )
-                storyline_backlog += cur.fetchone()[0] or 0
-                cur.execute(
-                    f"""
-                    SELECT
-                        COUNT(*) FILTER (WHERE synthesized_at >= NOW() - INTERVAL '1 hour'),
-                        COUNT(*) FILTER (WHERE synthesized_at >= NOW() - INTERVAL '24 hours'),
-                        COUNT(*) FILTER (WHERE synthesized_at >= NOW() - INTERVAL '7 days')
-                    FROM {schema}.storylines
-                    WHERE synthesized_at IS NOT NULL
-                    """
-                )
-                r = cur.fetchone()
-                if r:
-                    syn_1h += r[0] or 0
-                    syn_24h += r[1] or 0
-                    syn_7d += r[2] or 0
-            except Exception:
-                _rollback_conn(conn)
-
-        dimensions.append(
-            {
-                "id": "storylines_synthesized",
-                "label": "Storylines synthesized",
-                "backlog": storyline_backlog,
-                "last_1h": syn_1h,
-                "last_24h": syn_24h,
-                "last_7d": syn_7d,
-            }
-        )
-
-        try:
-            cur.execute(
-                """
+                f"""
                 SELECT phase_name,
-                    COUNT(*) FILTER (WHERE finished_at >= NOW() - INTERVAL '1 hour') AS r1h,
-                    COUNT(*) FILTER (WHERE finished_at >= NOW() - INTERVAL '24 hours') AS r24h,
-                    COUNT(*) FILTER (WHERE finished_at >= NOW() - INTERVAL '7 days') AS r7d,
                     COUNT(*) FILTER (
-                        WHERE finished_at >= NOW() - INTERVAL '24 hours' AND success IS TRUE
+                        WHERE finished_at >= NOW() - INTERVAL '1 hour'
+                          AND {measurable}
+                    ) AS r1h,
+                    COUNT(*) FILTER (
+                        WHERE finished_at >= NOW() - INTERVAL '24 hours'
+                          AND {measurable}
+                    ) AS r24h,
+                    COUNT(*) FILTER (
+                        WHERE finished_at >= NOW() - INTERVAL '7 days'
+                          AND {measurable}
+                    ) AS r7d,
+                    COUNT(*) FILTER (
+                        WHERE finished_at >= NOW() - INTERVAL '24 hours'
+                          AND success IS TRUE
+                          AND {measurable}
                     ) AS s24h,
                     COUNT(*) FILTER (
-                        WHERE finished_at >= NOW() - INTERVAL '24 hours' AND success IS NOT TRUE
+                        WHERE finished_at >= NOW() - INTERVAL '24 hours'
+                          AND success IS NOT TRUE
+                          AND {measurable}
                     ) AS f24h,
                     COUNT(*) FILTER (
-                        WHERE finished_at >= NOW() - INTERVAL '7 days' AND success IS TRUE
+                        WHERE finished_at >= NOW() - INTERVAL '7 days'
+                          AND success IS TRUE
+                          AND {measurable}
                     ) AS s7d,
                     COUNT(*) FILTER (
-                        WHERE finished_at >= NOW() - INTERVAL '7 days' AND success IS NOT TRUE
+                        WHERE finished_at >= NOW() - INTERVAL '7 days'
+                          AND success IS NOT TRUE
+                          AND {measurable}
                     ) AS f7d,
                     AVG(EXTRACT(EPOCH FROM (finished_at - started_at))) FILTER (
                         WHERE finished_at >= NOW() - INTERVAL '24 hours'
                           AND started_at IS NOT NULL
+                          AND finished_at > started_at
+                          AND {measurable}
                     ) AS avg_s
                 FROM automation_run_history
                 WHERE finished_at >= NOW() - INTERVAL '7 days'
-                  AND NOT (phase_name = ANY(%s))
+                  AND NOT (phase_name = ANY(%(ex_phases)s))
                 GROUP BY phase_name
                 ORDER BY r7d DESC NULLS LAST, phase_name
                 """,
-                (list(_PROCESSING_PROGRESS_EXCLUDED_PHASES),),
+                {"min_dur": min_dur, "ex_phases": list(_processing_progress_excluded_phases())},
             )
             for row in cur.fetchall() or []:
                 (
@@ -401,6 +535,8 @@ def compute_processing_progress_response(
                         "failures_7d": f7i,
                         "pass_rate_24h": pr24,
                         "pass_rate_7d": pr7,
+                        "run_success_rate_24h": pr24,
+                        "run_success_rate_7d": pr7,
                         "avg_duration_sec_24h": _json_safe_float(avg_s, ndigits=1),
                     }
                 )
@@ -408,29 +544,35 @@ def compute_processing_progress_response(
             logger.debug("processing_progress phase summary: %s", e)
             _rollback_conn(conn)
 
-        ex_phases = list(_PROCESSING_PROGRESS_EXCLUDED_PHASES)
+        ex_phases = list(_processing_progress_excluded_phases())
+        measurable = run_history_measurable_sql()
+        tick_params = {
+            "ex_phases": ex_phases,
+            "min_dur": MEANINGFUL_DURATION_SEC,
+        }
         try:
             if include_hourly_tick_rows:
                 cur.execute(
-                    """
+                    f"""
                     SELECT date_trunc('hour', finished_at) AS hr,
                            phase_name,
                            COUNT(*) AS runs,
                            SUM(CASE WHEN success IS TRUE THEN 0 ELSE 1 END) AS fails
                     FROM automation_run_history
                     WHERE finished_at >= NOW() - INTERVAL '72 hours'
-                      AND NOT (phase_name = ANY(%s))
+                      AND NOT (phase_name = ANY(%(ex_phases)s))
+                      AND {measurable}
                     GROUP BY hr, phase_name
                     HAVING COUNT(*) > 0
                     ORDER BY hr ASC, phase_name ASC
                     LIMIT 4000
                     """,
-                    (ex_phases,),
+                    tick_params,
                 )
                 for row in cur.fetchall() or []:
                     hr, pname, runs, fails = row[0], row[1], row[2] or 0, row[3] or 0
                     tick_phase = _norm_phase_name(pname)
-                    if not tick_phase:
+                    if not tick_phase or not _monitor_pulse_visible_phase(tick_phase):
                         continue
                     hourly_phase_ticks.append(
                         {
@@ -445,17 +587,18 @@ def compute_processing_progress_response(
                 hourly_phase_tick_bucket_count = len(hourly_phase_ticks)
             else:
                 cur.execute(
-                    """
+                    f"""
                     SELECT COUNT(*)::bigint FROM (
                         SELECT 1
                         FROM automation_run_history
                         WHERE finished_at >= NOW() - INTERVAL '72 hours'
-                          AND NOT (phase_name = ANY(%s))
+                          AND NOT (phase_name = ANY(%(ex_phases)s))
+                          AND {measurable}
                         GROUP BY date_trunc('hour', finished_at), phase_name
                         HAVING COUNT(*) > 0
                     ) subq
                     """,
-                    (ex_phases,),
+                    tick_params,
                 )
                 rct = cur.fetchone()
                 if rct and rct[0] is not None:
@@ -463,6 +606,47 @@ def compute_processing_progress_response(
         except Exception as e:
             logger.debug("processing_progress hourly: %s", e)
             _rollback_conn(conn)
+
+        measured_batch_by_phase: dict[str, tuple[int, str, int]] = {}
+        try:
+            measured_batch_by_phase = query_measured_rows_per_run_by_phase(cur)
+        except Exception as e:
+            logger.debug("processing_progress measured rows/run SQL: %s", e)
+        if not measured_batch_by_phase:
+            measured_batch_rows: list[tuple[Any, Any]] = []
+            try:
+                cur.execute(
+                    """
+                    SELECT phase_name,
+                           COALESCE(
+                               CASE
+                                   WHEN metadata IS NOT NULL
+                                        AND metadata::text LIKE '%%"batch":%%'
+                                   THEN metadata::text
+                               END,
+                               CASE
+                                   WHEN error_message IS NOT NULL
+                                        AND error_message LIKE '%%"batch":%%'
+                                   THEN error_message
+                               END
+                           ) AS payload
+                    FROM automation_run_history
+                    WHERE finished_at >= NOW() - INTERVAL '24 hours'
+                      AND success IS TRUE
+                      AND (
+                          (metadata IS NOT NULL AND metadata::text LIKE '%%"batch":%%')
+                          OR (error_message IS NOT NULL AND error_message LIKE '%%"batch":%%')
+                      )
+                    ORDER BY finished_at DESC
+                    LIMIT 500
+                    """
+                )
+                measured_batch_rows = list(cur.fetchall() or [])
+            except Exception as e:
+                logger.debug("processing_progress measured batch fallback: %s", e)
+                _rollback_conn(conn)
+            if measured_batch_rows:
+                measured_batch_by_phase = _measured_batch_per_run_by_phase(measured_batch_rows)
 
         cur.close()
         conn.close()
@@ -478,6 +662,15 @@ def compute_processing_progress_response(
     pending_m: dict[str, int] = {}
     backlog_m: dict[str, int] = {}
     pending_metrics_merge_error: str | None = None
+    pending_metrics_as_of_utc: str | None = None
+    snapshot_operator_metrics: dict[str, Any] = {}
+    snapshot_signal_lane_metrics: dict[str, Any] = {}
+    snapshot_feed_health_metrics: dict[str, Any] = {}
+    snapshot_queue_audit: dict[str, Any] = {}
+    snapshot_unified_intake_breakdown: dict[str, int] | None = None
+    work_queues_m: dict[str, Any] = {}
+    intake_window_hours: int | None = None
+    pending_included = pending_metrics_source in ("live", "snapshot")
 
     def _fallback_batch(_: str) -> int:
         return 1
@@ -490,27 +683,95 @@ def compute_processing_progress_response(
     except Exception as e:
         logger.debug("processing_progress batch size helper: %s", e)
 
-    if include_pending_metrics:
+    if pending_metrics_source == "live":
         try:
             from services.backlog_metrics import (
                 get_all_backlog_counts,
-                get_all_pending_counts,
+                invalidate_backlog_metrics_cache,
             )
+            from shared.pipeline_queue_counts import get_all_phase_queue_depths
 
-            pending_m = {k: int(v) for k, v in get_all_pending_counts().items()}
-            # Row-excess counts (for sort keys / parity with automation backlog_counts); not shown as batches.
+            invalidate_backlog_metrics_cache()
+            pending_m = {k: int(v) for k, v in get_all_phase_queue_depths().items()}
             backlog_m = {k: int(v) for k, v in get_all_backlog_counts().items()}
+            pending_metrics_as_of_utc = now_iso
         except Exception as e:
             pending_metrics_merge_error = str(e)[:500]
             logger.warning(
                 "processing_progress: backlog_metrics merge failed (pending_records will be zeros): %s",
                 e,
             )
+    elif pending_metrics_source == "snapshot":
+        try:
+            from services.monitor_backlog_snapshot_service import (
+                read_monitor_backlog_snapshot,
+                refresh_monitor_backlog_snapshot,
+            )
+
+            snap = read_monitor_backlog_snapshot(allow_stale=True)
+            if not snap:
+                snap = refresh_monitor_backlog_snapshot(force=True)
+            if snap:
+                pending_m = {
+                    k: int(v)
+                    for k, v in (
+                        snap.get("queue_depths")
+                        or snap.get("pending")
+                        or {}
+                    ).items()
+                }
+                backlog_m = {
+                    k: int(v)
+                    for k, v in (
+                        snap.get("scheduling_backlog")
+                        or snap.get("backlog")
+                        or {}
+                    ).items()
+                }
+                pending_metrics_as_of_utc = snap.get("refreshed_at_utc") or now_iso
+                snapshot_operator_metrics = dict(snap.get("operator_metrics") or {})
+                work_queues_m = dict(snap.get("work_queues") or {})
+                snapshot_signal_lane_metrics = dict(snap.get("signal_lane_metrics") or {})
+                snapshot_feed_health_metrics = dict(snap.get("feed_health_metrics") or {})
+                snapshot_queue_audit = dict(snap.get("queue_audit") or {})
+                raw_uib = snap.get("unified_intake_breakdown")
+                if isinstance(raw_uib, dict):
+                    snapshot_unified_intake_breakdown = {
+                        k: int(v) for k, v in raw_uib.items()
+                    }
+                raw_intake = snap.get("intake_window_hours")
+                if raw_intake is not None:
+                    try:
+                        intake_window_hours = int(raw_intake)
+                    except (TypeError, ValueError):
+                        intake_window_hours = None
+            else:
+                pending_metrics_merge_error = "monitor_backlog_snapshot unavailable"
+        except Exception as e:
+            pending_metrics_merge_error = str(e)[:500]
+            logger.warning(
+                "processing_progress: snapshot merge failed (pending_records will be zeros): %s",
+                e,
+            )
+
+    if pending_metrics_source == "live" and not work_queues_m:
+        try:
+            from services.monitor_backlog_snapshot_service import read_monitor_backlog_snapshot
+
+            snap_wq = read_monitor_backlog_snapshot(allow_stale=True)
+            if snap_wq:
+                work_queues_m = dict(snap_wq.get("work_queues") or {})
+                if intake_window_hours is None and snap_wq.get("intake_window_hours") is not None:
+                    intake_window_hours = int(snap_wq.get("intake_window_hours"))
+        except Exception as e:
+            logger.debug("processing_progress work_queues from snapshot: %s", e)
 
     def _phase_merge_sort_key(n: str) -> tuple:
-        # Tie-break with str(n) so keys are never compared across None/str (TypeError in Python 3).
+        wq = work_queues_m.get(n) or {}
+        first_pass = int(wq.get("first_pass", pending_m.get(n, 0)) or 0)
         return (
-            -(pending_m.get(n, 0) + backlog_m.get(n, 0)),
+            -first_pass,
+            -(pending_m.get(n, 0)),
             -(phase_by_name.get(n, {}).get("runs_7d", 0) or 0),
             n,
         )
@@ -518,12 +779,14 @@ def compute_processing_progress_response(
     all_names = sorted(
         (
             (set(phase_by_name) | set(pending_m) | set(backlog_m))
-            - _PROCESSING_PROGRESS_EXCLUDED_PHASES
+            - _processing_progress_excluded_phases()
         ),
         key=_phase_merge_sort_key,
     )
     phase_dashboard: list[dict[str, Any]] = []
     for name in all_names:
+        if not _monitor_pulse_visible_phase(name):
+            continue
         row = dict(phase_by_name.get(name, {}))
         if not row:
             row = {
@@ -537,22 +800,75 @@ def compute_processing_progress_response(
                 "failures_7d": 0,
                 "pass_rate_24h": None,
                 "pass_rate_7d": None,
+                "run_success_rate_24h": None,
+                "run_success_rate_7d": None,
                 "avg_duration_sec_24h": None,
             }
         row["phase_name"] = name
-        pend = int(pending_m.get(name, 0))
+        row["phase_key"] = name
+        wq = work_queues_m.get(name) or {}
+        pend = _unified_pending_count(name, pending_m, wq)
         row["pending_records"] = pend
-        row["estimated_batch_per_run"] = int(get_batch(name))
-        bsize = int(row["estimated_batch_per_run"])
+        row["queue_depth"] = pend
+        row["scheduling_backlog"] = int(backlog_m.get(name, 0) or 0)
+        row["scheduling_status"] = _phase_scheduling_status(name)
+        try:
+            from shared.pipeline_resource_policy import intake_phase_scheduled
+
+            intake_inactive = not intake_phase_scheduled(name)
+        except Exception:
+            intake_inactive = False
+        if intake_inactive:
+            row["pending_first_pass"] = 0
+            row["pending_retry"] = 0
+            row["intake_first_pass"] = 0
+            row["work_queue_metric_kind"] = "inactive_intake_mode"
+        else:
+            row["pending_first_pass"] = int(wq.get("first_pass", pend) or 0)
+            row["pending_retry"] = int(wq.get("retry_pending", 0) or 0)
+            row["intake_first_pass"] = int(wq.get("intake_first_pass", 0) or 0)
+            row["work_queue_metric_kind"] = wq.get("metric_kind")
+        from shared.pipeline_queue_vocabulary import apply_rows_per_run_fields
+
+        configured_batch = int(get_batch(name))
+        measured_tuple = measured_batch_by_phase.get(name)
+        row = apply_rows_per_run_fields(
+            row,
+            name,
+            configured=configured_batch,
+            measured=measured_tuple,
+        )
+        bsize = int(row.get("rows_per_run") or row.get("estimated_batch_per_run") or 0)
         if pend <= 0:
             row["batches_to_drain"] = 0
+            row["estimated_phase_runs"] = 0
         elif bsize > 0:
-            row["batches_to_drain"] = int(math.ceil(pend / bsize))
+            est = int(math.ceil(pend / bsize))
+            row["batches_to_drain"] = est
+            row["estimated_phase_runs"] = est
         else:
             row["batches_to_drain"] = None
+            row["estimated_phase_runs"] = None
+        runs_24h = int(row.get("runs_24h") or 0)
+        row["queue_stale"] = (
+            row["scheduling_status"] == "active"
+            and pend > bsize
+            and bsize > 0
+            and runs_24h == 0
+        )
+        from shared.pipeline_queue_vocabulary import add_queue_depth_aliases, apply_monitor_queue_kind
+
+        row = add_queue_depth_aliases(row)
+        row = apply_monitor_queue_kind(row, name)
         phase_dashboard.append(row)
 
+    from shared.pipeline_queue_vocabulary import REPORTING_DEFINITIONS as QUEUE_VOCAB_DEFINITIONS
+
     reporting_definitions: dict[str, str] = {
+        "monitor_schema_version": (
+            f"Monitor reporting vocabulary version ({MONITOR_SCHEMA_VERSION}). "
+            "Additive aliases: phase_key, queue_depth, estimated_phase_runs, run_success_rate_24h."
+        ),
         "pass_rate_24h_7d": (
             "Percentage = 100 × (completions with success=TRUE) ÷ (all completions in window). "
             "SQL uses success IS NOT TRUE for non-success, so FALSE and NULL both count as non-success. "
@@ -565,22 +881,54 @@ def compute_processing_progress_response(
             "batches (e.g. storyline_automation) still show total eligible items; estimated_batch_per_run "
             "reflects typical throughput per scheduler run."
         ),
+        "pending_first_pass": (
+            "Items never successfully cleared for this phase (no last_pass_at / never compiled / never "
+            "linked / queue row never processed). Grows with new intake; shrinks as automation catches up."
+        ),
+        "pending_retry": (
+            "Items that were attempted but still need another pass (failed_needs_retry or legacy false-clear "
+            "outcomes). Subset of pending_records for pass-marker phases. For entity_dossier_compile, this "
+            "column counts existing dossiers needing refresh because upstream data changed (or calendar stale "
+            "when ENTITY_DOSSIER_STALE_DAYS > 0) — not failed compiles."
+        ),
+        "intake_first_pass": (
+            "First-pass items created within the intake window (MONITOR_INTAKE_WINDOW_HOURS, default 72h). "
+            "Tracks fresh RSS intake backlog separately from historical all-time first-pass debt."
+        ),
         "estimated_batch_per_run": (
-            "Modeled rows consumed per scheduled run of the phase (backlog_metrics._per_run_batch_size); "
-            "configuration estimate, not measured from automation_run_history."
+            "Alias for rows_per_run. Prefer measured_rows_per_run_24h from recent batch "
+            "automation_run_history when available; otherwise configured_rows_per_run."
+        ),
+        "rows_per_run": QUEUE_VOCAB_DEFINITIONS.get("rows_per_run", ""),
+        "measured_rows_per_run_24h": QUEUE_VOCAB_DEFINITIONS.get("measured_rows_per_run_24h", ""),
+        "configured_rows_per_run": QUEUE_VOCAB_DEFINITIONS.get("configured_rows_per_run", ""),
+        "rows_per_run_source": QUEUE_VOCAB_DEFINITIONS.get("rows_per_run_source", ""),
+        "runs_1h": (
+            "Meaningful completions in the last hour (excludes instant drain_started/phase_started markers). "
+            "Counts each completed batch round (metadata.status=batch_round) or drain/phase finish with rows processed."
         ),
         "batches_to_drain": (
             "Runs needed to clear the current queue: ceil(pending_records ÷ estimated_batch_per_run) "
             "when estimated_batch_per_run > 0; 0 if no pending; null if estimated_batch_per_run is 0 "
-            "(no row-batch model for that phase). Values > 1 mean more than one run is needed to drain."
+            "or unavailable (no row-batch model / awaiting_decision_yield for storyline_review_agent). "
+            "Values > 1 mean more than one run is needed to drain. "
+            "Alias: estimated_phase_runs."
+        ),
+        "scheduling_status": (
+            "active = orchestrator may enqueue; suppressed = inactive intake mode (unified vs legacy); "
+            "retired = post-spine phase masked from scheduling (orphan backlog may still appear)."
+        ),
+        "queue_stale": (
+            "True when active phase has pending work exceeding one batch but zero meaningful "
+            "completions in the last 24h — likely scheduling starvation or recent API downtime."
         ),
         "avg_duration_sec_24h": (
-            "Unweighted arithmetic mean of (finished_at − started_at) in seconds over 24h completions; "
-            "long runs skew the mean (median would be more robust but is not shown)."
+            "Mean wall-clock seconds (finished_at − started_at) over 24h, excluding instant "
+            "drain_started/phase_started markers and sub-second heartbeat rows."
         ),
         "runs_24h": (
-            "Count of rows in automation_run_history for that phase in the window. For claim_extraction with "
-            "CLAIM_EXTRACTION_DRAIN, one row is written per internal batch (not one per long-running scheduler task)."
+            "Meaningful completions in 24h (excludes instant drain_started/phase_started markers). "
+            "Per-batch rows (batch_round) count when rows were processed even if the outer scheduler task is still running."
         ),
         "dimension_throughput": (
             "Counts of rows updated or created in the stated intervals (SQL filters differ per dimension); "
@@ -594,9 +942,12 @@ def compute_processing_progress_response(
             "Separate from storyline_automation pool depth (scheduler eligibility for suggest_only storylines)."
         ),
     }
+    reporting_definitions.update(QUEUE_VOCAB_DEFINITIONS)
 
     operator_metrics: dict[str, Any] = {}
-    if include_pending_metrics:
+    if pending_metrics_source == "snapshot" and snapshot_operator_metrics:
+        operator_metrics = snapshot_operator_metrics
+    elif pending_metrics_source == "live":
         try:
             from services.backlog_metrics import (
                 get_storyline_review_queue_pending,
@@ -619,15 +970,71 @@ def compute_processing_progress_response(
     except Exception:
         pass
 
+    signal_lane_metrics: dict[str, int] = {}
+    if pending_metrics_source == "snapshot" and snapshot_signal_lane_metrics:
+        signal_lane_metrics = snapshot_signal_lane_metrics
+    else:
+        try:
+            from services.phase_work_queue_metrics import get_signal_lane_counts_24h
+
+            signal_lane_metrics = get_signal_lane_counts_24h()
+        except Exception as e:
+            logger.debug("processing_progress signal_lane_metrics: %s", e)
+
+    feed_health_metrics: dict[str, int] = {}
+    if pending_metrics_source == "snapshot" and snapshot_feed_health_metrics:
+        feed_health_metrics = snapshot_feed_health_metrics
+    else:
+        try:
+            from services.rss_feed_health_service import get_feed_health_monitor_counts
+
+            feed_health_metrics = get_feed_health_monitor_counts()
+        except Exception as e:
+            logger.debug("processing_progress feed_health_metrics: %s", e)
+
+    queue_audit: dict[str, Any] = {}
+    unified_intake_breakdown: dict[str, int] | None = None
+    if pending_included and pending_m:
+        if snapshot_queue_audit:
+            queue_audit = snapshot_queue_audit
+        else:
+            try:
+                from shared.queue_audit import build_queue_audit
+
+                queue_audit = build_queue_audit(pending_m)
+            except Exception as e:
+                logger.debug("processing_progress queue_audit: %s", e)
+        if snapshot_unified_intake_breakdown is not None:
+            unified_intake_breakdown = snapshot_unified_intake_breakdown
+        else:
+            try:
+                from shared.pipeline_queue_counts import get_unified_intake_breakdown
+
+                unified_intake_breakdown = dict(get_unified_intake_breakdown())
+            except Exception as e:
+                logger.debug("processing_progress unified_intake_breakdown: %s", e)
+
     return {
         "success": True,
         "data": {
             "generated_at_utc": now_iso,
             "workload_window_days_note": _BACKLOG_WORKLOAD_WINDOW_DAYS,
-            "pending_metrics_included": include_pending_metrics,
+            "pending_metrics_included": pending_included,
+            "pending_metrics_source": pending_metrics_source,
+            "pending_metrics_as_of_utc": pending_metrics_as_of_utc,
             "pending_metrics_merge_error": pending_metrics_merge_error,
+            "intake_window_hours": intake_window_hours,
+            "intake_first_pass_sum": sum(
+                int(wq.get("intake_first_pass", 0) or 0) for wq in work_queues_m.values()
+            ),
+            "signal_lane_metrics": signal_lane_metrics,
+            "feed_health_metrics": feed_health_metrics,
             "operator_metrics": operator_metrics,
+            "queue_audit": queue_audit,
+            "unified_intake_breakdown": unified_intake_breakdown,
             "reporting_definitions": reporting_definitions,
+            "monitor_schema_version": MONITOR_SCHEMA_VERSION,
+            "dimension_throughput_included": include_dimension_throughput,
             "dimensions": dimensions,
             "phase_dashboard": phase_dashboard,
             "phases": phase_dashboard,

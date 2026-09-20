@@ -7,6 +7,7 @@ Flat /api/... routes. See docs/CONTEXT_CENTRIC_UPGRADE_PLAN.md.
 import asyncio
 import json
 import logging
+import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, List, Optional
@@ -124,47 +125,8 @@ def _count_extracted_events_for_status(cur, domain_key: str | None) -> int:
         return 0
 
 
-@router.post("/context_centric/sync_entity_profiles", response_model=dict)
-def sync_entity_profiles(domain_key: str | None = Query(None, description="Sync this domain only; omit to sync all")) -> dict:
-    """
-    Run entity_profile_sync: backfill entity_canonical from article_entities, then
-    copy entity_canonical -> intelligence.entity_profiles for the given domain (or all).
-    Returns counts of new profiles created per domain.
-    """
-    try:
-        from config.context_centric_config import is_context_centric_task_enabled
-        if not is_context_centric_task_enabled("entity_profile_sync"):
-            return {"success": False, "error": "entity_profile_sync task is disabled in context_centric config"}
-    except Exception:
-        pass
-    from services.entity_profile_sync_service import (
-        backfill_entity_canonical,
-        sync_domain_entity_profiles,
-    )
+# Entity routes: domains/intelligence_hub/routes/entity_resolution.py
 
-    domains = [domain_key] if domain_key else list(get_active_domain_keys())
-    if domain_key and not is_valid_domain_key(domain_key):
-        raise HTTPException(
-            status_code=400,
-            detail=f"domain_key must be an active domain ({', '.join(get_active_domain_keys())}) or omitted",
-        )
-
-    backfill_counts: dict[str, int] = {}
-    result: dict[str, int] = {}
-    for d in domains:
-        try:
-            backfilled = backfill_entity_canonical(d)
-            backfill_counts[d] = backfilled
-        except Exception as e:
-            logger.warning(f"backfill_entity_canonical {d}: {e}")
-            backfill_counts[d] = 0
-        try:
-            created = sync_domain_entity_profiles(d)
-            result[d] = created
-        except Exception as e:
-            logger.warning(f"sync_entity_profiles {d}: {e}")
-            result[d] = -1
-    return {"success": True, "created_by_domain": result, "canonical_backfilled": backfill_counts}
 
 
 @router.get("/context_centric/claim_subject_gaps", response_model=dict)
@@ -361,20 +323,6 @@ def run_pattern_matching(
         return {"success": False, "error": str(e), "contexts_checked": 0, "matches_stored": 0, "alerts_created": 0, "errors": [str(e)]}
 
 
-@router.post("/context_centric/run_entity_enrichment", response_model=dict)
-def run_entity_enrichment(limit: int = Query(20, ge=1, le=50, description="Max profiles to enrich (production: 20)")) -> dict:
-    """
-    Run Phase 1 entity enrichment: Wikipedia (and optional GDELT) for entity_profiles
-    that lack a Wikipedia-derived section. Updates sections and versioned_facts.
-    See docs/RAG_ENHANCEMENT_ROADMAP.md.
-    """
-    try:
-        from services.entity_enrichment_service import run_enrichment_batch
-        updated = run_enrichment_batch(limit=limit)
-        return {"success": True, "updated": updated}
-    except Exception as e:
-        logger.warning("run_entity_enrichment: %s", e, exc_info=True)
-        return {"success": False, "error": str(e), "updated": 0}
 
 
 @router.post("/context_centric/sync_contexts", response_model=dict)
@@ -656,71 +604,156 @@ def list_pattern_discoveries(
     domain_key: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    min_context_count: int | None = Query(
+        None,
+        ge=0,
+        le=100000,
+        description="Exclude patterns with data.context_count below this (when present)",
+    ),
+    briefing: bool = Query(
+        False,
+        description="Briefings Collisions lens: drop weak network co_mentions; rank by context_count",
+    ),
 ) -> dict:
     """List pattern discoveries (Phase 2.2). Optional pattern_type and domain_key filters."""
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
     try:
+        # Domain listing without an explicit type is the Briefings Collisions consumer —
+        # apply the high-signal lens so weak network co_mentions do not flood the feed.
+        if domain_key and not pattern_type:
+            briefing = True
+
+        where: list[str] = []
+        params: list[Any] = []
+        if pattern_type:
+            where.append("pattern_type = %s")
+            params.append(pattern_type)
+        if domain_key:
+            where.append("domain_key = %s")
+            params.append(domain_key)
+
+        # Briefing lens: hide single-article network co_mentions (dominate politics feed).
+        effective_min = min_context_count
+        if briefing and effective_min is None:
+            effective_min = 2
+        if briefing:
+            where.append(
+                """
+                NOT (
+                    pattern_type = 'network'
+                    AND COALESCE(data->>'relation', '') = 'co_mentioned'
+                    AND COALESCE((data->>'context_count')::int, 0) < 2
+                )
+                """
+            )
+        if effective_min is not None and effective_min > 0:
+            where.append(
+                """
+                (
+                    data->>'context_count' IS NULL
+                    OR COALESCE((data->>'context_count')::int, 0) >= %s
+                )
+                """
+            )
+            params.append(int(effective_min))
+
+        where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+        order_sql = (
+            """
+            ORDER BY COALESCE((data->>'context_count')::int, 0) DESC NULLS LAST,
+                     confidence DESC NULLS LAST,
+                     created_at DESC
+            """
+            if briefing
+            else "ORDER BY created_at DESC"
+        )
+        params.extend([limit, offset])
         with conn.cursor() as cur:
-            if pattern_type and domain_key:
-                cur.execute(
-                    """
-                    SELECT id, pattern_type, domain_key, context_ids, entity_profile_ids, confidence, data, created_at
-                    FROM intelligence.pattern_discoveries
-                    WHERE pattern_type = %s AND domain_key = %s
-                    ORDER BY created_at DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (pattern_type, domain_key, limit, offset),
-                )
-            elif pattern_type:
-                cur.execute(
-                    """
-                    SELECT id, pattern_type, domain_key, context_ids, entity_profile_ids, confidence, data, created_at
-                    FROM intelligence.pattern_discoveries
-                    WHERE pattern_type = %s
-                    ORDER BY created_at DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (pattern_type, limit, offset),
-                )
-            elif domain_key:
-                cur.execute(
-                    """
-                    SELECT id, pattern_type, domain_key, context_ids, entity_profile_ids, confidence, data, created_at
-                    FROM intelligence.pattern_discoveries
-                    WHERE domain_key = %s
-                    ORDER BY created_at DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (domain_key, limit, offset),
-                )
-            else:
-                cur.execute(
-                    """
-                    SELECT id, pattern_type, domain_key, context_ids, entity_profile_ids, confidence, data, created_at
-                    FROM intelligence.pattern_discoveries
-                    ORDER BY created_at DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (limit, offset),
-                )
+            cur.execute(
+                f"""
+                SELECT id, pattern_type, domain_key, context_ids, entity_profile_ids,
+                       confidence, data, created_at
+                FROM intelligence.pattern_discoveries
+                {where_sql}
+                {order_sql}
+                LIMIT %s OFFSET %s
+                """,
+                tuple(params),
+            )
             rows = cur.fetchall()
+
+            # Enrich entity display names for Collisions / Search snippets.
+            all_ep_ids: list[int] = []
+            for r in rows:
+                ids = list(r[4]) if r[4] else []
+                all_ep_ids.extend(int(x) for x in ids if x is not None)
+            name_by_id: dict[int, str] = {}
+            uniq = sorted(set(all_ep_ids))[:200]
+            if uniq:
+                cur.execute(
+                    """
+                    SELECT id,
+                           LEFT(
+                             COALESCE(
+                               NULLIF(metadata->>'canonical_name', ''),
+                               NULLIF(metadata->>'name', ''),
+                               NULLIF(metadata->>'display_name', ''),
+                               'entity ' || id::text
+                             ),
+                             80
+                           ) AS nm
+                    FROM intelligence.entity_profiles
+                    WHERE id = ANY(%s)
+                    """,
+                    (uniq,),
+                )
+                for eid, nm in cur.fetchall():
+                    name_by_id[int(eid)] = str(nm or f"entity {eid}")
+
         conn.close()
         items = []
         for r in rows:
-            items.append({
-                "id": r[0],
-                "pattern_type": r[1],
-                "domain_key": r[2],
-                "context_ids": list(r[3]) if r[3] else [],
-                "entity_profile_ids": list(r[4]) if r[4] else [],
-                "confidence": float(r[5]) if r[5] is not None else None,
-                "data": r[6],
-                "created_at": r[7].isoformat() if r[7] else None,
-            })
-        return {"items": items, "limit": limit, "offset": offset}
+            ep_ids = [int(x) for x in (list(r[4]) if r[4] else []) if x is not None]
+            entity_names = [name_by_id[i] for i in ep_ids if i in name_by_id][:6]
+            raw_data = r[6]
+            data_out: dict[str, Any] = dict(raw_data) if isinstance(raw_data, dict) else {}
+            # Put a human label first so older Briefings UI (first two data keys) is readable.
+            label_bits: list[str] = []
+            if entity_names:
+                label_bits.append(" · ".join(entity_names[:3]))
+            rel = data_out.get("relation")
+            if isinstance(rel, str) and rel.strip():
+                label_bits.append(rel.replace("_", " "))
+            date_v = data_out.get("date")
+            if isinstance(date_v, str) and date_v.strip():
+                label_bits.append(date_v)
+            ctx = data_out.get("context_count")
+            if ctx is not None and str(ctx).strip():
+                label_bits.append(f"{ctx} contexts")
+            if label_bits:
+                data_out = {"label": " · ".join(label_bits), **data_out}
+            items.append(
+                {
+                    "id": r[0],
+                    "pattern_type": r[1],
+                    "domain_key": r[2],
+                    "context_ids": list(r[3]) if r[3] else [],
+                    "entity_profile_ids": ep_ids,
+                    "entity_names": entity_names,
+                    "confidence": float(r[5]) if r[5] is not None else None,
+                    "data": data_out if data_out else raw_data,
+                    "created_at": r[7].isoformat() if r[7] else None,
+                }
+            )
+        return {
+            "items": items,
+            "limit": limit,
+            "offset": offset,
+            "briefing": briefing,
+            "min_context_count": effective_min,
+        }
     except Exception as e:
         logger.warning(f"list_pattern_discoveries: {e}")
         try:
@@ -730,296 +763,6 @@ def list_pattern_discoveries(
         raise HTTPException(status_code=500, detail="Failed to list pattern discoveries")
 
 
-def _row_to_profile(row: tuple) -> dict:
-    """Map entity_profiles row to dict (JSON-safe)."""
-    return {
-        "id": row[0],
-        "domain_key": row[1],
-        "canonical_entity_id": row[2],
-        "compilation_date": str(row[3]) if row[3] else None,
-        "sections": _json_safe(row[4]) if row[4] is not None else None,
-        "relationships_summary": _json_safe(row[5]) if row[5] is not None else None,
-        "metadata": _json_safe(row[6]) if row[6] is not None else None,
-        "created_at": row[7].isoformat() if row[7] else None,
-        "updated_at": row[8].isoformat() if row[8] else None,
-    }
-
-
-def _row_to_profile_brief(row: tuple) -> dict:
-    """Map 7-column row (no sections/relationships) to list view. Keeps response small and fast."""
-    return {
-        "id": row[0],
-        "domain_key": row[1],
-        "canonical_entity_id": row[2],
-        "compilation_date": str(row[3]) if row[3] else None,
-        "sections": None,
-        "relationships_summary": None,
-        "metadata": _json_safe(row[4]) if row[4] is not None else None,
-        "created_at": row[5].isoformat() if row[5] else None,
-        "updated_at": row[6].isoformat() if row[6] else None,
-    }
-
-
-@router.get("/entity_profiles", response_model=dict)
-def list_entity_profiles(
-    domain_key: str | None = Query(None, description="Filter by domain"),
-    limit: int = Query(
-        50,
-        ge=1,
-        le=50_000,
-        description="Page size; use offset for pagination. Large limits can be slow without brief=true.",
-    ),
-    offset: int = Query(0, ge=0),
-    brief: bool = Query(False, description="If true, omit sections/relationships for faster list load"),
-) -> dict:
-    """List entity profiles (intelligence.entity_profiles). Use brief=True for list views (skips heavy columns)."""
-    conn = get_db_connection()
-    if not conn:
-        raise HTTPException(status_code=503, detail="Database unavailable")
-    try:
-        with conn.cursor() as cur:
-            if domain_key:
-                cur.execute(
-                    "SELECT COUNT(*) FROM intelligence.entity_profiles WHERE domain_key = %s",
-                    (domain_key,),
-                )
-            else:
-                cur.execute("SELECT COUNT(*) FROM intelligence.entity_profiles")
-            total = int(cur.fetchone()[0])
-            if brief:
-                # Do not SELECT sections/relationships_summary — avoids huge transfer and timeout
-                if domain_key:
-                    cur.execute(
-                        """
-                        SELECT id, domain_key, canonical_entity_id, compilation_date,
-                               metadata, created_at, updated_at
-                        FROM intelligence.entity_profiles
-                        WHERE domain_key = %s
-                        ORDER BY updated_at DESC NULLS LAST
-                        LIMIT %s OFFSET %s
-                        """,
-                        (domain_key, limit, offset),
-                    )
-                else:
-                    cur.execute(
-                        """
-                        SELECT id, domain_key, canonical_entity_id, compilation_date,
-                               metadata, created_at, updated_at
-                        FROM intelligence.entity_profiles
-                        ORDER BY updated_at DESC NULLS LAST
-                        LIMIT %s OFFSET %s
-                        """,
-                        (limit, offset),
-                    )
-            else:
-                if domain_key:
-                    cur.execute(
-                        """
-                        SELECT id, domain_key, canonical_entity_id, compilation_date,
-                               sections, relationships_summary, metadata, created_at, updated_at
-                        FROM intelligence.entity_profiles
-                        WHERE domain_key = %s
-                        ORDER BY updated_at DESC NULLS LAST
-                        LIMIT %s OFFSET %s
-                        """,
-                        (domain_key, limit, offset),
-                    )
-                else:
-                    cur.execute(
-                        """
-                        SELECT id, domain_key, canonical_entity_id, compilation_date,
-                               sections, relationships_summary, metadata, created_at, updated_at
-                        FROM intelligence.entity_profiles
-                        ORDER BY updated_at DESC NULLS LAST
-                        LIMIT %s OFFSET %s
-                        """,
-                        (limit, offset),
-                    )
-            rows = cur.fetchall()
-        conn.close()
-        to_item = _row_to_profile_brief if brief else _row_to_profile
-        return {"items": [to_item(r) for r in rows], "limit": limit, "offset": offset, "total": total}
-    except Exception as e:
-        logger.warning("list_entity_profiles: %s", e, exc_info=True)
-        try:
-            conn.close()
-        except Exception:
-            pass
-        detail = str(e)
-        if "does not exist" in detail or "relation" in detail.lower():
-            detail = f"Entity profiles table may be missing. Run migration 143: {detail}"
-        raise HTTPException(status_code=500, detail=f"Failed to list entity profiles: {detail}")
-
-
-@router.get("/entity_profiles/{profile_id}", response_model=dict)
-def get_entity_profile(profile_id: int) -> dict:
-    """Get a single entity profile by id."""
-    conn = get_db_connection()
-    if not conn:
-        raise HTTPException(status_code=503, detail="Database unavailable")
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, domain_key, canonical_entity_id, compilation_date,
-                       sections, relationships_summary, metadata, created_at, updated_at
-                FROM intelligence.entity_profiles
-                WHERE id = %s
-                """,
-                (profile_id,),
-            )
-            row = cur.fetchone()
-        conn.close()
-        if not row:
-            raise HTTPException(status_code=404, detail="Entity profile not found")
-        return _row_to_profile(row)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.warning(f"get_entity_profile: {e}")
-        try:
-            conn.close()
-        except Exception:
-            pass
-        raise HTTPException(status_code=500, detail="Failed to get entity profile")
-
-
-@router.patch("/entity_profiles/{profile_id}", response_model=dict)
-def update_entity_profile(
-    profile_id: int,
-    body: dict = Body(..., description="Fields to merge into metadata: importance, entity_type, tracking_params, alert_thresholds, orchestrator_tags"),
-) -> dict:
-    """Update entity profile metadata. Use orchestrator_tags (array of strings) so the orchestrator can prioritize for deeper stories."""
-    conn = get_db_connection()
-    if not conn:
-        raise HTTPException(status_code=503, detail="Database unavailable")
-    allowed = {"importance", "entity_type", "tracking_params", "alert_thresholds", "orchestrator_tags"}
-    updates = {k: v for k, v in body.items() if k in allowed and v is not None}
-    if not updates:
-        return get_entity_profile(profile_id)
-    # Normalize orchestrator_tags to list of strings
-    if "orchestrator_tags" in updates:
-        raw = updates["orchestrator_tags"]
-        if isinstance(raw, list):
-            updates["orchestrator_tags"] = [str(x).strip() for x in raw if str(x).strip()]
-        else:
-            updates["orchestrator_tags"] = []
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT metadata FROM intelligence.entity_profiles WHERE id = %s",
-                (profile_id,),
-            )
-            row = cur.fetchone()
-            if not row:
-                conn.close()
-                raise HTTPException(status_code=404, detail="Entity profile not found")
-            import json
-            meta = dict(row[0]) if row[0] else {}
-            meta.update(updates)
-            cur.execute(
-                """
-                UPDATE intelligence.entity_profiles
-                SET metadata = %s, updated_at = NOW()
-                WHERE id = %s
-                RETURNING id, domain_key, canonical_entity_id, compilation_date,
-                          sections, relationships_summary, metadata, created_at, updated_at
-                """,
-                (json.dumps(meta), profile_id),
-            )
-            out = cur.fetchone()
-        conn.commit()
-        conn.close()
-        return _row_to_profile(out)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.warning(f"update_entity_profile: {e}")
-        try:
-            conn.close()
-        except Exception:
-            pass
-        raise HTTPException(status_code=500, detail="Failed to update entity profile")
-
-
-@router.post("/entity_profiles/{profile_id}/merge", response_model=dict)
-def merge_entity_profiles(
-    profile_id: int,
-    body: dict = Body(..., embed=True),
-) -> dict:
-    """Merge source entity profile into target (Phase 4.2). Same domain required. Redirects old_entity_to_new and context_entity_mentions to target."""
-    source_profile_id = body.get("source_profile_id")
-    if source_profile_id is None:
-        raise HTTPException(status_code=400, detail="source_profile_id required")
-    try:
-        source_profile_id = int(source_profile_id)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="source_profile_id must be an integer")
-    if source_profile_id == profile_id:
-        raise HTTPException(status_code=400, detail="Source and target must differ")
-    conn = get_db_connection()
-    if not conn:
-        raise HTTPException(status_code=503, detail="Database unavailable")
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id, domain_key FROM intelligence.entity_profiles WHERE id IN (%s, %s)",
-                (profile_id, source_profile_id),
-            )
-            rows = cur.fetchall()
-            if len(rows) != 2:
-                conn.close()
-                raise HTTPException(status_code=404, detail="One or both entity profiles not found")
-            by_id = {r[0]: r[1] for r in rows}
-            if by_id[profile_id] != by_id[source_profile_id]:
-                conn.close()
-                raise HTTPException(status_code=400, detail="Source and target must be in the same domain")
-            # Redirect old_entity_to_new from source -> target
-            cur.execute(
-                "UPDATE intelligence.old_entity_to_new SET entity_profile_id = %s WHERE entity_profile_id = %s",
-                (profile_id, source_profile_id),
-            )
-            # Redirect context_entity_mentions from source -> target (avoid dupes: delete source mentions that target already has, then update rest)
-            cur.execute(
-                """
-                DELETE FROM intelligence.context_entity_mentions a
-                USING intelligence.context_entity_mentions b
-                WHERE a.entity_profile_id = %s AND b.entity_profile_id = %s AND a.context_id = b.context_id
-                """,
-                (source_profile_id, profile_id),
-            )
-            cur.execute(
-                "UPDATE intelligence.context_entity_mentions SET entity_profile_id = %s WHERE entity_profile_id = %s",
-                (profile_id, source_profile_id),
-            )
-            # Mark source as merged (audit trail)
-            cur.execute(
-                "SELECT metadata FROM intelligence.entity_profiles WHERE id = %s",
-                (source_profile_id,),
-            )
-            r = cur.fetchone()
-            import json
-            from datetime import datetime
-            meta = dict(r[0]) if r and r[0] else {}
-            meta["merged_into_profile_id"] = profile_id
-            meta["merged_at"] = datetime.utcnow().isoformat() + "Z"
-            cur.execute(
-                "UPDATE intelligence.entity_profiles SET metadata = %s, updated_at = NOW() WHERE id = %s",
-                (json.dumps(meta), source_profile_id),
-            )
-        conn.commit()
-        conn.close()
-        return {"success": True, "target_profile_id": profile_id, "source_profile_id": source_profile_id, "message": "Merged; source profile marked as merged."}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.warning(f"merge_entity_profiles: {e}")
-        try:
-            conn.rollback()
-            conn.close()
-        except Exception:
-            pass
-        raise HTTPException(status_code=500, detail="Failed to merge entity profiles")
 
 
 def _row_to_context(row: tuple, max_content_len: int = 2000) -> dict:
@@ -1331,7 +1074,8 @@ def get_context_grouping_feedback(
 _EVENT_COLS = """id, event_type, event_name, start_date, end_date, geographic_scope,
                    key_participant_entity_ids, milestones, sub_event_ids, created_at, updated_at, domain_keys,
                    editorial_briefing, editorial_briefing_json, briefing_version, briefing_status,
-                   global_narrative, narrative_lenses, global_narrative_version, global_narrative_updated_at, narrative_lenses_updated_at"""
+                   global_narrative, narrative_lenses, global_narrative_version, global_narrative_updated_at, narrative_lenses_updated_at,
+                   anchors, particulars, arc_state, container_kind"""
 
 
 def _row_to_event(row: tuple) -> dict:
@@ -1366,7 +1110,78 @@ def _row_to_event(row: tuple) -> dict:
         out["global_narrative_updated_at"] = row[19].isoformat()
     if len(row) > 20 and row[20]:
         out["narrative_lenses_updated_at"] = row[20].isoformat()
+    # Event-core first slice (rare-anchor founding)
+    if len(row) > 21:
+        anchors = row[21]
+        out["anchors"] = anchors if isinstance(anchors, (list, dict)) else (anchors or [])
+    if len(row) > 22:
+        particulars = row[22]
+        out["particulars"] = (
+            particulars if isinstance(particulars, (list, dict)) else (particulars or {})
+        )
+    if len(row) > 23:
+        arc_state = row[23]
+        out["arc_state"] = arc_state if isinstance(arc_state, (list, dict)) else (arc_state or {})
+    if len(row) > 24:
+        out["container_kind"] = row[24]
     return out
+
+
+def _enrich_developments_with_context_titles(cur, developments: Any) -> list:
+    """Add title and domain_key to context-based developments missing title."""
+    if not developments:
+        return []
+    devs = list(developments) if isinstance(developments, list) else []
+    if not devs:
+        return devs
+    missing_ids: set[int] = set()
+    for d in devs:
+        if not isinstance(d, dict):
+            continue
+        cid = d.get("context_id")
+        if cid is not None and not d.get("title"):
+            try:
+                missing_ids.add(int(cid))
+            except (TypeError, ValueError):
+                pass
+    title_map: dict[int, tuple[str | None, str | None]] = {}
+    if missing_ids:
+        cur.execute(
+            """
+            SELECT id, title, domain_key
+            FROM intelligence.contexts
+            WHERE id = ANY(%s)
+            """,
+            (list(missing_ids),),
+        )
+        for r in cur.fetchall() or []:
+            title_map[int(r[0])] = (r[1], r[2])
+    enriched: list = []
+    for d in devs:
+        if not isinstance(d, dict):
+            enriched.append(d)
+            continue
+        out = dict(d)
+        cid = out.get("context_id")
+        if cid is not None and not out.get("title"):
+            try:
+                info = title_map.get(int(cid))
+                if info:
+                    if info[0]:
+                        out["title"] = info[0]
+                    if info[1] and not out.get("domain_key"):
+                        out["domain_key"] = info[1]
+            except (TypeError, ValueError):
+                pass
+        enriched.append(out)
+    return enriched
+
+
+def _enrich_chronicles_developments(cur, chronicles: list[dict]) -> list[dict]:
+    """Enrich all chronicle developments with context titles where missing."""
+    for ch in chronicles:
+        ch["developments"] = _enrich_developments_with_context_titles(cur, ch.get("developments"))
+    return chronicles
 
 
 def _list_tracked_events_sync(
@@ -1612,22 +1427,71 @@ def get_tracked_event(event_id: int) -> dict:
                 SELECT id, update_date, developments, analysis, predictions, momentum_score, created_at
                 FROM intelligence.event_chronicles
                 WHERE event_id = %s
-                ORDER BY update_date DESC
+                ORDER BY update_date DESC, id DESC
                 """,
                 (event_id,),
             )
             chronicles = []
+            seen_days: set[str] = set()
+            event_name = event.get("event_name") or ""
             for r in cur.fetchall():
+                day = str(r[1]) if r[1] else f"id-{r[0]}"
+                if day in seen_days:
+                    continue
+                seen_days.add(day)
+                raw_devs = r[2] if isinstance(r[2], list) else []
+                if isinstance(r[2], str):
+                    try:
+                        import json as _json
+                        raw_devs = _json.loads(r[2])
+                    except Exception:
+                        raw_devs = []
+                try:
+                    from services.event_tracking_service import development_title_matches_event
+                    filtered_devs = []
+                    seen_titles: set[str] = set()
+                    for d in raw_devs:
+                        if not isinstance(d, dict):
+                            continue
+                        title = d.get("title")
+                        if not development_title_matches_event(event_name, title):
+                            continue
+                        title_key = re.sub(r"\s+", " ", (title or "").strip().lower())[:120]
+                        if title_key and title_key in seen_titles:
+                            continue
+                        if title_key:
+                            seen_titles.add(title_key)
+                        filtered_devs.append(d)
+                except Exception:
+                    filtered_devs = raw_devs if isinstance(raw_devs, list) else []
+                analysis = r[3] if isinstance(r[3], dict) else r[3]
+                if filtered_devs:
+                    momentum = min(1.0, len(filtered_devs) * 0.1)
+                else:
+                    momentum = None
+                    # Drop polluted attachment blurbs when nothing on-topic remains.
+                    if isinstance(analysis, dict):
+                        analysis = {
+                            **analysis,
+                            "latest_developments": None,
+                            "context_count": len(filtered_devs),
+                        }
                 chronicles.append({
                     "id": r[0],
                     "update_date": str(r[1]) if r[1] else None,
-                    "developments": r[2],
-                    "analysis": r[3],
+                    "developments": filtered_devs,
+                    "analysis": analysis,
                     "predictions": r[4],
-                    "momentum_score": float(r[5]) if r[5] is not None else None,
+                    "momentum_score": momentum,
                     "created_at": r[6].isoformat() if r[6] else None,
                 })
-            event["chronicles"] = chronicles
+            # Collapse empty day shells that only repeat the same summary.
+            with_devs = [c for c in chronicles if c.get("developments")]
+            if with_devs:
+                chronicles = with_devs
+            elif chronicles:
+                chronicles = [chronicles[0]]
+            event["chronicles"] = _enrich_chronicles_developments(cur, chronicles)
             try:
                 from services.quality_feedback_service import get_latest_event_validations
                 validations = get_latest_event_validations([event_id], conn=conn)
@@ -1645,6 +1509,79 @@ def get_tracked_event(event_id: int) -> dict:
         except Exception:
             pass
         raise HTTPException(status_code=500, detail="Failed to get tracked event")
+
+
+@router.get("/tracked_events/{event_id}/membership", response_model=dict)
+def get_tracked_event_membership(
+    event_id: int,
+    limit: int = Query(100, ge=1, le=500),
+) -> dict:
+    """Typed event-core article membership for a tracked event (rare-anchor founding)."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM intelligence.tracked_events WHERE id = %s", (event_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Tracked event not found")
+            from services.event_core_membership_service import list_typed_members_for_tracked_event
+
+            items = list_typed_members_for_tracked_event(cur, event_id, limit=limit)
+            for item in items:
+                if item.get("created_at") is not None:
+                    item["created_at"] = item["created_at"].isoformat()
+        return {"success": True, "data": {"items": items, "limit": limit}, "message": None}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("get_tracked_event_membership: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to list event membership")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+@router.get("/tracked_events/{event_id}/facets", response_model=dict)
+def get_tracked_event_facets(event_id: int) -> dict:
+    """Storyline facet links for a tracked event (event-core)."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM intelligence.tracked_events WHERE id = %s", (event_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Tracked event not found")
+            cur.execute(
+                """
+                SELECT id, tracked_event_id, domain_key, storyline_id, facet, created_at
+                FROM intelligence.tracked_event_storyline_facets
+                WHERE tracked_event_id = %s
+                ORDER BY created_at DESC, id DESC
+                """,
+                (event_id,),
+            )
+            cols = [d[0] for d in cur.description]
+            items = []
+            for row in cur.fetchall() or []:
+                item = dict(zip(cols, row))
+                if item.get("created_at") is not None:
+                    item["created_at"] = item["created_at"].isoformat()
+                items.append(item)
+        return {"success": True, "data": {"items": items}, "message": None}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("get_tracked_event_facets: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to list event facets")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 @router.post("/tracked_events/{event_id}/narrative_stack", response_model=dict)
@@ -1670,7 +1607,13 @@ def get_tracked_event_linked_events(
     event_id: int,
     limit: int = Query(12, ge=1, le=30),
 ) -> dict:
-    """Other tracked_events that appear in cross_domain_correlations with this event."""
+    """
+    Other tracked_events meaningfully related to this one.
+
+    Prefer entity_overlap / thematic pairwise correlations. Mega temporal bags
+    (100 co-window events) are ignored — those produce junk like ICE stories
+    linked to an NVIDIA SEC probe.
+    """
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
@@ -1679,36 +1622,119 @@ def get_tracked_event_linked_events(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT correlation_type, correlation_strength, event_ids
+                SELECT event_name,
+                       COALESCE(key_participant_entity_ids, '[]'::jsonb)
+                FROM intelligence.tracked_events
+                WHERE id = %s
+                """,
+                (event_id,),
+            )
+            self_row = cur.fetchone()
+            if not self_row:
+                conn.close()
+                return {"items": [], "limit": limit}
+            self_name = self_row[0] or ""
+            self_ents_raw = self_row[1]
+            self_ents: set[int] = set()
+            if isinstance(self_ents_raw, list):
+                for x in self_ents_raw:
+                    if isinstance(x, int):
+                        self_ents.add(x)
+                    elif isinstance(x, dict) and "id" in x:
+                        try:
+                            self_ents.add(int(x["id"]))
+                        except (TypeError, ValueError):
+                            pass
+
+            # Pairwise-quality correlations only (skip giant temporal dumps).
+            cur.execute(
+                """
+                SELECT correlation_type, correlation_strength, event_ids,
+                       COALESCE(entity_profile_ids, '{}') AS entity_profile_ids,
+                       COALESCE(cardinality(event_ids), 0) AS n_events
                 FROM intelligence.cross_domain_correlations
                 WHERE %s = ANY(event_ids)
-                ORDER BY discovered_at DESC NULLS LAST
-                LIMIT 20
+                  AND (
+                    correlation_type IN ('entity_overlap', 'thematic')
+                    OR cardinality(event_ids) BETWEEN 2 AND 12
+                  )
+                ORDER BY correlation_strength DESC NULLS LAST, discovered_at DESC NULLS LAST
+                LIMIT 40
                 """,
                 (event_id,),
             )
             rows = cur.fetchall() or []
-        other: set[int] = set()
+
+        scored: dict[int, float] = {}
         for r in rows:
-            for eid in list(r[2]) if r[2] else []:
-                if isinstance(eid, int) and eid != event_id:
-                    other.add(eid)
-        if not other:
+            ctype = (r[0] or "") if len(r) > 0 else ""
+            strength = float(r[1] or 0)
+            eids = list(r[2]) if r[2] else []
+            n_events = int(r[4] or len(eids))
+            # Hard reject mega-bags even if mislabeled thematic.
+            if n_events > 12:
+                continue
+            for eid in eids:
+                if not isinstance(eid, int) or eid == event_id:
+                    continue
+                boost = strength
+                if ctype == "entity_overlap":
+                    boost += 0.25
+                scored[eid] = max(scored.get(eid, 0.0), boost)
+
+        if not scored:
             conn.close()
             return {"items": [], "limit": limit}
+
+        ranked_ids = sorted(scored.keys(), key=lambda i: scored[i], reverse=True)[
+            : limit * 3
+        ]
         with conn.cursor() as cur:
             cur.execute(
                 f"""
                 SELECT {_EVENT_COLS}
                 FROM intelligence.tracked_events
                 WHERE id = ANY(%s)
-                ORDER BY updated_at DESC NULLS LAST
-                LIMIT %s
                 """,
-                (list(other)[: limit * 2], limit),
+                (ranked_ids,),
             )
+            by_id = {}
             for row in cur.fetchall() or []:
-                items.append(_row_to_event(row))
+                ev = _row_to_event(row)
+                by_id[ev["id"]] = ev
+
+        from services.event_tracking_service import (
+            development_title_matches_event,
+            significant_event_tokens,
+        )
+
+        self_tokens = {t.lower() for t in significant_event_tokens(self_name)}
+        for eid in ranked_ids:
+            ev = by_id.get(eid)
+            if not ev:
+                continue
+            other_name = ev.get("event_name") or ""
+            # Require title relevance OR shared participants.
+            title_ok = development_title_matches_event(self_name, other_name) or (
+                bool(self_tokens)
+                and len(
+                    self_tokens
+                    & {t.lower() for t in significant_event_tokens(other_name)}
+                )
+                >= 1
+            )
+            other_ents: set[int] = set()
+            raw_ents = ev.get("key_participant_entity_ids") or []
+            if isinstance(raw_ents, list):
+                for x in raw_ents:
+                    if isinstance(x, int):
+                        other_ents.add(x)
+            entity_ok = bool(self_ents & other_ents)
+            if not title_ok and not entity_ok:
+                continue
+            items.append(ev)
+            if len(items) >= limit:
+                break
         conn.close()
     except Exception as e:
         logger.warning("get_tracked_event_linked_events: %s", e)
@@ -1834,7 +1860,37 @@ async def generate_tracked_event_report(event_id: int) -> dict:
             conn.close()
         except Exception:
             pass
+    try:
+        from services.saved_intel_service import save_intel_output
+
+        save_intel_output(
+            content_type="event_report",
+            subject_type="tracked_event",
+            subject_id=event_id,
+            content_md=result.get("report_md") or "",
+            title=result.get("event_name"),
+            metadata={
+                "context_ids_included": result.get("context_ids_included") or [],
+                "chronicle_count": result.get("chronicle_count", 0),
+                "context_count": result.get("context_count", 0),
+            },
+            generated_at=result.get("generated_at"),
+        )
+    except Exception as e:
+        logger.warning("save_intel_output event_report: %s", e)
     return result
+
+
+@router.get("/saved_intel_outputs", response_model=dict)
+def list_saved_intel_outputs_route(
+    domain_key: str | None = Query(None, description="Filter by domain"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    """List append-only reading history of generated intel outputs."""
+    from services.saved_intel_service import list_saved_intel_outputs
+
+    return list_saved_intel_outputs(domain_key=domain_key, limit=limit, offset=offset)
 
 
 # ---------------------------------------------------------------------------
@@ -2282,6 +2338,36 @@ def list_claims(
         raise HTTPException(status_code=500, detail="Failed to list claims")
 
 
+@router.get("/claims/similar_clusters", response_model=dict)
+def similar_claim_clusters(
+    since_days: int = Query(7, ge=1, le=365),
+    min_count: int = Query(3, ge=2, le=100, description="Min claims per subject cluster"),
+    min_contexts: int = Query(2, ge=1, le=50, description="Min distinct contexts"),
+    domain_key: str | None = Query(None),
+    q: str | None = Query(None, description="ILIKE filter on subject/predicate/object"),
+    mode: str = Query("both", description="subject | triple | both"),
+    limit: int = Query(40, ge=1, le=100),
+) -> dict:
+    """Cluster similar extracted_claims for agent / discovery review."""
+    if mode not in ("subject", "triple", "both"):
+        raise HTTPException(status_code=400, detail="mode must be subject, triple, or both")
+    try:
+        from services.claim_similarity_service import scan_similar_claim_clusters
+
+        return scan_similar_claim_clusters(
+            since_days=since_days,
+            min_claim_count=min_count,
+            min_context_count=min_contexts,
+            domain_key=domain_key,
+            query=q,
+            mode=mode,  # type: ignore[arg-type]
+            limit=limit,
+        )
+    except Exception as e:
+        logger.warning("similar_claim_clusters: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to scan similar claims")
+
+
 @router.get("/context_centric/search", response_model=dict)
 def context_centric_search(
     q: str | None = Query(None, description="Full-text search (claims subject/predicate/object, context title/content)"),
@@ -2440,320 +2526,6 @@ def context_centric_search(
         raise HTTPException(status_code=500, detail="Failed to search")
 
 
-# ---------------------------------------------------------------------------
-# Entity resolution endpoints (T1.2)
-# ---------------------------------------------------------------------------
-
-@router.post("/entities/resolve", response_model=dict)
-def resolve_entity(
-    body: dict = Body(..., examples=[{"domain_key": "politics", "entity_name": "Biden", "entity_type": "person"}]),
-) -> dict:
-    """
-    Resolve an entity name to canonical entity, returning the best match and candidates.
-    Body: {domain_key, entity_name, entity_type}.
-    """
-    domain_key = body.get("domain_key", "politics")
-    entity_name = body.get("entity_name", "")
-    entity_type = body.get("entity_type", "person")
-    if not entity_name:
-        raise HTTPException(status_code=400, detail="entity_name required")
-
-    from services.entity_resolution_service import resolve_with_candidates
-    result = resolve_with_candidates(domain_key, entity_name, entity_type, limit=10)
-    return {"success": True, **result}
-
-
-@router.post("/entities/populate_aliases", response_model=dict)
-def populate_entity_aliases(
-    domain_key: str | None = Query(None, description="Domain to process; omit for all"),
-    min_mentions: int = Query(2, description="Minimum articles for an alias to be added"),
-) -> dict:
-    """
-    Batch-populate entity_canonical.aliases from article_entities mention variants.
-    """
-    from services.entity_resolution_service import populate_aliases_from_mentions
-
-    domains = [domain_key] if domain_key else list(get_active_domain_keys())
-    results = {}
-    for d in domains:
-        results[d] = populate_aliases_from_mentions(d, min_mentions=min_mentions)
-    return {"success": True, "results": results}
-
-
-@router.get("/entities/merge_candidates", response_model=dict)
-def get_merge_candidates(
-    domain_key: str = Query(..., description="Domain to scan"),
-    min_confidence: float = Query(0.5, description="Minimum confidence threshold"),
-    limit: int = Query(50, ge=1, le=200),
-) -> dict:
-    """
-    Find pairs of canonical entities that likely refer to the same real-world entity.
-    Returns candidates with confidence scores and match reasons.
-    """
-    from services.entity_resolution_service import find_merge_candidates
-    return find_merge_candidates(domain_key, min_confidence=min_confidence, limit=limit)
-
-
-@router.post("/entities/merge", response_model=dict)
-def merge_entities(
-    body: dict = Body(..., examples=[{"domain_key": "politics", "keep_id": 1, "merge_id": 2}]),
-) -> dict:
-    """
-    Merge two canonical entities: reassign article_entities, combine aliases, delete the merged entity.
-    Body: {domain_key, keep_id, merge_id}.
-    """
-    domain_key = body.get("domain_key")
-    keep_id = body.get("keep_id")
-    merge_id = body.get("merge_id")
-    if not all([domain_key, keep_id, merge_id]):
-        raise HTTPException(status_code=400, detail="domain_key, keep_id, and merge_id required")
-
-    from services.entity_resolution_service import merge_canonical_entities
-    return merge_canonical_entities(domain_key, keep_id=keep_id, merge_id=merge_id)
-
-
-@router.post("/entities/auto_merge", response_model=dict)
-def auto_merge_entities(
-    domain_key: str | None = Query(None, description="Domain to auto-merge; omit for all"),
-    min_confidence: float = Query(0.9, description="Only merge above this confidence (use 0.6 for Trump/Donald Trump–style consolidation)"),
-) -> dict:
-    """
-    Automatically merge canonical entities with confidence >= threshold.
-    Keeps the primary (full) name and merges variants into it (variants become aliases).
-    Use min_confidence=0.6 to consolidate last-name and variant matches (e.g. Trump, Donald J Trump, King Trump).
-    """
-    from services.entity_resolution_service import auto_merge_high_confidence
-
-    domains = [domain_key] if domain_key else list(get_active_domain_keys())
-    results = {}
-    for d in domains:
-        results[d] = auto_merge_high_confidence(d, min_confidence=min_confidence)
-    return {"success": True, "results": results}
-
-
-@router.post("/entities/cross_domain_link", response_model=dict)
-def cross_domain_link_entities(
-    min_confidence: float = Query(0.8, description="Minimum confidence for cross-domain linking"),
-    limit: int = Query(100, ge=1, le=500),
-) -> dict:
-    """
-    Find the same entity across domain schemas (politics, finance, science-tech)
-    and create cross_domain_same_entity relationships.
-    """
-    from services.entity_resolution_service import link_cross_domain_entities
-    return link_cross_domain_entities(min_confidence=min_confidence, limit=limit)
-
-
-@router.post("/entities/run_resolution_batch", response_model=dict)
-def run_entity_resolution_batch(
-    auto_merge_confidence: float = Query(0.9),
-    cross_domain_confidence: float = Query(0.8),
-) -> dict:
-    """
-    Run a full entity resolution cycle: populate aliases, auto-merge duplicates,
-    link cross-domain entities. Suitable for scheduled or manual trigger.
-    """
-    from services.entity_resolution_service import run_resolution_batch
-    return run_resolution_batch(
-        auto_merge_confidence=auto_merge_confidence,
-        cross_domain_confidence=cross_domain_confidence,
-    )
-
-
-@router.get("/entities/canonical", response_model=dict)
-def list_canonical_entities(
-    domain_key: str = Query(..., description="Domain to query"),
-    entity_type: str | None = Query(None, description="Filter by type (person, organization, subject, recurring_event)"),
-    search: str | None = Query(None, description="Search canonical_name or aliases"),
-    min_mentions: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=500),
-    offset: int = Query(0, ge=0),
-) -> dict:
-    """List canonical entities with alias info and mention counts."""
-    from services.entity_resolution_service import _schema_for_domain
-
-    schema = _schema_for_domain(domain_key)
-    conn = get_db_connection()
-    if not conn:
-        raise HTTPException(status_code=500, detail="Database connection failed")
-
-    try:
-        with conn.cursor() as cur:
-            where_clauses = []
-            params: list = []
-
-            if entity_type:
-                where_clauses.append("ec.entity_type = %s")
-                params.append(entity_type)
-            if search:
-                where_clauses.append(
-                    "(LOWER(ec.canonical_name) LIKE LOWER(%s) OR EXISTS "
-                    "(SELECT 1 FROM unnest(COALESCE(ec.aliases, '{}')) a WHERE LOWER(a) LIKE LOWER(%s)))"
-                )
-                params.extend([f"%{search}%", f"%{search}%"])
-
-            where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
-
-            having_clause = ""
-            if min_mentions > 0:
-                having_clause = f"HAVING COUNT(ae.id) >= {int(min_mentions)}"
-
-            cur.execute(
-                f"""
-                SELECT ec.id, ec.canonical_name, ec.entity_type, ec.aliases,
-                       COUNT(ae.id) AS mention_count,
-                       ec.created_at, ec.updated_at
-                FROM {schema}.entity_canonical ec
-                LEFT JOIN {schema}.article_entities ae ON ae.canonical_entity_id = ec.id
-                {where_sql}
-                GROUP BY ec.id, ec.canonical_name, ec.entity_type, ec.aliases,
-                         ec.created_at, ec.updated_at
-                {having_clause}
-                ORDER BY COUNT(ae.id) DESC, ec.canonical_name
-                LIMIT %s OFFSET %s
-                """,
-                (*params, limit, offset),
-            )
-            rows = cur.fetchall()
-
-            entities = []
-            for row in rows:
-                entities.append({
-                    "canonical_entity_id": row[0],
-                    "canonical_name": row[1],
-                    "entity_type": row[2],
-                    "aliases": row[3] or [],
-                    "mention_count": row[4],
-                    "created_at": _json_safe(row[5]),
-                    "updated_at": _json_safe(row[6]),
-                })
-
-        conn.close()
-        return {"success": True, "entities": entities, "domain_key": domain_key, "limit": limit, "offset": offset}
-    except Exception as e:
-        logger.warning("list_canonical_entities: %s", e)
-        try:
-            conn.close()
-        except Exception:
-            pass
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ---------------------------------------------------------------------------
-# NRI integration (read nri.* + proxy :8010)
-# ---------------------------------------------------------------------------
-
-@router.get("/nri/health", response_model=dict)
-def nri_health() -> dict:
-    from services.nri_integration_service import get_nri_health
-    return get_nri_health()
-
-
-@router.get("/nri/resolved_mentions", response_model=dict)
-def nri_resolved_mentions(
-    domain_key: str | None = Query(None),
-    status: str | None = Query(None),
-    limit: int = Query(50, ge=1, le=500),
-    offset: int = Query(0, ge=0),
-) -> dict:
-    from services.nri_integration_service import list_resolved_mentions
-    return list_resolved_mentions(domain_key=domain_key, status=status, limit=limit, offset=offset)
-
-
-@router.get("/nri/parked", response_model=dict)
-def nri_parked(
-    domain_key: str | None = Query(None),
-    review_status: str | None = Query("open"),
-    limit: int = Query(50, ge=1, le=500),
-    offset: int = Query(0, ge=0),
-) -> dict:
-    from services.nri_integration_service import list_parked_resolution
-    return list_parked_resolution(
-        domain_key=domain_key, review_status=review_status, limit=limit, offset=offset,
-    )
-
-
-@router.patch("/nri/parked/{parked_id}", response_model=dict)
-def nri_review_parked(parked_id: int, body: dict = Body(...)) -> dict:
-    from services.nri_integration_service import review_parked
-    return review_parked(
-        parked_id,
-        review_status=str(body.get("review_status", "reviewed")),
-        candidate_ftm_id=body.get("candidate_ftm_id"),
-    )
-
-
-@router.get("/nri/entity_bridge/{entity_profile_id}", response_model=dict)
-def nri_entity_bridge(entity_profile_id: int) -> dict:
-    from services.nri_integration_service import get_entity_bridge
-    return get_entity_bridge(entity_profile_id)
-
-
-@router.get("/nri/hypotheses", response_model=dict)
-def nri_hypotheses(
-    status: str | None = Query(None),
-    ftm_id: str | None = Query(None),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-) -> dict:
-    from services.nri_integration_service import list_hypotheses
-    return list_hypotheses(status=status, ftm_id=ftm_id, limit=limit, offset=offset)
-
-
-@router.get("/nri/hypotheses/{hyp_id}", response_model=dict)
-def nri_hypothesis_detail(hyp_id: str) -> dict:
-    from services.nri_integration_service import get_hypothesis
-    return get_hypothesis(hyp_id)
-
-
-# ---------------------------------------------------------------------------
-# Entity position tracking endpoints (T2.2)
-# ---------------------------------------------------------------------------
-
-@router.get("/entity_positions", response_model=dict)
-def get_entity_positions(
-    domain_key: str = Query(...),
-    entity_id: int = Query(...),
-    limit: int = Query(50, ge=1, le=200),
-) -> dict:
-    """Get stored positions (stances, votes, statements) for a canonical entity."""
-    from services.entity_position_tracker_service import get_entity_positions as _get
-    return _get(domain_key, entity_id, limit=limit)
-
-
-@router.post("/entity_positions/extract", response_model=dict)
-def extract_entity_positions(
-    body: dict = Body(..., examples=[{"domain_key": "politics", "entity_id": 1, "max_articles": 10}]),
-) -> dict:
-    """Extract positions for a specific entity from its articles using LLM."""
-    domain_key = body.get("domain_key")
-    entity_id = body.get("entity_id")
-    if not domain_key or not entity_id:
-        raise HTTPException(status_code=400, detail="domain_key and entity_id required")
-
-    from services.entity_position_tracker_service import extract_positions_for_entity
-    return extract_positions_for_entity(
-        domain_key, entity_id,
-        max_articles=body.get("max_articles", 20),
-    )
-
-
-@router.post("/entity_positions/batch", response_model=dict)
-def run_position_tracker_batch(
-    domain_key: str | None = Query(None),
-    min_mentions: int = Query(5, ge=1),
-    max_entities: int = Query(10, ge=1, le=50),
-) -> dict:
-    """
-    Batch-extract positions for top entities by mention count.
-    Suitable for manual trigger or scheduled runs.
-    """
-    from services.entity_position_tracker_service import run_position_tracker_batch as _batch
-    return _batch(
-        domain_key=domain_key,
-        min_mentions=min_mentions,
-        max_entities=max_entities,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -2801,17 +2573,6 @@ def get_event_synthesis(event_id: int) -> dict:
     return synthesize_event_context(event_id)
 
 
-@router.get("/synthesis/entity/{entity_id}", response_model=dict)
-def get_entity_synthesis(
-    entity_id: int,
-    domain_key: str = Query(...),
-) -> dict:
-    """
-    Synthesize all intelligence for a canonical entity: dossier, positions,
-    relationships, recent articles, storyline references.
-    """
-    from services.content_synthesis_service import synthesize_entity_context
-    return synthesize_entity_context(domain_key, entity_id)
 
 
 # ---------------------------------------------------------------------------

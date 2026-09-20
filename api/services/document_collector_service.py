@@ -231,6 +231,29 @@ def collect_documents(domain: str | None = None, max_per_source: int = 10) -> in
                                 }
                             else:
                                 continue
+                    if source_key == "arxiv":
+                        # Selective RAG: only insert arXiv PDFs with an evidence-pull ticket
+                        from config.runtime import env_str as _env
+
+                        if _env("RAG_EVIDENCE_PULL_GATE_ARXIV", "true").lower() in (
+                            "1",
+                            "true",
+                            "yes",
+                        ):
+                            cur.execute(
+                                """
+                                SELECT 1 FROM intelligence.rag_evidence_pull_queue
+                                WHERE status IN ('queued', 'downloading', 'processing')
+                                  AND (
+                                    pdf_url = %s
+                                    OR arxiv_id = split_part(split_part(%s, '/pdf/', 2), '.pdf', 1)
+                                  )
+                                LIMIT 1
+                                """,
+                                (clean_url, clean_url),
+                            )
+                            if not cur.fetchone():
+                                continue
                     # Dedupe by source_url
                     cur.execute(
                         "SELECT 1 FROM intelligence.processed_documents WHERE source_url = %s LIMIT 1",

@@ -88,3 +88,90 @@ export function sanitizeLeadText(raw: string | null | undefined): string {
   if (!s.includes('\n')) s = s.replace(/\s+/g, ' ').trim();
   return stripLlmProsePreamble(s);
 }
+
+/** Mega / 5W1H placeholder titles that must never show in UI. */
+const PLACEHOLDER_STORYLINE_TITLE_RE =
+  /^Ongoing:\s*(WHAT|WHO|WHEN|WHERE|WHY)$/i;
+
+/** Entity-derived year keys leaked into titles (e.g. "Year_2026: …"). */
+const YEAR_ENTITY_TITLE_PREFIX_RE = /^Year_20\d{2}\s*:\s*/i;
+
+export type StorylineTitleSource = {
+  title?: string | null;
+  description?: string | null;
+  article_count?: number | null;
+  articles?: unknown[];
+} | null;
+
+/**
+ * Strip leaked JSON braces, prompt keys, and Year_20xx: prefixes from a raw title.
+ */
+export function cleanStorylineTitleRaw(raw: string | null | undefined): string {
+  if (raw == null || typeof raw !== 'string') return '';
+  let s = raw.trim();
+  if (!s) return '';
+
+  s = s.replace(YEAR_ENTITY_TITLE_PREFIX_RE, '').trim();
+
+  if (/^[\{\[]/.test(s)) {
+    s = s.replace(/^[\{\[\s"']+/, '').replace(/^:\s*/, '').trim();
+    s = s.replace(
+      /^(lede|headline|summary|title|who|what|when|where|why|how)\s*:\s*/i,
+      ''
+    ).trim();
+  }
+
+  s = sanitizeLeadText(s);
+  return s.trim();
+}
+
+/**
+ * Safe storyline title for list/detail chrome. Never returns Ongoing: WHAT,
+ * bare "{:", or Year_20xx: prefixes. Soft-ellipsizes mid-word truncations.
+ */
+export function displayStorylineTitle(
+  storyline: StorylineTitleSource,
+  fallbackId?: string | number
+): string {
+  const raw = (storyline?.title || '').trim();
+  const cleaned = cleanStorylineTitleRaw(raw);
+  const placeholder =
+    PLACEHOLDER_STORYLINE_TITLE_RE.test(raw) ||
+    PLACEHOLDER_STORYLINE_TITLE_RE.test(cleaned);
+  const usable =
+    Boolean(cleaned) &&
+    !placeholder &&
+    cleaned.length >= 3 &&
+    cleaned !== '{' &&
+    cleaned !== ':' &&
+    !/^[\{\[]/.test(cleaned);
+
+  if (usable) return softEllipsizeMidWordTruncation(cleaned);
+
+  const count =
+    storyline?.article_count ??
+    (Array.isArray(storyline?.articles) ? storyline.articles.length : undefined);
+  const desc = (storyline?.description || '').trim();
+  if (desc && /^Mega-storyline/i.test(desc) && count != null) {
+    return `Mega-storyline (${count} articles)`;
+  }
+  if (desc) {
+    const cleanedDesc = sanitizeLeadText(desc) || desc;
+    return cleanedDesc.length > 80
+      ? `${cleanedDesc.slice(0, 77)}…`
+      : cleanedDesc;
+  }
+  return fallbackId != null ? `Storyline #${fallbackId}` : 'Untitled Storyline';
+}
+
+/** If a title was cut mid-token (e.g. ends with "ove"), trim to last full word + …. */
+function softEllipsizeMidWordTruncation(title: string): string {
+  const t = title.trim();
+  if (t.length < 24) return t;
+  if (/[.!?…)"'\]]$/.test(t)) return t;
+  const m = t.match(/^(.*\s)([A-Za-z]{1,3})$/);
+  if (!m) return t;
+  const head = m[1].trimEnd();
+  if (head.length < 20) return t;
+  return `${head}…`;
+}

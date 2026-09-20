@@ -1,0 +1,18 @@
+[Unit]
+Description=News Intelligence PopOS desk presence sensor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/ni-popos-worker
+Environment=PYTHONPATH=%h/ni-popos-worker/api
+Environment=DESK_INTERACTIVE_IDLE_SEC=120
+EnvironmentFile=-%h/ni-popos-worker/.env
+EnvironmentFile=-%h/ni-popos-worker/.env.popos_worker
+# Path with spaces: invoke via bash. Override ExecStart if the checkout lives elsewhere.
+ExecStart=/bin/bash -lc 'exec python3 "$HOME/Documents/projects/News Intelligence/scripts/popos_desk_presence.py"'
+Nice=10
+
+[Install]
+WantedBy=default.target

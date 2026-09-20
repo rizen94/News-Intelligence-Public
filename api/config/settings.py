@@ -51,7 +51,7 @@ RAM_SAFETY_MARGIN_GB = 8.0
 OLLAMA_MODEL_PRIMARY = os.environ.get("OLLAMA_MODEL_PRIMARY", "llama3.1:8b")
 OLLAMA_MODEL_SECONDARY = os.environ.get("OLLAMA_MODEL_SECONDARY", "mistral-nemo:12b")
 OLLAMA_MODEL_PHI = os.environ.get("OLLAMA_MODEL_PHI", "phi3.5:latest")
-OLLAMA_MODEL_EXTRACTION = os.environ.get("OLLAMA_MODEL_EXTRACTION", "llama3.1:8b")
+OLLAMA_MODEL_EXTRACTION = os.environ.get("OLLAMA_MODEL_EXTRACTION", "qwen3.6:latest")
 
 MODELS = {
     "embedding": os.environ.get("OLLAMA_MODEL_EMBEDDING", "nomic-embed-text"),
@@ -61,13 +61,17 @@ MODELS = {
     "topic_extraction": OLLAMA_MODEL_PRIMARY,
 }
 
-# Ollama hosts for dual-GPU routing across machines
-# Widow (local): Handles smaller models (8B, 12B, etc.) for quick tasks
-# popOS (remote): RTX5090 handles large 70B model for heavy summarization
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-# popOS machine with RTX5090 - 192.168.93.99 is the default IP
-OLLAMA_POP_OS_HOST = os.environ.get("OLLAMA_POP_OS_HOST", "http://192.168.93.99:11434")
-OLLAMA_TIMEOUT = 300
+# Ollama hosts — canonical values from config.runtime (SSOT for host URLs)
+from config.runtime import (
+    ollama_dual_host_routing_enabled as OLLAMA_DUAL_HOST_ROUTING_ENABLED,
+    ollama_host as _runtime_ollama_host,
+    ollama_pop_os_host as _runtime_ollama_pop_os_host,
+    ollama_timeout_seconds as _runtime_ollama_timeout,
+)
+
+OLLAMA_HOST = _runtime_ollama_host()
+OLLAMA_POP_OS_HOST = _runtime_ollama_pop_os_host()
+OLLAMA_TIMEOUT = _runtime_ollama_timeout()
 
 # --- Ollama invocation policy (see shared/services/ollama_model_caller.py) ---
 # Background batches with prompts at least this many chars may use the secondary model (e.g. Mistral-Nemo 12B).
@@ -204,9 +208,18 @@ def news_intel_security_middleware_enabled() -> bool:
 
 def news_intel_rate_limit_per_minute() -> int:
     try:
-        return max(1, int(os.environ.get("NEWS_INTEL_RATE_LIMIT_PER_MINUTE", "120")))
+        return max(1, int(os.environ.get("NEWS_INTEL_RATE_LIMIT_PER_MINUTE", "300")))
     except ValueError:
-        return 120
+        return 300
+
+
+def news_intel_rate_limit_exempt_private_lan() -> bool:
+    """Homelab: PopOS Caddy → Widow shares one proxy IP; exempt RFC1918/loopback from per-IP cap."""
+    return os.environ.get("NEWS_INTEL_RATE_LIMIT_EXEMPT_PRIVATE_LAN", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
 
 def get_rss_ingest_excluded_domain_keys() -> frozenset[str]:
@@ -270,6 +283,79 @@ def event_tracking_min_content_len() -> int:
     return max(0, min(5000, n))
 
 
+def event_tracking_min_articles_per_event() -> int:
+    """
+    Minimum distinct contexts required to create a tracked event.
+    Raised default (4) reduces phantom one-off / weakly related groupings.
+    """
+    try:
+        n = int(os.environ.get("EVENT_TRACKING_MIN_ARTICLES_PER_EVENT", "4"))
+    except ValueError:
+        n = 4
+    return max(2, min(50, n))
+
+
+def event_tracking_storyline_min_entity_overlap() -> int:
+    """
+    Minimum distinct canonical entities shared with a storyline before linking.
+    Overlap of 1 previously attached Fed/Treasury noise to unrelated mega-storylines.
+    """
+    try:
+        n = int(os.environ.get("EVENT_TRACKING_STORYLINE_MIN_ENTITY_OVERLAP", "3"))
+    except ValueError:
+        n = 3
+    return max(1, min(50, n))
+
+
+# Politics-only pilot: seed domain storylines from tracked_events identity.
+# Rollback = unset / off. Values: politics | 1 | true | on (comma-list allowed; only politics honored).
+_EVENT_IDENTITY_SEED_ALLOWED = frozenset({"politics"})
+
+
+def event_identity_storyline_seed_domains() -> frozenset[str]:
+    """
+    Domains allowed to promote storylines from tracked_events when the seed flag is on.
+
+    Env ``EVENT_IDENTITY_STORYLINE_SEED`` (one-switch rollback):
+    - empty / 0 / false / off → disabled
+    - politics / 1 / true / on / all / * → ``{politics}`` (finance never included in this slice)
+    - comma list → intersection with politics-only allowlist
+    """
+    raw = (os.environ.get("EVENT_IDENTITY_STORYLINE_SEED") or "").strip().lower()
+    if not raw or raw in ("0", "false", "no", "off"):
+        return frozenset()
+    if raw in ("1", "true", "yes", "on", "all", "*"):
+        return frozenset(_EVENT_IDENTITY_SEED_ALLOWED)
+    requested = {
+        p.strip().replace("_", "-")
+        for p in raw.split(",")
+        if p.strip()
+    }
+    return frozenset(requested & _EVENT_IDENTITY_SEED_ALLOWED)
+
+
+def event_identity_storyline_seed_enabled(domain_key: str) -> bool:
+    """True when event-identity storyline seed is on for this domain (politics pilot)."""
+    dk = (domain_key or "").strip().lower().replace("_", "-")
+    if not dk or dk not in _EVENT_IDENTITY_SEED_ALLOWED:
+        return False
+    if dk in event_identity_storyline_seed_domains():
+        return True
+    # Optional domain YAML under storyline_development.event_identity_seed
+    try:
+        from services.domain_synthesis_config import get_domain_synthesis_config
+
+        return bool(
+            getattr(
+                get_domain_synthesis_config(dk).storyline_development,
+                "event_identity_seed",
+                False,
+            )
+        )
+    except Exception:
+        return False
+
+
 def topic_clustering_graduation_confidence() -> float:
     """
     Average article-topic confidence at/above which an article is considered clustered.
@@ -284,9 +370,12 @@ def topic_clustering_graduation_confidence() -> float:
 
 def topic_clustering_backlog_uses_pass_marker() -> bool:
     """
-    When true (default), Monitor/automation ``pending`` for topic_clustering counts only articles
-    that have never completed a successful clustering pass (``metadata.pipeline.topic_clustering.last_pass_at``).
-    Legacy behavior (count low-confidence re-refinement as backlog) when false.
+    When true (default), Monitor/automation ``queue_depth`` for topic_clustering counts only
+    articles that have never completed a clustering pass (``last_pass_at`` empty) — same
+    first-pass-only predicate as ``TopicClusteringService.select_pending_article_ids`` /
+    PopOS idle gate. Retry/failed rows appear in ``retry_depth`` via phase_work_queue_metrics,
+    not in ``queue_depth``.
+    Legacy low-confidence re-refinement backlog when false (and iterative refinement on).
     """
     return os.environ.get("TOPIC_CLUSTERING_BACKLOG_USE_PASS_MARKER", "true").lower() in (
         "1",
@@ -306,6 +395,145 @@ def topic_clustering_iterative_refinement_enabled() -> bool:
         "true",
         "yes",
     )
+
+
+def topic_clustering_batch_size() -> int:
+    try:
+        n = int(os.environ.get("TOPIC_CLUSTERING_BATCH_SIZE", "20"))
+    except ValueError:
+        n = 20
+    # No artificial ceiling — adaptive bounds + host headroom own the limit.
+    default = max(5, n)
+    try:
+        from shared.adaptive_batch_policy import get_persisted_adaptive_batch, resolve_adaptive_batch
+
+        # Prefer live tune when adaptive is on; otherwise last persisted value for Monitor/ETA callers.
+        from shared.adaptive_batch_policy import adaptive_batch_enabled
+
+        if adaptive_batch_enabled():
+            tuned, _meta = resolve_adaptive_batch("topic_clustering", default)
+            return max(5, int(tuned))
+        adaptive = get_persisted_adaptive_batch("topic_clustering")
+        if adaptive is not None:
+            return max(5, int(adaptive))
+    except Exception:
+        pass
+    return default
+
+
+def topic_clustering_concurrency() -> int:
+    try:
+        n = int(os.environ.get("TOPIC_CLUSTERING_CONCURRENCY", "5"))
+    except ValueError:
+        n = 5
+    return max(1, min(20, n))
+
+
+def topic_fast_match_min_score() -> float:
+    try:
+        n = float(os.environ.get("TOPIC_FAST_MATCH_MIN_SCORE", "0.62"))
+    except ValueError:
+        n = 0.62
+    return min(0.99, max(0.35, n))
+
+
+def unified_intake_extraction_enabled() -> bool:
+    """When true, unified intake is the only scheduled intake extract path."""
+    raw = os.environ.get("UNIFIED_INTAKE_EXTRACTION_ENABLED", "true").strip().lower()
+    if raw in ("0", "false", "no"):
+        return False
+    if raw in ("1", "true", "yes"):
+        return True
+    return True
+
+
+def legacy_intake_extraction_enabled() -> bool:
+    """Explicit rollback: run legacy per-phase intake instead of unified."""
+    return os.environ.get("LEGACY_INTAKE_EXTRACTION_ENABLED", "").lower() in ("1", "true", "yes")
+
+
+def unified_intake_legacy_aware_backlog_enabled() -> bool:
+    """Skip LLM for articles already satisfied by legacy intake; backfill pass marker only."""
+    raw = os.environ.get("UNIFIED_INTAKE_LEGACY_AWARE_BACKLOG", "true").strip().lower()
+    return raw not in ("0", "false", "no")
+
+
+def fast_ner_enabled() -> bool:
+    return os.environ.get("FAST_NER_ENABLED", "true").lower() in ("1", "true", "yes")
+
+
+def fast_ner_backend() -> str:
+    """spacy | gliner | both | auto (spacy then gliner if available)."""
+    raw = (os.environ.get("FAST_NER_BACKEND", "spacy") or "spacy").strip().lower()
+    if raw in ("spacy", "gliner", "both", "auto"):
+        return raw
+    return "spacy"
+
+
+def fast_ner_max_chars() -> int:
+    try:
+        return max(2000, min(100_000, int(os.environ.get("FAST_NER_MAX_CHARS", "24000"))))
+    except ValueError:
+        return 24000
+
+
+def unified_intake_max_article_chars() -> int:
+    """
+    Per-article body budget in the unified intake LLM prompt.
+
+    Default matches FAST_NER_MAX_CHARS (24000) so entity/event extraction sees
+    the same long-form body as the NER pre-pass. Override:
+    UNIFIED_INTAKE_MAX_ARTICLE_CHARS.
+    """
+    raw = os.environ.get("UNIFIED_INTAKE_MAX_ARTICLE_CHARS", "").strip()
+    if raw:
+        try:
+            return max(4000, min(100_000, int(raw)))
+        except ValueError:
+            pass
+    return fast_ner_max_chars()
+
+
+def fast_ner_gliner_labels() -> list[str]:
+    raw = os.environ.get(
+        "FAST_NER_GLINER_LABELS",
+        "person,organization,company,location,country,event,law,product",
+    )
+    return [x.strip() for x in raw.split(",") if x.strip()]
+
+
+def context_chunking_enabled() -> bool:
+    # Off by default: one context per article with full body (articles/contexts
+    # already use unbounded text). Opt in with CONTEXT_CHUNKING_ENABLED=true.
+    return os.environ.get("CONTEXT_CHUNKING_ENABLED", "false").lower() in ("1", "true", "yes")
+
+
+def context_chunk_min_chars() -> int:
+    try:
+        return max(4000, int(os.environ.get("CONTEXT_CHUNK_MIN_CHARS", "12000")))
+    except ValueError:
+        return 12000
+
+
+def context_chunk_size_tokens() -> int:
+    try:
+        return max(256, min(4096, int(os.environ.get("CONTEXT_CHUNK_SIZE_TOKENS", "1024"))))
+    except ValueError:
+        return 1024
+
+
+def context_chunk_overlap_tokens() -> int:
+    try:
+        return max(0, min(512, int(os.environ.get("CONTEXT_CHUNK_OVERLAP_TOKENS", "128"))))
+    except ValueError:
+        return 128
+
+
+def context_chunk_max_chunks() -> int:
+    try:
+        return max(1, min(12, int(os.environ.get("CONTEXT_CHUNK_MAX_CHUNKS", "4"))))
+    except ValueError:
+        return 4
 
 
 def news_intel_public_web_auth_enabled() -> bool:

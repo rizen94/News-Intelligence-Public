@@ -11,6 +11,7 @@ Features:
 
 import json
 from shared.domain_registry import resolve_domain_schema
+from shared.storyline_article_counts import storyline_article_count_subquery
 import logging
 import os
 import re
@@ -23,11 +24,12 @@ from typing import Any
 import numpy as np
 import requests
 from psycopg2.extras import RealDictCursor
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
 # Configuration
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_BASE_URL = env_str("OLLAMA_BASE_URL", "http://localhost:11434")
 EMBEDDING_MODEL = "nomic-embed-text"
 LLM_MODEL = "llama3.1:8b"
 MAX_CONTEXT_ARTICLES = 20
@@ -667,17 +669,19 @@ Historical context (2-3 sentences):"""
         anomalies = []
 
         # Get storylines with rapid growth
+        ac_sub = storyline_article_count_subquery(schema, "s")
         cur.execute(
             f"""
-            SELECT s.id, s.title, s.article_count,
-                   COUNT(sa.article_id) as recent_additions
+            SELECT s.id, s.title, {ac_sub} AS article_count,
+                   COUNT(sa.article_id) FILTER (WHERE a.created_at > %s) as recent_additions
             FROM {schema}.storylines s
             LEFT JOIN {schema}.storyline_articles sa ON s.id = sa.storyline_id
-            LEFT JOIN {schema}.articles a ON sa.article_id = a.id AND a.created_at > %s
-            GROUP BY s.id, s.title, s.article_count
-            HAVING COUNT(sa.article_id) > 5
+            LEFT JOIN {schema}.articles a ON sa.article_id = a.id
+            WHERE s.merged_into_id IS NULL
+            GROUP BY s.id, s.title
+            HAVING COUNT(sa.article_id) FILTER (WHERE a.created_at > %s) > 5
         """,
-            (cutoff,),
+            (cutoff, cutoff),
         )
 
         for row in cur.fetchall():
@@ -1381,34 +1385,58 @@ List potential consequences (one per line):"""
                         )
 
                     edges: list[dict[str, Any]] = []
+                    typed_edge_map: dict[tuple[int, int], dict[str, Any]] = {}
+                    try:
+                        from services.causal_edges_service import list_causal_edges
+
+                        for te in list_causal_edges(
+                            cause_kind="tracked_event",
+                            min_confidence=0.0,
+                            limit=200,
+                        ):
+                            if te.get("effect_kind") != "tracked_event":
+                                continue
+                            key = (int(te["cause_id"]), int(te["effect_id"]))
+                            typed_edge_map[key] = te
+                    except Exception:
+                        typed_edge_map = {}
+
                     for i in range(len(nodes) - 1):
                         a = nodes[i]
                         b = nodes[i + 1]
                         overlap = set(a.get("participant_entity_profile_ids") or []) & set(
                             b.get("participant_entity_profile_ids") or []
                         )
+                        typed = typed_edge_map.get((a["event_id"], b["event_id"]))
                         reason_parts = []
+                        if typed:
+                            reason_parts.append(
+                                f"typed_edge_id={typed.get('id')} grade={typed.get('evidence_grade')}"
+                            )
                         if overlap:
                             reason_parts.append(f"shared_participants={len(overlap)}")
                         if set(a.get("domains") or []) != set(b.get("domains") or []):
                             reason_parts.append("cross_domain_transition")
-                        reason_parts.append("temporal_sequence")
+                        if not typed:
+                            reason_parts.append("temporal_sequence")
+                        conf = float(corr.get("correlation_strength") or 0.0)
+                        if typed:
+                            conf = max(conf, float(typed.get("confidence") or 0.0))
+                        elif overlap:
+                            conf = min(1.0, conf + 0.1)
                         edges.append(
                             {
                                 "from_event_id": a["event_id"],
                                 "to_event_id": b["event_id"],
-                                "confidence": round(
-                                    min(
-                                        1.0,
-                                        float(corr.get("correlation_strength") or 0.0)
-                                        + (0.1 if overlap else 0.0),
-                                    ),
-                                    3,
-                                ),
+                                "confidence": round(min(1.0, conf), 3),
                                 "reason": ", ".join(reason_parts),
+                                "typed_edge_id": typed.get("id") if typed else None,
+                                "evidence_grade": typed.get("evidence_grade") if typed else None,
                             }
                         )
 
+                    # Prefer chains that cite at least one typed edge
+                    has_typed = any(e.get("typed_edge_id") for e in edges)
                     chains.append(
                         {
                             "correlation_id": str(corr["correlation_id"]),
@@ -1419,8 +1447,17 @@ List potential consequences (one per line):"""
                             else None,
                             "nodes": nodes,
                             "edges": edges,
+                            "has_typed_causal_edges": has_typed,
                         }
                     )
+
+                chains.sort(
+                    key=lambda c: (
+                        1 if c.get("has_typed_causal_edges") else 0,
+                        float(c.get("strength") or 0),
+                    ),
+                    reverse=True,
+                )
 
                 return {
                     "days": days,

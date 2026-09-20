@@ -11,7 +11,13 @@
 ### Registry and API path validation
 
 - **`is_valid_domain_key()`** ([`api/shared/domain_registry.py`](../api/shared/domain_registry.py)) now checks **`get_active_domain_keys()`** on each call (re-reads active YAML + built-ins), instead of a frozen import-time set.
-- **`DOMAIN_PATH_PATTERN`** is a **shape-only** regex (`^[a-z0-9]+(?:-[a-z0-9]+)*$`). The allowlist is **`is_valid_domain_key()`** / DB **`validate_domain()`** where applicable. Import-time **`ACTIVE_DOMAIN_KEYS` / `ACTIVE_DOMAIN_KEYS_SET`** remain snapshots for backward compatibility only.
+- **`DOMAIN_PATH_PATTERN`** is a **shape-only** regex (`^[a-z0-9]+(?:-[a-z0-9]+)*$`). The allowlist is **`is_valid_domain_key()`** / DB **`validate_domain()`** where applicable. **`ACTIVE_DOMAIN_KEYS` / `ACTIVE_DOMAIN_KEYS_SET`** remain for backward compatibility only and are now **lazy module attributes** (PEP 562) rather than import-time snapshots — see “Registry cache” below.
+
+### Registry cache (2026-09)
+
+- **`get_domain_entries()`** caches per process for **`DOMAIN_REGISTRY_CACHE_TTL_SECONDS`** (default **60**), so `resolve_domain_schema()` / `get_pipeline_active_domain_keys()` no longer cost a `public.domains` round trip plus a re-parse of every `domains/*.yaml` on every call. The YAML-only bootstrap result uses the shorter **`DOMAIN_REGISTRY_BOOTSTRAP_CACHE_TTL_SECONDS`** (default **5**) so a process that starts before Postgres is ready still picks the DB registry up.
+- **`invalidate_domain_registry_cache()`** drops it; **`activate_domain_row()`** calls it so provisioning stays immediate. Set the TTL to `0` to disable caching.
+- Reading `ACTIVE_DOMAIN_KEYS` no longer opens the reserved UI pool at import time, so scripts, workers, and tests can import registry-touching modules without DB credentials.
 
 ### Services using dynamic keys
 

@@ -63,12 +63,12 @@ Install cron from **`infrastructure/widow-db-adjacent.cron`** (edit user/path, t
 
 ---
 
-## 4. Do not run a full FastAPI stack on Widow
+## 4. Widow API and AutomationManager (current architecture)
 
-A second API duplicates **AutomationManager**, orchestrator loops, and ML — avoid it. If nginx on Widow serves the public demo, set **`PUBLIC_API_UPSTREAM`** to the **main host** `192.168.x.x:8000` and disable **`news-intelligence-api-public.service`**. See [WIDOW_PUBLIC_STACK.md](WIDOW_PUBLIC_STACK.md).
+**Widow runs the full NI API** via `news-intelligence-api-public.service` (AutomationManager embedded). Do **not** start a second API or `start_system.sh` alongside systemd. DB-adjacent cron handles only the phases listed in `AUTOMATION_DISABLED_SCHEDULES`; all LLM-heavy phases run in-process on Widow (with optional PopOS overflow via `OLLAMA_DUAL_HOST_ROUTING_ENABLED`). See [WIDOW_BOOT_RESILIENCE.md](WIDOW_BOOT_RESILIENCE.md) and [PIPELINE_OPERATIONS_WIDOW.md](PIPELINE_OPERATIONS_WIDOW.md).
 
 ---
 
 ## 5. Adding more Widow-only phases later
 
-Pick schedules that are **mostly DB / CPU** and **do not** require local Ollama on Widow. Extend `run_widow_db_adjacent.py` and add their names to **`AUTOMATION_DISABLED_SCHEDULES`** on the main host. LLM-heavy phases (claim extraction, coherence review, etc.) should stay on the GPU host unless `OLLAMA_HOST` points to it.
+Pick schedules that are **mostly DB / CPU** and **do not** require local Ollama on Widow. Extend `run_widow_db_adjacent.py` and add their names to **`AUTOMATION_DISABLED_SCHEDULES`** so AutomationManager does not duplicate them. LLM-heavy phases stay in AutomationManager on Widow (Ollama on `:11434`, PopOS overflow when dual routing is enabled).

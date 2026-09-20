@@ -22,7 +22,65 @@ from config.settings import (
     OLLAMA_MODEL_EXTRACTION,
     OLLAMA_MODEL_PHI,
     OLLAMA_POP_OS_HOST,
+    OLLAMA_TIMEOUT,
 )
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
+
+
+def _httpx_ollama_timeout(lane: str | None = None) -> float:
+    try:
+        default = float(env_str("OLLAMA_TIMEOUT", str(OLLAMA_TIMEOUT)))
+    except ValueError:
+        default = float(OLLAMA_TIMEOUT)
+    lane_key = (lane or "").strip().lower()
+    if lane_key == "gpu":
+        try:
+            return float(env_str("OLLAMA_GPU_TIMEOUT", env_str("BULK_OLLAMA_TIMEOUT", str(default))))
+        except ValueError:
+            return default
+    if lane_key == "cpu":
+        try:
+            return float(env_str("OLLAMA_CPU_TIMEOUT", str(default)))
+        except ValueError:
+            return default
+    return default
+
+
+def ollama_priority_headers() -> dict[str, str]:
+    """
+    Homelab ollama-proxy priority: NI background work is LOW.
+
+    Widow clients are usually LOW via OLLAMA_LOW_PRIORITY_CIDRS (192.168.93.101).
+    PopOS phase workers call 127.0.0.1 and must send X-Ollama-Priority: low so they
+    never set proxy in_flight=high (desk presence treats HIGH as interactive).
+    """
+    raw = (env_str("OLLAMA_PRIORITY", "low") or "low").strip().lower()
+    if raw in ("", "low", "background", "ni"):
+        return {"X-Ollama-Priority": "low"}
+    if raw in ("high", "interactive"):
+        return {"X-Ollama-Priority": "high"}
+    # Unknown → still prefer low for NI callers
+    return {"X-Ollama-Priority": "low"}
+
+
+def _ollama_generate_text(result: dict[str, Any] | None) -> str:
+    """
+    Extract text from an Ollama /api/generate JSON body.
+
+    Qwen3-family tags often put structured output in ``thinking`` and leave
+    ``response`` empty unless ``think: false`` is set — prefer response, then
+    fall back to thinking so extraction does not see an empty string.
+    """
+    if not isinstance(result, dict):
+        return ""
+    text = (result.get("response") or "").strip()
+    if text:
+        return text
+    thinking = (result.get("thinking") or "").strip()
+    if thinking:
+        return thinking
+    return ""
+
 
 logger = logging.getLogger(__name__)
 
@@ -64,14 +122,14 @@ def _get_lane_semaphore(execution_lane: str | None, dual_enabled: bool) -> async
     lane = (execution_lane or "gpu").strip().lower()
     if lane == "cpu":
         global _ollama_cpu_semaphore, _ollama_cpu_semaphore_loop
-        cpu_cap = max(1, int(os.environ.get("OLLAMA_CPU_CONCURRENCY", "6")))
+        cpu_cap = max(1, int(env_str("OLLAMA_CPU_CONCURRENCY", "6")))
         _ollama_cpu_semaphore, _ollama_cpu_semaphore_loop = _loop_bound_semaphore(
             _ollama_cpu_semaphore, _ollama_cpu_semaphore_loop, cpu_cap
         )
         return _ollama_cpu_semaphore
 
     global _ollama_gpu_semaphore, _ollama_gpu_semaphore_loop
-    gpu_cap = max(1, int(os.environ.get("OLLAMA_GPU_CONCURRENCY", "6")))
+    gpu_cap = max(1, int(env_str("OLLAMA_GPU_CONCURRENCY", "6")))
     _ollama_gpu_semaphore, _ollama_gpu_semaphore_loop = _loop_bound_semaphore(
         _ollama_gpu_semaphore, _ollama_gpu_semaphore_loop, gpu_cap
     )
@@ -135,35 +193,18 @@ class LLMService:
     def __init__(self, ollama_base_url: str | None = None):
         self.ollama_base_url = (ollama_base_url or OLLAMA_HOST).rstrip("/")
         self.ollama_cpu_host = (
-            os.environ.get("OLLAMA_CPU_HOST", self.ollama_base_url).rstrip("/")
+            env_str("OLLAMA_CPU_HOST", self.ollama_base_url).rstrip("/")
         )
         self.ollama_gpu_host = (
-            os.environ.get("OLLAMA_GPU_HOST", self.ollama_base_url).rstrip("/")
+            env_str("OLLAMA_GPU_HOST", self.ollama_base_url).rstrip("/")
         )
         # popOS host for 70B model - heavy summarization work on RTX5090
         self.ollama_pop_os_host = OLLAMA_POP_OS_HOST.rstrip("/")
-        self.dual_host_enabled = os.environ.get(
+        self.dual_host_enabled = env_str(
             "OLLAMA_DUAL_HOST_ROUTING_ENABLED", "false"
         ).lower() in ("1", "true", "yes")
-        self.client = httpx.AsyncClient(
-            timeout=180.0
-        )  # Increased timeout to 180s for comprehensive analysis
-        self.cpu_client = (
-            self.client
-            if self.ollama_cpu_host == self.ollama_base_url
-            else httpx.AsyncClient(timeout=180.0)
-        )
-        self.gpu_client = (
-            self.client
-            if self.ollama_gpu_host == self.ollama_base_url
-            else httpx.AsyncClient(timeout=180.0)
-        )
-        # popOS client for 70B model on remote RTX5090
-        self.pop_os_client = (
-            self.client
-            if self.ollama_pop_os_host == self.ollama_base_url
-            else httpx.AsyncClient(timeout=300.0)
-        )
+        self._client_loop_id: int | None = None
+        self._init_http_clients()
         self._pop_os_available = True
         self._pop_os_last_check = None
         self.model_performance = {
@@ -192,6 +233,66 @@ class LLMService:
                 "best_for": ["fast_simple", "readability_quality"],
             },
         }
+
+    def _init_http_clients(self) -> None:
+        """(Re)create httpx AsyncClients. Bound to the loop that first uses them."""
+        base_timeout = _httpx_ollama_timeout()
+        cpu_timeout = _httpx_ollama_timeout("cpu")
+        gpu_timeout = _httpx_ollama_timeout("gpu")
+        priority_headers = ollama_priority_headers()
+        self.client = httpx.AsyncClient(timeout=base_timeout, headers=priority_headers)
+        self.cpu_client = (
+            self.client
+            if self.ollama_cpu_host == self.ollama_base_url
+            else httpx.AsyncClient(timeout=cpu_timeout, headers=priority_headers)
+        )
+        self.gpu_client = (
+            self.client
+            if self.ollama_gpu_host == self.ollama_base_url
+            else httpx.AsyncClient(timeout=gpu_timeout, headers=priority_headers)
+        )
+        self.pop_os_client = (
+            self.client
+            if self.ollama_pop_os_host == self.ollama_base_url
+            else httpx.AsyncClient(timeout=gpu_timeout, headers=priority_headers)
+        )
+
+    def _collect_distinct_clients(self) -> list[httpx.AsyncClient]:
+        seen: set[int] = set()
+        out: list[httpx.AsyncClient] = []
+        for c in (self.client, self.cpu_client, self.gpu_client, self.pop_os_client):
+            if c is None or id(c) in seen:
+                continue
+            seen.add(id(c))
+            out.append(c)
+        return out
+
+    async def _ensure_clients_for_running_loop(self, *, force: bool = False) -> None:
+        """
+        Recreate AsyncClients when the running event loop changed.
+
+        Nested ``asyncio.run`` / temporary loops (e.g. sync appraisal inside Research)
+        bind httpx to a loop that is then closed — later calls fail with
+        ``Event loop is closed``. Rebind before each Ollama call.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop_id = id(loop)
+        if not force and self._client_loop_id is None:
+            self._client_loop_id = loop_id
+            return
+        if not force and self._client_loop_id == loop_id:
+            return
+        old = self._collect_distinct_clients()
+        self._init_http_clients()
+        self._client_loop_id = loop_id
+        for c in old:
+            try:
+                await c.aclose()
+            except Exception:
+                pass
 
     def select_model(
         self,
@@ -342,7 +443,7 @@ class LLMService:
         base_url, cb_key = self._resolve_sync_execution_target(model=model_type, execution_lane=execution_lane)
 
         try:
-            with httpx.Client(timeout=300.0) as sync_client:  # 300s for 70B on popOS
+            with httpx.Client(timeout=_httpx_ollama_timeout()) as sync_client:
                 response = sync_client.post(
                     f"{base_url}/api/generate",
                     json={
@@ -355,6 +456,7 @@ class LLMService:
                             "num_predict": max(1, int(max_tokens or 2000)),
                         },
                     },
+                    headers=ollama_priority_headers(),
                 )
                 if response.status_code != 200:
                     logger.error(
@@ -364,7 +466,7 @@ class LLMService:
                         response.text[:500],
                     )
                     return ""
-                return (response.json().get("response", "") or "").strip()
+                return _ollama_generate_text(response.json())
         except Exception as e:
             logger.error("generate sync call failed to %s: %s", cb_key, e)
             return ""
@@ -533,24 +635,36 @@ class LLMService:
 
     async def generate_storyline_analysis(self, storyline_context: str) -> dict[str, Any]:
         """
-        Generate comprehensive storyline analysis using Llama 3.1 8B
+        Generate comprehensive storyline analysis using Llama 3.1 8B.
+
+        Hard rule: stay anchored to the named storyline — never emit a generic
+        "Global Update / Global Tensions" kitchen-sink wrap-up of unrelated arcs.
         """
         model = ModelType.LLAMA_8B
 
         prompt = f"""
-        Analyze this storyline and provide a comprehensive report:
-        1. Main narrative thread
-        2. Key developments
-        3. Timeline of events
-        4. Stakeholders involved
-        5. Potential future developments
-        6. Quality assessment
+You are writing the analysis for ONE specific news storyline.
+Stay strictly on that storyline's title and the articles provided for it.
 
-        Storyline context:
-        {storyline_context}
+FORBIDDEN:
+- Generic "Global Update", "Global Tensions", "Global Turmoil", "world in flux" roundups
+- Mixing unrelated countries/arcs that are not clearly about this storyline's title
+- Opening with a world-tour lede that could apply to any story
 
-        Write a professional, journalistic analysis that would be suitable for publication.
-        """
+If the article list is thin or off-topic for the title, say so briefly and summarize
+only what clearly belongs to the title — do not invent a global mega-narrative.
+
+Provide a professional journalistic report covering:
+1. Main narrative thread (must match the storyline title)
+2. Key developments for THIS story only
+3. Timeline of events for THIS story
+4. Stakeholders involved in THIS story
+5. Potential future developments for THIS story
+6. Quality / source assessment
+
+Storyline context:
+{storyline_context}
+"""
 
         try:
             start_time = datetime.now()
@@ -649,12 +763,13 @@ class LLMService:
         prompt: str,
         execution_lane: str | None = None,
         invocation_kind: Any | None = None,
+        batch_size: int = 1,
     ) -> str:
         """Make API call to Ollama with circuit breaker protection and lane-aware semaphores."""
         sem = _get_lane_semaphore(execution_lane or _llm_execution_lane.get(), self.dual_host_enabled)
         async with sem:
             return await self._call_ollama_impl(
-                model, prompt, execution_lane=execution_lane, invocation_kind=invocation_kind
+                model, prompt, execution_lane=execution_lane, invocation_kind=invocation_kind, batch_size=batch_size
             )
 
     async def _call_ollama_impl(
@@ -663,9 +778,14 @@ class LLMService:
         prompt: str,
         execution_lane: str | None = None,
         invocation_kind: Any | None = None,
+        batch_size: int = 1,
+        *,
+        _loop_retry: bool = False,
     ) -> str:
         """Inner Ollama call (no semaphore). Routes 70B to popOS, smaller models to local GPU."""
         from services.circuit_breaker_service import get_circuit_breaker_service
+
+        await self._ensure_clients_for_running_loop()
 
         cb_service = get_circuit_breaker_service()
         # Pass model to enable 70B -> popOS routing
@@ -680,30 +800,55 @@ class LLMService:
         try:
             from shared.services.ollama_model_policy import (
                 InvocationKind,
+                extraction_temperature_for_invocation,
                 keep_alive_for_invocation,
+                num_ctx_for_invocation,
                 num_predict_for_invocation,
             )
 
             kind = invocation_kind if isinstance(invocation_kind, InvocationKind) else None
+            opts: dict = {
+                "temperature": extraction_temperature_for_invocation(kind),
+                "top_p": 0.9,
+                "num_predict": num_predict_for_invocation(kind, batch_size),
+            }
+            num_ctx = num_ctx_for_invocation(kind)
+            if num_ctx is not None:
+                opts["num_ctx"] = num_ctx
+            model_name = model.value
+            if kind == InvocationKind.STRUCTURED_EXTRACTION:
+                override = (
+                    env_str("BULK_EXTRACTION_MODEL", "").strip()
+                    or env_str("OLLAMA_MODEL_EXTRACTION", "").strip()
+                )
+                if override:
+                    model_name = override
+            lane = (execution_lane or _llm_execution_lane.get() or "gpu").strip().lower()
+            if lane == "cpu":
+                cpu_extraction = env_str("BULK_CPU_EXTRACTION_MODEL", "").strip()
+                if cpu_extraction:
+                    model_name = cpu_extraction
+            payload: dict[str, Any] = {
+                "model": model_name,
+                "prompt": prompt,
+                "stream": False,
+                "keep_alive": keep_alive_for_invocation(kind),
+                "options": opts,
+            }
+            if kind == InvocationKind.STRUCTURED_EXTRACTION:
+                payload["format"] = "json"
+                # Qwen3 defaults to thinking-mode; JSON then lands in ``thinking``.
+                payload["think"] = False
             response = await client.post(
                 f"{base_url}/api/generate",
-                json={
-                    "model": model.value,
-                    "prompt": prompt,
-                    "stream": False,
-                    "keep_alive": keep_alive_for_invocation(kind),
-                    "options": {
-                        "temperature": 0.7,
-                        "top_p": 0.9,
-                        "num_predict": num_predict_for_invocation(kind),
-                    },
-                },
+                json=payload,
+                headers=ollama_priority_headers(),
             )
 
             if response.status_code == 200:
                 result = response.json()
                 await cb._record_success()
-                return result.get("response", "")
+                return _ollama_generate_text(result)
             else:
                 await cb._record_failure()
                 raise Exception(f"{cb_key} API error: {response.status_code} - {response.text}")
@@ -715,9 +860,24 @@ class LLMService:
             await cb._record_failure()
             raise Exception(f"Cannot connect to {cb_key} service")
         except Exception as e:
-            if "circuit breaker" not in str(e).lower():
+            msg = str(e).lower()
+            if (
+                not _loop_retry
+                and ("event loop is closed" in msg or "bound to a different event loop" in msg)
+            ):
+                await self._ensure_clients_for_running_loop(force=True)
+                return await self._call_ollama_impl(
+                    model,
+                    prompt,
+                    execution_lane=execution_lane,
+                    invocation_kind=invocation_kind,
+                    batch_size=batch_size,
+                    _loop_retry=True,
+                )
+            if "circuit breaker" not in msg:
                 await cb._record_failure()
-            raise Exception(f"{cb_key} API error: {str(e)}")
+                raise Exception(f"{cb_key} API error: {str(e)}")
+            raise
 
     async def get_model_status(self, timeout_seconds: float | None = None) -> dict[str, Any]:
         """
@@ -763,13 +923,21 @@ class LLMService:
             return {"success": False, "error": f"Cannot connect to Ollama: {str(e)}"}
 
     async def close(self):
-        """Close HTTP client"""
-        await self.client.aclose()
-        if self.cpu_client is not self.client:
-            await self.cpu_client.aclose()
-        if self.gpu_client is not self.client and self.gpu_client is not self.cpu_client:
-            await self.gpu_client.aclose()
+        """Close HTTP clients"""
+        for c in self._collect_distinct_clients():
+            try:
+                await c.aclose()
+            except Exception:
+                pass
+        self._client_loop_id = None
 
 
 # Global LLM service instance
 llm_service = LLMService()
+
+
+def reset_llm_service() -> LLMService:
+    """Recreate global LLMService after env routing changes (bulk PopOS offload)."""
+    global llm_service
+    llm_service = LLMService()
+    return llm_service

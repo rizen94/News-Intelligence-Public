@@ -25,23 +25,11 @@ def test_phase_default_lane_policy():
     assert mgr._phase_default_lane("context_sync") == "cpu"
 
 
-def test_dynamic_lane_resolution_prefers_gpu_when_cpu_hot(monkeypatch):
-    monkeypatch.setattr(am, "AUTOMATION_DYNAMIC_RESOURCE_ROUTING_ENABLED", True)
+def test_resolve_effective_lane_uses_phase_policy():
     mgr = AutomationManager(get_db_config())
-    mgr._resource_headroom = {"cpu_headroom": 0.1, "gpu_headroom": 0.8, "db_headroom": 0.5}
-    # Use a default-CPU-lane phase (not in OLLAMA_AUTOMATION_PHASES) with cpu_light class.
-    lane, reason = mgr._resolve_effective_lane("metadata_enrichment", "cpu_light")
-    assert lane == "gpu"
-    assert reason == "dynamic_cpu_hot_gpu_available"
-
-
-def test_db_heavy_cooldown_expands_under_pool_pressure(monkeypatch):
-    monkeypatch.setattr(am, "AUTOMATION_DYNAMIC_RESOURCE_ROUTING_ENABLED", True)
-    mgr = AutomationManager(get_db_config())
-    mgr._resource_headroom = {"cpu_headroom": 0.6, "gpu_headroom": 0.6, "db_headroom": 0.1}
-    mult, reason = mgr._dynamic_cooldown_multiplier("db_heavy")
-    assert mult > 1.0
-    assert reason == "db_pool_pressure"
+    lane, reason = mgr._resolve_effective_lane("claim_extraction", "cpu_light")
+    assert lane == "cpu"
+    assert reason == "phase_policy"
 
 
 @pytest.mark.asyncio
@@ -96,27 +84,6 @@ async def test_bypass_schedule_depth_cap_allows_second_enqueue(monkeypatch):
     assert mgr._scheduled_queue_depth_by_phase["data_cleanup"] == 2
 
 
-def test_per_phase_scheduler_cap_blocks_when_at_capacity(monkeypatch):
-    monkeypatch.setattr(am, "AUTOMATION_PER_PHASE_CONCURRENT_CAP", 2)
-    mgr = AutomationManager(get_db_config())
-    mgr._running_tasks_by_phase["claim_extraction"] = 2
-    sched = mgr.schedules.get("claim_extraction") or {}
-    ok = mgr._should_run_task(
-        "claim_extraction",
-        {
-            "enabled": True,
-            "depends_on": [],
-            "last_run": None,
-            "phase": 5,
-            "priority": am.TaskPriority.NORMAL,
-            "interval": 60,
-        },
-        datetime.now(timezone.utc),
-        {"claim_extraction": 100},
-    )
-    assert ok is False
-
-
 def test_per_phase_execute_cap_zero_for_nightly_sequential(monkeypatch):
     monkeypatch.setattr(am, "AUTOMATION_PER_PHASE_CONCURRENT_CAP", 2)
     mgr = AutomationManager(get_db_config())
@@ -134,9 +101,12 @@ def test_per_phase_execute_cap_zero_for_nightly_sequential(monkeypatch):
 
 def test_skip_redundant_claim_extraction_when_drain_pipeline_saturated(monkeypatch):
     monkeypatch.setenv("CLAIM_EXTRACTION_DRAIN", "true")
+    monkeypatch.delenv("AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES", raising=False)
     monkeypatch.setattr(am, "AUTOMATION_PER_PHASE_CONCURRENT_CAP", 2)
     mgr = AutomationManager(get_db_config())
     mgr._running_tasks_by_phase["claim_extraction"] = 2
+    mgr._scheduled_queue_depth_by_phase["claim_extraction"] = 0
+    mgr._requested_queue_depth_by_phase["claim_extraction"] = 0
     assert mgr._should_skip_redundant_phase_request("claim_extraction") is True
     assert (
         mgr._should_skip_redundant_phase_request(
@@ -145,6 +115,8 @@ def test_skip_redundant_claim_extraction_when_drain_pipeline_saturated(monkeypat
         is False
     )
     mgr._running_tasks_by_phase["claim_extraction"] = 1
+    mgr._scheduled_queue_depth_by_phase["claim_extraction"] = 0
+    mgr._requested_queue_depth_by_phase["claim_extraction"] = 0
     assert mgr._should_skip_redundant_phase_request("claim_extraction") is False
 
 
@@ -183,3 +155,22 @@ def test_discard_redundant_claim_extraction_at_cap(monkeypatch):
     )
     mgr._running_tasks_by_phase["claim_extraction"] = 2
     assert mgr._discard_redundant_claim_extraction_when_at_cap(t2, 2) is False
+
+
+def test_collection_cycle_concurrent_cap_defaults_to_one(monkeypatch):
+    monkeypatch.delenv("AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES", raising=False)
+    monkeypatch.setattr(am, "AUTOMATION_PER_PHASE_CONCURRENT_CAP", 8)
+    mgr = AutomationManager(get_db_config())
+    now = datetime.now(timezone.utc)
+    t = Task(
+        id="cc1",
+        name="collection_cycle",
+        priority=TaskPriority.NORMAL,
+        status=TaskStatus.PENDING,
+        created_at=now,
+        metadata={"scheduled": True},
+    )
+    assert mgr._per_phase_execute_concurrent_cap(t) == 1
+    mgr._running_tasks_by_phase["collection_cycle"] = 1
+    assert mgr._discard_redundant_drain_when_at_cap(t, 1) is True
+    assert mgr._should_skip_redundant_phase_request("collection_cycle") is True

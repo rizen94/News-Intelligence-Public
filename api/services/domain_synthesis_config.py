@@ -23,6 +23,34 @@ _CONFIG_PATH = os.path.join(
 _cached_raw: dict[str, Any] | None = None
 
 
+def _coerce_str_list(raw: Any) -> list[str]:
+    """Normalize YAML focus_areas / patterns: dict items become 'k: v' strings."""
+    if not raw:
+        return []
+    out: list[str] = []
+    for item in raw:
+        if item is None:
+            continue
+        if isinstance(item, str):
+            text = item.strip()
+            if text:
+                out.append(text)
+            continue
+        if isinstance(item, dict):
+            for k, v in item.items():
+                if v is None or v == "":
+                    text = str(k).strip()
+                else:
+                    text = f"{k}: {v}".strip()
+                if text:
+                    out.append(text)
+            continue
+        text = str(item).strip()
+        if text:
+            out.append(text)
+    return out
+
+
 @dataclass
 class TopicFilter:
     exclude_keywords: list[str] = field(default_factory=list)
@@ -68,6 +96,9 @@ class StorylineAutomationConfig:
     assembly_after_enrichment: bool = True
     unlinked_article_threshold: int = 25
     automation_batch_per_assembly: int = 20
+    min_relevance_score: float | None = None
+    min_semantic_score: float | None = None
+    min_quality_tier: int | None = None
 
 
 @dataclass
@@ -79,11 +110,61 @@ class StorylineDevelopmentConfig:
     )
     narrative: StorylineNarrativeConfig = field(default_factory=StorylineNarrativeConfig)
     automation: StorylineAutomationConfig = field(default_factory=StorylineAutomationConfig)
+    # Politics pilot: seed storylines from tracked_events (also gated by EVENT_IDENTITY_STORYLINE_SEED).
+    event_identity_seed: bool = False
+
+
+@dataclass
+class LinkScoreProfile:
+    """Per-domain attach-score blend (chemistry model). Weights should sum ~1.0."""
+
+    relevance_weight: float = 0.40
+    semantic_weight: float = 0.15
+    keyword_weight: float = 0.10
+    quality_weight: float = 0.10
+    temporal_weight: float = 0.10
+    canonical_entity_weight: float = 0.15
+    temporal_half_life_days: float = 14.0
+    auto_approve_combined: float = 0.75
+    aggressive_membership: bool = True
+    allow_storyline_merge: bool = True
+    # Hard stop for silent attach (chemistry evidence threads default via env/YAML).
+    max_member_articles: int | None = None
+
+
+HUB_FACET_ROLES = frozenset({"who", "what", "where"})
+
+
+@dataclass(frozen=True)
+class HubFacet:
+    """High-level who/what/where categorization — never solo Mode B admit keys."""
+
+    key: str
+    role: str  # who | what | where
+    names: tuple[str, ...] = ()
+
+    def name_set_lower(self) -> frozenset[str]:
+        return frozenset(n.strip().lower() for n in self.names if n and str(n).strip())
+
+
+# Domain protein shapes — keep storylines table; behavior differs by kind.
+STORY_KINDS = frozenset(
+    {
+        "event_narrative",
+        "market_regulatory_arc",
+        "matter_docket",
+        "evidence_thread",
+        "research_topic",
+    }
+)
 
 
 @dataclass
 class DomainSynthesisConfig:
     domain_key: str
+    story_kind: str = "event_narrative"
+    link_score_profile: LinkScoreProfile = field(default_factory=LinkScoreProfile)
+    hub_facets: list[HubFacet] = field(default_factory=list)
     focus_areas: list[str] = field(default_factory=list)
     macro_subject_axes: list[str] = field(default_factory=list)
     event_type_priorities: list[str] = field(default_factory=list)
@@ -115,20 +196,65 @@ class DomainSynthesisConfig:
     def entity_weight(self, entity_type: str) -> float:
         return self.entity_type_weights.get(entity_type, 0.5)
 
+    def hub_name_set(self) -> frozenset[str]:
+        names: set[str] = set()
+        for facet in self.hub_facets:
+            names |= set(facet.name_set_lower())
+        return frozenset(names)
+
+    def match_hub_facet(self, entity_name: str | None) -> HubFacet | None:
+        """Return hub facet if entity_name equals or contains a configured hub alias."""
+        raw = (entity_name or "").strip().lower()
+        if not raw:
+            return None
+        # Exact alias first
+        for facet in self.hub_facets:
+            if raw in facet.name_set_lower():
+                return facet
+        # Short hubs (e.g. "Court") only exact; longer aliases allow containment
+        for facet in self.hub_facets:
+            for alias in facet.name_set_lower():
+                if len(alias) < 5:
+                    continue
+                if alias in raw or raw in alias:
+                    return facet
+        return None
+
+    def is_hub_entity_name(self, entity_name: str | None) -> bool:
+        return self.match_hub_facet(entity_name) is not None
+
+    def membership_min_shared_non_hub(self) -> int:
+        """Chemistry kinds need denser non-hub overlap before silent attach."""
+        return 2 if self.is_chemistry_kind() else 1
+
     def prioritised_event_types(self) -> list[str]:
         return list(self.event_type_priorities)
+
+    def is_chemistry_kind(self) -> bool:
+        """Research/evidence/docket kinds prefer loose bonds over hard membership."""
+        return self.story_kind in (
+            "research_topic",
+            "evidence_thread",
+            "matter_docket",
+        )
 
     def narrative_prompt_context(self) -> str:
         """Bundle domain LLM context with storyline patterns for title/summary generation."""
         parts: list[str] = []
         if self.llm_context:
             parts.append(self.llm_context.strip())
-        if self.focus_areas:
-            parts.append("Focus areas: " + "; ".join(self.focus_areas[:8]))
-        if self.storyline_patterns:
-            parts.append(
-                "Preferred storyline arcs: " + "; ".join(self.storyline_patterns[:6])
+        parts.append(f"Story kind: {self.story_kind}")
+        focus = _coerce_str_list(self.focus_areas)
+        if focus:
+            parts.append("Focus areas: " + "; ".join(focus[:8]))
+        patterns = _coerce_str_list(self.storyline_patterns)
+        if patterns:
+            label = (
+                "Preferred research threads"
+                if self.story_kind == "research_topic"
+                else "Preferred storyline arcs"
             )
+            parts.append(f"{label}: " + "; ".join(patterns[:6]))
         return "\n".join(parts)
 
 
@@ -155,10 +281,19 @@ def reload_config() -> None:
 
 
 def _normalise_domain_key(domain_key: str) -> str:
-    k = domain_key.lower().strip().replace("_", "-")
-    if k in ("sciencetech", "science tech", "science-tech"):
-        return "artificial-intelligence"
-    return k
+    """Normalize domain keys without requiring a live DB (domain_registry import)."""
+    normalized = (domain_key or "").strip().lower().replace("_", "-")
+    try:
+        from shared.domain_registry_constants import RETIRED_DOMAIN_KEY_ALIASES
+
+        if normalized in RETIRED_DOMAIN_KEY_ALIASES or normalized in (
+            "sciencetech",
+            "science tech",
+        ):
+            return "artificial-intelligence"
+    except Exception:
+        pass
+    return normalized
 
 
 def _float(val: Any, default: float) -> float:
@@ -262,6 +397,9 @@ def _merge_storyline_development(
         ),
         credible_source_domains=[str(d).lower() for d in credible],
     )
+    _mq_raw = auto_dom.get("min_quality_tier", auto_def.get("min_quality_tier"))
+    _mr_raw = auto_dom.get("min_relevance_score", auto_def.get("min_relevance_score"))
+    _ms_raw = auto_dom.get("min_semantic_score", auto_def.get("min_semantic_score"))
     automation = StorylineAutomationConfig(
         default_mode=str(
             auto_dom.get("default_mode", auto_def.get("default_mode", "auto_approve"))
@@ -280,6 +418,15 @@ def _merge_storyline_development(
             auto_dom.get("automation_batch_per_assembly"),
             _int(auto_def.get("automation_batch_per_assembly"), 20),
         ),
+        min_relevance_score=float(_mr_raw) if _mr_raw is not None else None,
+        min_semantic_score=float(_ms_raw) if _ms_raw is not None else None,
+        min_quality_tier=_int(_mq_raw, 3) if _mq_raw is not None else None,
+    )
+    event_identity_seed = bool(
+        dom_block.get(
+            "event_identity_seed",
+            def_block.get("event_identity_seed", False),
+        )
     )
     return StorylineDevelopmentConfig(
         discovery=discovery,
@@ -287,7 +434,98 @@ def _merge_storyline_development(
         consolidation=consolidation,
         narrative=narrative,
         automation=automation,
+        event_identity_seed=event_identity_seed,
     )
+
+
+def _merge_link_score_profile(
+    defaults: dict[str, Any],
+    domain_raw: dict[str, Any],
+) -> LinkScoreProfile:
+    def_p = defaults.get("link_score_profile") or {}
+    dom_p = domain_raw.get("link_score_profile") or {}
+    return LinkScoreProfile(
+        relevance_weight=_float(
+            dom_p.get("relevance_weight"), _float(def_p.get("relevance_weight"), 0.40)
+        ),
+        semantic_weight=_float(
+            dom_p.get("semantic_weight"), _float(def_p.get("semantic_weight"), 0.15)
+        ),
+        keyword_weight=_float(
+            dom_p.get("keyword_weight"), _float(def_p.get("keyword_weight"), 0.10)
+        ),
+        quality_weight=_float(
+            dom_p.get("quality_weight"), _float(def_p.get("quality_weight"), 0.10)
+        ),
+        temporal_weight=_float(
+            dom_p.get("temporal_weight"), _float(def_p.get("temporal_weight"), 0.10)
+        ),
+        canonical_entity_weight=_float(
+            dom_p.get("canonical_entity_weight"),
+            _float(def_p.get("canonical_entity_weight"), 0.15),
+        ),
+        temporal_half_life_days=_float(
+            dom_p.get("temporal_half_life_days"),
+            _float(def_p.get("temporal_half_life_days"), 14.0),
+        ),
+        auto_approve_combined=_float(
+            dom_p.get("auto_approve_combined"),
+            _float(def_p.get("auto_approve_combined"), 0.75),
+        ),
+        aggressive_membership=bool(
+            dom_p.get(
+                "aggressive_membership",
+                def_p.get("aggressive_membership", True),
+            )
+        ),
+        allow_storyline_merge=bool(
+            dom_p.get(
+                "allow_storyline_merge",
+                def_p.get("allow_storyline_merge", True),
+            )
+        ),
+        max_member_articles=(
+            int(dom_p["max_member_articles"])
+            if dom_p.get("max_member_articles") is not None
+            else (
+                int(def_p["max_member_articles"])
+                if def_p.get("max_member_articles") is not None
+                else None
+            )
+        ),
+    )
+
+
+def _merge_hub_facets(
+    defaults: dict[str, Any],
+    domain_raw: dict[str, Any],
+) -> list[HubFacet]:
+    """Domain list replaces defaults when present; else use defaults."""
+    raw_list = domain_raw.get("hub_facets")
+    if raw_list is None:
+        raw_list = defaults.get("hub_facets") or []
+    out: list[HubFacet] = []
+    seen_keys: set[str] = set()
+    for item in raw_list or []:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("key") or "").strip().lower()
+        if not key or key in seen_keys:
+            continue
+        role = str(item.get("role") or "what").strip().lower()
+        if role not in HUB_FACET_ROLES:
+            role = "what"
+        names_raw = item.get("names") or []
+        names = tuple(
+            str(n).strip()
+            for n in names_raw
+            if n is not None and str(n).strip()
+        )
+        if not names:
+            continue
+        seen_keys.add(key)
+        out.append(HubFacet(key=key, role=role, names=names))
+    return out
 
 
 def get_domain_synthesis_config(domain_key: str) -> DomainSynthesisConfig:
@@ -311,14 +549,23 @@ def get_domain_synthesis_config(domain_key: str) -> DomainSynthesisConfig:
     )
 
     storyline_development = _merge_storyline_development(defaults, domain_raw)
+    kind_raw = str(
+        domain_raw.get("story_kind") or defaults.get("story_kind") or "event_narrative"
+    ).strip()
+    story_kind = kind_raw if kind_raw in STORY_KINDS else "event_narrative"
+    link_score_profile = _merge_link_score_profile(defaults, domain_raw)
+    hub_facets = _merge_hub_facets(defaults, domain_raw)
 
     return DomainSynthesisConfig(
         domain_key=norm_key,
-        focus_areas=domain_raw.get("focus_areas", []),
+        story_kind=story_kind,
+        link_score_profile=link_score_profile,
+        hub_facets=hub_facets,
+        focus_areas=_coerce_str_list(domain_raw.get("focus_areas", [])),
         macro_subject_axes=list(domain_raw.get("macro_subject_axes") or []),
         event_type_priorities=domain_raw.get("event_type_priorities", []),
         entity_type_weights=domain_raw.get("entity_type_weights", {}),
-        storyline_patterns=domain_raw.get("storyline_patterns", []),
+        storyline_patterns=_coerce_str_list(domain_raw.get("storyline_patterns", [])),
         editorial_sections=domain_raw.get("editorial_sections", []),
         topic_filter=topic_filter,
         llm_context=(domain_raw.get("llm_context") or "").strip(),
@@ -340,3 +587,60 @@ def get_domain_synthesis_config(domain_key: str) -> DomainSynthesisConfig:
 
 def get_storyline_development_config(domain_key: str) -> StorylineDevelopmentConfig:
     return get_domain_synthesis_config(domain_key).storyline_development
+
+
+def get_domain_hub_facets(domain_key: str) -> list[HubFacet]:
+    return list(get_domain_synthesis_config(domain_key).hub_facets)
+
+
+def get_domain_story_kind(domain_key: str) -> str:
+    return get_domain_synthesis_config(domain_key).story_kind
+
+
+def temporal_proximity_score(
+    days_apart: float | None,
+    *,
+    half_life_days: float = 14.0,
+) -> float:
+    """1.0 = same day; exponential decay by half-life. Missing dates → 1.0 (no penalty)."""
+    if days_apart is None:
+        return 1.0
+    hl = max(0.5, float(half_life_days))
+    return max(0.0, min(1.0, 0.5 ** (abs(float(days_apart)) / hl)))
+
+
+def canonical_entity_jaccard(a: set[int] | set[str], b: set[int] | set[str]) -> float:
+    """Jaccard over canonical entity IDs (prefer int); empty sets → 0."""
+    if not a or not b:
+        return 0.0
+    inter = len(a & b)
+    union = len(a | b)
+    return float(inter) / float(union) if union else 0.0
+
+
+def combined_attach_score(
+    domain_key: str,
+    *,
+    relevance: float = 0.0,
+    semantic: float = 0.0,
+    keyword: float = 0.0,
+    quality: float = 0.5,
+    temporal: float = 1.0,
+    canonical_jaccard: float = 0.0,
+) -> float:
+    """Legacy suggestion rank helper — not an episode admit formula.
+
+    Prefer blend_link_score for ranking. Dead YAML relevance/keyword/quality
+    weights are ignored; uses temporal + canonical (+ relevance as soft prior).
+    """
+    profile = get_domain_synthesis_config(domain_key).link_score_profile
+    # Rank-only collapse: ignore relevance_weight / keyword_weight / quality_weight / semantic_weight
+    tw = float(profile.temporal_weight or 0.1)
+    cw = float(profile.canonical_entity_weight or 0.15)
+    left = max(0.0, 1.0 - tw - cw)
+    score = (
+        left * float(relevance or semantic or 0)
+        + float(temporal if temporal is not None else 1.0) * tw
+        + float(canonical_jaccard or 0) * cw
+    )
+    return round(max(0.0, min(1.0, score)), 4)

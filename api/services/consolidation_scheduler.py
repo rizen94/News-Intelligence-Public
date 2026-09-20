@@ -8,18 +8,56 @@ Default: interval = 3 hours (8 runs per day, 4 types × 2 = 2x per type per day)
 """
 
 import logging
+from functools import lru_cache
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Seconds between consolidation runs (1h = ~6x per type per day; use 10800 for 2x per type per day)
-CONSOLIDATION_INTERVAL_SECONDS = 3600  # 1 hour — stagger so ~every hour one type runs
+_DEFAULT_INTERVAL = 3600
+_DEFAULT_STARTUP_DELAY = 60
+_DEFAULT_TYPES = ["storylines", "entities", "investigations", "events"]
 
-# Delay before first run after startup (seconds) so we don't hammer the system
-CONSOLIDATION_STARTUP_DELAY_SECONDS = 60
 
-# Rotation: 0=storylines, 1=entities, 2=investigations, 3=events (investigation superset again)
-CONSOLIDATION_TYPES = ["storylines", "entities", "investigations", "events"]
+@lru_cache(maxsize=1)
+def _consolidation_config() -> dict[str, Any]:
+    try:
+        from services.automation.registry import load_schedulers_manifest
+
+        raw = load_schedulers_manifest().get("consolidation") or {}
+        if not isinstance(raw, dict):
+            return {}
+        return raw
+    except Exception as exc:
+        logger.debug("consolidation config load skipped: %s", exc)
+        return {}
+
+
+def _consolidation_interval_seconds() -> int:
+    raw = _consolidation_config().get("interval_seconds", _DEFAULT_INTERVAL)
+    try:
+        return max(60, int(raw))
+    except (TypeError, ValueError):
+        return _DEFAULT_INTERVAL
+
+
+def _consolidation_startup_delay_seconds() -> int:
+    raw = _consolidation_config().get("startup_delay_seconds", _DEFAULT_STARTUP_DELAY)
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return _DEFAULT_STARTUP_DELAY
+
+
+def _consolidation_types() -> list[str]:
+    raw = _consolidation_config().get("rotation")
+    if isinstance(raw, list) and raw:
+        return [str(x) for x in raw]
+    return list(_DEFAULT_TYPES)
+
+
+CONSOLIDATION_INTERVAL_SECONDS = _consolidation_interval_seconds()
+CONSOLIDATION_STARTUP_DELAY_SECONDS = _consolidation_startup_delay_seconds()
+CONSOLIDATION_TYPES = _consolidation_types()
 
 
 def run_consolidation_step(step_name: str) -> dict[str, Any]:
@@ -28,6 +66,9 @@ def run_consolidation_step(step_name: str) -> dict[str, Any]:
     """
     result: dict[str, Any] = {"step": step_name, "success": False, "message": "", "details": {}}
     try:
+        from shared.services.worker_health import record_worker_heartbeat
+
+        record_worker_heartbeat(f"consolidation:{step_name}", status="running")
         if step_name == "storylines":
             from services.storyline_consolidation_service import get_consolidation_service
 
@@ -57,9 +98,24 @@ def run_consolidation_step(step_name: str) -> dict[str, Any]:
             )
         else:
             result["message"] = f"Unknown consolidation step: {step_name}"
+        record_worker_heartbeat(
+            f"consolidation:{step_name}",
+            status="healthy" if result["success"] else "degraded",
+            detail=result.get("message"),
+        )
     except Exception as e:
         logger.exception("Consolidation step %s failed: %s", step_name, e)
         result["message"] = str(e)
+        try:
+            from shared.services.worker_health import record_worker_heartbeat
+
+            record_worker_heartbeat(
+                f"consolidation:{step_name}",
+                status="unhealthy",
+                detail=str(e),
+            )
+        except Exception:
+            pass
     return result
 
 

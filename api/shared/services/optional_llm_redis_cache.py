@@ -13,11 +13,12 @@ import hashlib
 import logging
 import os
 from typing import Optional
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
-_CACHE_VERSION = os.environ.get("NEWS_INTEL_LLM_CACHE_VERSION", "1").strip() or "1"
-_ENABLED = os.environ.get("NEWS_INTEL_LLM_CACHE_REDIS", "").lower() in ("1", "true", "yes")
+_CACHE_VERSION = env_str("NEWS_INTEL_LLM_CACHE_VERSION", "1").strip() or "1"
+_ENABLED = env_str("NEWS_INTEL_LLM_CACHE_REDIS", "").lower() in ("1", "true", "yes")
 
 _redis = None  # lazy
 
@@ -34,7 +35,7 @@ def _client():
         logger.debug("optional_llm_redis_cache: redis package not installed")
         _redis = False
         return None
-    url = (os.environ.get("REDIS_URL") or "").strip()
+    url = (env_str("REDIS_URL") or "").strip()
     if url:
         try:
             _redis = redis.Redis.from_url(url, decode_responses=True, socket_timeout=2.0)
@@ -43,12 +44,12 @@ def _client():
             logger.debug("optional_llm_redis_cache: from_url failed: %s", e)
             _redis = False
             return None
-    host = (os.environ.get("REDIS_HOST") or "").strip()
+    host = (env_str("REDIS_HOST") or "").strip()
     if not host:
         _redis = False
         return None
-    port = int(os.environ.get("REDIS_PORT", "6379") or "6379")
-    password = os.environ.get("REDIS_PASSWORD") or None
+    port = int(env_str("REDIS_PORT", "6379") or "6379")
+    password = env_str("REDIS_PASSWORD") or None
     try:
         _redis = redis.Redis(
             host=host,

@@ -64,6 +64,40 @@ class TopicExtractionQueueWorker:
 
         self.extractor = LLMTopicExtractor(db_connection_func, schema=schema, ollama_url=ollama_url)
         self.entity_service = get_article_entity_extraction_service()
+        self._queue_table_missing = False
+
+    def _topic_queue_table_exists(self) -> bool:
+        """Return False when this domain schema was never given topic_extraction_queue.
+
+        Corpus domains such as neurodiversity may be pipeline-active without migration 236
+        covering them; prefer idle skip over ERROR spam every poll interval.
+        """
+        if self._queue_table_missing:
+            return False
+        try:
+            conn = self.get_db_connection()
+            if not conn:
+                return True  # fail open for this check; batch path still handles errors
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT 1 FROM information_schema.tables
+                        WHERE table_schema = %s AND table_name = 'topic_extraction_queue'
+                        """,
+                        (self.schema,),
+                    )
+                    exists = cur.fetchone() is not None
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning(
+                "Could not check topic_extraction_queue for %s: %s", self.schema, e
+            )
+            return True
+        if not exists:
+            self._queue_table_missing = True
+        return exists
 
     async def start(self):
         """Start the queue worker after a startup delay."""
@@ -75,6 +109,16 @@ class TopicExtractionQueueWorker:
             "⏳ Queue worker %s: waiting %ss for API startup…", self.schema, STARTUP_DELAY_SECONDS
         )
         await asyncio.sleep(STARTUP_DELAY_SECONDS)
+
+        if not self._topic_queue_table_exists():
+            logger.warning(
+                "Skipping topic extraction queue worker for %s: "
+                "table %s.topic_extraction_queue does not exist "
+                "(domain active without queue table — not an ERROR)",
+                self.schema,
+                self.schema,
+            )
+            return
 
         self._reset_stale_processing_records()
 
@@ -92,6 +136,8 @@ class TopicExtractionQueueWorker:
 
     def _reset_stale_processing_records(self):
         """Reset records stuck in 'processing' from a previous crash back to 'pending'."""
+        if not self._topic_queue_table_exists():
+            return
         try:
             conn = self.get_db_connection()
             if not conn:
@@ -137,6 +183,17 @@ class TopicExtractionQueueWorker:
                 return await self._process_queue_batch_inner(should_yield_to_api)
 
         except Exception as e:
+            msg = str(e)
+            if "topic_extraction_queue" in msg and "does not exist" in msg.lower():
+                self._queue_table_missing = True
+                self.is_running = False
+                logger.warning(
+                    "Stopping topic extraction queue worker for %s: "
+                    "relation %s.topic_extraction_queue does not exist",
+                    self.schema,
+                    self.schema,
+                )
+                return False
             logger.error("Error processing queue batch for %s: %s", self.schema, e)
             return False
 

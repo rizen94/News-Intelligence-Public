@@ -13,9 +13,9 @@ automation, articles, timeline, watchlist, …). For domain terminology, see rep
 
 from fastapi import APIRouter
 
-from .storyline_assembly import router as assembly_router
 from .storyline_analysis import router as analysis_router
 from .storyline_articles import router as articles_router
+from .storyline_assembly import router as assembly_router
 from .storyline_automation import router as automation_router
 from .storyline_consolidation import router as consolidation_router
 from .storyline_crud import router as crud_router

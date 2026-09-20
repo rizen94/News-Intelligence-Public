@@ -1051,13 +1051,17 @@ const Topics: React.FC = () => {
   return (
     <Box sx={{ p: 3 }}>
       <Typography variant='h4' gutterBottom>
-        📊 Topic Clustering & Analysis
+        Topic clusters
+        <Chip
+          label='Pipeline cluster'
+          size='small'
+          sx={{ ml: 1, verticalAlign: 'middle' }}
+        />
       </Typography>
 
       <Typography variant='body1' color='text.secondary' sx={{ mb: 3 }}>
-        Discover and explore trend themes backed by entities and contexts.
-        Themes group related participants, developments, and events into a
-        bigger-picture view. Convert interesting themes into storylines for
+        Pre-storyline clusters — convert when ready. Discover trend themes backed
+        by entities and contexts; use <strong>Convert to storyline</strong> for
         deeper RAG-enhanced analysis.
       </Typography>
 

@@ -1,0 +1,4 @@
+FROM nginx:alpine
+COPY news-intelligence-kit/nginx/default.conf /etc/nginx/conf.d/default.conf
+COPY web/dist /usr/share/nginx/html
+COPY news-intelligence-kit/web/static/setup-gate.js /usr/share/nginx/html/setup-gate.js

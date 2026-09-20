@@ -15,6 +15,7 @@ from psycopg2.extras import Json
 from shared.database.connection import get_db_connection
 from shared.domain_registry import resolve_domain_schema
 from shared.services.domain_aware_service import validate_domain
+from shared.storyline_article_counts import sync_counts_update_sql
 
 from ..models.storyline_models import Storyline, StorylineArticle
 from ..schemas.storyline_schemas import StorylineCreateRequest, StorylineUpdateRequest
@@ -95,10 +96,11 @@ class StorylineService:
                             cur.execute(
                                 f"""
                                 UPDATE {self.schema}.storylines
-                                SET article_count = article_count + %s, updated_at = %s
+                                SET {sync_counts_update_sql(self.schema)},
+                                updated_at = %s
                                 WHERE id = %s
                             """,
-                                (article_count, datetime.now(), storyline_id),
+                                (storyline_id, storyline_id, datetime.now(), storyline_id),
                             )
                             
                         # Update storyline details if needed
@@ -149,10 +151,11 @@ class StorylineService:
                             cur.execute(
                                 f"""
                                 UPDATE {self.schema}.storylines
-                                SET article_count = %s, updated_at = %s
+                                SET {sync_counts_update_sql(self.schema)},
+                                updated_at = %s
                                 WHERE id = %s
                             """,
-                                (article_count, datetime.now(), storyline_id),
+                                (storyline_id, storyline_id, datetime.now(), storyline_id),
                             )
                         
                         conn.commit()
@@ -299,14 +302,11 @@ class StorylineService:
                         cur.execute(
                             f"""
                             UPDATE {self.schema}.storylines
-                            SET article_count = (
-                                SELECT COUNT(*) FROM {self.schema}.storyline_articles 
-                                WHERE storyline_id = %s
-                            ),
+                            SET {sync_counts_update_sql(self.schema)},
                             updated_at = %s
                             WHERE id = %s
                         """,
-                            (storyline_id, datetime.now(), storyline_id),
+                            (storyline_id, storyline_id, datetime.now(), storyline_id),
                         )
                         
                         conn.commit()
@@ -527,7 +527,10 @@ class StorylineService:
                     # Get paginated results
                     query = f"""
                         SELECT s.id, s.title, s.description, s.created_at, s.updated_at,
-                               s.status, s.article_count, s.quality_score,
+                               s.status,
+                               (SELECT COUNT(*)::int FROM {self.schema}.storyline_articles sa0
+                                WHERE sa0.storyline_id = s.id) AS article_count,
+                               s.quality_score,
                                (SELECT MAX(sa.added_at) FROM {self.schema}.storyline_articles sa
                                 WHERE sa.storyline_id = s.id) AS last_article_added_at
                         FROM {self.schema}.storylines s
@@ -644,9 +647,7 @@ class StorylineService:
         Delegates to RAGAnalysisService.perform_comprehensive_analysis.
         """
         try:
-            from domains.storyline_management.services.rag_analysis_service import (
-                RAGAnalysisService,
-            )
+            from .rag_analysis_service import RAGAnalysisService
 
             svc = RAGAnalysisService(domain=self.domain)
             result = await svc.perform_comprehensive_analysis(storyline_id)
@@ -748,3 +749,72 @@ class StorylineService:
         union = len(words1.union(words2))
         
         return intersection / union if union > 0 else 0.0
+
+    async def evolve_storyline_with_new_content(
+        self,
+        storyline_id: int,
+        new_article_ids: list[int] | None = None,
+        force_evolution: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Attach new articles to a storyline via storyline_automation (scheduled evolution path).
+        """
+        try:
+            from services.storyline_automation_service import StorylineAutomationService
+
+            svc = StorylineAutomationService(domain=self.domain)
+            result = await svc.discover_articles_for_storyline(
+                storyline_id, force_refresh=force_evolution
+            )
+            articles = result.get("articles") or []
+            if new_article_ids:
+                conn = self.get_db_connection()
+                try:
+                    with conn.cursor() as cur:
+                        for aid in new_article_ids:
+                            cur.execute(
+                                f"""
+                                INSERT INTO {self.schema}.storyline_articles (storyline_id, article_id)
+                                SELECT %s, %s
+                                WHERE NOT EXISTS (
+                                    SELECT 1 FROM {self.schema}.storyline_articles
+                                    WHERE storyline_id = %s AND article_id = %s
+                                )
+                                """,
+                                (storyline_id, aid, storyline_id, aid),
+                            )
+                        cur.execute(
+                            f"SELECT COUNT(*) FROM {self.schema}.storyline_articles WHERE storyline_id = %s",
+                            (storyline_id,),
+                        )
+                        total = int(cur.fetchone()[0] or 0)
+                    conn.commit()
+                finally:
+                    conn.close()
+            else:
+                conn = self.get_db_connection()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            f"SELECT COUNT(*) FROM {self.schema}.storyline_articles WHERE storyline_id = %s",
+                            (storyline_id,),
+                        )
+                        total = int(cur.fetchone()[0] or 0)
+                finally:
+                    conn.close()
+            return {
+                "success": True,
+                "data": {
+                    "storyline_id": storyline_id,
+                    "total_articles": total,
+                    "new_articles": len(articles) + (len(new_article_ids or [])),
+                    "evolution_count": len(articles),
+                    "summary_updated": False,
+                    "context_updated": False,
+                    "summary_length": 0,
+                    "context_stats": result.get("stats") or {},
+                },
+            }
+        except Exception as e:
+            logger.error("evolve_storyline_with_new_content %s: %s", storyline_id, e)
+            return {"success": False, "error": str(e)}

@@ -17,6 +17,7 @@ import os
 from typing import Any
 
 import requests
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ DEFAULT_TIMEOUT = 45
 
 
 def congress_gov_api_key() -> str:
-    return (os.environ.get("CONGRESS_GOV_API_KEY") or "").strip()
+    return (env_str("CONGRESS_GOV_API_KEY") or "").strip()
 
 
 def is_congress_gov_configured() -> bool:

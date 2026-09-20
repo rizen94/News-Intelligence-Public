@@ -20,6 +20,8 @@ LLM routing uses Ollama (see ``config.settings`` and ``shared.services.ollama_mo
 # Dump all thread tracebacks on SIGUSR1 for debugging hung processes
 import faulthandler
 import signal as _signal
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
+from config.version import get_version
 
 faulthandler.enable()
 try:
@@ -84,6 +86,7 @@ from config.settings import (
     news_intel_expose_error_detail_to_client,
     news_intel_is_production,
     news_intel_public_web_auth_enabled,
+    news_intel_rate_limit_exempt_private_lan,
     news_intel_rate_limit_per_minute,
     news_intel_security_middleware_enabled,
     news_intel_trusted_hosts,
@@ -146,6 +149,13 @@ async def lifespan(app: FastAPI):
                 "Set comma-separated origins (e.g. https://app.example.com) if you expose the UI separately."
             )
 
+    try:
+        from shared.pipeline_resource_policy import configure_pipeline_resources
+
+        configure_pipeline_resources()
+    except Exception as e:
+        logger.debug("pipeline resource policy at startup: %s", e)
+
     # Initialize database connection pool early (persistent connection)
     try:
         from shared.database.connection import _init_pool, get_db_config, get_db_connection
@@ -205,6 +215,29 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ Database initialization error: {e}")
 
+    # Warm Monitor processing_progress cache (cold build can exceed 30s client timeout).
+    try:
+        import threading
+
+        def _warm_monitor_processing_pulse_cache() -> None:
+            try:
+                from domains.system_monitoring.routes.resource_dashboard import (
+                    _refresh_processing_progress_fast_cache,
+                )
+
+                _refresh_processing_progress_fast_cache((False, True))
+                logger.info("Monitor processing_progress cache warmed")
+            except Exception as warm_exc:
+                logger.debug("processing_progress cache warm skipped: %s", warm_exc)
+
+        threading.Thread(
+            target=_warm_monitor_processing_pulse_cache,
+            name="monitor-pulse-cache-warm",
+            daemon=True,
+        ).start()
+    except Exception as e:
+        logger.debug("monitor cache warm thread skipped: %s", e)
+
     # Initialize LLM service
     async def init_llm(app: FastAPI) -> None:
         try:
@@ -226,66 +259,71 @@ async def lifespan(app: FastAPI):
     await init_llm(app)
 
     # Log finance embedding config (no heavy imports)
-    try:
-        from domains.finance.data.vector_store import get_embedding_collection_info
+    if not env_bool("NEWS_INTEL_KIT_MODE", False):
+        try:
+            from domains.finance.data.vector_store import get_embedding_collection_info
 
-        model, coll = get_embedding_collection_info()
-        logger.info(f"✅ Finance evidence: embedding={model}, collection={coll}")
-    except Exception as e:
-        logger.debug("Finance embedding config not logged: %s", e)
+            model, coll = get_embedding_collection_info()
+            logger.info(f"✅ Finance evidence: embedding={model}, collection={coll}")
+        except Exception as e:
+            logger.debug("Finance embedding config not logged: %s", e)
 
     # Initialize Finance Orchestrator (runs in its own background thread to avoid
     # blocking the main uvicorn event loop with sync DB/state operations)
-    try:
-        from domains.finance import data_sources, embedding, stats
-        from domains.finance import llm as finance_llm
-        from domains.finance.data import evidence_ledger, market_data_store, vector_store
-        from domains.finance.orchestrator import FinanceOrchestrator
-
-        app.state.finance_orchestrator = FinanceOrchestrator(
-            source_loader=data_sources,
-            market_data_store=market_data_store,
-            vector_store=vector_store,
-            evidence_ledger=evidence_ledger,
-            embedding_module=embedding,
-            stats_module=stats,
-            llm_wrapper=finance_llm,
-            cpu_concurrency=4,
-        )
-        logger.info("✅ Finance Orchestrator initialized")
-        if app.state.finance_orchestrator:
-
-            def _run_finance_background():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                fo = app.state.finance_orchestrator
-                fo._schedule_task = None
-                fo._queue_task = None
-
-                async def _start():
-                    fo._schedule_stop.clear()
-                    fo._schedule_task = asyncio.create_task(fo._schedule_loop())
-                    fo._queue_stop.clear()
-                    fo._queue_task = asyncio.create_task(fo._queue_loop())
-                    while True:
-                        await asyncio.sleep(60)
-
-                loop.run_until_complete(_start())
-
-            finance_bg_thread = threading.Thread(
-                target=_run_finance_background, daemon=True, name="FinanceScheduler"
-            )
-            finance_bg_thread.start()
-            app.state.finance_bg_thread = finance_bg_thread
-            logger.info("✅ Finance scheduler and queue worker started (background thread)")
-    except Exception as e:
-        logger.error("❌ Failed to initialize Finance Orchestrator: %s", e)
+    if env_bool("NEWS_INTEL_KIT_MODE", False):
         app.state.finance_orchestrator = None
+        app.state.finance_bg_thread = None
+        logger.info("Kit mode: Finance Orchestrator skipped")
+    else:
+        try:
+            from domains.finance import data_sources, embedding, stats
+            from domains.finance import llm as finance_llm
+            from domains.finance.data import evidence_ledger, market_data_store, vector_store
+            from domains.finance.orchestrator import FinanceOrchestrator
+
+            app.state.finance_orchestrator = FinanceOrchestrator(
+                source_loader=data_sources,
+                market_data_store=market_data_store,
+                vector_store=vector_store,
+                evidence_ledger=evidence_ledger,
+                embedding_module=embedding,
+                stats_module=stats,
+                llm_wrapper=finance_llm,
+                cpu_concurrency=4,
+            )
+            logger.info("✅ Finance Orchestrator initialized")
+            if app.state.finance_orchestrator:
+
+                def _run_finance_background():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    fo = app.state.finance_orchestrator
+                    fo._schedule_task = None
+                    fo._queue_task = None
+
+                    async def _start():
+                        fo._schedule_stop.clear()
+                        fo._schedule_task = asyncio.create_task(fo._schedule_loop())
+                        fo._queue_stop.clear()
+                        fo._queue_task = asyncio.create_task(fo._queue_loop())
+                        while True:
+                            await asyncio.sleep(60)
+
+                    loop.run_until_complete(_start())
+
+                finance_bg_thread = threading.Thread(
+                    target=_run_finance_background, daemon=True, name="FinanceScheduler"
+                )
+                finance_bg_thread.start()
+                app.state.finance_bg_thread = finance_bg_thread
+                logger.info("✅ Finance scheduler and queue worker started (background thread)")
+        except Exception as e:
+            logger.error("❌ Failed to initialize Finance Orchestrator: %s", e)
+            app.state.finance_orchestrator = None
 
     # Start automation manager in background thread (before OrchestratorCoordinator)
     try:
         from services.automation_manager import AutomationManager
-        from services.ml_processing_service import MLProcessingService
         import services.automation_manager as _automation_module
 
         automation = AutomationManager(db_config)
@@ -320,52 +358,74 @@ async def lifespan(app: FastAPI):
             lambda: getattr(app.state, "finance_orchestrator", None)
         )
 
-        try:
-            ml_processing_service = MLProcessingService()
-            ml_processing_service.start_processing()
-            logger.info("✅ ML Processing Service started automatically")
-            app.state.ml_processing = ml_processing_service
-        except Exception as e:
-            logger.error(f"❌ Failed to start ML Processing Service: {e}")
+        if not env_bool("NEWS_INTEL_KIT_MODE", False):
+            from config.settings import legacy_intake_extraction_enabled
 
-        try:
-            from domains.content_analysis.services.topic_extraction_queue_worker import (
-                TopicExtractionQueueWorker,
+            if legacy_intake_extraction_enabled():
+                try:
+                    from shared.legacy_intake_rollback import load_ml_processing_service
+
+                    MLProcessingService = load_ml_processing_service().MLProcessingService
+                    ml_processing_service = MLProcessingService()
+                    ml_processing_service.start_processing()
+                    logger.info("ML Processing Service started (legacy intake rollback)")
+                    app.state.ml_processing = ml_processing_service
+                except Exception as e:
+                    logger.error("Failed to start ML Processing Service (legacy rollback): %s", e)
+            else:
+                app.state.ml_processing = None
+                logger.debug("ML Processing Service skipped (unified intake is sole path)")
+        else:
+            app.state.ml_processing = None
+            logger.info("Kit mode: ML Processing Service skipped")
+
+        if env_bool("NEWS_INTEL_DISABLE_TOPIC_QUEUE_WORKERS", False):
+            logger.info(
+                "Topic extraction queue workers disabled (NEWS_INTEL_DISABLE_TOPIC_QUEUE_WORKERS=true)"
             )
-            from shared.database.connection import get_db_connection
+        else:
+            try:
+                from domains.content_analysis.services.topic_extraction_queue_worker import (
+                    TopicExtractionQueueWorker,
+                )
+                from shared.database.connection import get_db_connection
 
-            def start_queue_workers_background():
-                import asyncio
+                def start_queue_workers_background():
+                    import asyncio
 
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
 
-                async def start_workers():
-                    from shared.domain_registry import pipeline_url_schema_pairs
+                    async def start_workers():
+                        from shared.domain_registry import pipeline_url_schema_pairs
 
-                    for _domain_key, schema in pipeline_url_schema_pairs():
-                        try:
-                            worker = TopicExtractionQueueWorker(get_db_connection, schema=schema)
-                            asyncio.create_task(worker.start())
-                            logger.info(
-                                f"✅ Started topic extraction queue worker for {_domain_key} ({schema})"
-                            )
-                        except Exception as e:
-                            logger.error(f"❌ Failed to start queue worker for {_domain_key}: {e}")
+                        for _domain_key, schema in pipeline_url_schema_pairs():
+                            try:
+                                worker = TopicExtractionQueueWorker(get_db_connection, schema=schema)
+                                asyncio.create_task(worker.start())
+                                logger.info(
+                                    f"✅ Started topic extraction queue worker for {_domain_key} ({schema})"
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"❌ Failed to start queue worker for {_domain_key}: {e}"
+                                )
 
-                    while True:
-                        await asyncio.sleep(60)
+                        while True:
+                            await asyncio.sleep(60)
 
-                loop.run_until_complete(start_workers())
+                    loop.run_until_complete(start_workers())
 
-            queue_worker_thread = threading.Thread(
-                target=start_queue_workers_background, daemon=True
-            )
-            queue_worker_thread.start()
-            app.state.queue_worker_thread = queue_worker_thread
-            logger.info("✅ Topic extraction queue workers started automatically in background")
-        except Exception as e:
-            logger.error(f"❌ Failed to start topic extraction queue workers: {e}")
+                queue_worker_thread = threading.Thread(
+                    target=start_queue_workers_background, daemon=True
+                )
+                queue_worker_thread.start()
+                app.state.queue_worker_thread = queue_worker_thread
+                logger.info(
+                    "✅ Topic extraction queue workers started automatically in background"
+                )
+            except Exception as e:
+                logger.error(f"❌ Failed to start topic extraction queue workers: {e}")
     except Exception as e:
         logger.error(f"Failed to start automation manager: {e}")
         app.state.automation = None
@@ -453,7 +513,7 @@ async def lifespan(app: FastAPI):
     try:
         from services.health_monitor_orchestrator import get_health_monitor
 
-        base_url = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+        base_url = env_str("API_BASE_URL", "http://127.0.0.1:8000")
         health_monitor = get_health_monitor(base_url=base_url)
 
         def _run_health_monitor():
@@ -537,7 +597,7 @@ async def lifespan(app: FastAPI):
         app.state.consolidation_stop_event = None
 
     # Start Newsroom Orchestrator (optional — requires orchestration/ package + env flag)
-    newsroom_env_enabled = os.getenv("NEWSROOM_ORCHESTRATOR_ENABLED", "").lower() in (
+    newsroom_env_enabled = env_str("NEWSROOM_ORCHESTRATOR_ENABLED", "").lower() in (
         "1",
         "true",
         "yes",
@@ -789,7 +849,7 @@ app = FastAPI(
     Set `NEWS_INTEL_ENV=production` for stricter CORS, Host header checks, disabled OpenAPI by default,
     generic 500 responses, and in-app rate limiting (see `docs/SECURITY_OPERATIONS.md`).
     """,
-    version="5.0.0",
+    version=get_version(),
     lifespan=lifespan,
     docs_url=_docs_url,
     redoc_url=_redoc_url,
@@ -832,10 +892,21 @@ app = FastAPI(
 REQUEST_TIMEOUT_SECONDS = 30  # default ceiling; Monitor heavy routes get longer budgets below
 
 
-def _request_timeout_seconds(request: Request) -> float:
-    """Per-path timeout budget (Monitor SQL can exceed 30s under load)."""
-    path = (request.url.path or "").rstrip("/")
-    qs = str(request.url.query or "").lower()
+def resolve_request_timeout_seconds(
+    path: str,
+    method: str = "GET",
+    query: str = "",
+) -> float:
+    """
+    Per-path timeout budget (Monitor SQL can exceed 30s under load).
+
+    Pure helper so unit tests can assert path/method matching without importing
+    the FastAPI app. Sync investigation dossier POST is LLM-bound (180s);
+    cached GET stays on the default short ceiling.
+    """
+    path = (path or "").rstrip("/")
+    qs = str(query or "").lower()
+    method_u = (method or "GET").upper()
     if path.endswith("/processing_progress"):
         if "include_pending_metrics=true" in qs:
             return 300.0
@@ -850,7 +921,31 @@ def _request_timeout_seconds(request: Request) -> float:
         return 60.0
     if path.endswith("/sql_explorer/query"):
         return 120.0
+    # LLM interpret + retrieve/attach can exceed the default 30s ceiling.
+    if path.endswith("/research/assemble") or path.endswith("/research/interpret"):
+        return 180.0
+    if "/editorial/packages/" in path and path.endswith(
+        ("/research/run", "/narrative/run", "/reduction/run")
+    ):
+        return 180.0
+    # Sync investigation dossier POST (tracked event → Ollama) routinely exceeds 30s.
+    # Cached GET /tracked_events/{id}/report stays on REQUEST_TIMEOUT_SECONDS.
+    if (
+        method_u == "POST"
+        and "/tracked_events/" in path
+        and path.endswith("/report")
+    ):
+        return 180.0
     return float(REQUEST_TIMEOUT_SECONDS)
+
+
+def _request_timeout_seconds(request: Request) -> float:
+    """Per-path timeout budget from the live Request object."""
+    return resolve_request_timeout_seconds(
+        request.url.path or "",
+        method=request.method or "GET",
+        query=str(request.url.query or ""),
+    )
 
 
 @app.middleware("http")
@@ -929,6 +1024,7 @@ if news_intel_security_middleware_enabled():
     app.add_middleware(
         SecurityMiddleware,
         rate_limit_per_minute=news_intel_rate_limit_per_minute(),
+        exempt_private_lan=news_intel_rate_limit_exempt_private_lan(),
     )
 
 # Guest vs admin RBAC (demo middleware is outermost — runs first; auth sits inside read-only demo layer).
@@ -1021,8 +1117,8 @@ async def root():
     return {
         "success": True,
         "data": {
-            "name": "News Intelligence System v5.0",
-            "version": "5.0.0",
+            "name": f"News Intelligence System v{get_version()}",
+            "version": get_version(),
             "architecture": "Domain-Driven Design",
             "ai_models": {"primary": MODELS["primary"], "secondary": MODELS["secondary"]},
             "domains": [

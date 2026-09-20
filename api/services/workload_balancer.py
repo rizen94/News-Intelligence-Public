@@ -13,6 +13,7 @@ Env:
 from __future__ import annotations
 
 import os
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 # Phases where variable cooldown helps (backfill / heavy optional paths).
 _DEFAULT_BALANCER_PHASES: frozenset[str] = frozenset(
@@ -30,6 +31,8 @@ _DEFAULT_BALANCER_PHASES: frozenset[str] = frozenset(
         "claim_extraction",
         "claims_to_facts",
         "entity_extraction",
+        "ml_processing",
+        "sentiment_analysis",
         "metadata_enrichment",
         "story_enhancement",
     }
@@ -38,7 +41,7 @@ _DEFAULT_BALANCER_PHASES: frozenset[str] = frozenset(
 
 def workload_balancer_enabled() -> bool:
     # Default off: base WORKLOAD_MIN_COOLDOWN + router already throttle; set true for gentler churn.
-    return os.environ.get("WORKLOAD_BALANCER_ENABLED", "false").lower() in (
+    return env_str("WORKLOAD_BALANCER_ENABLED", "false").lower() in (
         "1",
         "true",
         "yes",
@@ -46,7 +49,7 @@ def workload_balancer_enabled() -> bool:
 
 
 def workload_balancer_phase_names() -> frozenset[str]:
-    raw = os.environ.get("WORKLOAD_BALANCER_PHASES", "").strip()
+    raw = env_str("WORKLOAD_BALANCER_PHASES", "").strip()
     if raw:
         return frozenset(x.strip() for x in raw.split(",") if x.strip())
     return _DEFAULT_BALANCER_PHASES

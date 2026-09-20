@@ -105,9 +105,9 @@ Until every path uses **`domain_registry`** / **`get_schema_names_active()`** / 
 
 ### Process restart (when still required)
 
-**`get_domain_entries()`** / **`get_active_domain_keys()`** / **`url_schema_pairs()`** and **`is_valid_domain_key()`** re-read YAML on **each call** — RSS collection and most iterators pick up a new onboarded silo **without** restarting the API.
+**`get_domain_entries()`** / **`get_active_domain_keys()`** / **`url_schema_pairs()`** and **`is_valid_domain_key()`** re-read the registry on each call, subject to a process-local cache of **`DOMAIN_REGISTRY_CACHE_TTL_SECONDS`** (default **60**) — RSS collection and most iterators pick up a new onboarded silo **without** restarting the API, within one TTL. `provision_domain.py` activates through **`activate_domain_row()`**, which calls **`invalidate_domain_registry_cache()`**, so a fresh silo appears immediately.
 
-**Import-time snapshot** [`ACTIVE_DOMAIN_KEYS`](../../shared/domain_registry.py) / [`ACTIVE_DOMAIN_KEYS_SET`](../../shared/domain_registry.py) is **stale** after YAML edits; prefer **`get_active_domain_keys()`** in new code. **`DOMAIN_PATH_PATTERN`** is a **shape-only** regex (not the allowlist).
+[`ACTIVE_DOMAIN_KEYS`](../../shared/domain_registry.py) / [`ACTIVE_DOMAIN_KEYS_SET`](../../shared/domain_registry.py) are back-compat aliases resolved lazily; prefer **`get_active_domain_keys()`** in new code. **`DOMAIN_PATH_PATTERN`** is a **shape-only** regex (not the allowlist).
 
 Restart **API and workers** after YAML changes if you hit code that still **cached** domain lists at startup, or after changing **`domain_key` / `schema_name`** in a file (any process that read the old path).
 

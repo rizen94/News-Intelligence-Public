@@ -19,13 +19,14 @@ from .base import BaseRAGService
 from .domain import RAGDomainModule
 from .generation import RAGChunk, RAGGenerationModule, RAGResult
 from .retrieval import RAGRetrievalModule
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
 # Configuration
-OLLAMA_BASE_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-EMBEDDING_MODEL = os.getenv("RAG_EMBEDDING_MODEL", "nomic-embed-text")
-LLM_MODEL = os.getenv("RAG_LLM_MODEL", "llama3.1:8b")
+OLLAMA_BASE_URL = env_str("OLLAMA_URL", "http://localhost:11434")
+EMBEDDING_MODEL = env_str("RAG_EMBEDDING_MODEL", "nomic-embed-text")
+LLM_MODEL = env_str("RAG_LLM_MODEL", "llama3.1:8b")
 
 # RAG parameters
 TOP_K_ARTICLES = 10

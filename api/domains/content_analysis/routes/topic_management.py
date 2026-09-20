@@ -32,22 +32,7 @@ DB_CONFIG = {
     "port": 5432,
 }
 
-# Note: TopicClusteringService is now domain-aware and should be initialized per-domain
-# For routes, we'll create service instances as needed
-
-
-def _resolve_topic_row_schema(conn, topic_id: int, domain: str | None) -> str | None:
-    """Schema containing topics.id = topic_id; if domain set, only that schema."""
-    if domain is not None and str(domain).strip():
-        schemas = [parse_optional_domain_to_schema(domain)]
-    else:
-        schemas = list(get_domain_data_schemas())
-    with conn.cursor() as cur:
-        for sch in schemas:
-            cur.execute(f"SELECT 1 FROM {sch}.topics WHERE id = %s", (topic_id,))
-            if cur.fetchone():
-                return sch
-    return None
+from shared.topic_cluster_reads import cluster_row_to_topic_api, resolve_cluster_schema
 
 
 # ============================================================================
@@ -191,40 +176,39 @@ async def get_domain_topics(
                 # Build query with schema qualification
                 query = f"""
                     SELECT
-                        t.id, t.topic_uuid, t.name, t.description, t.category,
-                        t.keywords, t.confidence_score, t.accuracy_score,
-                        t.review_count, t.correct_assignments, t.incorrect_assignments,
-                        t.status, t.is_auto_generated, t.created_at, t.updated_at,
-                        COUNT(DISTINCT ata.article_id) as article_count
-                    FROM {schema}.topics t
-                    LEFT JOIN {schema}.article_topic_assignments ata ON t.id = ata.topic_id
+                        tc.id,
+                        tc.cluster_name,
+                        NULL::text AS description,
+                        COALESCE(tc.relevance_score, 0.5) AS relevance_score,
+                        COALESCE(tc.article_count, COUNT(DISTINCT atc.article_id)) AS article_count,
+                        tc.created_at,
+                        tc.updated_at
+                    FROM {schema}.topic_clusters tc
+                    LEFT JOIN {schema}.article_topic_clusters atc ON tc.id = atc.topic_cluster_id
                     WHERE 1=1
                 """
                 params = []
 
                 if category:
-                    query += " AND t.category = %s"
-                    params.append(category)
+                    pass  # topic_clusters has no category column
 
                 if status:
-                    query += " AND t.status = %s"
-                    params.append(status)
+                    pass  # legacy status filter ignored for clusters
 
                 if search:
-                    query += " AND t.name ILIKE %s"
+                    query += " AND tc.cluster_name ILIKE %s"
                     params.append(f"%{search}%")
 
-                query += " GROUP BY t.id"
+                query += " GROUP BY tc.id"
 
-                # Sorting
                 valid_sort_fields = {
-                    "name": "t.name",
-                    "accuracy_score": "t.accuracy_score",
-                    "confidence_score": "t.confidence_score",
-                    "review_count": "t.review_count",
-                    "created_at": "t.created_at",
+                    "name": "tc.cluster_name",
+                    "accuracy_score": "tc.relevance_score",
+                    "confidence_score": "tc.relevance_score",
+                    "review_count": "tc.article_count",
+                    "created_at": "tc.created_at",
                 }
-                sort_field = valid_sort_fields.get(sort_by, "t.accuracy_score")
+                sort_field = valid_sort_fields.get(sort_by, "tc.relevance_score")
                 query += f" ORDER BY {sort_field} DESC"
 
                 query += " LIMIT %s OFFSET %s"
@@ -232,40 +216,12 @@ async def get_domain_topics(
 
                 cur.execute(query, params)
 
-                topics = []
-                for row in cur.fetchall():
-                    topics.append(
-                        {
-                            "id": row[0],
-                            "topic_uuid": str(row[1]) if row[1] else None,
-                            "name": row[2],
-                            "description": row[3],
-                            "category": row[4],
-                            "keywords": row[5] or [],
-                            "confidence_score": float(row[6]) if row[6] else 0.5,
-                            "accuracy_score": float(row[7]) if row[7] else 0.5,
-                            "review_count": row[8] or 0,
-                            "correct_assignments": row[9] or 0,
-                            "incorrect_assignments": row[10] or 0,
-                            "status": row[11],
-                            "is_auto_generated": row[12],
-                            "article_count": row[15] or 0,  # Fixed: COUNT is at index 15, not 16
-                            "created_at": row[13].isoformat() if row[13] else None,
-                            "updated_at": row[14].isoformat() if row[14] else None,
-                        }
-                    )
+                topics = [cluster_row_to_topic_api(row) for row in cur.fetchall()]
 
-                # Get total count from domain schema
-                count_query = f"SELECT COUNT(*) FROM {schema}.topics WHERE 1=1"
+                count_query = f"SELECT COUNT(*) FROM {schema}.topic_clusters WHERE 1=1"
                 count_params = []
-                if category:
-                    count_query += " AND category = %s"
-                    count_params.append(category)
-                if status:
-                    count_query += " AND status = %s"
-                    count_params.append(status)
                 if search:
-                    count_query += " AND name ILIKE %s"
+                    count_query += " AND cluster_name ILIKE %s"
                     count_params.append(f"%{search}%")
 
                 cur.execute(count_query, count_params)
@@ -305,7 +261,7 @@ async def get_topic(
 
         try:
             try:
-                sch = _resolve_topic_row_schema(conn, topic_id, domain)
+                sch = resolve_cluster_schema(conn, topic_id, domain)
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
             if not sch:
@@ -315,16 +271,17 @@ async def get_topic(
                 cur.execute(
                     f"""
                     SELECT
-                        t.id, t.topic_uuid, t.name, t.description, t.category,
-                        t.keywords, t.confidence_score, t.accuracy_score,
-                        t.review_count, t.correct_assignments, t.incorrect_assignments,
-                        t.status, t.is_auto_generated, t.created_at, t.updated_at,
-                        t.learning_data, t.last_improved_at,
-                        COUNT(DISTINCT ata.article_id) as article_count
-                    FROM {sch}.topics t
-                    LEFT JOIN {sch}.article_topic_assignments ata ON t.id = ata.topic_id
-                    WHERE t.id = %s
-                    GROUP BY t.id
+                        tc.id,
+                        tc.cluster_name,
+                        NULL::text,
+                        COALESCE(tc.relevance_score, 0.5),
+                        COALESCE(tc.article_count, COUNT(DISTINCT atc.article_id)),
+                        tc.created_at,
+                        tc.updated_at
+                    FROM {sch}.topic_clusters tc
+                    LEFT JOIN {sch}.article_topic_clusters atc ON tc.id = atc.topic_cluster_id
+                    WHERE tc.id = %s
+                    GROUP BY tc.id
                 """,
                     (topic_id,),
                 )
@@ -333,30 +290,9 @@ async def get_topic(
                 if not row:
                     raise HTTPException(status_code=404, detail="Topic not found")
 
-                return {
-                    "success": True,
-                    "data": {
-                        "id": row[0],
-                        "topic_uuid": str(row[1]),
-                        "name": row[2],
-                        "description": row[3],
-                        "category": row[4],
-                        "keywords": row[5] or [],
-                        "confidence_score": float(row[6]) if row[6] else 0.5,
-                        "accuracy_score": float(row[7]) if row[7] else 0.5,
-                        "review_count": row[8] or 0,
-                        "correct_assignments": row[9] or 0,
-                        "incorrect_assignments": row[10] or 0,
-                        "status": row[11],
-                        "is_auto_generated": row[12],
-                        "article_count": row[17] or 0,
-                        "learning_data": row[15] or {},
-                        "last_improved_at": row[16].isoformat() if row[16] else None,
-                        "created_at": row[13].isoformat() if row[13] else None,
-                        "updated_at": row[14].isoformat() if row[14] else None,
-                        "domain_schema": sch,
-                    },
-                }
+                data = cluster_row_to_topic_api(row)
+                data["domain_schema"] = sch
+                return {"success": True, "data": data}
 
         finally:
             conn.close()
@@ -390,22 +326,13 @@ async def create_topic(
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
-                    INSERT INTO {sch}.topics (
-                        name, description, category, keywords,
-                        is_auto_generated, status, confidence_score, accuracy_score
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id, topic_uuid, created_at
+                    INSERT INTO {sch}.topic_clusters (cluster_name, relevance_score, article_count, created_at, updated_at)
+                    VALUES (%s, %s, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING id, cluster_name, created_at
                 """,
                     (
                         topic.name,
-                        topic.description,
-                        topic.category,
-                        topic.keywords or [],
-                        False,  # Manual creation
-                        "active",
-                        0.8,  # High confidence for manual topics
-                        0.8,  # High accuracy for manual topics
+                        0.8,
                     ),
                 )
 
@@ -416,8 +343,8 @@ async def create_topic(
                     "success": True,
                     "data": {
                         "id": result[0],
-                        "topic_uuid": str(result[1]),
-                        "name": topic.name,
+                        "topic_uuid": None,
+                        "name": result[1],
                         "created_at": result[2].isoformat(),
                         "domain_schema": sch,
                     },
@@ -454,40 +381,37 @@ async def update_topic(
 
         try:
             with conn.cursor() as cur:
-                # Build update query dynamically
                 updates = []
-                params = []
+                params: list = []
 
                 if topic_update.description is not None:
-                    updates.append("description = %s")
-                    params.append(topic_update.description)
+                    pass
 
                 if topic_update.category is not None:
-                    updates.append("category = %s")
-                    params.append(topic_update.category)
+                    pass
 
                 if topic_update.keywords is not None:
-                    updates.append("keywords = %s")
-                    params.append(topic_update.keywords)
+                    pass
 
                 if topic_update.status is not None:
-                    updates.append("status = %s")
-                    params.append(topic_update.status)
+                    pass
 
-                if not updates:
-                    raise HTTPException(status_code=400, detail="No fields to update")
-
-                updates.append("updated_at = CURRENT_TIMESTAMP")
-                params.append(topic_id)
-
-                query = f"UPDATE {sch}.topics SET {', '.join(updates)} WHERE id = %s RETURNING id"
-                cur.execute(query, params)
-
+                cur.execute(
+                    f"SELECT id FROM {sch}.topic_clusters WHERE id = %s",
+                    (topic_id,),
+                )
                 if not cur.fetchone():
                     raise HTTPException(status_code=404, detail="Topic not found")
 
-                conn.commit()
+                if updates:
+                    updates.append("updated_at = CURRENT_TIMESTAMP")
+                    params.append(topic_id)
+                    query = f"UPDATE {sch}.topic_clusters SET {', '.join(updates)} WHERE id = %s RETURNING id"
+                    cur.execute(query, params)
+                    if not cur.fetchone():
+                        raise HTTPException(status_code=404, detail="Topic not found")
 
+                conn.commit()
                 return {"success": True, "message": "Topic updated successfully"}
 
         finally:
@@ -527,15 +451,15 @@ async def get_domain_article_topics(
                 cur.execute(
                     f"""
                     SELECT
-                        ata.id as assignment_id,
-                        t.id, t.name, t.category, t.description,
-                        ata.confidence_score, ata.relevance_score,
-                        ata.is_validated, ata.is_correct, ata.feedback_notes,
-                        ata.assignment_method, ata.created_at
-                    FROM {schema}.article_topic_assignments ata
-                    JOIN {schema}.topics t ON ata.topic_id = t.id
-                    WHERE ata.article_id = %s
-                    ORDER BY ata.confidence_score DESC
+                        atc.id as assignment_id,
+                        tc.id, tc.cluster_name, NULL::text AS category, NULL::text AS description,
+                        atc.confidence_score, atc.relevance_score,
+                        FALSE AS is_validated, NULL::boolean AS is_correct, NULL::text AS feedback_notes,
+                        'cluster' AS assignment_method, NULL::timestamptz AS created_at
+                    FROM {schema}.article_topic_clusters atc
+                    JOIN {schema}.topic_clusters tc ON atc.topic_cluster_id = tc.id
+                    WHERE atc.article_id = %s
+                    ORDER BY atc.confidence_score DESC NULLS LAST
                 """,
                     (article_id,),
                 )
@@ -806,21 +730,9 @@ async def merge_topics(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     merge_request: TopicMerge = Body(...),
 ):
-    """
-    Merge multiple topics into one within a domain silo.
+    """Merge topic_clusters — primary is first ID; secondaries deleted after reassignment."""
+    from shared.topic_cluster_store import sync_cluster_article_count
 
-    This will:
-    1. Keep the first topic as the primary (or create new merged topic)
-    2. Transfer all article assignments from merged topics to primary
-    3. Combine topic statistics (counts, scores)
-    4. Merge keywords and descriptions
-    5. Mark merged topics as 'merged' status
-    6. Handle duplicate assignments (keep highest confidence)
-
-    Args:
-        merge_request: Contains list of topic IDs to merge
-        keep_primary: If True, keep first topic; if False, create new merged topic
-    """
     try:
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
@@ -832,304 +744,69 @@ async def merge_topics(
             raise HTTPException(status_code=500, detail="Database connection failed")
 
         try:
-            try:
-                sch = parse_optional_domain_to_schema(merge_request.domain or domain)
-            except ValueError as e:
-                raise HTTPException(status_code=400, detail=str(e))
+            sch = parse_optional_domain_to_schema(merge_request.domain or domain)
+            primary_id = merge_request.topic_ids[0]
+            secondary_ids = merge_request.topic_ids[1:]
 
             with conn.cursor() as cur:
-                # Validate all topics exist
                 placeholders = ",".join(["%s"] * len(merge_request.topic_ids))
                 cur.execute(
                     f"""
-                    SELECT id, name, status FROM {sch}.topics
+                    SELECT id, cluster_name FROM {sch}.topic_clusters
                     WHERE id IN ({placeholders})
-                """,
+                    """,
                     merge_request.topic_ids,
                 )
-
-                existing_topics = {
-                    row[0]: {"name": row[1], "status": row[2]} for row in cur.fetchall()
-                }
-
-                if len(existing_topics) != len(merge_request.topic_ids):
-                    missing = set(merge_request.topic_ids) - set(existing_topics.keys())
+                existing = {int(r[0]): r[1] for r in cur.fetchall()}
+                if len(existing) != len(merge_request.topic_ids):
+                    missing = set(merge_request.topic_ids) - set(existing.keys())
                     raise HTTPException(status_code=404, detail=f"Topics not found: {missing}")
 
-                # Check for already merged topics
-                merged_topics = [
-                    tid for tid, data in existing_topics.items() if data["status"] == "merged"
-                ]
-                if merged_topics:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Cannot merge topics that are already merged: {merged_topics}",
-                    )
-
-                # Primary topic is the first one
-                primary_topic_id = merge_request.topic_ids[0]
-                topics_to_merge = merge_request.topic_ids[1:]
-
-                # Get primary topic details
-                cur.execute(
-                    f"""
-                    SELECT name, description, category, keywords, confidence_score, accuracy_score,
-                           review_count, correct_assignments, incorrect_assignments, article_count
-                    FROM {sch}.topics t
-                    LEFT JOIN (
-                        SELECT topic_id, COUNT(*) as article_count
-                        FROM {sch}.article_topic_assignments
-                        GROUP BY topic_id
-                    ) ata ON t.id = ata.topic_id
-                    WHERE t.id = %s
-                """,
-                    (primary_topic_id,),
-                )
-
-                primary_row = cur.fetchone()
-                if not primary_row:
-                    raise HTTPException(status_code=404, detail="Primary topic not found")
-
-                primary_name = primary_row[0]
-                primary_desc = primary_row[1]
-                primary_row[2]
-                primary_keywords = set(primary_row[3] or [])
-                primary_confidence = float(primary_row[4] or 0.5)
-                primary_accuracy = float(primary_row[5] or 0.5)
-                primary_review_count = primary_row[6] or 0
-                primary_correct = primary_row[7] or 0
-                primary_incorrect = primary_row[8] or 0
-                primary_article_count = primary_row[9] or 0
-
-                # Collect data from topics to merge
-                total_articles = primary_article_count
-                total_reviews = primary_review_count
-                total_correct = primary_correct
-                total_incorrect = primary_incorrect
-                all_keywords = primary_keywords.copy()
-                all_descriptions = [primary_desc] if primary_desc else []
-
-                # Get data from topics to merge
-                for topic_id in topics_to_merge:
+                primary_name = existing[primary_id]
+                for sec_id in secondary_ids:
                     cur.execute(
                         f"""
-                        SELECT name, description, category, keywords, confidence_score, accuracy_score,
-                               review_count, correct_assignments, incorrect_assignments,
-                               (SELECT COUNT(*) FROM {sch}.article_topic_assignments WHERE topic_id = %s) as article_count
-                        FROM {sch}.topics
-                        WHERE id = %s
-                    """,
-                        (topic_id, topic_id),
+                        INSERT INTO {sch}.article_topic_clusters (article_id, topic_cluster_id, relevance_score, confidence_score)
+                        SELECT article_id, %s, relevance_score, confidence_score
+                        FROM {sch}.article_topic_clusters
+                        WHERE topic_cluster_id = %s
+                        ON CONFLICT (article_id, topic_cluster_id) DO UPDATE SET
+                            relevance_score = GREATEST({sch}.article_topic_clusters.relevance_score, EXCLUDED.relevance_score),
+                            confidence_score = GREATEST({sch}.article_topic_clusters.confidence_score, EXCLUDED.confidence_score)
+                        """,
+                        (primary_id, sec_id),
                     )
-
-                    row = cur.fetchone()
-                    if row:
-                        if row[1]:  # description
-                            all_descriptions.append(row[1])
-                        if row[3]:  # keywords
-                            all_keywords.update(row[3])
-
-                        total_articles += row[9] or 0
-                        total_reviews += row[6] or 0
-                        total_correct += row[7] or 0
-                        total_incorrect += row[8] or 0
-
-                # Update primary topic with merged data
-                merged_description = " | ".join([d for d in all_descriptions if d])
-                if not merged_description:
-                    merged_description = f"Merged topic combining: {', '.join([existing_topics[tid]['name'] for tid in merge_request.topic_ids])}"
-
-                # Calculate weighted averages for scores
-                # Get all assignments to calculate proper averages
-                cur.execute(
-                    f"""
-                    SELECT
-                        AVG(confidence_score) as avg_confidence,
-                        AVG(relevance_score) as avg_relevance
-                    FROM {sch}.article_topic_assignments
-                    WHERE topic_id = ANY(%s)
-                """,
-                    (merge_request.topic_ids,),
-                )
-
-                score_row = cur.fetchone()
-                new_confidence = (
-                    float(score_row[0] or primary_confidence)
-                    if score_row[0]
-                    else primary_confidence
-                )
-                new_accuracy = primary_accuracy  # Keep primary accuracy, or could recalculate
-
-                # Update primary topic
-                cur.execute(
-                    f"""
-                    UPDATE {sch}.topics
-                    SET
-                        description = %s,
-                        keywords = %s,
-                        confidence_score = %s,
-                        accuracy_score = %s,
-                        review_count = %s,
-                        correct_assignments = %s,
-                        incorrect_assignments = %s,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = %s
-                    RETURNING id, name
-                """,
-                    (
-                        merged_description,
-                        list(all_keywords),
-                        new_confidence,
-                        new_accuracy,
-                        total_reviews,
-                        total_correct,
-                        total_incorrect,
-                        primary_topic_id,
-                    ),
-                )
-
-                updated_primary = cur.fetchone()
-
-                # Transfer article assignments from merged topics to primary
-                # Handle duplicates by keeping the one with highest confidence
-                # First, get all assignments from topics to merge
-                cur.execute(
-                    f"""
-                    SELECT
-                        article_id,
-                        confidence_score,
-                        relevance_score,
-                        is_validated,
-                        is_correct,
-                        feedback_notes,
-                        assignment_method
-                    FROM {sch}.article_topic_assignments
-                    WHERE topic_id = ANY(%s)
-                    ORDER BY article_id, confidence_score DESC, relevance_score DESC
-                """,
-                    (topics_to_merge,),
-                )
-
-                assignments_to_transfer = cur.fetchall()
-
-                # Group by article_id and keep only the best assignment per article
-                assignments_by_article = {}
-                for row in assignments_to_transfer:
-                    article_id = row[0]
-                    if article_id not in assignments_by_article:
-                        assignments_by_article[article_id] = {
-                            "article_id": row[0],
-                            "confidence_score": float(row[1] or 0.5),
-                            "relevance_score": float(row[2] or 0.5),
-                            "is_validated": row[3],
-                            "is_correct": row[4],
-                            "feedback_notes": row[5],
-                            "assignment_method": row[6],
-                        }
-                    else:
-                        # Keep the one with higher confidence
-                        if (
-                            float(row[1] or 0.5)
-                            > assignments_by_article[article_id]["confidence_score"]
-                        ):
-                            assignments_by_article[article_id] = {
-                                "article_id": row[0],
-                                "confidence_score": float(row[1] or 0.5),
-                                "relevance_score": float(row[2] or 0.5),
-                                "is_validated": row[3],
-                                "is_correct": row[4],
-                                "feedback_notes": row[5],
-                                "assignment_method": row[6],
-                            }
-
-                # Insert or update assignments
-                for assignment in assignments_by_article.values():
                     cur.execute(
-                        f"""
-                        INSERT INTO {sch}.article_topic_assignments AS ata (
-                            article_id, topic_id, confidence_score, relevance_score,
-                            is_validated, is_correct, feedback_notes, assignment_method
-                        )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (article_id, topic_id) DO UPDATE SET
-                            confidence_score = GREATEST(
-                                ata.confidence_score,
-                                EXCLUDED.confidence_score
-                            ),
-                            relevance_score = GREATEST(
-                                ata.relevance_score,
-                                EXCLUDED.relevance_score
-                            ),
-                            updated_at = CURRENT_TIMESTAMP
-                    """,
-                        (
-                            assignment["article_id"],
-                            primary_topic_id,
-                            assignment["confidence_score"],
-                            assignment["relevance_score"],
-                            assignment["is_validated"],
-                            assignment["is_correct"],
-                            assignment["feedback_notes"],
-                            assignment["assignment_method"],
-                        ),
+                        f"DELETE FROM {sch}.article_topic_clusters WHERE topic_cluster_id = %s",
+                        (sec_id,),
                     )
+                    cur.execute(
+                        f"DELETE FROM {sch}.topic_keywords WHERE topic_cluster_id = %s",
+                        (sec_id,),
+                    )
+                    cur.execute(f"DELETE FROM {sch}.topic_clusters WHERE id = %s", (sec_id,))
 
-                # Delete assignments from merged topics (now that they're transferred)
-                cur.execute(
-                    f"""
-                    DELETE FROM {sch}.article_topic_assignments
-                    WHERE topic_id IN ({placeholders})
-                """,
-                    topics_to_merge,
-                )
-
-                # Mark merged topics as 'merged' status
-                cur.execute(
-                    f"""
-                    UPDATE {sch}.topics
-                    SET
-                        status = 'merged',
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id IN ({placeholders})
-                """,
-                    topics_to_merge,
-                )
-
-                # Get names of merged topics for response
-                cur.execute(
-                    f"""
-                    SELECT name FROM {sch}.topics
-                    WHERE id IN ({placeholders})
-                """,
-                    topics_to_merge,
-                )
-                merged_names = [row[0] for row in cur.fetchall()]
-
+                sync_cluster_article_count(cur, sch, primary_id)
                 conn.commit()
-
-                logger.info(
-                    f"Merged {len(topics_to_merge)} topics into {primary_name}: {merged_names}"
-                )
 
                 return {
                     "success": True,
                     "data": {
-                        "primary_topic": {"id": updated_primary[0], "name": updated_primary[1]},
+                        "primary_topic": {"id": primary_id, "name": primary_name},
                         "merged_topics": [
-                            {"id": tid, "name": existing_topics[tid]["name"]}
-                            for tid in topics_to_merge
+                            {"id": tid, "name": existing[tid]} for tid in secondary_ids
                         ],
-                        "merged_count": len(topics_to_merge),
-                        "total_articles": total_articles,
-                        "message": f"Successfully merged {len(topics_to_merge)} topics into '{updated_primary[1]}'",
+                        "merged_count": len(secondary_ids),
+                        "message": f"Merged {len(secondary_ids)} clusters into '{primary_name}'",
                     },
                 }
-
         finally:
             conn.close()
 
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error merging topics: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error merging topics: {str(e)}")

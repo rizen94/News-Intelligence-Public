@@ -11,6 +11,7 @@ Background service that automatically:
 Runs periodically via the AutomationManager.
 """
 
+import hashlib
 import json
 import logging
 import re
@@ -26,11 +27,38 @@ from services.ai_storyline_discovery import get_discovery_service
 from services.domain_synthesis_config import get_storyline_development_config
 from services.storyline_coherence_guardrails import (
     assess_mega_group_coherence,
+    assess_storyline_pair_merge_coherence,
+    is_leaked_storyline_title,
     is_overly_generic_storyline_title,
+    is_placeholder_mega_title,
+    mega_quality_score_for_title,
+    _FIVE_W_PLACEHOLDER_TOKENS,
 )
+from shared.storyline_article_counts import sync_counts_update_sql
 from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
+
+# Process-local centroid cache: skip recompute when article membership fingerprint matches.
+_CENTROID_CACHE: dict[tuple[str, int, str], np.ndarray] = {}
+_CENTROID_CACHE_MAX = 4000
+
+
+def _article_ids_fingerprint(article_ids: list[int]) -> str:
+    raw = ",".join(str(i) for i in sorted(int(x) for x in article_ids))
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _cache_centroid(domain: str, storyline_id: int, fp: str, centroid: np.ndarray) -> None:
+    if len(_CENTROID_CACHE) >= _CENTROID_CACHE_MAX:
+        # Drop an arbitrary ~10% of entries when full
+        for k in list(_CENTROID_CACHE.keys())[: max(1, _CENTROID_CACHE_MAX // 10)]:
+            _CENTROID_CACHE.pop(k, None)
+    _CENTROID_CACHE[(domain, int(storyline_id), fp)] = centroid
+
+
+def _cached_centroid(domain: str, storyline_id: int, fp: str) -> np.ndarray | None:
+    return _CENTROID_CACHE.get((domain, int(storyline_id), fp))
 
 
 def _schema_for_domain(domain_key: str) -> str:
@@ -47,7 +75,7 @@ MIN_ARTICLES_FOR_MEGA = 10  # Minimum articles for a mega-storyline
 MAX_MERGES_PER_RUN = 20  # Limit merges per run to avoid overload
 CONSOLIDATION_INTERVAL_MINUTES = 30  # How often to run
 
-# Entities that must not become mega-storyline titles (finance jargon, dates, outlets).
+# Entities that must not become mega-storyline titles (finance jargon, dates, outlets, 5W1H).
 _MEGA_ENTITY_STOPWORDS = frozenset(
     {
         "apy",
@@ -122,6 +150,24 @@ _MEGA_ENTITY_STOPWORDS = frozenset(
         "november",
         "december",
     }
+    | _FIVE_W_PLACEHOLDER_TOKENS
+    | {
+        "keywords",
+        "entities",
+        "ongoing",
+        "preview",
+        "transcript",
+        "summary",
+        "filings",
+        "record",
+        "best",
+        "here",
+        "once",
+        "more",
+        "week",
+        "lock",
+        "co",
+    }
 )
 
 _RATE_ROUNDUP_TITLE_RE = re.compile(
@@ -189,7 +235,7 @@ def _is_earnings_reports_mega_cluster(children: list["StorylineInfo"]) -> bool:
 
 
 def derive_mega_storyline_title(children: list["StorylineInfo"]) -> str:
-    """Build a human-readable mega-storyline title (never bare 'APY' / 'Earn')."""
+    """Build a human-readable mega-storyline title (never bare 'APY' / 'Earn' / 5W1H)."""
     if not children:
         return "Related Stories"
 
@@ -209,7 +255,12 @@ def derive_mega_storyline_title(children: list["StorylineInfo"]) -> str:
             top = [e for e, n in ranked if n >= 2][:3]
             if top:
                 label = ", ".join(e.title() if e.isalpha() else e for e in top)
-                return f"Ongoing: {label} earnings & filings"
+                candidate = f"Ongoing: {label} earnings & filings"
+                if not (
+                    is_overly_generic_storyline_title(candidate)
+                    or is_placeholder_mega_title(candidate)
+                ):
+                    return candidate
         return "Ongoing: Cross-company earnings & filings"
 
     entity_counts: dict[str, int] = defaultdict(int)
@@ -221,21 +272,48 @@ def derive_mega_storyline_title(children: list["StorylineInfo"]) -> str:
             entity_counts[key] += 1
 
     if entity_counts:
-        top_entity = max(entity_counts, key=entity_counts.get)
+        # Prefer entities shared across children; fall back to most frequent.
+        shared = [(e, n) for e, n in entity_counts.items() if n >= 2]
+        pool = shared if shared else list(entity_counts.items())
+        top_entity = max(pool, key=lambda kv: (kv[1], len(kv[0])))[0]
         if top_entity not in _MEGA_ENTITY_STOPWORDS:
             label = top_entity.upper() if len(top_entity) <= 4 else top_entity.title()
-            return f"Ongoing: {label}"
+            candidate = f"Ongoing: {label}"
+            if not (
+                is_overly_generic_storyline_title(candidate)
+                or is_placeholder_mega_title(candidate)
+                or is_leaked_storyline_title(candidate)
+            ):
+                return candidate
 
     phrase = _common_title_phrase(children)
     if phrase:
         candidate = f"Ongoing: {phrase}"
-        if not is_overly_generic_storyline_title(candidate):
+        if not (
+            is_overly_generic_storyline_title(candidate)
+            or is_placeholder_mega_title(candidate)
+        ):
             return candidate
 
     base = (children[0].title or "Related stories").strip()
+    if is_leaked_storyline_title(base) or is_placeholder_mega_title(base):
+        for child in children[1:]:
+            alt = (child.title or "").strip()
+            if alt and not is_leaked_storyline_title(alt) and not is_placeholder_mega_title(alt):
+                base = alt
+                break
+        else:
+            return "Related Stories"
     if len(base) > 48:
         base = base[:48].rsplit(" ", 1)[0] + "…"
     return f"Related Stories: {base}"
+
+
+def _distinct_article_count(members: list["StorylineInfo"]) -> int:
+    """Distinct article_id count across storylines (not sum of stale columns)."""
+    from shared.storyline_article_counts import distinct_article_count
+
+    return distinct_article_count(members)
 
 
 @dataclass
@@ -375,6 +453,7 @@ class StorylineConsolidationService:
                         (storyline.id,),
                     )
                     storyline.article_ids = [r["article_id"] for r in cur.fetchall()]
+                    storyline.article_count = len(storyline.article_ids)
 
                     storylines.append(storyline)
 
@@ -404,6 +483,18 @@ class StorylineConsolidationService:
                 for storyline in storylines:
                     if not storyline.article_ids:
                         # Still try to get entities from the storyline title/description
+                        storyline.entities = self.discovery_service.extract_entities(
+                            f"{storyline.title} {storyline.description}"
+                        )
+                        entity_count += len(storyline.entities)
+                        continue
+
+                    fp = _article_ids_fingerprint(list(storyline.article_ids))
+                    cached = _cached_centroid(domain, int(storyline.id), fp)
+                    if cached is not None:
+                        storyline.centroid = cached
+                        embedding_count += 1
+                        # Still refresh entities from title/description (cheap)
                         storyline.entities = self.discovery_service.extract_entities(
                             f"{storyline.title} {storyline.description}"
                         )
@@ -452,6 +543,7 @@ class StorylineConsolidationService:
                         norm = np.linalg.norm(storyline.centroid)
                         if norm > 0:
                             storyline.centroid = storyline.centroid / norm
+                        _cache_centroid(domain, int(storyline.id), fp, storyline.centroid)
                         embedding_count += 1
 
                     storyline.entities = entities
@@ -553,17 +645,36 @@ class StorylineConsolidationService:
         return result
 
     def find_merge_candidates(
-        self, storylines: list[StorylineInfo], threshold: float = MERGE_SIMILARITY_THRESHOLD
+        self,
+        storylines: list[StorylineInfo],
+        threshold: float = MERGE_SIMILARITY_THRESHOLD,
+        *,
+        domain: str = "",
     ) -> list[tuple[StorylineInfo, StorylineInfo, dict]]:
         """
         Find pairs of storylines that should be merged.
 
         Works with or without embeddings, using entity/title similarity as fallback.
+        Coherence gate rejects pairs without shared non-stopword entities.
         """
         candidates = []
         n = len(storylines)
+        skipped_coherence = 0
 
         logger.debug(f"Comparing {n} storylines for merge candidates (threshold: {threshold:.0%})")
+
+        if domain:
+            try:
+                from services.domain_synthesis_config import get_domain_synthesis_config
+
+                if not get_domain_synthesis_config(domain).link_score_profile.allow_storyline_merge:
+                    logger.info(
+                        "find_merge_candidates: skip merges for domain %s (story_kind disallows)",
+                        domain,
+                    )
+                    return []
+            except Exception:
+                pass
 
         for i in range(n):
             for j in range(i + 1, n):
@@ -585,7 +696,51 @@ class StorylineConsolidationService:
 
                 similarity = self.calculate_storyline_similarity(s1, s2)
 
+                if domain:
+                    try:
+                        from services.domain_synthesis_config import (
+                            get_domain_synthesis_config,
+                            temporal_proximity_score,
+                        )
+                        from services.embedding_link_candidate_service import (
+                            blend_link_score,
+                            days_apart,
+                        )
+
+                        profile = get_domain_synthesis_config(domain).link_score_profile
+                        gap = days_apart(
+                            getattr(s1, "last_event_at", None),
+                            getattr(s2, "last_event_at", None),
+                        )
+                        temp_p = temporal_proximity_score(
+                            gap, half_life_days=profile.temporal_half_life_days
+                        )
+                        can_j = float(similarity.get("entity") or 0.0)
+                        blended = blend_link_score(
+                            semantic=float(similarity.get("semantic") or 0.0),
+                            entity_jaccard=float(similarity.get("entity") or 0.0),
+                            canonical_jaccard=can_j,
+                            temporal_proximity=temp_p,
+                            domain_key=domain,
+                        )
+                        factor = 0.5 + 0.5 * blended
+                        similarity["overall"] = float(similarity["overall"]) * factor
+                        similarity["temporal"] = temp_p
+                        similarity["blend"] = blended
+                    except Exception:
+                        pass
+
                 if similarity["overall"] >= threshold:
+                    ok, reason = assess_storyline_pair_merge_coherence(domain, s1, s2)
+                    if not ok:
+                        skipped_coherence += 1
+                        logger.debug(
+                            "Merge skipped (coherence %s): '%s' + '%s'",
+                            reason,
+                            (s1.title or "")[:30],
+                            (s2.title or "")[:30],
+                        )
+                        continue
                     candidates.append((s1, s2, similarity))
                     logger.debug(
                         f"Merge candidate: '{s1.title[:30]}' + '{s2.title[:30]}' "
@@ -595,7 +750,13 @@ class StorylineConsolidationService:
         # Sort by similarity descending
         candidates.sort(key=lambda x: x[2]["overall"], reverse=True)
 
-        logger.info(f"Found {len(candidates)} merge candidates above {threshold:.0%} threshold")
+        logger.info(
+            "Found %s merge candidates above %.0f%% threshold "
+            "(%s skipped for coherence)",
+            len(candidates),
+            threshold * 100,
+            skipped_coherence,
+        )
 
         return candidates[:MAX_MERGES_PER_RUN]
 
@@ -614,49 +775,97 @@ class StorylineConsolidationService:
         - Marks secondary as merged
         - Creates merge history entry
         """
+        ok, reason = assess_storyline_pair_merge_coherence(domain, primary, secondary)
+        if not ok:
+            logger.info(
+                "Skipping merge %s <- %s (coherence %s)",
+                primary.id,
+                secondary.id,
+                reason,
+            )
+            return None
+
         schema = _schema_for_domain(domain)
         conn = self.get_db_connection()
 
         try:
             with conn.cursor() as cur:
-                # Move articles from secondary to primary
-                cur.execute(
-                    f"""
-                    INSERT INTO {schema}.storyline_articles
-                    (storyline_id, article_id, relevance_score, created_at)
-                    SELECT %s, article_id, relevance_score, NOW()
-                    FROM {schema}.storyline_articles
-                    WHERE storyline_id = %s
-                    ON CONFLICT (storyline_id, article_id) DO NOTHING
-                """,
-                    (primary.id, secondary.id),
+                from shared.assembly_link_funnel import storyline_articles_write_allowed
+
+                try:
+                    from services.episode_merge_service import (
+                        episode_merge_enabled,
+                        merge_episodes_eel_aware,
+                    )
+                except Exception:
+                    episode_merge_enabled = lambda: False  # type: ignore[misc, assignment]
+                    merge_episodes_eel_aware = None  # type: ignore[misc, assignment]
+
+                if episode_merge_enabled() and merge_episodes_eel_aware is not None:
+                    result = merge_episodes_eel_aware(
+                        conn,
+                        domain_key=domain,
+                        primary_id=int(primary.id),
+                        secondary_id=int(secondary.id),
+                        reason="consolidation",
+                    )
+                    if result.get("success"):
+                        conn.commit()
+                        logger.info(
+                            "EEL merge %s <- %s (sim: %.0f%%, eel_moved=%s)",
+                            primary.id,
+                            secondary.id,
+                            similarity["overall"] * 100,
+                            result.get("eel_moved", 0),
+                        )
+                        return primary.id
+                    conn.rollback()
+
+                if not storyline_articles_write_allowed():
+                    logger.info(
+                        "Skipping merge %s <- %s (episode mode, EEL merge unavailable)",
+                        primary.id,
+                        secondary.id,
+                    )
+                    return None
+
+                from shared.membership_store import copy_bag_rows
+
+                moved_count = copy_bag_rows(
+                    cur,
+                    schema=schema,
+                    from_storyline_id=int(secondary.id),
+                    to_storyline_id=int(primary.id),
+                    added_by="consolidation_move",
                 )
 
-                moved_count = cur.rowcount
+                # True move: drop secondary membership so archived dups are empty
+                cur.execute(
+                    f"DELETE FROM {schema}.storyline_articles WHERE storyline_id = %s",
+                    (secondary.id,),
+                )
 
                 # Update primary article count
                 cur.execute(
                     f"""
                     UPDATE {schema}.storylines
-                    SET article_count = (
-                        SELECT COUNT(*) FROM {schema}.storyline_articles
-                        WHERE storyline_id = %s
-                    ),
+                    SET {sync_counts_update_sql(schema)},
                     merge_count = COALESCE(merge_count, 0) + 1,
                     consolidation_score = GREATEST(COALESCE(consolidation_score, 0), %s),
                     last_consolidated_at = NOW(),
                     updated_at = NOW()
                     WHERE id = %s
                 """,
-                    (primary.id, similarity["overall"], primary.id),
+                    (primary.id, primary.id, similarity["overall"], primary.id),
                 )
 
-                # Mark secondary as merged
+                # Mark secondary as merged and zero its count
                 cur.execute(
                     f"""
                     UPDATE {schema}.storylines
                     SET merged_into_id = %s,
                         status = 'archived',
+                        article_count = 0,
                         updated_at = NOW()
                     WHERE id = %s
                 """,
@@ -831,8 +1040,8 @@ class StorylineConsolidationService:
                         queue.append(neighbor)
 
             # Only create mega-storyline if group has multiple members
-            # and enough total articles
-            total_articles = sum(s.article_count for s in component)
+            # and enough total articles (distinct IDs, not sum of stale columns)
+            total_articles = _distinct_article_count(component)
 
             if len(component) >= 2 and total_articles >= min_articles_for_mega:
                 ok, reason = assess_mega_group_coherence(domain, component)
@@ -874,21 +1083,22 @@ class StorylineConsolidationService:
                 """,
                 (canonical_id, dup_id),
             )
-            cur.execute(
-                f"""
-                INSERT INTO {schema}.storyline_articles
-                (storyline_id, article_id, relevance_score, created_at)
-                SELECT %s, article_id, relevance_score * 0.9, NOW()
-                FROM {schema}.storyline_articles
-                WHERE storyline_id = %s
-                ON CONFLICT (storyline_id, article_id) DO NOTHING
-                """,
-                (canonical_id, dup_id),
-            )
-            cur.execute(
-                f"DELETE FROM {schema}.storyline_articles WHERE storyline_id = %s",
-                (dup_id,),
-            )
+            from shared.assembly_link_funnel import storyline_articles_write_allowed
+            from shared.membership_store import copy_bag_rows
+
+            if storyline_articles_write_allowed():
+                copy_bag_rows(
+                    cur,
+                    schema=schema,
+                    from_storyline_id=int(dup_id),
+                    to_storyline_id=int(canonical_id),
+                    added_by="consolidation_move",
+                    relevance_multiplier=0.9,
+                )
+                cur.execute(
+                    f"DELETE FROM {schema}.storyline_articles WHERE storyline_id = %s",
+                    (dup_id,),
+                )
             cur.execute(
                 f"""
                 UPDATE {schema}.storylines
@@ -899,7 +1109,7 @@ class StorylineConsolidationService:
             )
 
     def _refresh_mega_counts_from_db(self, cur, schema: str, mega_id: int) -> None:
-        """Set description and article totals from child rows and pooled articles."""
+        """Set article totals and a child-title synopsis (no Mega-storyline covering… template)."""
         cur.execute(
             f"""
             SELECT COUNT(*)::int FROM {schema}.storylines
@@ -921,10 +1131,30 @@ class StorylineConsolidationService:
             (mega_id, mega_id),
         )
         art_n = cur.fetchone()[0]
-        desc = (
-            f"Mega-storyline covering {sub_n} related sub-stories "
-            f"with {art_n} total articles"
+        cur.execute(
+            f"""
+            SELECT title FROM {schema}.storylines
+            WHERE parent_storyline_id = %s AND merged_into_id IS NULL
+            ORDER BY article_count DESC NULLS LAST, id ASC
+            LIMIT 8
+            """,
+            (mega_id,),
         )
+        child_titles = [r[0] for r in cur.fetchall() if r and r[0]]
+        usable: list[str] = []
+        for title in child_titles:
+            t = (title or "").strip()
+            if not t:
+                continue
+            if is_leaked_storyline_title(t) or is_placeholder_mega_title(t):
+                continue
+            if is_overly_generic_storyline_title(t):
+                continue
+            short = t if len(t) <= 72 else t[:69].rsplit(" ", 1)[0] + "…"
+            usable.append(short)
+            if len(usable) >= 3:
+                break
+        desc = f"Sub-stories: {'; '.join(usable)}" if usable else None
         cur.execute(
             f"""
             UPDATE {schema}.storylines
@@ -935,6 +1165,19 @@ class StorylineConsolidationService:
             WHERE id = %s
             """,
             (art_n, art_n, desc, mega_id),
+        )
+        # sub_n unused except for logging callers; keep local for clarity
+        _ = sub_n
+
+    def _stamp_mega_quality(self, cur, schema: str, mega_id: int, title: str, *, coherent: bool) -> None:
+        score = mega_quality_score_for_title(title, coherent=coherent)
+        cur.execute(
+            f"""
+            UPDATE {schema}.storylines
+            SET quality_score = %s, updated_at = NOW()
+            WHERE id = %s
+            """,
+            (score, mega_id),
         )
 
     def create_mega_storyline(self, domain: str, children: list[StorylineInfo]) -> int | None:
@@ -957,13 +1200,27 @@ class StorylineConsolidationService:
         try:
             with conn.cursor() as cur:
                 mega_title = derive_mega_storyline_title(children)
-                if is_overly_generic_storyline_title(mega_title, domain):
+                if (
+                    is_overly_generic_storyline_title(mega_title, domain)
+                    or is_placeholder_mega_title(mega_title)
+                    or is_leaked_storyline_title(mega_title)
+                ):
                     logger.info(
-                        "Skipping mega create — generic title %r (%s children)",
+                        "Skipping mega create — generic/placeholder title %r (%s children)",
                         mega_title,
                         len(children),
                     )
                     return None
+
+                coherent_ok, coherent_reason = assess_mega_group_coherence(domain, children)
+                if not coherent_ok:
+                    logger.info(
+                        "Skipping mega create — coherence %s (%s children)",
+                        coherent_reason,
+                        len(children),
+                    )
+                    return None
+                quality = mega_quality_score_for_title(mega_title, coherent=True)
 
                 # Reuse existing mega with the same canonical title (avoid duplicate "Ongoing: X" rows)
                 cur.execute(
@@ -984,25 +1241,26 @@ class StorylineConsolidationService:
                 if mega_id is not None:
                     self._fold_duplicate_mega_rows(cur, schema, mega_title, mega_id)
                 else:
-                    total_articles = sum(c.article_count for c in children)
+                    total_articles = _distinct_article_count(children)
                     cur.execute(
                         f"""
                         INSERT INTO {schema}.storylines
                         (storyline_uuid, title, description, status, processing_status,
                          article_count, total_articles, is_mega_storyline,
-                         consolidation_score, created_at, updated_at)
+                         consolidation_score, quality_score, created_at, updated_at)
                         VALUES (
                             gen_random_uuid(), %s, %s, 'active', 'completed',
-                            %s, %s, TRUE, %s, NOW(), NOW()
+                            %s, %s, TRUE, %s, %s, NOW(), NOW()
                         )
                         RETURNING id
                         """,
                         (
                             mega_title,
-                            "Mega-storyline (initializing…)",
+                            None,
                             total_articles,
                             total_articles,
                             0.8,
+                            quality,
                         ),
                     )
                     ins = cur.fetchone()
@@ -1025,19 +1283,23 @@ class StorylineConsolidationService:
                 for child in children:
                     if child.id == mega_id:
                         continue
-                    cur.execute(
-                        f"""
-                        INSERT INTO {schema}.storyline_articles
-                        (storyline_id, article_id, relevance_score, created_at)
-                        SELECT %s, article_id, relevance_score * 0.9, NOW()
-                        FROM {schema}.storyline_articles
-                        WHERE storyline_id = %s
-                        ON CONFLICT (storyline_id, article_id) DO NOTHING
-                    """,
-                        (mega_id, child.id),
+                    from shared.assembly_link_funnel import storyline_articles_write_allowed
+                    from shared.membership_store import copy_bag_rows
+
+                    if not storyline_articles_write_allowed():
+                        # Episode mode: megas are containers — never pool child bags.
+                        continue
+                    copy_bag_rows(
+                        cur,
+                        schema=schema,
+                        from_storyline_id=int(child.id),
+                        to_storyline_id=int(mega_id),
+                        added_by="consolidation_move",
+                        relevance_multiplier=0.9,
                     )
 
                 self._refresh_mega_counts_from_db(cur, schema, mega_id)
+                self._stamp_mega_quality(cur, schema, mega_id, mega_title, coherent=True)
 
                 conn.commit()
 
@@ -1137,7 +1399,9 @@ class StorylineConsolidationService:
 
             # Step 3: Find merge candidates
             logger.info(f"[{domain}] Finding merge candidates from {len(storylines)} storylines...")
-            merge_candidates = self.find_merge_candidates(storylines, threshold=merge_threshold)
+            merge_candidates = self.find_merge_candidates(
+                storylines, threshold=merge_threshold, domain=domain
+            )
             result["merge_candidates_found"] = len(merge_candidates)
 
             # Step 4: Perform merges
