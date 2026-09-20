@@ -95,7 +95,10 @@ npm-debug.log*
 
 # Large data files
 *.csv
-models/
+# ML model binaries, but NOT source packages named models/
+# (api/domains/*/models/ hold pydantic models — e.g. storyline_models.py).
+/models/
+**/ml_models/
 
 # Large backup and export files
 news-system-backup-*/
