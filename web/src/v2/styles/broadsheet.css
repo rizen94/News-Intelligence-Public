@@ -209,10 +209,17 @@
 .v2-story-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem 1rem;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
   font-size: 0.78rem;
   color: var(--v2-ink-muted);
   margin-top: 0.25rem;
+}
+
+.v2-meta-sep {
+  color: var(--v2-ink-muted);
+  opacity: 0.55;
+  user-select: none;
 }
 
 .v2-badge {

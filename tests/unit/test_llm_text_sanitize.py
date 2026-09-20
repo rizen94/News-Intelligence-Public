@@ -69,3 +69,65 @@ def test_sanitize_on_persist_narrative_truncates():
     long_text = "word " * 900
     out = sanitize_on_persist(long_text, "narrative", max_length=100)
     assert len(out) <= 100
+
+
+def test_sanitize_reader_dek_strips_analysis_template():
+    from shared.llm_text_sanitize import sanitize_reader_dek
+
+    title = "Israeli Troops Evict Palestinian Families Amid Escalating Settler Violence in West Bank"
+    raw = (
+        f"**Storyline Analysis: {title}**\n\n"
+        "**Main Narrative Thread:**\n"
+        "The Israeli military's forced displacement of two Palestinian families "
+        "from their homes in Qusra, a village in the occupied West Bank, amidst a broader campaign"
+    )
+    out = sanitize_reader_dek(raw, title=title, max_length=280)
+    assert "**" not in out
+    assert "Main Narrative Thread" not in out
+    assert "Storyline Analysis" not in out
+    assert out.startswith("The Israeli military's forced displacement")
+
+
+def test_sanitize_reader_dek_skips_bold_title_echo():
+    from shared.llm_text_sanitize import sanitize_reader_dek
+
+    title = "US Anti-Terror Scheme Sees Record High Referrals Amid Rising Rightwing Extremism"
+    raw = (
+        f"**{title}**\n\n**Main Narrative Thread**\n\n"
+        "The Prevent anti-terror scheme in the US has seen a record high number of referrals."
+    )
+    out = sanitize_reader_dek(raw, title=title, max_length=280)
+    assert out.startswith("The Prevent anti-terror scheme")
+    assert "**" not in out
+
+
+def test_sanitize_reader_dek_inline_narrative_preamble():
+    from shared.llm_text_sanitize import sanitize_reader_dek
+
+    raw = (
+        "**BAE Systems Fined $36m Amid Trump's Cyber Privateering Push**\n\n"
+        "The main narrative thread of this story revolves around the UK defense "
+        "contractor BAE Systems facing a $36 million penalty for violating US arms export rules."
+    )
+    out = sanitize_reader_dek(
+        raw,
+        title="BAE Systems Fined $36m Amid Trump's Cyber Privateering Push",
+        max_length=280,
+    )
+    assert out.startswith("The UK defense contractor BAE Systems")
+    assert "main narrative thread" not in out.casefold()
+    assert "**" not in out
+
+
+def test_sanitize_reader_dek_strips_storyline_colon_prefix():
+    from shared.llm_text_sanitize import sanitize_reader_dek
+
+    raw = "Storyline: Wasserman Schultz's Challenger Wins Progressive Support Amid Global Economic Uncertainty"
+    out = sanitize_reader_dek(
+        raw,
+        title="Wasserman Schultz's Challenger Wins Progressive Support Amid Global Economic Uncertainty",
+        max_length=280,
+    )
+    # Title-echo after Storyline: strip → empty or non-echo prose only
+    assert not out.lower().startswith("storyline:")
+    assert "**" not in out

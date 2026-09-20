@@ -55,17 +55,16 @@ def _parse_editorial(raw: Any) -> dict[str, Any]:
 
 
 def _dek_from_row(editorial: dict[str, Any], description: str | None, title: str) -> str:
-    lede = (editorial.get("lede") or "").strip()
-    if lede:
-        return lede
-    what = (editorial.get("what") or "").strip()
-    if what:
-        return what
-    desc = (description or "").strip()
-    if desc:
-        # First sentence-ish
-        cut = desc.find(". ")
-        return (desc[: cut + 1] if cut > 40 else desc)[:280]
+    from shared.llm_text_sanitize import sanitize_reader_dek
+
+    for raw in (
+        editorial.get("lede"),
+        editorial.get("what"),
+        description,
+    ):
+        cleaned = sanitize_reader_dek(raw, title=title, max_length=280)
+        if cleaned:
+            return cleaned
     return ""
 
 
