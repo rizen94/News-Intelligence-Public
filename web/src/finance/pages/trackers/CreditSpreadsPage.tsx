@@ -668,6 +668,28 @@ export default function CreditSpreadsPage() {
   const hyLevels = fredData?.level_refs?.hy;
   const igLevels = fredData?.level_refs?.ig;
 
+  /** Include historic hi/lo so teaching lines stay on-plot even in a calm 1y window. */
+  const yDomain = useMemo((): [number, number] | ['auto', 'auto'] => {
+    const vals: number[] = [];
+    for (const row of chartData) {
+      if (row.hy_bps != null) vals.push(row.hy_bps);
+      if (row.ig_bps != null) vals.push(row.ig_bps);
+    }
+    for (const series of [hyLevels, igLevels]) {
+      const h = series?.historic;
+      if (h?.high?.bps != null) vals.push(h.high.bps);
+      if (h?.low?.bps != null) vals.push(h.low.bps);
+      if (h?.median_bps != null) vals.push(h.median_bps);
+      if (series?.week?.bps != null) vals.push(series.week.bps);
+      if (series?.month?.bps != null) vals.push(series.month.bps);
+    }
+    if (!vals.length) return ['auto', 'auto'];
+    const lo = Math.min(...vals);
+    const hi = Math.max(...vals);
+    const pad = Math.max(8, (hi - lo) * 0.06);
+    return [Math.floor(lo - pad), Math.ceil(hi + pad)];
+  }, [chartData, hyLevels, igLevels]);
+
   return (
     <div>
       <h1 className='finance-page-title'>Credit spreads</h1>
@@ -784,7 +806,8 @@ export default function CreditSpreadsPage() {
                     <XAxis dataKey='date' tick={{ fontSize: 11 }} minTickGap={40} />
                     <YAxis
                       tick={{ fontSize: 11 }}
-                      domain={['auto', 'auto']}
+                      domain={yDomain}
+                      allowDataOverflow={false}
                       label={{ value: 'bps', angle: -90, position: 'insideLeft', offset: 8 }}
                     />
                     <Tooltip
