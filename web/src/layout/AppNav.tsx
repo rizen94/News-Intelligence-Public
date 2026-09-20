@@ -37,6 +37,8 @@ type NavItem = {
   label: string;
   icon: React.ReactNode;
   domain?: string;
+  /** Absolute app path (e.g. /finance) — skips domain prefix */
+  absolute?: boolean;
 };
 type NavSection = { id: string; label: string; items: NavItem[] };
 
@@ -119,8 +121,14 @@ const NAV_SECTIONS: NavSection[] = [
     label: 'Finance',
     items: [
       {
+        path: '/finance',
+        label: 'Finance product',
+        icon: <ShowChartIcon />,
+        absolute: true,
+      },
+      {
         path: 'commodity/gold',
-        label: 'Commodity',
+        label: 'Commodity (classic)',
         icon: <ShowChartIcon />,
         domain: 'finance',
       },
@@ -165,11 +173,11 @@ export function AppNav() {
             </ListSubheader>
           }
         >
-          {section.items.map(({ path, label, icon }) => {
-            const fullPath = `${base}/${path}`;
+          {section.items.map(({ path, label, icon, absolute }) => {
+            const fullPath = absolute ? path : `${base}/${path}`;
             const monitorExact = `${base}/monitor`;
             let navSelected = location.pathname === fullPath;
-            if (!navSelected && !path.includes('/')) {
+            if (!navSelected && !absolute && !path.includes('/')) {
               navSelected = location.pathname.startsWith(`${fullPath}/`);
               if (
                 path === 'monitor' &&
@@ -179,12 +187,19 @@ export function AppNav() {
                 navSelected = false;
               }
             }
+            if (absolute && path === '/finance') {
+              navSelected =
+                location.pathname === '/finance' ||
+                location.pathname.startsWith('/finance/trackers') ||
+                location.pathname.startsWith('/finance/markets') ||
+                location.pathname.startsWith('/finance/reporting');
+            }
             return (
               <ListItemButton
                 key={path}
                 selected={navSelected}
                 onClick={() => {
-                  navigate(`${base}/${path}`);
+                  navigate(fullPath);
                   setMobileOpen(false);
                 }}
               >
@@ -195,6 +210,21 @@ export function AppNav() {
           })}
         </List>
       ))}
+      <List dense sx={{ mt: 1, borderTop: 1, borderColor: 'divider', pt: 1 }}>
+        <ListItemButton
+          onClick={() => {
+            navigate('/v2');
+            setMobileOpen(false);
+          }}
+        >
+          <ListItemText
+            primary='Try new app'
+            secondary='Broadsheet /v2'
+            primaryTypographyProps={{ fontWeight: 600, fontSize: '0.875rem' }}
+            secondaryTypographyProps={{ fontSize: '0.7rem' }}
+          />
+        </ListItemButton>
+      </List>
     </Box>
   );
 

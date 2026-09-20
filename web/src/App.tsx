@@ -1,9 +1,13 @@
 /**
  * News Intelligence — web SPA entry (React + Vite + MUI).
  *
- * Routing: React Router wraps the app; routes live under `/:domain/*` (e.g.
- * `/{domain}/dashboard`) via MainLayout. Domains come from the API
- * (`/api/system_monitoring/registry_domains`) with a static fallback — see `utils/domainHelper` and AGENTS.md.
+ * Routing:
+ * - Legacy (default): `/:domain/*` via MainLayout — unchanged until explicit cutover.
+ * - v2 User: `/v2/*` (Modern Broadsheet reader) under `web/src/v2/`.
+ * - v2 Admin: `/v2/admin/*` (utilitarian ops) — parallel to classic Operations.
+ *
+ * Domains come from the API (`/api/system_monitoring/registry_domains`) with a
+ * static fallback — see `utils/domainHelper` and AGENTS.md.
  *
  * API calls: `apiConnectionManager` sets base URL and domain for `/api/{domain}/...`
  * and global `/api/...` routes (see docs/WEB_API_CONNECTIONS.md).
@@ -37,10 +41,71 @@ import './utils/featureTestHelper';
 import MainLayout from './layout/MainLayout';
 import { getDefaultDomainKey } from './utils/domainHelper';
 
+const FinanceLayout = React.lazy(() => import('./finance/layouts/FinanceLayout'));
+const FinanceHomePage = React.lazy(() => import('./finance/pages/FinanceHomePage'));
+const TrackersIndexPage = React.lazy(
+  () => import('./finance/pages/trackers/TrackersIndexPage')
+);
+const UsdPurchasingPowerPage = React.lazy(
+  () => import('./finance/pages/trackers/UsdPurchasingPowerPage')
+);
+const CreditSpreadsPage = React.lazy(
+  () => import('./finance/pages/trackers/CreditSpreadsPage')
+);
+const MarketsIndexPage = React.lazy(
+  () => import('./finance/pages/markets/MarketsIndexPage')
+);
+const CommodityMarketsPage = React.lazy(
+  () => import('./finance/pages/markets/CommodityMarketsPage')
+);
+const MacroMarketsPage = React.lazy(
+  () => import('./finance/pages/markets/MacroMarketsPage')
+);
+const ReportingIndexPage = React.lazy(
+  () => import('./finance/pages/reporting/ReportingIndexPage')
+);
+const ReportingAnalysisPage = React.lazy(
+  () => import('./finance/pages/reporting/ReportingAnalysisPage')
+);
+const ReportingAnalysisResultPage = React.lazy(
+  () => import('./finance/pages/reporting/ReportingAnalysisResultPage')
+);
+const ReportingEvidencePage = React.lazy(
+  () => import('./finance/pages/reporting/ReportingEvidencePage')
+);
+const ReportingTracesPage = React.lazy(
+  () => import('./finance/pages/reporting/ReportingTracesPage')
+);
+
 const PageFallback = () => (
   <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
     <CircularProgress size={32} />
   </Box>
+);
+
+/* v2 parallel app — do not replace legacy /:domain routes */
+const V2UserLayout = React.lazy(() => import('./v2/layouts/UserLayout'));
+const V2AdminLayout = React.lazy(() => import('./v2/layouts/AdminLayout'));
+const V2HomePage = React.lazy(() => import('./v2/pages/Home/HomePage'));
+const V2NewsPage = React.lazy(() => import('./v2/pages/News/NewsPage'));
+const V2CurrentPage = React.lazy(() => import('./v2/pages/Current/CurrentPage'));
+const V2OneOffsPage = React.lazy(() => import('./v2/pages/OneOffs/OneOffsPage'));
+const V2StorylineReaderPage = React.lazy(
+  () => import('./v2/pages/StorylineReader/StorylineReaderPage')
+);
+const V2EntityDossierPage = React.lazy(
+  () => import('./v2/pages/EntityDossier/EntityDossierPage')
+);
+const V2AdminOverviewPage = React.lazy(
+  () => import('./v2/pages/admin/AdminOverviewPage')
+);
+const V2AdminMonitorPage = React.lazy(
+  () => import('./v2/pages/admin/AdminMonitorPage')
+);
+const V2AdminWorkPage = React.lazy(() => import('./v2/pages/admin/AdminWorkPage'));
+const V2AdminSqlPage = React.lazy(() => import('./v2/pages/admin/AdminSqlPage'));
+const V2AdminAuditPage = React.lazy(
+  () => import('./v2/pages/admin/AdminAuditPage')
 );
 
 const Dashboard = React.lazy(() => import('./pages/Dashboard/Dashboard'));
@@ -117,6 +182,97 @@ function App() {
                   path='/'
                   element={<Navigate to={defaultDomainPath} replace />}
                 />
+                {/* News /v2 — registered before /:domain so "v2" is not a domain */}
+                <Route path='/v2' element={<V2UserLayout />}>
+                  <Route index element={<V2HomePage />} />
+                  <Route path='news' element={<V2NewsPage />} />
+                  <Route path='current' element={<V2CurrentPage />} />
+                  <Route path='one-offs' element={<V2OneOffsPage />} />
+                  <Route
+                    path='storylines/:domain/:id'
+                    element={<V2StorylineReaderPage />}
+                  />
+                  <Route path='entities/:id' element={<V2EntityDossierPage />} />
+                </Route>
+                {/* Admin — ops only; also aliased at /admin */}
+                <Route path='/v2/admin' element={<V2AdminLayout />}>
+                  <Route index element={<V2AdminOverviewPage />} />
+                  <Route path='monitor' element={<V2AdminMonitorPage />} />
+                  <Route path='work' element={<V2AdminWorkPage />} />
+                  <Route path='sql' element={<V2AdminSqlPage />} />
+                  <Route path='audit' element={<V2AdminAuditPage />} />
+                </Route>
+                <Route path='/admin' element={<V2AdminLayout />}>
+                  <Route index element={<V2AdminOverviewPage />} />
+                  <Route path='monitor' element={<V2AdminMonitorPage />} />
+                  <Route path='work' element={<V2AdminWorkPage />} />
+                  <Route path='sql' element={<V2AdminSqlPage />} />
+                  <Route path='audit' element={<V2AdminAuditPage />} />
+                </Route>
+                {/* Finance product tree */}
+                <Route path='/finance' element={<FinanceLayout />}>
+                  <Route index element={<FinanceHomePage />} />
+                  <Route path='trackers' element={<TrackersIndexPage />} />
+                  <Route
+                    path='trackers/usd-purchasing-power'
+                    element={<UsdPurchasingPowerPage />}
+                  />
+                  <Route
+                    path='trackers/credit-spreads'
+                    element={<CreditSpreadsPage />}
+                  />
+                  <Route path='markets' element={<MarketsIndexPage />} />
+                  <Route
+                    path='markets/commodity'
+                    element={<Navigate to='/finance/markets/commodity/gold' replace />}
+                  />
+                  <Route
+                    path='markets/commodity/:commodity'
+                    element={<CommodityMarketsPage />}
+                  />
+                  <Route path='markets/macro' element={<MacroMarketsPage />} />
+                  <Route path='reporting' element={<ReportingIndexPage />} />
+                  <Route
+                    path='reporting/analysis'
+                    element={
+                      <DemoRouteGuard>
+                        <ReportingAnalysisPage />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='reporting/analysis/:taskId'
+                    element={
+                      <DemoRouteGuard>
+                        <ReportingAnalysisResultPage />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='reporting/evidence'
+                    element={
+                      <DemoRouteGuard>
+                        <ReportingEvidencePage />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='reporting/traces'
+                    element={
+                      <DemoRouteGuard>
+                        <ReportingTracesPage />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='reporting/traces/:taskId'
+                    element={
+                      <DemoRouteGuard>
+                        <ReportingTracesPage />
+                      </DemoRouteGuard>
+                    }
+                  />
+                </Route>
                 <Route path='/:domain' element={<MainLayout />}>
                   <Route index element={<Navigate to='dashboard' replace />} />
                   <Route path='dashboard' element={<Dashboard />} />

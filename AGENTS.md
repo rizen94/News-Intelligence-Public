@@ -32,6 +32,8 @@ Context for AI assistants. Use project terminology consistently.
 | API routes | **`/api/{domain}/...`** (domain-scoped), **`/api/...`** (global) | `/api/v4/...` (legacy, removed) |
 | DB config | **get_db_config**, **get_db_connection**, **get_db** | getDatabaseConfig |
 | System health | **system_monitoring** | monitoring (ambiguous) |
+| Live ops console | **Monitor** (in-app) | Grafana (history/infra) |
+| History / infra charts | **Homelab Grafana** (`ni_*` scrape) | embedding Grafana into Monitor |
 | Intelligence features | **intelligence_hub** | intelligence hub |
 
 ---
@@ -42,12 +44,19 @@ Context for AI assistants. Use project terminology consistently.
 |------|------|
 | API | `api/main.py` |
 | Frontend | `web/src/App.tsx` |
+| Finance product (trackers / markets / reporting) | `web/src/finance/` — routes under `/finance/*` (parallel to classic `/:domain` and News `/v2`) |
 | API client | `web/src/services/api/` + `apiService.ts` |
 | DB (single source) | `api/shared/database/connection.py` |
-| Domain layout / shell | `web/src/layout/MainLayout.tsx` (routes in `App.tsx`: `/:domain` with MainLayout) |
+| Domain layout / shell (legacy) | `web/src/layout/MainLayout.tsx` (routes in `App.tsx`: `/:domain` with MainLayout) — **default live app** |
+| v2 User (broadsheet) | `web/src/v2/` — routes `/v2`, `/v2/news`, `/v2/current`, `/v2/one-offs`, `/v2/storylines/:domain/:id` |
+| v2 Admin (ops) | `web/src/v2/` — routes `/v2/admin`, `/v2/admin/monitor`, `/work`, `/sql`, `/audit` |
+| Reader APIs (additive) | `api/domains/reader/` — `GET /api/reader/home`, `GET /api/reader/storylines/{id}` |
 | Background automation | `api/services/automation_manager.py` |
 | Human reviewer navigation | `docs/CODEBASE_MAP.md`, `docs/PIPELINE_AND_AUTOMATION.md`, `docs/CODE_REVIEW_AND_RUN_CAVEATS.md` |
+| Monitor vs Grafana | `docs/MONITOR_REPORTING_AND_METRICS.md`, `api/monitoring/grafana/README.md` |
 | Public HTTPS read-only demo | `docs/PUBLIC_DEPLOYMENT.md` (TLS, env, `NEWS_INTEL_DEMO_*`, `GET /api/public/demo_config`) |
+
+**Product roots (unified chrome):** News `/v2`, Finance `/finance`, Admin `/v2/admin` (also `/admin`) share a top-level root switcher. Classic `/:domain/...` remains via "Classic app". Finance trackers/markets/reporting stay under `/finance/*`; Admin is ops-only (Monitor, SQL, Work, Grafana) — no user-content sidebar.
 
 ---
 
@@ -67,7 +76,7 @@ Context for AI assistants. Use project terminology consistently.
 - **Active pipeline domains** (June 2026): `politics` and `finance` per `public.domains` / `PIPELINE_INCLUDE`. `science-tech` remains in the registry but is **inactive** until enabled in the domain registry and YAML — do not expect RSS or automation for it while excluded.
 - **After changing YAML:** restart API and worker processes — `DOMAIN_PATH_PATTERN` and `ACTIVE_DOMAIN_KEYS` are computed at import time.
 - **Per-domain:** `articles`, `storylines`, `topics`, `rss_feeds`, `events`.
-- **Global:** watchlist, monitoring (`system_monitoring`), health.
+- **Global:** watchlist, monitoring (`system_monitoring`), health. **Monitor** = live/action ops console; **Homelab Grafana** = history/infra via `GET /api/system_monitoring/prometheus` (`ni_*`).
 
 ---
 
@@ -88,7 +97,8 @@ Context for AI assistants. Use project terminology consistently.
 |------|----------|
 | API routes | `api/domains/*/routes/` |
 | Services | `api/services/`, `api/domains/*/services/` |
-| Frontend pages | `web/src/pages/` |
+| Frontend pages (legacy) | `web/src/pages/` |
+| Frontend pages (v2) | `web/src/v2/pages/` |
 | Migrations | `api/database/migrations/` |
 
 **Deployment:** Bare metal on Widow — production API via **`news-intelligence-api-public.service`** (single uvicorn embeds AutomationManager). Do **not** run `start_system.sh` alongside the systemd API. See [docs/WIDOW_BOOT_RESILIENCE.md](docs/WIDOW_BOOT_RESILIENCE.md) and [PROJECT_STATUS.md](PROJECT_STATUS.md).

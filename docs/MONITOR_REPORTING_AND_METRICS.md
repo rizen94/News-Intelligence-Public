@@ -4,16 +4,30 @@ Single map of **where** the platform records “how well we are processing,” *
 
 ---
 
+## Monitor UI vs Grafana
+
+| Surface | Owns | Does not own |
+|---------|------|--------------|
+| **In-app Monitor** (`/:domain/monitor`) | Live health (API/DB/web), automation running + FIFO/LIFO chip, current/recent activity, phase **pulse** (pending / fails / runs-to-clear), **Run phase now**, Open Grafana deep link | Multi-hour charts, GPU history, backlog ETAs, DB sessions |
+| **Homelab Grafana** (NI Ops `uid=ni-ops`) | Queue depth / scheduling backlog history, intake SLA (when available), DB size & table growth, automation run rates, RSS feed/article counters (`ni_*`) | Phase triggers and live “what is running now” |
+
+Deep link: build with `VITE_NEWS_INTEL_GRAFANA_URL` (documented as `NEWS_INTEL_GRAFANA_URL`), or set browser `localStorage.news_intel_grafana_url`. Dashboard JSON: `api/monitoring/grafana/` — apply steps in that folder’s README (PopOS Homelab).
+
+SQL explorer and Work executed stay on **separate admin routes** — not folded into Grafana.
+
+---
+
 ## Documentation (methodology)
 
 | Doc | Role |
 |-----|------|
-| `AGENTS.md` | Automation visibility: `automation_run_history`, `/automation/status`, `/backlog_status`, pipeline vs polling. |
+| `AGENTS.md` | Automation visibility: `automation_run_history`, `/automation/status`, `/backlog_status`, pipeline vs polling. Monitor = live/action; Grafana = history/infra. |
 | `docs/PIPELINE_AND_ORDER_OF_OPERATIONS.md` | Pipeline order and handoffs (not a metrics store). |
 | `docs/DIAGNOSTICS_EVENT_COLLECTOR.md` | Diagnostic events API and collection patterns. |
 | `docs/AUTOMATION_MANAGER_SCHEDULING.md` | Scheduler caps, queue depth, concurrent phases. |
 | `docs/MONITORING_SSH_SETUP.md` | Remote device metrics over SSH. |
-| `docs/MONITOR_BLOCKAGES_AND_GPU.md` | GPU / blockage notes for Monitor operators. |
+| `docs/MONITOR_BLOCKAGES_AND_GPU.md` | GPU / blockage notes for Monitor operators (history → Grafana). |
+| `api/monitoring/grafana/README.md` | Homelab import of NI Ops + RSS dashboards. |
 
 ---
 
@@ -37,12 +51,13 @@ Single map of **where** the platform records “how well we are processing,” *
 | Endpoint | Purpose |
 |----------|---------|
 | `GET /api/system_monitoring/monitoring/overview` | API/DB/webserver + in-memory activity feed. |
+| `GET /api/system_monitoring/prometheus` | Prometheus text exposition (`ni_*`) for Homelab Grafana. Cached ~60s. Optional `NI_PROMETHEUS_SCRAPE_TOKEN` via `X-NI-Scrape-Token`. |
 | `GET /api/system_monitoring/automation/status` | Live queues, `pending_counts`, phase table, resource router. |
-| `GET /api/system_monitoring/backlog_status` | ETAs, steady_state, nightly_catchup, dimension throughputs (cached ~15s). |
+| `GET /api/system_monitoring/backlog_status` | ETAs, steady_state, nightly_catchup, dimension throughputs (cached ~15s). **Not on default Monitor** — Admin / Grafana history. |
 | `GET /api/system_monitoring/processing_progress` | **Processing pulse:** `routes/processing_progress.py`, mounted on `resource_dashboard` router. **phase_dashboard** fields: `pending_records` (unprocessed DB rows), `estimated_batch_per_run` (modeled rows per run), `batches_to_drain` (ceil divide = runs to clear queue, or `null`). Plus dimension throughputs, pass rates, 72h hourly buckets (cached **~90s** per worker). |
-| `GET /api/system_monitoring/process_run_summary` | Phases run vs not in N hours, pipeline checkpoints, optional `activity.jsonl` tail. |
+| `GET /api/system_monitoring/process_run_summary` | Phases run vs not in N hours, pipeline checkpoints, optional `activity.jsonl` tail. **Not on default Monitor.** |
 | `GET /api/system_monitoring/pipeline_status` | Pipeline coordinator snapshot. |
-| `GET /api/system_monitoring/database/connections` | `pg_stat_activity` style sessions. |
+| `GET /api/system_monitoring/database/connections` | `pg_stat_activity` style sessions. **Not on default Monitor.** |
 | `GET /api/diagnostics_events/...` | Curated diagnostic events (see diagnostics doc). |
 
 ---
@@ -67,17 +82,19 @@ These are **operator-run** unless you install cron/systemd yourself:
 
 - **No built-in periodic job** in the repo writes backlog snapshots to disk; that is **manual** (`./snapshot_backlog_status` or `scripts/snapshot_backlog_status.sh`) or external cron you add.
 - **AutomationManager** (on the main API host) **continuously** runs phases and **appends** `automation_run_history` — that **is** the scheduled metrics backbone for phase frequency and duration.
-- **Monitor SPA** polls heavy endpoints on a **staggered** interval (~every 3rd tick for `backlog_status` / DB sessions / **processing_progress**).
+- **Monitor SPA** polls overview (~15s) and processing pulse; queue depths ~every 60s. Historical trends are Homelab Grafana on `ni_*`, not SPA charts.
 
 ---
 
-## Monitor UI (after “Processing pulse”)
+## Monitor UI (live / action)
 
-The Monitor page includes:
+Default Monitor is four blocks (not a second Grafana):
 
-- Connection cards, current/recent **activity feed**.
-- **Processing pulse (7-day window)** — ticker-style dimension chips + phase table + hourly bucket count (data from **`processing_progress`**).
-- **Backlog status progression** — ETAs and steady state (`backlog_status`).
-- Phase timeline, orchestrator decision log, triggers, etc.
+1. **Status** — API / DB / web, automation running, FIFO/LIFO chip, light corpus chips, pipeline status chip.
+2. **Now** — current + short recent activity.
+3. **Pulse** — phase table: pending, runs to clear, fail/run counts (stuck phases highlighted).
+4. **Actions** — Run phase now + **Open Grafana** (deep link).
 
-For a **true** week-long **time-series DB** of backlogs (not just live SQL + history of runs), you would add a small **scheduled snapshot table** or keep using `.local/backlog_snapshots/` with external cron; the new API does not replace that.
+**Removed from default Monitor:** GPU 72h chart, trend arrows, hourly vanity bucket count, active-domains card noise, backlog ETAs / process-run summary / DB sessions (API still available for Admin/Grafana).
+
+For a **true** week-long **time-series** of queues and SLA, use Homelab Grafana (`api/monitoring/grafana/ni-ops-dashboard.json`) scraping `/api/system_monitoring/prometheus`. Operator CLI snapshots (`.local/backlog_snapshots/`) remain available for burndown scripts.

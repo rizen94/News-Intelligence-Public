@@ -35,6 +35,7 @@ This document maps the full system: API route structure, web interface structure
 |------|------|
 | API server | `api/main.py` |
 | Frontend app | `web/src/App.tsx` |
+| Finance product UI | `web/src/finance/` → `/finance/*` (Trackers, Markets, Reporting) |
 | API client layer | `web/src/services/api/` + `web/src/services/apiService.ts` |
 | Database (single source) | `api/shared/database/connection.py` |
 | LLM service | `api/shared/services/llm_service.py` |
@@ -288,6 +289,8 @@ All routes are mounted from `api/main.py`. Each domain router defines its own pr
 | GET | `/api/{domain}/finance/sources/status` | Source health |
 | GET | `/api/{domain}/finance/data-sources` | Data sources |
 | GET | `/api/{domain}/finance/market-data` | Market data |
+| GET | `/api/{domain}/finance/credit-spread` | Credit spreads (FRED OAS or ETF yields) |
+| GET | `/api/{domain}/finance/usd-purchasing-power-tracker` | USD purchasing power tracker |
 | GET | `/api/{domain}/finance/market-trends` | Market trends |
 | GET | `/api/{domain}/finance/market-patterns` | Market patterns |
 | GET | `/api/{domain}/finance/corporate-announcements` | Corporate announcements |
@@ -316,6 +319,7 @@ All routes are mounted from `api/main.py`. Each domain router defines its own pr
 | GET | `/api/system_monitoring/status` | System status |
 | GET | `/api/system_monitoring/dashboard` | Dashboard |
 | GET | `/api/system_monitoring/monitoring/overview` | Monitoring overview |
+| GET | `/api/system_monitoring/prometheus` | Prometheus `ni_*` for Homelab Grafana |
 | GET | `/api/system_monitoring/fast_stats` | Fast stats |
 | GET | `/api/system_monitoring/metrics` | Metrics |
 | GET | `/api/system_monitoring/performance` | Performance metrics |
@@ -361,7 +365,18 @@ All routes are mounted from `api/main.py`. Each domain router defines its own pr
 | GET | `/api/user_management/preferences/{id}` | Get preferences |
 | PUT | `/api/user_management/preferences/{id}` | Update preferences |
 
-### 3.9 v3 Compatibility Layer
+### 3.9 Reader (v2 broadsheet feeds)
+
+**Files:** `api/domains/reader/` — additive; does not change `/{domain}/storylines` contracts.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/reader/home?domain=` | News / Current Events / One-offs StoryUnits (optional domain filter) |
+| GET | `/api/reader/storylines/{id}?domain=` | Longform reader pack: summary, timeline, citations, dossier rail |
+
+**News heuristic:** material `updated_at` / refinement within 48h + non-empty dek. Membership-only `last_article_added_at` bumps are excluded.
+
+### 3.10 v3 Compatibility Layer
 
 **Retired:** The old flat `/api/...` router was removed from `main.py`; an archived copy for reference lives at `api/archive/legacy_api/legacy_global_api.py` (see `api/archive/legacy_api/README.md`). Use domain-scoped routes under `api/domains/*/routes`.
 
@@ -369,12 +384,33 @@ All routes are mounted from `api/main.py`. Each domain router defines its own pr
 
 ## 4. Web Interface Structure
 
-### 4.1 Route Map
+### 4.0 Dual SPA paths (side-by-side)
 
-All routes are under `/:domain/` where domain is `politics`, `finance`, or `science-tech`. Default redirect: `/` → `/politics/dashboard`.
+Three product roots share a top-level switcher (`web/src/shell/ProductRootSwitcher.tsx`):
+
+| Tree | Prefix | Code | Notes |
+|------|--------|------|-------|
+| News | `/v2/…` | `web/src/v2/` | Broadsheet reader; domain is `?domain=` filter |
+| Finance | `/finance/…` | `web/src/finance/` | Trackers / Markets / Reporting |
+| Admin | `/v2/admin/…`, `/admin/…` | `web/src/v2/pages/admin/` | Ops only — Monitor, Work, SQL, Audit, Grafana; no user-content nav |
+| Classic (legacy) | `/:domain/…` | `web/src/layout/MainLayout.tsx` | Kept via "Classic app"; Operations still at `/:domain/monitor` |
+
+Cross-links: classic AppNav "Try new app" → `/v2`; product chrome root toggle swaps News / Finance / Admin. Classic `/finance/commodity/...` and `/finance/analysis` remain under `/:domain`.
+
+### 4.1 Route Map (legacy + finance product)
+
+All **classic** routes are under `/:domain/` where domain is `politics`, `finance`, or `science-tech`. Default redirect: `/` → `/politics/dashboard`.
+
+**Finance product** (product-root chrome): `/finance`, `/finance/trackers/*`, `/finance/markets/*`, `/finance/reporting/*`. See `web/src/finance/`.
 
 | Path | Component | Description |
 |------|-----------|-------------|
+| `/finance` | `FinanceHomePage` | Finance product home (Trackers / Markets / Reporting) |
+| `/finance/trackers/usd-purchasing-power` | `UsdPurchasingPowerPage` | USD purchasing power tracker |
+| `/finance/trackers/credit-spreads` | `CreditSpreadsPage` | HY/IG credit spreads |
+| `/finance/markets/commodity/:commodity` | `CommodityMarketsPage` | Commodity series under Finance product |
+| `/finance/markets/macro` | `MacroMarketsPage` | Core FRED macro series |
+| `/finance/reporting/*` | reporting shell | Analysis / evidence / traces |
 | `/:domain/dashboard` | `Dashboard` | Intelligence dashboard: What's New, Active Investigations, System Intelligence |
 | `/:domain/discover` | `DiscoverPage` | Latest contexts, entity browser, event timeline |
 | `/:domain/discover/contexts/:id` | `ContextDetailPage` | Context detail |
@@ -389,15 +425,31 @@ All routes are under `/:domain/` where domain is `politics`, `finance`, or `scie
 | `/:domain/investigate/search` | `SearchPage` | Context-centric search |
 | `/:domain/investigate/documents` | `ProcessedDocumentsPage` | Processed documents |
 | `/:domain/investigate/narrative-threads` | `NarrativeThreadsPage` | Narrative threads |
-| `/:domain/monitor` | `MonitorPage` | System monitoring, automation, pipeline |
+| `/:domain/monitor` | `MonitorPage` | Live ops: status / now / pulse / actions; Grafana for history |
 | `/:domain/analyze` | `AnalyzePage` | Analysis |
-| `/:domain/analysis` | `FinancialAnalysis` | Financial analysis form |
+| `/:domain/analysis` | `FinancialAnalysis` | Financial analysis form (classic) |
 | `/:domain/analysis/:taskId` | `FinancialAnalysisResult` | Financial analysis result |
-| `/:domain/commodity/:commodity` | `CommodityDashboard` | Commodity dashboard (gold, silver, platinum) |
+| `/:domain/commodity/:commodity` | `CommodityDashboard` | Commodity dashboard (classic; gold, silver, platinum, oil, gas) |
+
+### 4.1b Route Map (v2)
+
+| Path | Component | Description |
+|------|-----------|-------------|
+| `/v2` | `v2/pages/Home/HomePage` | Hero + News cascade; Current / One-offs rails |
+| `/v2/news` | `NewsPage` | 48h material News |
+| `/v2/current` | `CurrentPage` | Long-running arcs |
+| `/v2/one-offs` | `OneOffsPage` | List + expected/announced calendar |
+| `/v2/storylines/:domain/:id` | `StorylineReaderPage` | Longform reader pack |
+| `/v2/entities/:id` | `EntityDossierPage` | Light dossier |
+| `/v2/admin` | `AdminOverviewPage` | Ops hub |
+| `/v2/admin/monitor` | `AdminMonitorPage` | Parallel Monitor |
+| `/v2/admin/work` | `AdminWorkPage` | process_run_summary / backlog / failures |
+| `/v2/admin/sql` | `AdminSqlPage` | SQL explorer |
+| `/v2/admin/audit` | `AdminAuditPage` | Side-by-side audit checklist |
 
 ### 4.2 Navigation (Sidebar)
 
-Located in `web/src/layout/AppNav.tsx` — persistent sidebar (220px desktop, drawer on mobile).
+Located in `web/src/layout/AppNav.tsx` — persistent sidebar (220px desktop, drawer on mobile). Includes a **Try new app** link to `/v2`.
 
 | Label | Path | Icon | Visibility |
 |-------|------|------|------------|
@@ -409,7 +461,8 @@ Located in `web/src/layout/AppNav.tsx` — persistent sidebar (220px desktop, dr
 | Investigate | `investigate` | SearchIcon | All domains |
 | Monitor | `monitor` | MonitorHeartIcon | All domains |
 | Analyze | `analyze` | AnalyticsIcon | All domains |
-| Commodity | `commodity/gold` | ShowChartIcon | **Finance only** |
+| Commodity | `commodity/gold` | ShowChartIcon | **Finance domain only** (classic) |
+| Finance product | `/finance` | ShowChartIcon | All domains (cross-link) |
 
 Domain selector in the header switches between politics, finance, science-tech.
 
@@ -584,7 +637,8 @@ api/
 │   ├── intelligence_hub/routes/  # Intelligence, RAG, synthesis, briefings, context-centric
 │   ├── finance/routes/           # Finance analysis, commodities
 │   ├── user_management/routes/   # User CRUD, preferences
-│   └── system_monitoring/routes/ # Health, automation, pipeline, orchestrator
+│   ├── system_monitoring/routes/ # Health, automation, pipeline, orchestrator
+│   └── reader/                   # v2 broadsheet home + storyline pack APIs
 ├── services/                     # Business logic services
 ├── modules/ml/                   # ML pipeline, briefing, RAG, summarization
 ├── shared/
@@ -597,9 +651,14 @@ api/
 └── database/migrations/          # SQL migrations
 
 web/src/
-├── App.tsx                       # Route definitions, providers
-├── layout/AppNav.tsx             # Sidebar navigation
-├── pages/                        # Page components (see 4.3)
+├── App.tsx                       # Route definitions, providers (legacy + /v2)
+├── layout/AppNav.tsx             # Sidebar navigation (+ Try new app → /v2)
+├── pages/                        # Legacy page components (see 4.3)
+├── v2/                           # Parallel broadsheet User + Admin UI
+│   ├── layouts/                  # UserLayout, AdminLayout
+│   ├── pages/                    # Home, News, Current, OneOffs, reader, admin
+│   ├── components/StoryUnit.tsx
+│   └── styles/broadsheet.css
 ├── components/                   # Shared components
 ├── services/
 │   ├── api/                      # API modules (see 4.4)
