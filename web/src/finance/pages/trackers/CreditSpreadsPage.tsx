@@ -2,8 +2,8 @@
  * Credit spreads tracker under /finance/trackers — adapted from classic CreditSpreadDashboard.
  * No redirect to classic domain routes; always calls finance API silo.
  * Warning/progress cues render on each chart/metric panel (not a standalone legend grid).
- * Chart overlays: 1w/1m level lines (widen/narrow color) + historic high/low/median anchors
- * from full FRED-available span (anchors teach abnormal vs normal; plot stays a short window).
+ * Chart overlays: 1w/1m level lines (widen/narrow color) + FRED-window hi/lo/median +
+ * curated historic_crisis_refs (GFC/COVID/tight) — citation constants, not live FRED extremes.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -128,6 +128,19 @@ type HistoricExtremes = {
   median_bps?: number;
 };
 
+/** Curated multi-decade ICE OAS peaks — not live-recomputed from FRED. */
+type HistoricCrisisRef = {
+  id: string;
+  label: string;
+  short_label: string;
+  bps: number;
+  date?: string | null;
+  kind?: 'high' | 'low' | string;
+  /** always = near recent scale; crisis_scale = only when Crisis scale toggle is on */
+  chart_priority?: 'always' | 'crisis_scale' | string;
+  source?: string | null;
+};
+
 type SeriesLevelRefs = {
   series?: string;
   latest_bps?: number | null;
@@ -135,6 +148,7 @@ type SeriesLevelRefs = {
   week?: LagLevelRef | null;
   month?: LagLevelRef | null;
   historic?: HistoricExtremes | null;
+  historic_crisis_refs?: HistoricCrisisRef[];
 };
 
 type FredPayload = {
@@ -151,9 +165,60 @@ type FredPayload = {
     hy?: SeriesLevelRefs | null;
     ig?: SeriesLevelRefs | null;
   };
+  historic_crisis_refs?: {
+    hy?: HistoricCrisisRef[];
+    ig?: HistoricCrisisRef[];
+    citation_note?: string;
+  };
   series_ids?: Record<string, string>;
   data_window_note?: string | null;
   indicator_refs?: IndicatorRef[];
+};
+
+/** Fallback if an older API omits historic_crisis_refs (matches server citation constants). */
+const FALLBACK_CRISIS_REFS: { hy: HistoricCrisisRef[]; ig: HistoricCrisisRef[]; citation_note: string } = {
+  hy: [
+    {
+      id: 'gfc_high',
+      label: 'GFC',
+      short_label: 'GFC 2182',
+      bps: 2182,
+      date: '2008-12-15',
+      kind: 'high',
+      chart_priority: 'crisis_scale',
+    },
+    {
+      id: 'covid_high',
+      label: 'COVID',
+      short_label: 'COVID 1087',
+      bps: 1087,
+      date: '2020-03-23',
+      kind: 'high',
+      chart_priority: 'crisis_scale',
+    },
+    {
+      id: 'pre_gfc_low',
+      label: 'pre-GFC tight',
+      short_label: 'tight 241',
+      bps: 241,
+      date: '2007-06',
+      kind: 'low',
+      chart_priority: 'always',
+    },
+  ],
+  ig: [
+    {
+      id: 'gfc_high',
+      label: 'GFC',
+      short_label: 'IG GFC 656',
+      bps: 656,
+      date: '2008-12',
+      kind: 'high',
+      chart_priority: 'crisis_scale',
+    },
+  ],
+  citation_note:
+    'Crisis refs are curated published ICE BofA OAS peaks (citation constants), not live-recomputed. FRED live window for these series is ~3y.',
 };
 
 type EtfSpreadRow = {
@@ -382,7 +447,7 @@ function HistoricChip({
   if (!historic?.high || !historic?.low) return null;
   return (
     <span className='finance-level-chip is-historic'>
-      {prefix} hi {historic.high.bps.toFixed(0)}
+      {prefix} FRED hi {historic.high.bps.toFixed(0)}
       {historic.high.date ? ` (${historic.high.date.slice(0, 7)})` : ''} · lo{' '}
       {historic.low.bps.toFixed(0)}
       {historic.low.date ? ` (${historic.low.date.slice(0, 7)})` : ''}
@@ -391,15 +456,32 @@ function HistoricChip({
   );
 }
 
-/** Scannable strip of 1w/1m + historic anchors (pairs with plot ReferenceLines). */
+function CrisisChip({ refItem }: { refItem: HistoricCrisisRef }) {
+  return (
+    <span
+      className='finance-level-chip is-crisis'
+      title={[refItem.date, refItem.source].filter(Boolean).join(' · ') || undefined}
+    >
+      {refItem.short_label}
+    </span>
+  );
+}
+
+/** Scannable strip of 1w/1m + FRED-window + curated crisis refs. */
 function LevelRefsStrip({
   hy,
   ig,
+  crisisHy,
+  crisisIg,
+  citationNote,
 }: {
   hy?: SeriesLevelRefs | null;
   ig?: SeriesLevelRefs | null;
+  crisisHy?: HistoricCrisisRef[];
+  crisisIg?: HistoricCrisisRef[];
+  citationNote?: string | null;
 }) {
-  if (!hy && !ig) return null;
+  if (!hy && !ig && !(crisisHy?.length || crisisIg?.length)) return null;
   const limited = hy?.historic?.history_limited || ig?.historic?.history_limited;
   const from = hy?.historic?.available_from || ig?.historic?.available_from;
   return (
@@ -414,11 +496,25 @@ function LevelRefsStrip({
         <LagChip prefix='IG' lag={ig?.month} />
         <HistoricChip prefix='IG' historic={ig?.historic} />
       </div>
+      {(crisisHy?.length || crisisIg?.length) && (
+        <div className='finance-level-refs__row finance-level-refs__row--crisis'>
+          <span className='finance-level-refs__crisis-label'>Crisis refs</span>
+          {(crisisHy ?? []).map(r => (
+            <CrisisChip key={`hy-${r.id}`} refItem={r} />
+          ))}
+          {(crisisIg ?? []).map(r => (
+            <CrisisChip key={`ig-${r.id}`} refItem={r} />
+          ))}
+        </div>
+      )}
       {limited && from && (
         <p className='finance-level-refs__note'>
-          FRED ICE OAS history limited — anchors from {from} onward (not a full multi-decade
-          dump). ETF proxies are daily snapshots only.
+          FRED live ICE OAS window from {from} (~3y) — FRED hi/lo/med are from that span only.
+          {citationNote ? ` ${citationNote}` : ''}
         </p>
+      )}
+      {!limited && citationNote && (
+        <p className='finance-level-refs__note'>{citationNote}</p>
       )}
     </div>
   );
@@ -428,13 +524,19 @@ function deltaStroke(dir?: DeltaDirection | null): string {
   return DIRECTION_STROKE[(dir || 'flat') as DeltaDirection];
 }
 
-/** Horizontal ReferenceLines for 1w/1m (direction-colored) + HY historic anchors. */
+/** Horizontal ReferenceLines for 1w/1m + FRED-window HY anchors + curated crisis refs. */
 function SpreadLevelReferenceLines({
   hy,
   ig,
+  crisisHy,
+  crisisIg,
+  crisisScale,
 }: {
   hy?: SeriesLevelRefs | null;
   ig?: SeriesLevelRefs | null;
+  crisisHy?: HistoricCrisisRef[];
+  crisisIg?: HistoricCrisisRef[];
+  crisisScale: boolean;
 }) {
   const lines: React.ReactNode[] = [];
 
@@ -479,7 +581,7 @@ function SpreadLevelReferenceLines({
         strokeDasharray='4 4'
         ifOverflow='extendDomain'
         label={{
-          value: `HY hi ${hist.high.bps.toFixed(0)}${
+          value: `HY FRED hi ${hist.high.bps.toFixed(0)}${
             hist.high.date ? ` · ${hist.high.date.slice(0, 7)}` : ''
           }`,
           position: 'insideTopLeft',
@@ -499,7 +601,7 @@ function SpreadLevelReferenceLines({
         strokeDasharray='4 4'
         ifOverflow='extendDomain'
         label={{
-          value: `HY lo ${hist.low.bps.toFixed(0)}${
+          value: `HY FRED lo ${hist.low.bps.toFixed(0)}${
             hist.low.date ? ` · ${hist.low.date.slice(0, 7)}` : ''
           }`,
           position: 'insideBottomLeft',
@@ -527,6 +629,46 @@ function SpreadLevelReferenceLines({
       />
     );
   }
+
+  const pushCrisis = (
+    key: string,
+    refItem: HistoricCrisisRef,
+    labelPosition: 'insideTopLeft' | 'insideTopRight' | 'insideBottomLeft' | 'insideBottomRight'
+  ) => {
+    const priority = refItem.chart_priority || 'crisis_scale';
+    if (priority === 'crisis_scale' && !crisisScale) return;
+    lines.push(
+      <ReferenceLine
+        key={key}
+        y={refItem.bps}
+        stroke='#5d4037'
+        strokeOpacity={0.55}
+        strokeWidth={1}
+        strokeDasharray='8 5'
+        ifOverflow='extendDomain'
+        label={{
+          value: refItem.short_label,
+          position: labelPosition,
+          fontSize: 10,
+          fill: '#6d4c41',
+          opacity: 0.85,
+        }}
+      />
+    );
+  };
+
+  // HY crisis lines are the priority; short labels — chips carry the rest.
+  const hyCrisis = crisisHy ?? [];
+  const gfc = hyCrisis.find(r => r.id === 'gfc_high');
+  const covid = hyCrisis.find(r => r.id === 'covid_high');
+  const tight = hyCrisis.find(r => r.id === 'pre_gfc_low');
+  if (gfc) pushCrisis('hy-crisis-gfc', gfc, 'insideTopLeft');
+  if (covid) pushCrisis('hy-crisis-covid', covid, 'insideTopRight');
+  if (tight) pushCrisis('hy-crisis-tight', tight, 'insideBottomLeft');
+
+  // IG GFC only when crisis scale is on (avoids wrecking the calm IG view alone).
+  const igGfc = (crisisIg ?? []).find(r => r.id === 'gfc_high');
+  if (igGfc) pushCrisis('ig-crisis-gfc', igGfc, 'insideBottomRight');
 
   return <>{lines}</>;
 }
@@ -595,6 +737,8 @@ function SpreadStatCard({
 export default function CreditSpreadsPage() {
   const [tab, setTab] = useState<DashboardTab>('fred');
   const [timeRange, setTimeRange] = useState<TimeRange>('1y');
+  /** When on, Y domain includes HY GFC/COVID (and IG GFC) crisis peaks. Off keeps recent scale readable. */
+  const [crisisScale, setCrisisScale] = useState(true);
   const [loadingFred, setLoadingFred] = useState(true);
   const [loadingEtf, setLoadingEtf] = useState(true);
   const [fredData, setFredData] = useState<FredPayload | null>(null);
@@ -668,7 +812,28 @@ export default function CreditSpreadsPage() {
   const hyLevels = fredData?.level_refs?.hy;
   const igLevels = fredData?.level_refs?.ig;
 
-  /** Include historic hi/lo so teaching lines stay on-plot even in a calm 1y window. */
+  const crisisBundle = useMemo(() => {
+    const fromApi = fredData?.historic_crisis_refs;
+    const hy =
+      fromApi?.hy?.length
+        ? fromApi.hy
+        : hyLevels?.historic_crisis_refs?.length
+          ? hyLevels.historic_crisis_refs
+          : FALLBACK_CRISIS_REFS.hy;
+    const ig =
+      fromApi?.ig?.length
+        ? fromApi.ig
+        : igLevels?.historic_crisis_refs?.length
+          ? igLevels.historic_crisis_refs
+          : FALLBACK_CRISIS_REFS.ig;
+    return {
+      hy,
+      ig,
+      citation_note: fromApi?.citation_note || FALLBACK_CRISIS_REFS.citation_note,
+    };
+  }, [fredData, hyLevels, igLevels]);
+
+  /** Include FRED-window + crisis (when toggled) so teaching lines stay on-plot. */
   const yDomain = useMemo((): [number, number] | ['auto', 'auto'] => {
     const vals: number[] = [];
     for (const row of chartData) {
@@ -683,20 +848,27 @@ export default function CreditSpreadsPage() {
       if (series?.week?.bps != null) vals.push(series.week.bps);
       if (series?.month?.bps != null) vals.push(series.month.bps);
     }
+    for (const ref of [...crisisBundle.hy, ...crisisBundle.ig]) {
+      const priority = ref.chart_priority || 'crisis_scale';
+      if (priority === 'always' || crisisScale) {
+        vals.push(ref.bps);
+      }
+    }
     if (!vals.length) return ['auto', 'auto'];
     const lo = Math.min(...vals);
     const hi = Math.max(...vals);
     const pad = Math.max(8, (hi - lo) * 0.06);
     return [Math.floor(lo - pad), Math.ceil(hi + pad)];
-  }, [chartData, hyLevels, igLevels]);
+  }, [chartData, hyLevels, igLevels, crisisBundle, crisisScale]);
 
   return (
     <div>
       <h1 className='finance-page-title'>Credit spreads</h1>
       <p className='finance-page-lede'>
         High-yield and investment-grade credit stress vs. Treasuries. Warning = widening;
-        progress = narrowing / stable. Chart lines mark last week / last month levels and
-        historic high·low·median from available FRED history — not a dense multi-decade dump.
+        progress = narrowing / stable. Chart lines mark last week / last month, FRED-window
+        high·low·median (~3y live), and curated crisis refs (GFC / COVID / tight) — citation
+        constants, not a dense multi-decade dump.
       </p>
 
       {error && (
@@ -749,16 +921,28 @@ export default function CreditSpreadsPage() {
                   : undefined
               }
               action={
-                <ToggleButtonGroup
-                  size='small'
-                  value={timeRange}
-                  exclusive
-                  onChange={(_, v) => v != null && setTimeRange(v)}
-                >
-                  <ToggleButton value='1y'>1y</ToggleButton>
-                  <ToggleButton value='3y'>3y</ToggleButton>
-                  <ToggleButton value='max'>max</ToggleButton>
-                </ToggleButtonGroup>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                  <ToggleButton
+                    size='small'
+                    value='crisis'
+                    selected={crisisScale}
+                    onChange={() => setCrisisScale(v => !v)}
+                    aria-label='Toggle crisis scale'
+                    sx={{ textTransform: 'none', px: 1 }}
+                  >
+                    Crisis scale
+                  </ToggleButton>
+                  <ToggleButtonGroup
+                    size='small'
+                    value={timeRange}
+                    exclusive
+                    onChange={(_, v) => v != null && setTimeRange(v)}
+                  >
+                    <ToggleButton value='1y'>1y</ToggleButton>
+                    <ToggleButton value='3y'>3y</ToggleButton>
+                    <ToggleButton value='max'>max</ToggleButton>
+                  </ToggleButtonGroup>
+                </Box>
               }
             />
             <CardContent sx={{ pt: 0 }}>
@@ -771,7 +955,13 @@ export default function CreditSpreadsPage() {
                   variant='context'
                 />
               </ChartCues>
-              <LevelRefsStrip hy={hyLevels} ig={igLevels} />
+              <LevelRefsStrip
+                hy={hyLevels}
+                ig={igLevels}
+                crisisHy={crisisBundle.hy}
+                crisisIg={crisisBundle.ig}
+                citationNote={crisisBundle.citation_note}
+              />
               {loadingFred ? (
                 <Skeleton variant='rectangular' height={360} sx={{ borderRadius: 1 }} />
               ) : chartData.length === 0 ? (
@@ -801,7 +991,13 @@ export default function CreditSpreadsPage() {
                         strokeDasharray='3 4'
                       />
                     ))}
-                    <SpreadLevelReferenceLines hy={hyLevels} ig={igLevels} />
+                    <SpreadLevelReferenceLines
+                      hy={hyLevels}
+                      ig={igLevels}
+                      crisisHy={crisisBundle.hy}
+                      crisisIg={crisisBundle.ig}
+                      crisisScale={crisisScale}
+                    />
                     <CartesianGrid strokeDasharray='3 3' stroke='#eee' />
                     <XAxis dataKey='date' tick={{ fontSize: 11 }} minTickGap={40} />
                     <YAxis
@@ -839,10 +1035,11 @@ export default function CreditSpreadsPage() {
                 </ResponsiveContainer>
               )}
               <Typography variant='caption' color='text.secondary' display='block' sx={{ mt: 1 }}>
-                Colored dashed lines = last week / last month levels (brown = widen/stress, green =
-                narrow/relief, gray = flat). Brown/slate dashed = HY historic high · low · median
-                from available FRED span. Gray bands = NBER recession (USREC). Plot window is for
-                scanning recent path; anchors teach abnormal vs normal.
+                Colored dashed = last week / last month (brown = widen, green = narrow, gray =
+                flat). Brown/slate = HY FRED-window hi · lo · med (~3y). Muted brown long-dash =
+                curated crisis refs (GFC / COVID / tight) — citation constants, not live FRED.
+                Toggle Crisis scale off to keep the recent path readable. Gray bands = NBER
+                recession (USREC).
               </Typography>
             </CardContent>
           </Card>
