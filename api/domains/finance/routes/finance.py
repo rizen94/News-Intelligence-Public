@@ -535,10 +535,19 @@ async def get_finance_market_data(
 @router.get("/{domain}/finance/credit-spread")
 async def get_credit_spread(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
-    days: int = Query(365, ge=1, le=3650, description="History window for FRED view"),
+    days: int = Query(
+        365,
+        ge=1,
+        le=14600,
+        description="Chart display window for FRED view (anchors always use max available)",
+    ),
     view: str = Query("fred", description="fred | etf"),
 ):
-    """Credit spread dashboard: FRED HY/IG OAS + recession bands, or ETF yield spreads."""
+    """Credit spread dashboard: FRED HY/IG OAS + recession bands, or ETF yield spreads.
+
+    ``days`` controls the plotted series window. 1w/1m deltas and historic
+    high/low/median anchors are computed from the full FRED-available span.
+    """
     _check_domain(domain)
     view_norm = (view or "fred").strip().lower()
     try:
