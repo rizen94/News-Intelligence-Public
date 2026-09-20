@@ -215,6 +215,15 @@ function App() {
                     path='trackers/credit-spreads'
                     element={<CreditSpreadsPage />}
                   />
+                  {/* Classic orphan path → Finance trackers home for credit spreads */}
+                  <Route
+                    path='credit-spread'
+                    element={<Navigate to='/finance/trackers/credit-spreads' replace />}
+                  />
+                  <Route
+                    path='credit-spreads'
+                    element={<Navigate to='/finance/trackers/credit-spreads' replace />}
+                  />
                   <Route path='markets' element={<MarketsIndexPage />} />
                   <Route
                     path='markets/commodity'
