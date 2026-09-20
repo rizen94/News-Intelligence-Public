@@ -737,8 +737,8 @@ function SpreadStatCard({
 export default function CreditSpreadsPage() {
   const [tab, setTab] = useState<DashboardTab>('fred');
   const [timeRange, setTimeRange] = useState<TimeRange>('1y');
-  /** When on, Y domain includes HY GFC/COVID (and IG GFC) crisis peaks. Off keeps recent scale readable. */
-  const [crisisScale, setCrisisScale] = useState(true);
+  /** Default off: Y fits live + 1w/1m + FRED-window + tight ~241. On expands for GFC/COVID peaks. */
+  const [crisisScale, setCrisisScale] = useState(false);
   const [loadingFred, setLoadingFred] = useState(true);
   const [loadingEtf, setLoadingEtf] = useState(true);
   const [fredData, setFredData] = useState<FredPayload | null>(null);
@@ -1036,10 +1036,10 @@ export default function CreditSpreadsPage() {
               )}
               <Typography variant='caption' color='text.secondary' display='block' sx={{ mt: 1 }}>
                 Colored dashed = last week / last month (brown = widen, green = narrow, gray =
-                flat). Brown/slate = HY FRED-window hi · lo · med (~3y). Muted brown long-dash =
-                curated crisis refs (GFC / COVID / tight) — citation constants, not live FRED.
-                Toggle Crisis scale off to keep the recent path readable. Gray bands = NBER
-                recession (USREC).
+                flat). Brown/slate = HY FRED-window hi · lo · med (~3y). Crisis peaks (GFC /
+                COVID / IG GFC) stay as chips; turn Crisis scale on to draw those lines and
+                expand Y. Tight ~241 stays on the normal scale when near the recent path. Gray
+                bands = NBER recession (USREC).
               </Typography>
             </CardContent>
           </Card>
