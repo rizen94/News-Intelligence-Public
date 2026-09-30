@@ -67,6 +67,34 @@ _GENERIC_SUBJECTS = frozenset(
     }
 )
 
+# Generic ML tokens that glue unrelated arXiv papers without a shared research question.
+_AI_GENERIC_TOKENS = frozenset(
+    {
+        "llm",
+        "llms",
+        "transformer",
+        "transformers",
+        "benchmark",
+        "benchmarks",
+        "fine-tuning",
+        "finetuning",
+        "inference",
+        "alignment",
+        "agent",
+        "agents",
+        "multimodal",
+        "foundation model",
+        "foundation models",
+        "neural",
+        "deep learning",
+        "machine learning",
+        "artificial intelligence",
+        "dataset",
+        "datasets",
+        "arxiv",
+    }
+)
+
 def _subject_norm(text: str | None) -> str:
     return re.sub(r"\s+", " ", (text or "").strip().lower())
 
@@ -366,6 +394,19 @@ def assess_cluster_coherence(
                 return True, f"finance_dominant_entity:{top_entity}"
         return False, "finance_generic_earnings_reports"
 
+    if dk.startswith("artificial-intelligence"):
+        # Reject clusters that only share generic ML vocabulary with no specific entities.
+        recurring = sum(1 for _, n in entity_counts.items() if n >= 2)
+        ai_distinct = sum(1 for _, n in entity_counts.items() if n >= 1)
+        blob = " ".join(
+            f"{a.get('title') or ''} {(a.get('summary') or '')[:400]}" for a in articles
+        ).lower()
+        generic_hits = sum(1 for tok in _AI_GENERIC_TOKENS if tok in blob)
+        if recurring < 1 and ai_distinct < min_distinct_specific_entities() and generic_hits >= 3:
+            return False, "ai_generic_ml_overlap"
+        if recurring < 1 and not entity_counts and generic_hits >= 4:
+            return False, "ai_generic_ml_overlap"
+
     distinct_specific = sum(1 for _, n in entity_counts.items() if n >= 1)
     min_distinct = min_distinct_specific_entities()
     if distinct_specific >= min_distinct:
@@ -410,6 +451,39 @@ def assess_mega_group_coherence(domain: str, children: list[Any]) -> tuple[bool,
             recurring = sum(1 for _, n in all_entities.items() if n >= 2)
             if recurring < 2:
                 return False, "finance_earnings_mega_insufficient_entities"
+
+    return True, "ok"
+
+
+def assess_storyline_pair_merge_coherence(
+    domain: str, primary: Any, secondary: Any
+) -> tuple[bool, str]:
+    """
+    Gate near-dup title merges during storyline hygiene.
+
+    Allows merge when titles look like the same arc; blocks when either side is
+    an overly generic kitchen-sink title (would inflate mega-bags).
+    """
+    if not guardrails_enabled():
+        return True, "disabled"
+
+    p_title = (getattr(primary, "title", None) or "").strip()
+    s_title = (getattr(secondary, "title", None) or "").strip()
+    if not p_title or not s_title:
+        return False, "missing_title"
+
+    if is_overly_generic_storyline_title(p_title, domain) and is_overly_generic_storyline_title(
+        s_title, domain
+    ):
+        return False, "both_generic_titles"
+
+    p_words = set(_title_content_words(p_title))
+    s_words = set(_title_content_words(s_title))
+    if not p_words or not s_words:
+        return False, "no_content_words"
+    overlap = len(p_words & s_words) / float(max(1, min(len(p_words), len(s_words))))
+    if overlap < 0.35:
+        return False, "weak_title_token_overlap"
 
     return True, "ok"
 

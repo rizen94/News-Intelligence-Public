@@ -74,40 +74,75 @@ class MLProcessingService:
                 time.sleep(60)
 
     def _process_storylines(self):
-        """Process storylines that need ML analysis"""
+        """Process storylines that need ML analysis (per active domain schema)."""
+        try:
+            from shared.domain_registry import domain_key_to_schema, get_active_domain_keys
+        except Exception as e:
+            logger.error(f"domain registry unavailable for ML processing: {e}")
+            return
+
         try:
             db_gen = get_db()
             db = next(db_gen)
             try:
-                # Get storylines that need processing
-                query = text("""
-                    SELECT id, title, description, article_count
-                    FROM storylines
-                    WHERE ml_processing_status = 'pending'
-                    OR (
-                        ml_processing_status = 'completed'
-                        AND EXISTS (
-                            SELECT 1 FROM storyline_articles sa
-                            WHERE sa.storyline_id = storylines.id
-                              AND sa.added_at > COALESCE(storylines.ml_last_processed, '1970-01-01'::timestamptz)
+                for domain_key in get_active_domain_keys():
+                    schema = domain_key_to_schema(domain_key)
+                    if not schema or not schema.replace("_", "").isalnum():
+                        continue
+                    # Skip empty magnets: pending with no membership only burned CPU
+                    # and spammed "No articles found" forever.
+                    query = text(f"""
+                        SELECT id, title, description, article_count
+                        FROM {schema}.storylines
+                        WHERE (
+                            ml_processing_status = 'pending'
+                            OR (
+                                ml_processing_status = 'completed'
+                                AND EXISTS (
+                                    SELECT 1 FROM {schema}.storyline_articles sa
+                                    WHERE sa.storyline_id = {schema}.storylines.id
+                                      AND sa.added_at > COALESCE(
+                                          {schema}.storylines.ml_last_processed,
+                                          '1970-01-01'::timestamptz
+                                      )
+                                )
+                            )
                         )
+                        AND EXISTS (
+                            SELECT 1 FROM {schema}.storyline_articles sa2
+                            WHERE sa2.storyline_id = {schema}.storylines.id
+                        )
+                        AND COALESCE(article_count, 0) > 0
+                        ORDER BY priority DESC, created_at ASC
+                        LIMIT 3
+                    """)
+                    storylines = db.execute(query).fetchall()
+                    for storyline in storylines:
+                        self._process_storyline_with_ml(storyline, schema=schema)
+
+                    db.execute(
+                        text(f"""
+                            UPDATE {schema}.storylines
+                            SET ml_processing_status = 'skipped_empty',
+                                ml_last_processed = CURRENT_TIMESTAMP
+                            WHERE ml_processing_status = 'pending'
+                              AND (
+                                COALESCE(article_count, 0) <= 0
+                                OR NOT EXISTS (
+                                    SELECT 1 FROM {schema}.storyline_articles sa
+                                    WHERE sa.storyline_id = {schema}.storylines.id
+                                )
+                              )
+                        """)
                     )
-                    ORDER BY priority DESC, created_at ASC
-                    LIMIT 5
-                """)
-
-                storylines = db.execute(query).fetchall()
-
-                for storyline in storylines:
-                    self._process_storyline_with_ml(storyline)
-
+                db.commit()
             finally:
                 db.close()
 
         except Exception as e:
             logger.error(f"Error processing storylines: {e}")
 
-    def _process_storyline_with_ml(self, storyline):
+    def _process_storyline_with_ml(self, storyline, *, schema: str = "public"):
         """Process a single storyline with improved ML summarization"""
         try:
             start_time = time.time()
@@ -116,10 +151,13 @@ class MLProcessingService:
             logger.info(f"Processing storyline: {storyline.title}")
 
             # Get articles for this storyline
-            articles = self._get_storyline_articles(storyline_id)
+            articles = self._get_storyline_articles(storyline_id, schema=schema)
 
             if not articles:
-                logger.warning(f"No articles found for storyline {storyline_id}")
+                logger.info(
+                    "Skipping empty storyline %s (marking skipped_empty)", storyline_id
+                )
+                self._mark_storyline_ml_skipped(storyline_id, schema=schema)
                 return
 
             # Import ML service
@@ -131,7 +169,7 @@ class MLProcessingService:
             master_summary = self._generate_narrative_summary(ml_service, articles, storyline)
 
             # Update storyline with ML results
-            self._update_storyline_ml_results(storyline_id, master_summary)
+            self._update_storyline_ml_results(storyline_id, master_summary, schema=schema)
 
             processing_time = time.time() - start_time
             logger.info(f"Narrative ML processing completed in {processing_time:.2f}s")
@@ -142,16 +180,20 @@ class MLProcessingService:
             logger.error(f"ML processing failed: {e}")
             return 0
 
-    def _get_storyline_articles(self, storyline_id: int) -> list[dict[str, Any]]:
+    def _get_storyline_articles(
+        self, storyline_id: int, *, schema: str = "public"
+    ) -> list[dict[str, Any]]:
         """Get articles for a storyline"""
+        if not schema.replace("_", "").isalnum():
+            return []
         try:
             db_gen = get_db()
             db = next(db_gen)
             try:
-                query = text("""
+                query = text(f"""
                     SELECT a.id, a.title, a.content, a.summary, a.source_domain, a.published_at, a.author
-                    FROM articles a
-                    JOIN storyline_articles sa ON a.id = sa.article_id
+                    FROM {schema}.articles a
+                    JOIN {schema}.storyline_articles sa ON a.id = sa.article_id
                     WHERE sa.storyline_id = :storyline_id
                     ORDER BY a.published_at ASC
                 """)
@@ -408,14 +450,41 @@ As new articles are added to this storyline, the narrative analysis will be auto
         except:
             return "Unknown"
 
-    def _update_storyline_ml_results(self, storyline_id: int, master_summary: str):
-        """Update storyline with ML results"""
+    def _mark_storyline_ml_skipped(self, storyline_id: int, *, schema: str = "public") -> None:
+        """Leave empty magnets out of the pending ML queue."""
+        if not schema.replace("_", "").isalnum():
+            return
         try:
             db_gen = get_db()
             db = next(db_gen)
             try:
-                query = text("""
-                    UPDATE storylines
+                db.execute(
+                    text(f"""
+                        UPDATE {schema}.storylines
+                        SET ml_processing_status = 'skipped_empty',
+                            ml_last_processed = CURRENT_TIMESTAMP
+                        WHERE id = :storyline_id
+                    """),
+                    {"storyline_id": storyline_id},
+                )
+                db.commit()
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"Error marking storyline {storyline_id} skipped_empty: {e}")
+
+    def _update_storyline_ml_results(
+        self, storyline_id: int, master_summary: str, *, schema: str = "public"
+    ):
+        """Update storyline with ML results"""
+        if not schema.replace("_", "").isalnum():
+            return
+        try:
+            db_gen = get_db()
+            db = next(db_gen)
+            try:
+                query = text(f"""
+                    UPDATE {schema}.storylines
                     SET master_summary = :summary,
                         ml_processing_status = 'completed',
                         ml_last_processed = CURRENT_TIMESTAMP

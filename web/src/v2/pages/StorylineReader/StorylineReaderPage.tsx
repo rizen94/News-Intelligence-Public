@@ -3,6 +3,8 @@
  * Interactive: breadcrumbs, prev/next from last feed, j/k keyboard nav.
  */
 import React, { useEffect, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Breadcrumb,
@@ -15,6 +17,25 @@ import {
   fetchReaderStoryline,
   type ReaderPackResponse,
 } from '../../services/readerApi';
+import { articlesApi } from '../../../services/api/articles';
+
+function MetaSep() {
+  return (
+    <span className='v2-meta-sep' aria-hidden='true'>
+      ·
+    </span>
+  );
+}
+
+function ReaderMarkdown({ source }: { source: string }) {
+  const text = (source || '').trim();
+  if (!text) return null;
+  return (
+    <div className='v2-reader-md'>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+    </div>
+  );
+}
 
 function DossierTree({ nodes }: { nodes: Array<Record<string, unknown>> }) {
   if (!nodes?.length) return null;
@@ -44,6 +65,13 @@ export default function StorylineReaderPage() {
   const [pack, setPack] = useState<ReaderPackResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [navTick, setNavTick] = useState(0);
+  const [pullLoading, setPullLoading] = useState(false);
+  const [pullStatus, setPullStatus] = useState<string | null>(null);
+  const [pullSummary, setPullSummary] = useState<string | null>(null);
+  const [pullError, setPullError] = useState<string | null>(null);
+  const [pullArticleId, setPullArticleId] = useState<number | null>(null);
+  const [pullActors, setPullActors] = useState<string[]>([]);
+  const [pullNoteCount, setPullNoteCount] = useState(0);
 
   useEffect(() => {
     if (!domain || !id) return;
@@ -102,12 +130,130 @@ export default function StorylineReaderPage() {
           navigate(nav.prev.href);
         }
       } else if (e.key === 'Escape') {
-        navigate(withDomainQuery('/v2/news', domain || null));
+        navigate(withDomainQuery('/news', domain || null));
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [navigate, domain, id, navTick]);
+
+  useEffect(() => {
+    setPullSummary(null);
+    setPullError(null);
+    setPullStatus(null);
+    setPullArticleId(null);
+    setPullActors([]);
+    setPullNoteCount(0);
+    setPullLoading(false);
+  }, [domain, id]);
+
+  const applyReadyPull = (st: Record<string, unknown>) => {
+    if (st.summary_markdown) {
+      setPullSummary(String(st.summary_markdown));
+    }
+    setPullStatus(String(st.status || 'ready'));
+    setPullActors(
+      Array.isArray(st.vault_actors)
+        ? (st.vault_actors as unknown[]).map(String)
+        : Array.isArray((st.context_meta as { vault_actors?: unknown[] } | undefined)?.vault_actors)
+          ? ((st.context_meta as { vault_actors: unknown[] }).vault_actors).map(String)
+          : []
+    );
+    setPullNoteCount(
+      Number(
+        st.vault_note_count ||
+          (st.context_meta as { vault_note_count?: number } | undefined)?.vault_note_count ||
+          0
+      )
+    );
+    if (st.article_id) setPullArticleId(Number(st.article_id));
+    setPullLoading(false);
+  };
+
+  const pollPull = async (pullId: number | string) => {
+    for (let i = 0; i < 90; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const st = await articlesApi.getContextPull(pullId);
+      if (!st || st.ok === false) continue;
+      setPullStatus(String(st.status || ''));
+      if (st.status === 'ready' && st.summary_markdown) {
+        applyReadyPull(st as Record<string, unknown>);
+        return;
+      }
+      if (st.status === 'failed') {
+        setPullError(st.error_message || 'Pull context failed');
+        setPullLoading(false);
+        return;
+      }
+    }
+    setPullError('Timed out waiting for context brief');
+    setPullLoading(false);
+  };
+
+  /** Cache-first: if enqueue already returned ready + summary, show it; only poll pending jobs. */
+  const handlePullResponse = async (res: Record<string, unknown>) => {
+    const pullId = (res?.pull_id || res?.id) as number | string | undefined;
+    if (!pullId) {
+      setPullError(String(res?.error || 'Failed to start pull context'));
+      setPullLoading(false);
+      return;
+    }
+    if (res.article_id) setPullArticleId(Number(res.article_id));
+    const readyCached =
+      (res.cached === true || res.status === 'ready') && res.summary_markdown;
+    if (readyCached) {
+      applyReadyPull(res);
+      return;
+    }
+    if (res.status === 'ready' && !res.summary_markdown) {
+      // Deferred / empty ready — fetch once rather than polling a running job
+      const st = await articlesApi.getContextPull(pullId);
+      if (st?.status === 'ready') {
+        applyReadyPull(st as Record<string, unknown>);
+        if (!st.summary_markdown) {
+          setPullSummary(
+            '_No primed expansion yet. Check back after the morning vault prime._'
+          );
+        }
+        return;
+      }
+    }
+    setPullStatus(String(res.status || 'pending'));
+    await pollPull(pullId);
+  };
+
+  const runStorylinePull = async () => {
+    if (!domain || !id) return;
+    setPullLoading(true);
+    setPullError(null);
+    setPullStatus('pending');
+    setPullSummary(null);
+    setPullActors([]);
+    try {
+      const res = await articlesApi.pullStorylineContext(id, domain);
+      await handlePullResponse((res || {}) as Record<string, unknown>);
+    } catch (e: unknown) {
+      setPullError(e instanceof Error ? e.message : 'Failed');
+      setPullLoading(false);
+    }
+  };
+
+  const runPullContext = async (articleId: number) => {
+    if (!domain || !articleId) return;
+    setPullLoading(true);
+    setPullError(null);
+    setPullStatus('pending');
+    setPullArticleId(articleId);
+    setPullSummary(null);
+    setPullActors([]);
+    try {
+      const res = await articlesApi.pullContext(articleId, domain, id);
+      await handlePullResponse((res || {}) as Record<string, unknown>);
+    } catch (e: unknown) {
+      setPullError(e instanceof Error ? e.message : 'Failed');
+      setPullLoading(false);
+    }
+  };
 
   const nav =
     domain && id
@@ -120,13 +266,13 @@ export default function StorylineReaderPage() {
       <div>
         <Breadcrumb
           crumbs={[
-            { label: 'Home', to: withDomainQuery('/v2', domain || null) },
-            { label: 'News', to: withDomainQuery('/v2/news', domain || null) },
+            { label: 'Home', to: withDomainQuery('/', domain || null) },
+            { label: 'News', to: withDomainQuery('/news', domain || null) },
             { label: 'Error' },
           ]}
         />
         <p className='v2-empty'>{error}</p>
-        <Link to={withDomainQuery('/v2', domain || null)}>← Home</Link>
+        <Link to={withDomainQuery('/', domain || null)}>← Home</Link>
       </div>
     );
   }
@@ -147,12 +293,30 @@ export default function StorylineReaderPage() {
       ? pack.editorial_document.what
       : null);
 
+  const expansionBody = String(
+    pack.vault_expansion?.summary_md &&
+      String(pack.vault_expansion?.body_md || '').includes('Vault context')
+      ? pack.vault_expansion.summary_md
+      : pack.vault_expansion?.body_md || pack.vault_expansion?.summary_md || ''
+  ).trim();
+  // One brief surface: Pull refreshes the same block (no stacked Morning + Executive).
+  const briefMd = (pullSummary || expansionBody).trim();
+  const briefFromPull = Boolean(pullSummary);
+  const summaryText = String(pack.summary || '').trim();
+  const summaryDup = Boolean(
+    summaryText &&
+      briefMd &&
+      (summaryText === briefMd ||
+        briefMd.includes(summaryText.slice(0, Math.min(120, summaryText.length))) ||
+        summaryText.includes(briefMd.slice(0, Math.min(120, briefMd.length))))
+  );
+
   return (
     <div>
       <Breadcrumb
         crumbs={[
-          { label: 'Home', to: withDomainQuery('/v2', domain || null) },
-          { label: 'News', to: withDomainQuery('/v2/news', domain || null) },
+          { label: 'Home', to: withDomainQuery('/', domain || null) },
+          { label: 'News', to: withDomainQuery('/news', domain || null) },
           { label: (domain || '').toUpperCase() },
           { label: pack.title.slice(0, 48) + (pack.title.length > 48 ? '…' : '') },
         ]}
@@ -193,26 +357,151 @@ export default function StorylineReaderPage() {
             {pack.updated_at ? (
               <span>Updated {pack.updated_at.slice(0, 10)}</span>
             ) : null}
+            {pack.updated_at && pack.article_count != null ? <MetaSep /> : null}
             {pack.article_count != null ? (
               <span>{pack.article_count} sources</span>
+            ) : null}
+            {(pack.updated_at || pack.article_count != null) && pack.status ? (
+              <MetaSep />
             ) : null}
             {pack.status ? <span>{pack.status}</span> : null}
           </div>
 
           {pull ? <blockquote className='v2-pull-quote'>{pull}</blockquote> : null}
 
-          <section>
-            <h2 className='v2-section-label'>Summary</h2>
-            <p style={{ whiteSpace: 'pre-wrap' }}>
-              {pack.summary || 'No summary yet.'}
+          {briefMd ? (
+            <section style={{ marginBottom: '1.25rem' }}>
+              <h2 className='v2-section-label'>
+                {briefFromPull ? 'Executive brief' : 'Morning brief'}
+              </h2>
+              <p
+                style={{
+                  fontSize: '0.85rem',
+                  color: 'var(--v2-ink-muted)',
+                  marginBottom: '0.75rem',
+                }}
+              >
+                {briefFromPull
+                  ? [
+                      'Living context',
+                      pullNoteCount ? `${pullNoteCount} notes` : null,
+                      pullActors.length
+                        ? pullActors.slice(0, 8).join(', ')
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')
+                  : [
+                      'Primed vault brief',
+                      pack.vault_expansion?.updated_at
+                        ? String(pack.vault_expansion.updated_at).slice(0, 10)
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+              </p>
+              <ReaderMarkdown source={briefMd} />
+            </section>
+          ) : null}
+
+          <div className='v2-pull-toolbar'>
+            <button
+              type='button'
+              className='v2-reader-nav-link'
+              disabled={pullLoading || !domain || !id}
+              onClick={() => runStorylinePull()}
+              style={{
+                border: '1px solid var(--v2-rule)',
+                background: 'transparent',
+                cursor: pullLoading ? 'wait' : 'pointer',
+                padding: '0.35rem 0.75rem',
+                fontFamily: 'inherit',
+              }}
+            >
+              {pullLoading ? 'Pulling context…' : 'Pull context'}
+            </button>
+            <span className='v2-pull-hint'>
+              Cache-first living context
+              {pullArticleId ? ` · article ${pullArticleId}` : ''}
+            </span>
+          </div>
+          {pullError ? (
+            <p className='v2-empty' style={{ color: 'crimson' }}>
+              {pullError}
             </p>
-          </section>
+          ) : null}
+          {pullStatus && pullStatus !== 'ready' && !pullError ? (
+            <p className='v2-empty'>Context job: {pullStatus}</p>
+          ) : null}
+
+          {!summaryDup ? (
+            <section>
+              <h2 className='v2-section-label'>Summary</h2>
+              <p style={{ whiteSpace: 'pre-wrap' }}>
+                {summaryText || 'No summary yet.'}
+              </p>
+            </section>
+          ) : null}
 
           {pack.background_information ? (
             <section>
               <hr className='v2-section-rule' />
               <h2 className='v2-section-label'>Background</h2>
               <p style={{ whiteSpace: 'pre-wrap' }}>{pack.background_information}</p>
+            </section>
+          ) : null}
+
+          {pack.vault_context_pack?.notes &&
+          pack.vault_context_pack.notes.length > 0 ? (
+            <section>
+              <hr className='v2-section-rule' />
+              <h2 className='v2-section-label'>Living context</h2>
+              <p
+                style={{
+                  fontSize: '0.85rem',
+                  color: 'var(--v2-ink-muted)',
+                  marginBottom: '0.75rem',
+                }}
+              >
+                From Obsidian vault notes linked to this arc
+                {pack.vault_context_pack.note_count
+                  ? ` · ${pack.vault_context_pack.note_count} notes`
+                  : ''}
+              </p>
+              <ul style={{ paddingLeft: '1.1rem' }}>
+                {pack.vault_context_pack.notes.map((n, i) => (
+                  <li
+                    key={String(n.vault_path || n.title || i)}
+                    style={{ marginBottom: '0.75rem' }}
+                  >
+                    <strong style={{ fontFamily: 'var(--v2-font-display)' }}>
+                      {n.title || n.vault_path || 'Note'}
+                    </strong>
+                    {n.is_seed ? (
+                      <span
+                        style={{
+                          marginLeft: '0.4rem',
+                          fontSize: '0.75rem',
+                          color: 'var(--v2-ink-muted)',
+                        }}
+                      >
+                        seed
+                      </span>
+                    ) : null}
+                    {n.significance_excerpt ? (
+                      <p
+                        style={{
+                          margin: '0.25rem 0 0',
+                          color: 'var(--v2-ink-muted)',
+                          whiteSpace: 'pre-wrap',
+                        }}
+                      >
+                        {n.significance_excerpt}
+                      </p>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
             </section>
           ) : null}
 
@@ -269,6 +558,27 @@ export default function StorylineReaderPage() {
                       {[c.source_domain, c.published_at?.slice(0, 10)]
                         .filter(Boolean)
                         .join(' · ')}
+                      {domain ? (
+                        <>
+                          {' · '}
+                          <button
+                            type='button'
+                            disabled={pullLoading}
+                            onClick={() => runPullContext(Number(c.id))}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              padding: 0,
+                              color: 'var(--v2-accent, inherit)',
+                              textDecoration: 'underline',
+                              cursor: pullLoading ? 'wait' : 'pointer',
+                              font: 'inherit',
+                            }}
+                          >
+                            Pull context
+                          </button>
+                        </>
+                      ) : null}
                     </div>
                   </li>
                 ))}
@@ -301,7 +611,7 @@ export default function StorylineReaderPage() {
                   }
                 ).children.map(ch => (
                   <li key={ch.id}>
-                    <Link to={ch.href || `/v2/storylines/${domain}/${ch.id}`}>
+                    <Link to={ch.href || `/storylines/${domain}/${ch.id}`}>
                       {ch.title}
                     </Link>
                   </li>
