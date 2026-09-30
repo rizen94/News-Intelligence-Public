@@ -24,10 +24,16 @@ function MetaSep() {
 }
 
 export function StoryUnit({ item, variant = 'secondary', style }: Props) {
-  const href = withDomainQuery(
-    item.href || `/v2/storylines/${item.domain}/${item.storyline_id}`,
-    item.domain || null
-  );
+  const href =
+    item.surface_kind === 'daily_briefing'
+      ? withDomainQuery(item.href || '/news', null)
+      : withDomainQuery(
+          item.href ||
+            (item.surface_kind === 'vault_hub' && item.cluster_key
+              ? `/hubs/${item.cluster_key}`
+              : `/storylines/${item.domain}/${item.storyline_id}`),
+          item.domain || null
+        );
   const meta: React.ReactNode[] = [];
   const push = (node: React.ReactNode) => {
     if (meta.length) meta.push(<MetaSep key={`sep-${meta.length}`} />);

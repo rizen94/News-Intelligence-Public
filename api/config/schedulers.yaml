@@ -1,0 +1,184 @@
+# Single scheduler manifest — owner, enabled, notes.
+# Env gates: AUTOMATION_DISABLED_SCHEDULES, schedulers.yaml enabled flag.
+
+schedulers:
+  automation_manager:
+    owner: automation_manager
+    interval_seconds: 5
+    enabled: true
+    note: Primary processing scheduler (all phases)
+
+  orchestrator_coordinator:
+    owner: orchestrator_coordinator
+    interval_seconds: 60
+    enabled: true
+    note: Collection cadence + finance interest; processing nudge + post-RSS kickoff via pipeline_conductor
+
+  newsplatform_secondary:
+    owner: systemd
+    unit: newsplatform-secondary.service
+    enabled: true
+    note: RSS ingest ~10min when schedule allows
+
+  widow_db_adjacent_cron:
+    owner: cron
+    file: infrastructure/widow-db-adjacent.cron
+    interval: "*/15 * * * *"
+    enabled: true
+    jobs:
+      - name: context_sync
+        script_flag: --context-sync
+        note: AUTHORITATIVE on Widow when in AUTOMATION_DISABLED_SCHEDULES for automation
+      - name: entity_profile_sync
+        script_flag: --entity-profile-sync
+      - name: pending_db_flush
+        script_flag: --pending-db-flush
+
+  widow_tracking_discovery_cron:
+    owner: cron
+    file: infrastructure/widow-tracking-discovery.cron
+    interval: "0 6 * * 1,4"
+    enabled: true
+    note: Headless tracking discovery loop — demoted proactive_detection/storyline_discovery phases
+    jobs:
+      - name: tracking_discovery_loop
+        script: api/scripts/run_tracking_discovery_loop.py
+        note: API discovery → vault candidates → promotion_bridge → storyline_assembly stubs
+
+  nri_mention_resolver_timer:
+    owner: systemd
+    unit: nri-mention-resolver.timer
+    enabled: false
+    replaced_by: mention_resolution
+    note: Disabled after unification — use AutomationManager mention_resolution phase
+
+  nri_loop_timer:
+    owner: systemd
+    unit: nri-loop.timer
+    enabled: false
+    note: Shadow loop; default off via NRI_LOOP_ENABLED
+
+  nri_api:
+    owner: systemd
+    unit: nri-api.service
+    enabled: false
+    replaced_by: news-intelligence-api-public
+    note: Retired after nri_core in-process routes
+
+  rss_feed_health:
+    owner: automation_manager
+    interval_seconds: 604800
+    enabled: true
+    note: Weekly quality cull — drop lowest avg-quality feed until all scored feeds >= 0.60
+
+  rolling_arc_refresh:
+    owner: automation_manager
+    interval_seconds: 86400
+    enabled: true
+    note: Phase B nightly rolling 12m arc chapterize (ROLLING_ARCS_ENABLED)
+
+  quiver_collector:
+    owner: automation_manager
+    interval_seconds: 21600  # 6 hours
+    enabled: true
+    note: Quiver Quantitative API - congress trades, gov contracts, lobbying, insider trades
+    domains: ["politics", "finance"]
+    condition: "QUIVER_COLLECTOR_ENABLED and QUIVER_API_KEY"
+
+  congress_trade_signals:
+    owner: automation_manager
+    interval_seconds: 21600  # after Quiver cadence
+    enabled: true
+    note: >
+      Enrich/score Quiver congress trades; monthly paper vs SPY; HITL promote.
+      No live brokerage. Feature congress_trade_signals (staged).
+    domains: ["politics", "finance"]
+    condition: "FEATURE_OVERRIDE_CONGRESS_TRADE_SIGNALS or FEATURE_STAGED_RUNTIME_ENABLED"
+
+  pulse_digest:
+    owner: automation_manager
+    interval_seconds: 21600  # 6 hours
+    enabled: true
+    note: >
+      Rank episode/container movement; stamp followed_items.last_surfaced_at;
+      persist intelligence.pulse_snapshots. Live read path is GET /api/pulse.
+    condition: "PULSE_DIGEST_ENABLED"
+
+  living_story_cooling_sweep:
+    owner: automation_manager
+    interval_seconds: 86400  # daily
+    enabled: true
+    note: >
+      Pause living follows when episode stays dormant/cooling past LIVING_COOLING_DAYS.
+    condition: "LIVING_STORIES_ENABLED"
+
+  chemistry_beaker:
+    owner: automation_manager
+    enabled: true
+    note: >
+      Post-RSS intake connection lifecycle (CHEMISTRY_BEAKER_ENABLED).
+      Phases: graph_connection_distillation → embedding_link_candidates →
+      collision_sampling → stimulus_rag → protein_harden.
+      Kickoff after collection_cycle RSS and after unified_intake batches when
+      enrichment+UIE pending ≤ catchup_clear_threshold.
+    phases:
+      - graph_connection_distillation
+      - embedding_link_candidates
+      - collision_sampling
+      - stimulus_rag
+      - protein_harden
+    condition: "CHEMISTRY_BEAKER_ENABLED"
+
+  vault_tag_link_sync:
+    owner: automation_manager
+    interval_seconds: 1800
+    enabled: true
+    note: >
+      Mirror Obsidian frontmatter tags + wikilinks into intelligence.vault_notes
+      / vault_note_links. Obsidian is SSOT for soft relational tags.
+
+  vault_notes_writer:
+    owner: automation_manager
+    interval_seconds: 600
+    enabled: true
+    note: >
+      Drain vault_update_queue; fence-safe timeline/significance patches.
+      Preserves Obsidian tags and wikilinks.
+
+  vault_cluster_hub_refresh:
+    owner: automation_manager
+    interval_seconds: 3600
+    enabled: true
+    note: >
+      Discover topic clusters from shared entities/tags/events; upsert Obsidian
+      hub indexes + registry (no storyline_articles merge). Feature: vault_cluster_hubs.
+
+  vault_morning_prime:
+    owner: automation_manager
+    interval_seconds: 86400
+    enabled: true
+    note: >
+      Once daily: Briefing Manager curates slate (MemPalace), per-story vault+web
+      expansions, two-lane daily briefing. Reader cache only.
+      Slate caps ~12 news / 4 science (vault_note_contract) so PopOS 8b finishes
+      under MAX_CONCURRENT_OLLAMA_TASKS=1; do not raise concurrency for mornings
+      unless Widow hosts a second Ollama lane.
+
+  storyline_hygiene:
+    owner: automation_manager
+    interval_seconds: 21600
+    enabled: true
+    note: >
+      Tight bags: freeze → storyline_core_prune dissimilar → near-dup title merge.
+      Feature: storyline_hygiene / STORYLINE_HYGIENE_ENABLED.
+
+# context_sync split-brain resolution: cron owns sync on Widow prod (see widow-db_adjacent)
+
+consolidation:
+  interval_seconds: 3600
+  startup_delay_seconds: 60
+  rotation:
+    - storylines
+    - entities
+    - investigations
+    - events

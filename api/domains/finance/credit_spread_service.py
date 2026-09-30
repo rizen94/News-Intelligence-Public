@@ -41,6 +41,68 @@ IG_THRESHOLDS_BPS: list[tuple[float, SpreadStatus]] = [
     (200, "Warning"),
 ]
 
+# Curated multi-decade ICE BofA OAS teaching anchors (citation constants).
+# Not live-recomputed: FRED currently truncates these series to ~3y of observations.
+# Sources: Trading Economics / published former-FRED ICE history (see project docs).
+HISTORIC_CRISIS_REFS: dict[str, list[dict[str, Any]]] = {
+    "hy": [
+        {
+            "id": "gfc_high",
+            "label": "GFC",
+            "short_label": "GFC 2182",
+            "bps": 2182.0,
+            "date": "2008-12-15",
+            "kind": "high",
+            "chart_priority": "crisis_scale",
+            "source": "Trading Economics / former FRED ICE BofA HY OAS",
+        },
+        {
+            "id": "covid_high",
+            "label": "COVID",
+            "short_label": "COVID 1087",
+            "bps": 1087.0,
+            "date": "2020-03-23",
+            "kind": "high",
+            "chart_priority": "crisis_scale",
+            "source": "Published ICE BofA HY OAS peak (eco3min / Raven Quant)",
+        },
+        {
+            "id": "pre_gfc_low",
+            "label": "pre-GFC tight",
+            "short_label": "tight 241",
+            "bps": 241.0,
+            "date": "2007-06",
+            "kind": "low",
+            "chart_priority": "always",
+            "source": "Trading Economics record low (former FRED ICE history)",
+        },
+    ],
+    "ig": [
+        {
+            "id": "gfc_high",
+            "label": "GFC",
+            "short_label": "IG GFC 656",
+            "bps": 656.0,
+            "date": "2008-12",
+            "kind": "high",
+            # Far above recent IG (~70–130 bps); only plot when crisis scale is on.
+            "chart_priority": "crisis_scale",
+            "source": "Trading Economics / former FRED ICE BofA IG OAS",
+        },
+    ],
+}
+
+HISTORIC_CRISIS_CITATION_NOTE = (
+    "Crisis refs are curated published ICE BofA OAS peaks (citation constants), "
+    "not live-recomputed. FRED live window for these series is ~3y."
+)
+
+
+def historic_crisis_refs_payload(series_key: SpreadKind) -> list[dict[str, Any]]:
+    """Copy of curated crisis anchors for one OAS series."""
+    return [dict(row) for row in HISTORIC_CRISIS_REFS.get(series_key, [])]
+
+
 # Scannable legend for UI / API consumers. Only live-wired series + labeled futures.
 INDICATOR_REFS: list[dict[str, Any]] = [
     {
@@ -339,9 +401,9 @@ def _historic_extremes(
 def build_level_refs_for_series(
     observations: list[dict[str, Any]],
     *,
-    series_key: str,
+    series_key: SpreadKind,
 ) -> dict[str, Any] | None:
-    """1w / 1m deltas + historic high/low/median anchors for one OAS series."""
+    """1w / 1m deltas + FRED-window hi/lo/med + curated crisis refs for one OAS series."""
     if not observations:
         return None
     latest_bps = _latest_bps(observations)
@@ -355,6 +417,7 @@ def build_level_refs_for_series(
         "week": week,
         "month": month,
         "historic": historic,
+        "historic_crisis_refs": historic_crisis_refs_payload(series_key),
     }
 
 
@@ -441,6 +504,11 @@ def build_fred_credit_spread_payload(days: int) -> dict[str, Any]:
         "level_refs": {
             "hy": hy_refs,
             "ig": ig_refs,
+        },
+        "historic_crisis_refs": {
+            "hy": historic_crisis_refs_payload("hy"),
+            "ig": historic_crisis_refs_payload("ig"),
+            "citation_note": HISTORIC_CRISIS_CITATION_NOTE,
         },
         "series_ids": {
             "hy_oas": FRED_HY_OAS_SERIES,
