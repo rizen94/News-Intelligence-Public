@@ -19,6 +19,8 @@ import {
 } from '../../services/readerApi';
 import { articlesApi } from '../../../services/api/articles';
 
+import { sanitizeSnippet } from '../../../utils/sanitizeSnippet';
+
 function MetaSep() {
   return (
     <span className='v2-meta-sep' aria-hidden='true'>
@@ -28,7 +30,8 @@ function MetaSep() {
 }
 
 function ReaderMarkdown({ source }: { source: string }) {
-  const text = (source || '').trim();
+  // Expansions sometimes still carry Guardian HTML stubs; strip before markdown.
+  const text = sanitizeSnippet(source || '', '').trim();
   if (!text) return null;
   return (
     <div className='v2-reader-md'>
@@ -283,15 +286,25 @@ export default function StorylineReaderPage() {
 
   const events = pack.timeline?.events || [];
   const citations = pack.citations || [];
+  const alsoIn = pack.also_in || [];
   const tree = (pack.dossier_rail?.tree || pack.dossier_rail?.entities || []) as Array<
     Record<string, unknown>
   >;
   const hierarchy = pack.dossier_rail?.hierarchy || {};
   const pull =
     pack.lede ||
+    (typeof pack.editorial_document?.lede === 'string'
+      ? pack.editorial_document.lede
+      : null) ||
     (typeof pack.editorial_document?.what === 'string'
       ? pack.editorial_document.what
-      : null);
+      : Array.isArray(pack.editorial_document?.what)
+        ? (pack.editorial_document.what as unknown[])
+            .map((x) => String(x || '').trim())
+            .filter(Boolean)
+            .slice(0, 2)
+            .join('; ')
+        : null);
 
   const expansionBody = String(
     pack.vault_expansion?.summary_md &&
@@ -299,9 +312,54 @@ export default function StorylineReaderPage() {
       ? pack.vault_expansion.summary_md
       : pack.vault_expansion?.body_md || pack.vault_expansion?.summary_md || ''
   ).trim();
-  // One brief surface: Pull refreshes the same block (no stacked Morning + Executive).
-  const briefMd = (pullSummary || expansionBody).trim();
+  // One brief surface: Pull → vault → durable package projection → pack.summary.
+  const durableBrief = String(pack.durable_brief || '').trim();
+  const briefMd = (pullSummary || expansionBody || durableBrief).trim();
   const briefFromPull = Boolean(pullSummary);
+  const briefSource: 'pull' | 'vault_expansion' | 'durable' | 'summary' | 'none' =
+    briefFromPull
+      ? 'pull'
+      : pack.brief_source ||
+        (expansionBody
+          ? 'vault_expansion'
+          : durableBrief
+            ? 'durable'
+            : briefMd
+              ? 'summary'
+              : 'none');
+  const briefLabel =
+    briefSource === 'pull'
+      ? 'Executive brief'
+      : briefSource === 'vault_expansion'
+        ? 'Morning brief'
+        : briefSource === 'durable'
+          ? 'Durable desk brief'
+          : briefSource === 'summary'
+            ? 'Storyline summary'
+            : 'Brief';
+  const briefMeta =
+    briefSource === 'pull'
+      ? [
+          'Living context',
+          pullNoteCount ? `${pullNoteCount} notes` : null,
+          pullActors.length ? pullActors.slice(0, 8).join(', ') : null,
+        ]
+          .filter(Boolean)
+          .join(' · ')
+      : briefSource === 'vault_expansion'
+        ? [
+            'Primed vault brief (live)',
+            pack.vault_expansion?.updated_at
+              ? String(pack.vault_expansion.updated_at).slice(0, 10)
+              : null,
+          ]
+            .filter(Boolean)
+            .join(' · ')
+        : briefSource === 'durable'
+          ? 'Desk / package projection — not the living morning brief'
+          : briefSource === 'summary'
+            ? 'Fallback pack summary'
+            : '';
   const summaryText = String(pack.summary || '').trim();
   const summaryDup = Boolean(
     summaryText &&
@@ -371,35 +429,18 @@ export default function StorylineReaderPage() {
 
           {briefMd ? (
             <section style={{ marginBottom: '1.25rem' }}>
-              <h2 className='v2-section-label'>
-                {briefFromPull ? 'Executive brief' : 'Morning brief'}
-              </h2>
-              <p
-                style={{
-                  fontSize: '0.85rem',
-                  color: 'var(--v2-ink-muted)',
-                  marginBottom: '0.75rem',
-                }}
-              >
-                {briefFromPull
-                  ? [
-                      'Living context',
-                      pullNoteCount ? `${pullNoteCount} notes` : null,
-                      pullActors.length
-                        ? pullActors.slice(0, 8).join(', ')
-                        : null,
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')
-                  : [
-                      'Primed vault brief',
-                      pack.vault_expansion?.updated_at
-                        ? String(pack.vault_expansion.updated_at).slice(0, 10)
-                        : null,
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-              </p>
+              <h2 className='v2-section-label'>{briefLabel}</h2>
+              {briefMeta ? (
+                <p
+                  style={{
+                    fontSize: '0.85rem',
+                    color: 'var(--v2-ink-muted)',
+                    marginBottom: '0.75rem',
+                  }}
+                >
+                  {briefMeta}
+                </p>
+              ) : null}
               <ReaderMarkdown source={briefMd} />
             </section>
           ) : null}
@@ -437,9 +478,13 @@ export default function StorylineReaderPage() {
           {!summaryDup ? (
             <section>
               <h2 className='v2-section-label'>Summary</h2>
-              <p style={{ whiteSpace: 'pre-wrap' }}>
-                {summaryText || 'No summary yet.'}
-              </p>
+              {summaryText && /(?:^|\n)##\s/.test(summaryText) ? (
+                <ReaderMarkdown source={summaryText} />
+              ) : (
+                <p style={{ whiteSpace: 'pre-wrap' }}>
+                  {summaryText || 'No summary yet.'}
+                </p>
+              )}
             </section>
           ) : null}
 
@@ -535,6 +580,31 @@ export default function StorylineReaderPage() {
               </ol>
             )}
           </section>
+
+          {alsoIn.length > 0 ? (
+            <section>
+              <hr className='v2-section-rule' />
+              <h2 className='v2-section-label'>Also in</h2>
+              <p className='v2-empty' style={{ marginBottom: '0.5rem' }}>
+                Primary home for this pack; some member articles also appear under
+                other storylines.
+              </p>
+              <ul style={{ paddingLeft: '1.1rem' }}>
+                {alsoIn.map(h => (
+                  <li key={`${h.domain}-${h.storyline_id}-${h.article_id}`} style={{ marginBottom: '0.4rem' }}>
+                    <a href={h.href || `/storylines/${h.domain}/${h.storyline_id}`}>
+                      {h.title || `Storyline ${h.storyline_id}`}
+                    </a>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--v2-ink-muted)' }}>
+                      {h.article_title
+                        ? ` · via “${String(h.article_title).slice(0, 72)}”`
+                        : ''}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
 
           <section>
             <hr className='v2-section-rule' />
