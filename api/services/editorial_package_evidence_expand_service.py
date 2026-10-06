@@ -2,7 +2,8 @@
 Narrative evidence-expand — iterative multi-source research into package briefs (v11).
 
 Keep Research literature-focused. This loop runs on Narrative packages
-(politics / finance / legal): DB → Wiki/spine → web → vault, then synthesizes
+(politics / finance / legal): DB → Wiki/spine → web → vault (retrieve for
+background + write brief scratchpad), then synthesizes
 intelligence.package_evidence_briefs for Editor publish.
 """
 
@@ -388,6 +389,37 @@ def _retrieve_wiki(gap: dict[str, Any], package: dict[str, Any]) -> list[dict[st
     return hits[:6]
 
 
+def _retrieve_vault(gap: dict[str, Any], package: dict[str, Any]) -> list[dict[str, Any]]:
+    """Situation / entity vault notes as background hits (not auto-attached members)."""
+    del gap  # title/package drive retrieval; gaps still trigger the round
+    try:
+        from services.package_vault_context_service import (
+            retrieve_vault_context_for_package,
+        )
+
+        pack = retrieve_vault_context_for_package(package, limit=6, max_chars=3200)
+        if not pack.get("ok"):
+            return []
+        hits: list[dict[str, Any]] = []
+        for n in pack.get("notes") or []:
+            hits.append(
+                {
+                    "source": "vault_note",
+                    "title": n.get("title"),
+                    "url": None,
+                    "vault_path": n.get("vault_path"),
+                    "note_type": n.get("note_type"),
+                    "excerpt": (n.get("excerpt") or "")[:1200],
+                    "rank": n.get("rank"),
+                    "background_only": True,
+                }
+            )
+        return hits
+    except Exception as e:
+        logger.debug("vault retrieve expand failed: %s", e)
+        return []
+
+
 def _retrieve_web(gap: dict[str, Any], package: dict[str, Any]) -> list[dict[str, Any]]:
     if not web_expand_enabled():
         return []
@@ -456,8 +488,11 @@ def _attach_db_hit(
 
     mt = str(hit.get("member_type") or hit.get("type") or "").strip()
     mid = hit.get("member_id") or hit.get("id")
+    # Promote embedding chunks → article/context (or external context for wiki/ref).
     if mt == "embedding_chunk":
-        return None
+        return _attach_embedding_chunk_hit(
+            package_id, package, hit, actor=actor
+        )
     if mt not in (
         "chronological_event",
         "article",
@@ -499,6 +534,249 @@ def _attach_db_hit(
         return None
 
 
+def _attach_embedding_chunk_hit(
+    package_id: int,
+    package: dict[str, Any],
+    hit: dict[str, Any],
+    *,
+    actor: str,
+) -> dict[str, Any] | None:
+    """Map embedding_chunk hits to attachable article/context members."""
+    from services.editorial_package_service import add_member
+
+    source_type = str(hit.get("source_type") or "").strip()
+    source_id = str(hit.get("source_id") or hit.get("member_id") or "").strip()
+    label = str(hit.get("label") or hit.get("title") or "")[:240]
+    quote = str(hit.get("quote") or hit.get("excerpt") or "")[:900]
+    blob = f"{label} {quote}"
+    if not _theme_ok(package, blob):
+        return None
+    dk = hit.get("domain_key") or (list(package.get("domain_keys") or []) or [None])[0]
+
+    # article chunks: source_id like "politics:12345"
+    if source_type == "article" and ":" in source_id:
+        parts = source_id.split(":", 1)
+        try:
+            article_dk, article_id = parts[0], int(parts[1])
+        except (TypeError, ValueError):
+            article_dk, article_id = dk, None
+        if article_id is not None:
+            try:
+                return add_member(
+                    package_id,
+                    member_type="article",
+                    member_id=int(article_id),
+                    domain_key=article_dk or dk,
+                    role="supporting",
+                    added_by_modal="narrative",
+                    added_by=actor,
+                    provenance={
+                        "label": label or f"article:{article_id}",
+                        "quote": quote or None,
+                        "evidence_expand": True,
+                        "from_embedding_chunk": True,
+                        "gap_id": hit.get("gap_id"),
+                    },
+                    metadata={"evidence_expand": True, "from_embedding_chunk": True},
+                    actor=actor,
+                )
+            except Exception as e:
+                logger.debug("attach embedding article failed: %s", e)
+
+    # context chunks: source_id is context id
+    if source_type == "context":
+        try:
+            ctx_id = int(source_id)
+            return add_member(
+                package_id,
+                member_type="context",
+                member_id=ctx_id,
+                domain_key=dk,
+                role="supporting",
+                added_by_modal="narrative",
+                added_by=actor,
+                provenance={
+                    "label": label or f"context:{ctx_id}",
+                    "quote": quote or None,
+                    "evidence_expand": True,
+                    "from_embedding_chunk": True,
+                    "gap_id": hit.get("gap_id"),
+                },
+                metadata={"evidence_expand": True, "from_embedding_chunk": True},
+                actor=actor,
+            )
+        except Exception as e:
+            logger.debug("attach embedding context failed: %s", e)
+
+    # wikipedia / reference_event → external context member
+    return _attach_external_hit(
+        package_id,
+        package,
+        {
+            "title": label or f"{source_type}:{source_id}",
+            "excerpt": quote,
+            "url": hit.get("url") or hit.get("source_url"),
+            "source": f"embedding_chunk:{source_type or 'unknown'}",
+        },
+        actor=actor,
+        gap_id=hit.get("gap_id"),
+    )
+
+
+def promote_members_before_compose(
+    package_id: int,
+    package: dict[str, Any],
+    *,
+    actor: str = "editor_compose",
+    chunk_limit: int = 4,
+    rag_limit: int = 4,
+) -> dict[str, Any]:
+    """Promote embedding_chunks + completed RAG pulls into members before compose.
+
+    Safe to call when expand already ran — attach helpers theme-gate and
+    add_member should no-op / skip duplicates via existing membership.
+    """
+    chunk_attached = 0
+    title = str(package.get("working_title") or "").strip()
+    stub = str(package.get("summary_stub") or "").strip()
+    q = f"{title} {stub}".strip()[:200]
+    domain_keys = list(package.get("domain_keys") or []) or None
+    if q:
+        try:
+            from services.embeddings_worker_service import search_embedding_chunks
+
+            dk = (domain_keys or [None])[0]
+            chunks = search_embedding_chunks(
+                q,
+                limit=chunk_limit + 2,
+                domain_key=dk,
+                source_types=["article", "wikipedia", "reference_event", "context"],
+            )
+            for ch in chunks or []:
+                hit = {
+                    "member_type": "embedding_chunk",
+                    "source_type": ch.get("source_type"),
+                    "source_id": ch.get("source_id"),
+                    "domain_key": ch.get("domain_key") or dk,
+                    "label": (ch.get("title") or ch.get("source_id") or "")[:200],
+                    "quote": (ch.get("chunk_text") or ch.get("text") or "")[:900],
+                    "gap_id": "pre_compose_chunk",
+                }
+                if _attach_embedding_chunk_hit(
+                    package_id, package, hit, actor=actor
+                ):
+                    chunk_attached += 1
+                if chunk_attached >= chunk_limit:
+                    break
+        except Exception as e:
+            logger.debug("pre-compose embedding promote failed: %s", e)
+
+    rag_attached = 0
+    try:
+        rag_attached = _attach_completed_rag_pulls(
+            package_id, package, actor=actor, limit=rag_limit
+        )
+    except Exception as e:
+        logger.debug("pre-compose rag promote failed: %s", e)
+
+    return {
+        "ok": True,
+        "chunk_attached": chunk_attached,
+        "rag_pull_attached": rag_attached,
+        "attached": chunk_attached + rag_attached,
+    }
+
+
+def _attach_completed_rag_pulls(
+    package_id: int,
+    package: dict[str, Any],
+    *,
+    actor: str = "evidence_expand",
+    limit: int = 4,
+) -> int:
+    """Attach completed rag_evidence_pull → processed_documents as context members."""
+    from shared.database.connection import get_db_connection_context
+
+    domains = [str(d) for d in (package.get("domain_keys") or []) if d]
+    attached = 0
+    try:
+        with get_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT q.id, q.domain_key, q.pdf_url, q.selection_reason,
+                           q.processed_document_id, pd.title, pd.source_url,
+                           LEFT(
+                             COALESCE(
+                               pd.key_findings::text,
+                               pd.extracted_sections::text,
+                               pd.metadata->>'snippet',
+                               pd.metadata->>'summary',
+                               ''
+                             ),
+                             1200
+                           )
+                    FROM intelligence.rag_evidence_pull_queue q
+                    LEFT JOIN intelligence.processed_documents pd
+                      ON pd.id = q.processed_document_id
+                    WHERE q.status = 'complete'
+                      AND q.processed_document_id IS NOT NULL
+                      AND (
+                        %s::text[] IS NULL
+                        OR cardinality(%s::text[]) = 0
+                        OR q.domain_key = ANY(%s)
+                      )
+                      AND q.updated_at >= NOW() - INTERVAL '120 days'
+                    ORDER BY q.updated_at DESC NULLS LAST
+                    LIMIT %s
+                    """,
+                    (domains or None, domains or None, domains or None, limit * 3),
+                )
+                rows = cur.fetchall() or []
+    except Exception as e:
+        logger.debug("load completed rag pulls: %s", e)
+        return 0
+
+    for (
+        qid,
+        domain_key,
+        pdf_url,
+        reason,
+        doc_id,
+        doc_title,
+        source_url,
+        excerpt,
+    ) in rows:
+        del domain_key, doc_id  # used via join only
+        # Theme on document title+excerpt only. Do not fold selection_reason into
+        # the theme blob (e.g. "timeline_events" falsely mismatches), and never
+        # prepend the package title (that made the gate always pass).
+        excerpt_s = (excerpt or "").strip()
+        if len(excerpt_s) < 40:
+            continue
+        blob = f"{doc_title or ''} {excerpt_s}"
+        if not _theme_ok(package, blob):
+            continue
+        hit = {
+            "title": (doc_title or f"RAG evidence #{qid}")[:240],
+            "excerpt": excerpt_s[:1200],
+            "url": source_url or pdf_url,
+            "source": "rag_evidence_pull",
+        }
+        if _attach_external_hit(
+            package_id,
+            package,
+            hit,
+            actor=actor,
+            gap_id=f"rag_pull:{qid}",
+            skip_theme=True,
+        ):
+            attached += 1
+        if attached >= limit:
+            break
+    return attached
+
+
 def _attach_external_hit(
     package_id: int,
     package: dict[str, Any],
@@ -506,6 +784,7 @@ def _attach_external_hit(
     *,
     actor: str,
     gap_id: str | None,
+    skip_theme: bool = False,
 ) -> dict[str, Any] | None:
     from services.editorial_package_service import add_member
 
@@ -515,7 +794,7 @@ def _attach_external_hit(
     if not title and not excerpt:
         return None
     blob = f"{title} {excerpt}"
-    if not _theme_ok(package, blob):
+    if not skip_theme and not _theme_ok(package, blob):
         return None
     dk = (list(package.get("domain_keys") or []) or [None])[0]
     ctx_id = _upsert_external_context(
@@ -688,6 +967,8 @@ def _fallback_brief_md(package: dict[str, Any]) -> str:
 async def _llm_synthesize(
     package: dict[str, Any],
     gaps: list[dict[str, Any]],
+    *,
+    vault_background: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     members = [m for m in (package.get("members") or []) if m.get("status") == "active"]
     member_rows = []
@@ -705,13 +986,20 @@ async def _llm_synthesize(
                 "url": prov.get("source_url") or prov.get("url"),
             }
         )
-    payload = {
+    payload: dict[str, Any] = {
         "package_id": package.get("id"),
         "working_title": package.get("working_title"),
         "summary_stub": package.get("summary_stub"),
         "gaps": gaps,
         "members": member_rows,
     }
+    if vault_background and vault_background.get("note_n"):
+        payload["vault_background"] = {
+            "policy": "background_only_not_citeable",
+            "note_n": vault_background.get("note_n"),
+            "notes": vault_background.get("notes") or [],
+            "evidence_text": (vault_background.get("evidence_text") or "")[:3500],
+        }
     prompt = (
         _load_prompt()
         + "\n\nINPUT:\n```json\n"
@@ -760,7 +1048,7 @@ def run_expand_retrieval(
     actor: str = "evidence_expand",
     include_web: bool | None = None,
 ) -> dict[str, Any]:
-    """DB + wiki (+ optional web) retrieve and attach; returns attach counts."""
+    """DB + wiki (+ optional web) attach; vault notes as background (not members)."""
     from services.editorial_package_service import get_package
     from services.package_evidence_brief_service import get_or_create_brief
 
@@ -799,12 +1087,37 @@ def run_expand_retrieval(
                 ):
                     attached += 1
 
+    vault_background: dict[str, Any] = {}
+    try:
+        from services.package_vault_context_service import (
+            retrieve_vault_context_for_package,
+        )
+
+        vault_background = retrieve_vault_context_for_package(
+            pkg, limit=6, max_chars=3200
+        )
+    except Exception as e:
+        logger.debug("vault background retrieve failed: %s", e)
+        vault_background = {"ok": False, "error": str(e), "note_n": 0}
+
+    rag_attached = 0
+    try:
+        rag_attached = _attach_completed_rag_pulls(
+            package_id, pkg, actor=actor, limit=4
+        )
+        attached += rag_attached
+    except Exception as e:
+        logger.debug("attach completed rag pulls failed: %s", e)
+
     return {
         "ok": True,
         "package_id": package_id,
         "attached": attached,
         "attempted": attempted,
         "gaps": gaps,
+        "vault_background": vault_background,
+        "vault_hits": int(vault_background.get("note_n") or 0),
+        "rag_pull_attached": rag_attached,
     }
 
 
@@ -864,8 +1177,11 @@ async def run_evidence_expand_pass(
         package_id, actor="evidence_expand", include_web=include_web
     )
     pkg = get_package(package_id) or pkg
+    vault_bg = retrieval.get("vault_background") if isinstance(retrieval, dict) else None
 
-    parsed, model = await _llm_synthesize(pkg, gaps)
+    parsed, model = await _llm_synthesize(
+        pkg, gaps, vault_background=vault_bg if isinstance(vault_bg, dict) else None
+    )
     used_fallback = parsed is None
     if used_fallback:
         brief_md = _fallback_brief_md(pkg)
@@ -936,6 +1252,12 @@ async def run_evidence_expand_pass(
             "retrieval": {
                 "attached": retrieval.get("attached"),
                 "attempted": retrieval.get("attempted"),
+                "vault_hits": retrieval.get("vault_hits"),
+                "vault_paths": [
+                    n.get("vault_path")
+                    for n in ((vault_bg or {}).get("notes") or [])
+                    if isinstance(n, dict)
+                ][:8],
             },
         },
     )

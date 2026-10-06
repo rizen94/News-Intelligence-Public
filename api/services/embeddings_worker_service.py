@@ -39,17 +39,21 @@ def _chunk_text(text: str, max_chars: int = 1200) -> list[str]:
 
 def _get_embedding(text: str) -> list[float] | None:
     try:
-        from services.ai_storyline_discovery import get_embedding_single
+        from services.ai_storyline_discovery import get_discovery_service
 
-        vec = get_embedding_single(text[:4000])
+        vec = get_discovery_service().get_embedding_single(text[:4000])
         if vec is None:
             return None
         if isinstance(vec, str):
             parsed = json.loads(vec)
             return parsed if isinstance(parsed, list) else None
-        return list(vec) if vec else None
+        # numpy ndarray or list
+        try:
+            return [float(x) for x in list(vec)]
+        except (TypeError, ValueError):
+            return None
     except Exception as e:
-        logger.debug("embedding skip: %s", e)
+        logger.warning("embedding skip: %s", e)
         return None
 
 
@@ -472,23 +476,24 @@ def search_embedding_chunks(
         "source_type = ANY(%s)",
         "embedding IS NOT NULL",
     ]
-    params: list[Any] = [types]
+    # WHERE bind order (SELECT/ORDER vector binds are prepended/appended below).
+    where_params: list[Any] = [types]
 
     if domain_key:
         conditions.append("domain_key = %s")
-        params.append(domain_key)
+        where_params.append(domain_key)
 
     if date_from is not None:
         conditions.append("event_date >= %s")
-        params.append(date_from)
+        where_params.append(date_from)
 
     if date_to is not None:
         conditions.append("event_date <= %s")
-        params.append(date_to)
+        where_params.append(date_to)
 
     if source_ids:
         conditions.append("source_id = ANY(%s)")
-        params.append(list(source_ids))
+        where_params.append(list(source_ids))
 
     if storyline_article_ids:
         id_list = [int(x) for x in storyline_article_ids]
@@ -501,16 +506,17 @@ def search_embedding_chunks(
                 )
             )"""
         )
-        params.extend([id_list, id_list])
+        where_params.extend([id_list, id_list])
 
     if keyword_hint and keyword_hint.strip():
         conditions.append(
             "to_tsvector('english', COALESCE(chunk_text, '')) @@ plainto_tsquery('english', %s)"
         )
-        params.append(keyword_hint.strip())
+        where_params.append(keyword_hint.strip())
 
     where_sql = " AND ".join(conditions)
-    params.extend([vec_str, vec_str, limit])
+    # SQL placeholder order: SELECT vec, WHERE…, ORDER BY vec, LIMIT
+    params: list[Any] = [vec_str, *where_params, vec_str, limit]
 
     with get_ui_db_connection_context() as conn:
         with conn.cursor() as cur:
