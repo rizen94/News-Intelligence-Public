@@ -400,6 +400,7 @@ def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any
         is_multi_topic_excerpt_mash,
         sanitize_briefing_lede,
         sanitize_reader_dek,
+        sanitize_reader_prose,
         strip_inventory_metadata_summary,
         strip_llm_wrapping_artifacts,
         strip_trailing_llm_json,
@@ -417,8 +418,12 @@ def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any
     description_raw = strip_inventory_metadata_summary(_usable_summary_text(description))
     briefing_raw = _usable_summary_text(timeline_narrative_briefing)
 
-    lede = sanitize_reader_dek(lede_raw, title=title, max_length=400) or sanitize_briefing_lede(
-        lede_raw, max_length=400
+    # Prefer dek; fall back to prose sanitize (strips **Storyline:** / **Main Narrative…**)
+    # before briefing_lede, which can leave markdown markers.
+    lede = (
+        sanitize_reader_dek(lede_raw, title=title, max_length=400)
+        or sanitize_reader_prose(lede_raw, title=title, max_length=400)
+        or sanitize_briefing_lede(lede_raw, max_length=400)
     )
 
     def _cap_summary(text: str) -> str:
@@ -452,7 +457,17 @@ def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any
         )
     durable_brief = ""
     if quality_status and (lede_raw or analysis_raw):
-        parts = [p for p in (lede_raw, analysis_raw, _developments_blob(ed)) if p]
+        parts = [
+            p
+            for p in (
+                sanitize_reader_prose(lede_raw, title=title, max_length=2000),
+                sanitize_reader_prose(analysis_raw, title=title, max_length=8000),
+                sanitize_reader_prose(
+                    _developments_blob(ed), title=title, max_length=2000
+                ),
+            )
+            if p
+        ]
         durable_brief = _cap_summary("\n\n".join(parts))
 
     # Prefer desk walkthrough; never promote ML inventory (Story Overview counts).
@@ -519,6 +534,21 @@ def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any
             "for split — use the citations below by topic rather than reading this "
             "as a single story."
         )
+    else:
+        # Reader Summary is often plain-text (not ReactMarkdown) — strip MD templates.
+        if summary:
+            cleaned_summary = sanitize_reader_prose(
+                summary, title=title, max_length=12000
+            )
+            if cleaned_summary:
+                summary = cleaned_summary
+            else:
+                summary = summary.replace("**", "").replace("__", "")
+        if durable_brief:
+            durable_brief = (
+                sanitize_reader_prose(durable_brief, title=title, max_length=12000)
+                or durable_brief.replace("**", "").replace("__", "")
+            )
 
     dossier_tree = _build_dossier_tree(entities, relationships)
 
@@ -646,6 +676,37 @@ def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any
     else:
         brief_source = "none"
 
+    ed_out: dict[str, Any] = dict(editorial) if isinstance(editorial, dict) else {}
+    for _ek in ("lede", "analysis", "what"):
+        _ev = ed_out.get(_ek)
+        if isinstance(_ev, str) and _ev.strip():
+            ed_out[_ek] = (
+                sanitize_reader_prose(_ev, title=title, max_length=8000)
+                or _ev.replace("**", "").replace("__", "")
+            )
+        elif isinstance(_ev, list):
+            ed_out[_ek] = [
+                sanitize_reader_prose(str(x), title=title, max_length=400)
+                or str(x).replace("**", "")
+                for x in _ev
+                if str(x).strip()
+            ]
+
+    situation_hub = None
+    try:
+        from services.vault_cluster_hub_service import storyline_ids_indexed_by_hubs
+
+        hub_map = storyline_ids_indexed_by_hubs(domain)
+        stubs = hub_map.get(int(sid)) or []
+        if stubs:
+            situation_hub = stubs[0]
+    except Exception:
+        situation_hub = None
+
+    tn = timeline_narrative_chronological
+    if isinstance(tn, str) and tn.strip():
+        tn = sanitize_reader_prose(tn, title=title, max_length=4000) or tn
+
     return {
         "domain": domain,
         "storyline_id": sid,
@@ -655,9 +716,10 @@ def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any
         "lede": lede,
         "durable_brief": durable_brief or None,
         "brief_source": brief_source,
-        "editorial_document": editorial if isinstance(editorial, dict) else {},
+        "editorial_document": ed_out,
         "background_information": background_information,
-        "timeline_narrative": timeline_narrative_chronological,
+        "timeline_narrative": tn,
+        "situation_hub": situation_hub,
         "created_at": created_at.isoformat() if created_at else None,
         "updated_at": updated_at.isoformat() if updated_at else None,
         "last_refinement": last_refinement.isoformat() if last_refinement else None,

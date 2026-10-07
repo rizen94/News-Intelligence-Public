@@ -59,15 +59,29 @@ def reader_brief_from_expansion(expansion: dict[str, Any]) -> str:
     """
     Build a reader-facing Pull brief from a vault expansion.
 
-    Prefers cleaned body_md prose; strips vault RAG dumps. Falls back to
+    Prefers cleaned body_md prose; strips vault RAG dumps and HTML. Falls back to
     summary_md (dek) when the body is empty or still stub-like after sanitize.
     """
+    from shared.llm_text_sanitize import (
+        html_to_visible_text,
+        sanitize_reader_prose,
+        strip_trailing_llm_json,
+    )
+
     title = str(expansion.get("title") or "").strip()
     body = _normalize_brief_noise(
-        _strip_vault_rag_dump(str(expansion.get("body_md") or ""))
+        _strip_vault_rag_dump(
+            html_to_visible_text(
+                strip_trailing_llm_json(str(expansion.get("body_md") or ""))
+            )
+        )
     )
     summary = _normalize_brief_noise(
-        _strip_vault_rag_dump(str(expansion.get("summary_md") or ""))
+        _strip_vault_rag_dump(
+            html_to_visible_text(
+                strip_trailing_llm_json(str(expansion.get("summary_md") or ""))
+            )
+        )
     )
 
     # Drop duplicate leading ## Title / # Title matching the expansion title
@@ -82,8 +96,11 @@ def reader_brief_from_expansion(expansion: dict[str, Any]) -> str:
     if not prose or len(re.sub(r"[#*\-\s]", "", prose)) < 80:
         prose = summary or body
 
+    # Strip **What happened** / emphasis for plain-text-safe morning briefs
+    prose = sanitize_reader_prose(prose, title=title, max_length=8000) or prose
+
     if not prose:
-        return f"## {title}\n\n_No primed expansion yet._" if title else "_No primed expansion yet._"
+        return f"## {title}\n\nNo primed expansion yet." if title else "No primed expansion yet."
 
     if title and not prose.lstrip().startswith("#"):
         return f"## {title}\n\n{prose}".strip()
@@ -475,44 +492,6 @@ def enqueue_context_pull(
     except Exception as e:
         logger.debug("pull cache expansion skip: %s", e)
         expansion = None
-
-    # #region agent log
-    try:
-        import json as _json
-        import time as _time
-
-        with open(
-            "/home/pete/Documents/projects/News Intelligence/.cursor/debug-fb1ed2.log",
-            "a",
-            encoding="utf-8",
-        ) as _f:
-            _f.write(
-                _json.dumps(
-                    {
-                        "sessionId": "fb1ed2",
-                        "hypothesisId": "E2",
-                        "location": "article_context_pull_service.py:enqueue_context_pull",
-                        "message": "pull cache lookup scoped",
-                        "data": {
-                            "domain_key": domain_key,
-                            "article_id": article_id,
-                            "storyline_id": storyline_id,
-                            "pull_scope": pull_scope,
-                            "tried_sids": tried_sids[:8],
-                            "has_expansion": bool(
-                                expansion
-                                and (expansion.get("body_md") or expansion.get("summary_md"))
-                            ),
-                            "expansion_object_id": (expansion or {}).get("object_id"),
-                        },
-                        "timestamp": int(_time.time() * 1000),
-                    }
-                )
-                + "\n"
-            )
-    except Exception:
-        pass
-    # #endregion
 
     if expansion and (expansion.get("body_md") or expansion.get("summary_md")):
         body = reader_brief_from_expansion(expansion)[:20000]

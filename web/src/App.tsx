@@ -1,15 +1,15 @@
 /**
  * News Intelligence — web SPA entry (React + Vite + MUI).
  *
- * Product roots (shared chrome via ProductRootSwitcher):
- * - News: `/v2/*` broadsheet reader (`web/src/v2/`)
- * - Finance: `/finance/{trackers|markets|reporting}` (`web/src/finance/`)
- * - Admin: `/v2/admin/*` and `/admin/*` — ops only (Monitor, Work, SQL, Audit, Grafana)
+ * Single live surface (v2 architecture; folder name unchanged):
+ * - News (default): `/`, `/news`, `/current`, `/hubs`, `/research`, `/one-offs`,
+ *   `/storylines/:domain/:id`, `/hubs/:idOrSlug` — broadsheet (`web/src/v2/`)
+ * - Finance: `/finance/*` (`web/src/finance/`)
+ * - Admin: `/admin/*` — ops (Monitor, Work, SQL, Audit)
  *
- * Classic: `/:domain/*` via MainLayout remains via “Classic app”.
- *
- * Domains: `/api/system_monitoring/registry_domains` + `utils/domainHelper`.
- * Public demo: `PublicDemoProvider` + `DemoRouteGuard` — see AppNav + guarded routes.
+ * Public origin: https://news-intelligence-ag.duckdns.org
+ * Legacy `/v2/*` and bare `/:domain/*` redirect into this map.
+ * Classic UI cold-stored at archive/classic_web_ui/ (not mounted).
  */
 import React, { Suspense, useEffect } from 'react';
 import { Box, CircularProgress } from '@mui/material';
@@ -18,6 +18,8 @@ import {
   Routes,
   Route,
   Navigate,
+  useLocation,
+  useParams,
 } from 'react-router-dom';
 import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
 import './App.css';
@@ -31,9 +33,9 @@ import errorHandler from './services/errorHandler';
 import ErrorBoundary from './components/ErrorBoundary/ErrorBoundary';
 import './utils/debugHelper';
 import './utils/featureTestHelper';
-
-import MainLayout from './layout/MainLayout';
-import { getDefaultDomainKey } from './utils/domainHelper';
+import LegacyV2Redirect from './components/LegacyV2Redirect';
+import { NEWS_HOME } from './paths';
+import { isValidDomain, getDefaultDomainKey } from './utils/domainHelper';
 
 const FinanceLayout = React.lazy(() => import('./finance/layouts/FinanceLayout'));
 const FinanceHomePage = React.lazy(() => import('./finance/pages/FinanceHomePage'));
@@ -77,15 +79,20 @@ const PageFallback = () => (
   </Box>
 );
 
-/* v2 parallel app — do not replace legacy /:domain routes */
+/* Live News / Admin (implementation under web/src/v2/) */
 const V2UserLayout = React.lazy(() => import('./v2/layouts/UserLayout'));
 const V2AdminLayout = React.lazy(() => import('./v2/layouts/AdminLayout'));
 const V2HomePage = React.lazy(() => import('./v2/pages/Home/HomePage'));
 const V2NewsPage = React.lazy(() => import('./v2/pages/News/NewsPage'));
 const V2CurrentPage = React.lazy(() => import('./v2/pages/Current/CurrentPage'));
 const V2OneOffsPage = React.lazy(() => import('./v2/pages/OneOffs/OneOffsPage'));
+const V2ResearchPage = React.lazy(() => import('./v2/pages/Research/ResearchPage'));
 const V2StorylineReaderPage = React.lazy(
   () => import('./v2/pages/StorylineReader/StorylineReaderPage')
+);
+const V2HubPage = React.lazy(() => import('./v2/pages/Hub/HubPage'));
+const V2SituationsPage = React.lazy(
+  () => import('./v2/pages/Situations/SituationsPage')
 );
 const V2EntityDossierPage = React.lazy(
   () => import('./v2/pages/EntityDossier/EntityDossierPage')
@@ -102,43 +109,6 @@ const V2AdminAuditPage = React.lazy(
   () => import('./v2/pages/admin/AdminAuditPage')
 );
 
-const Dashboard = React.lazy(() => import('./pages/Dashboard/Dashboard'));
-const DiscoverPage = React.lazy(() => import('./pages/Discover/DiscoverPage'));
-const ContextDetailPage = React.lazy(() => import('./pages/Discover/ContextDetailPage'));
-const InvestigatePage = React.lazy(() => import('./pages/Investigate/InvestigatePage'));
-const EventDetailPage = React.lazy(() => import('./pages/Investigate/EventDetailPage'));
-const EntityDetailPage = React.lazy(() => import('./pages/Investigate/EntityDetailPage'));
-const EntitiesListPage = React.lazy(() => import('./pages/Investigate/EntitiesListPage'));
-const SearchPage = React.lazy(() => import('./pages/Investigate/SearchPage'));
-const ProcessedDocumentsPage = React.lazy(() => import('./pages/Investigate/ProcessedDocumentsPage'));
-const ProcessedDocumentDetailPage = React.lazy(() => import('./pages/Investigate/ProcessedDocumentDetailPage'));
-const NarrativeThreadsPage = React.lazy(() => import('./pages/Investigate/NarrativeThreadsPage'));
-const EntityResolutionPage = React.lazy(() => import('./pages/Investigate/EntityResolutionPage'));
-const HypothesesPage = React.lazy(() => import('./pages/Investigate/HypothesesPage'));
-const EntityDossierPage = React.lazy(() => import('./pages/Investigate/EntityDossierPage'));
-const MonitorPage = React.lazy(() => import('./pages/Monitor/MonitorPage'));
-const SqlExplorerPage = React.lazy(() => import('./pages/Monitor/SqlExplorerPage'));
-const AnalyzePage = React.lazy(() => import('./pages/Analyze/AnalyzePage'));
-const AuditChecklistPage = React.lazy(() => import('./pages/Audit/AuditChecklistPage'));
-const CommodityDashboard = React.lazy(() => import('./pages/Finance/CommodityDashboard'));
-const FinancialAnalysis = React.lazy(() => import('./pages/Finance/FinancialAnalysis'));
-const FinancialAnalysisResult = React.lazy(() => import('./pages/Finance/FinancialAnalysisResult'));
-const TaskTraceViewer = React.lazy(() => import('./pages/Finance/TaskTraceViewer'));
-const Storylines = React.lazy(() => import('./pages/Storylines/Storylines'));
-const StorylineDetail = React.lazy(() => import('./pages/Storylines/StorylineDetail'));
-const StorylineDiscovery = React.lazy(() => import('./pages/Storylines/StorylineDiscovery'));
-const StorylineReviewQueue = React.lazy(() => import('./pages/Storylines/StorylineReviewQueue'));
-const SynthesizedView = React.lazy(() => import('./pages/Storylines/SynthesizedView'));
-const StoryTimeline = React.lazy(() => import('./pages/StoryTimeline/StoryTimeline'));
-const Articles = React.lazy(() => import('./pages/Articles/Articles'));
-const ArticleDetail = React.lazy(() => import('./pages/Articles/ArticleDetail'));
-const ArticleDeduplicationManager = React.lazy(() => import('./pages/Articles/ArticleDeduplicationManager'));
-const Briefings = React.lazy(() => import('./pages/Briefings/Briefings'));
-const RSSFeeds = React.lazy(() => import('./pages/RSSFeeds/RSSFeeds'));
-const Topics = React.lazy(() => import('./pages/Topics/Topics'));
-const Watchlist = React.lazy(() => import('./pages/Watchlist/Watchlist'));
-const Events = React.lazy(() => import('./pages/Events/Events'));
-
 const theme = createTheme({
   palette: {
     mode: 'light',
@@ -151,13 +121,27 @@ const theme = createTheme({
   },
 });
 
+/** Bare /:domain/* bookmarks → News home with ?domain= */
+function LegacyDomainHomeRedirect() {
+  const { domain } = useParams<{ domain: string }>();
+  const { search, hash } = useLocation();
+  const d =
+    domain && isValidDomain(domain) ? domain : getDefaultDomainKey();
+  const q = new URLSearchParams(search);
+  if (!q.get('domain')) q.set('domain', d);
+  const qs = q.toString();
+  return (
+    <Navigate to={`${NEWS_HOME}${qs ? `?${qs}` : ''}${hash}`} replace />
+  );
+}
+
 function App() {
-  const defaultDomainPath = `/${getDefaultDomainKey()}/dashboard`;
   useEffect(() => {
     errorHandler.initialize();
-    loggingService.info('News Intelligence (Dashboard) initialized', {
-      version: '9.0',
+    loggingService.info('News Intelligence initialized', {
+      version: '10.0',
       environment: import.meta.env.MODE || 'development',
+      publicOrigin: 'https://news-intelligence-ag.duckdns.org',
     });
     return () => getAPIConnectionManager().cleanup();
   }, []);
@@ -172,30 +156,22 @@ function App() {
               <div className='App'>
                 <Suspense fallback={<PageFallback />}>
                 <Routes>
-                <Route
-                  path='/'
-                  element={<Navigate to={defaultDomainPath} replace />}
-                />
-                {/* News /v2 — registered before /:domain so "v2" is not a domain */}
-                <Route path='/v2' element={<V2UserLayout />}>
+                {/* News — primary domain */}
+                <Route path='/' element={<V2UserLayout />}>
                   <Route index element={<V2HomePage />} />
                   <Route path='news' element={<V2NewsPage />} />
                   <Route path='current' element={<V2CurrentPage />} />
                   <Route path='one-offs' element={<V2OneOffsPage />} />
+                  <Route path='research' element={<V2ResearchPage />} />
+                  <Route path='hubs' element={<V2SituationsPage />} />
                   <Route
                     path='storylines/:domain/:id'
                     element={<V2StorylineReaderPage />}
                   />
+                  <Route path='hubs/:idOrSlug' element={<V2HubPage />} />
                   <Route path='entities/:id' element={<V2EntityDossierPage />} />
                 </Route>
-                {/* Admin — ops only; also aliased at /admin */}
-                <Route path='/v2/admin' element={<V2AdminLayout />}>
-                  <Route index element={<V2AdminOverviewPage />} />
-                  <Route path='monitor' element={<V2AdminMonitorPage />} />
-                  <Route path='work' element={<V2AdminWorkPage />} />
-                  <Route path='sql' element={<V2AdminSqlPage />} />
-                  <Route path='audit' element={<V2AdminAuditPage />} />
-                </Route>
+                {/* Admin */}
                 <Route path='/admin' element={<V2AdminLayout />}>
                   <Route index element={<V2AdminOverviewPage />} />
                   <Route path='monitor' element={<V2AdminMonitorPage />} />
@@ -203,7 +179,10 @@ function App() {
                   <Route path='sql' element={<V2AdminSqlPage />} />
                   <Route path='audit' element={<V2AdminAuditPage />} />
                 </Route>
-                {/* Finance product tree */}
+                {/* Legacy /v2 → primary paths */}
+                <Route path='/v2/*' element={<LegacyV2Redirect />} />
+                <Route path='/v2' element={<LegacyV2Redirect />} />
+                {/* Finance */}
                 <Route path='/finance' element={<FinanceLayout />}>
                   <Route index element={<FinanceHomePage />} />
                   <Route path='trackers' element={<TrackersIndexPage />} />
@@ -215,7 +194,6 @@ function App() {
                     path='trackers/credit-spreads'
                     element={<CreditSpreadsPage />}
                   />
-                  {/* Classic orphan path → Finance trackers home for credit spreads */}
                   <Route
                     path='credit-spread'
                     element={<Navigate to='/finance/trackers/credit-spreads' replace />}
@@ -276,185 +254,12 @@ function App() {
                     }
                   />
                 </Route>
-                <Route path='/:domain' element={<MainLayout />}>
-                  <Route index element={<Navigate to='dashboard' replace />} />
-                  <Route path='dashboard' element={<Dashboard />} />
-                  <Route path='discover' element={<DiscoverPage />} />
-                  <Route
-                    path='discover/contexts/:id'
-                    element={<ContextDetailPage />}
-                  />
-                  <Route path='storylines' element={<Storylines />} />
-                  <Route
-                    path='storylines/review-queue'
-                    element={
-                      <DemoRouteGuard>
-                        <StorylineReviewQueue />
-                      </DemoRouteGuard>
-                    }
-                  />
-                  {/* Static segments before :id — otherwise "discovery" / "synthesized" match as storyline ids */}
-                  <Route
-                    path='storylines/discovery'
-                    element={
-                      <DemoRouteGuard>
-                        <StorylineDiscovery />
-                      </DemoRouteGuard>
-                    }
-                  />
-                  <Route
-                    path='storylines/:id/synthesized'
-                    element={<SynthesizedView />}
-                  />
-                  <Route
-                    path='storylines/:id/timeline'
-                    element={<StoryTimeline />}
-                  />
-                  <Route path='storylines/:id' element={<StorylineDetail />} />
-                  <Route path='articles' element={<Articles />} />
-                  <Route
-                    path='articles/deduplication'
-                    element={
-                      <DemoRouteGuard>
-                        <ArticleDeduplicationManager />
-                      </DemoRouteGuard>
-                    }
-                  />
-                  <Route path='articles/:id' element={<ArticleDetail />} />
-                  <Route path='briefings' element={<Briefings />} />
-                  <Route
-                    path='report'
-                    element={<Navigate to='../briefings' replace />}
-                  />
-                  <Route
-                    path='rss_feeds'
-                    element={
-                      <DemoRouteGuard>
-                        <RSSFeeds />
-                      </DemoRouteGuard>
-                    }
-                  />
-                  <Route path='topics' element={<Topics />} />
-                  <Route
-                    path='watchlist'
-                    element={
-                      <DemoRouteGuard>
-                        <Watchlist />
-                      </DemoRouteGuard>
-                    }
-                  />
-                  <Route path='events' element={<Events />} />
-                  <Route path='investigate' element={<InvestigatePage />} />
-                  <Route
-                    path='investigate/events/:id'
-                    element={<EventDetailPage />}
-                  />
-                  <Route
-                    path='investigate/entities'
-                    element={<EntitiesListPage />}
-                  />
-                  <Route
-                    path='investigate/entities/:id'
-                    element={<EntityDetailPage />}
-                  />
-                  <Route
-                    path='investigate/entities/:entityId/dossier'
-                    element={<EntityDossierPage />}
-                  />
-                  <Route path='investigate/search' element={<SearchPage />} />
-                  <Route
-                    path='investigate/documents'
-                    element={<ProcessedDocumentsPage />}
-                  />
-                  <Route
-                    path='investigate/documents/:documentId'
-                    element={<ProcessedDocumentDetailPage />}
-                  />
-                  <Route
-                    path='investigate/narrative-threads'
-                    element={<NarrativeThreadsPage />}
-                  />
-                  <Route
-                    path='investigate/entity-resolution'
-                    element={<EntityResolutionPage />}
-                  />
-                  <Route
-                    path='investigate/hypotheses'
-                    element={<HypothesesPage />}
-                  />
-                  <Route
-                    path='monitor'
-                    element={
-                      <DemoRouteGuard>
-                        <MonitorPage />
-                      </DemoRouteGuard>
-                    }
-                  />
-                  <Route
-                    path='monitor/sql-explorer'
-                    element={
-                      <DemoRouteGuard>
-                        <SqlExplorerPage />
-                      </DemoRouteGuard>
-                    }
-                  />
-                  <Route
-                    path='audit-checklist'
-                    element={
-                      <DemoRouteGuard>
-                        <AuditChecklistPage />
-                      </DemoRouteGuard>
-                    }
-                  />
-                  <Route
-                    path='analyze'
-                    element={
-                      <DemoRouteGuard>
-                        <AnalyzePage />
-                      </DemoRouteGuard>
-                    }
-                  />
-                  <Route
-                    path='analysis'
-                    element={
-                      <DemoRouteGuard>
-                        <FinancialAnalysis />
-                      </DemoRouteGuard>
-                    }
-                  />
-                  <Route
-                    path='analysis/:taskId'
-                    element={
-                      <DemoRouteGuard>
-                        <FinancialAnalysisResult />
-                      </DemoRouteGuard>
-                    }
-                  />
-                  <Route
-                    path='trace/:taskId'
-                    element={
-                      <DemoRouteGuard>
-                        <TaskTraceViewer />
-                      </DemoRouteGuard>
-                    }
-                  />
-                  <Route
-                    path='commodity'
-                    element={<Navigate to='commodity/gold' replace />}
-                  />
-                  <Route
-                    path='commodity/:commodity'
-                    element={
-                      <DemoRouteGuard>
-                        <CommodityDashboard />
-                      </DemoRouteGuard>
-                    }
-                  />
-                </Route>
-                <Route
-                  path='*'
-                  element={<Navigate to={defaultDomainPath} replace />}
-                />
+                {/* Retired classic paths → News home */}
+                <Route path='/classic/*' element={<Navigate to={NEWS_HOME} replace />} />
+                <Route path='/classic' element={<Navigate to={NEWS_HOME} replace />} />
+                <Route path='/:domain/*' element={<LegacyDomainHomeRedirect />} />
+                <Route path='/:domain' element={<LegacyDomainHomeRedirect />} />
+                <Route path='*' element={<Navigate to={NEWS_HOME} replace />} />
               </Routes>
                 </Suspense>
             </div>

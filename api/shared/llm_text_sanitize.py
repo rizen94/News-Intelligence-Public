@@ -19,6 +19,52 @@ _FIELD_MAX_LENGTH: dict[str, int] = {
     "description": 500,
 }
 
+_HTML_TAG_RE = re.compile(r"<[^>]+>", re.DOTALL)
+_HTML_SCRIPT_RE = re.compile(r"<script[\s\S]*?</script>", re.IGNORECASE)
+_HTML_STYLE_RE = re.compile(r"<style[\s\S]*?</style>", re.IGNORECASE)
+_HTML_BLOCK_BREAK_RE = re.compile(
+    r"</\s*(?:p|div|h[1-6]|li|tr|blockquote|br)\s*>", re.IGNORECASE
+)
+_HTML_BR_RE = re.compile(r"<\s*br\s*/?\s*>", re.IGNORECASE)
+
+
+def html_to_visible_text(text: Optional[str], *, max_length: Optional[int] = None) -> str:
+    """
+    Turn scraped/article HTML into readable prose for reader briefs.
+
+    Guardian RSS often stores ``<p>…</p><ul><li>…`` in ``articles.content``;
+    stubs that copy that into expansion ``body_md`` must not reach the SPA as tags.
+    """
+    if text is None:
+        return ""
+    raw = str(text).strip()
+    if not raw:
+        return ""
+    if "<" not in raw or not re.search(r"</?[a-zA-Z]", raw):
+        out = raw
+    else:
+        s = _HTML_SCRIPT_RE.sub(" ", raw)
+        s = _HTML_STYLE_RE.sub(" ", s)
+        s = _HTML_BR_RE.sub("\n", s)
+        s = _HTML_BLOCK_BREAK_RE.sub("\n", s)
+        s = _HTML_TAG_RE.sub(" ", s)
+        s = (
+            s.replace("&nbsp;", " ")
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", '"')
+            .replace("&#39;", "'")
+            .replace("&apos;", "'")
+        )
+        s = re.sub(r"[ \t]+\n", "\n", s)
+        s = re.sub(r"\n{3,}", "\n\n", s)
+        s = re.sub(r"[ \t]{2,}", " ", s)
+        out = s.strip()
+    if max_length is not None and max_length > 0 and len(out) > max_length:
+        out = out[: max_length - 1].rstrip() + "…"
+    return out
+
 
 def strip_json_fence(text: str) -> str:
     """Remove markdown code fences from LLM output."""
@@ -29,6 +75,82 @@ def strip_json_fence(text: str) -> str:
             s = parts[1]
         if "```" in s:
             s = s.rsplit("```", 1)[0].strip()
+    return s
+
+
+_JSON_TRAILER_MARKERS = (
+    "\n---JSON---",
+    "\n```json",
+    "\n```JSON",
+)
+
+
+def strip_trailing_llm_json(text: Optional[str]) -> str:
+    """
+    Drop finisher machine trailer: ``---JSON---`` / trailing ```json blocks.
+
+    Narrative finisher prompts require prose then a JSON appendix. Reader surfaces
+    must never show that appendix. Prefer the markdown walkthrough ahead of the
+    marker; if the whole blob is a JSON object with ``canonical_narrative``,
+    use that field instead.
+    """
+    if text is None:
+        return ""
+    s = str(text).strip()
+    if not s:
+        return ""
+
+    # Explicit machine marker (finisher contract)
+    marker = "---JSON---"
+    if marker in s:
+        prose, rest = s.split(marker, 1)
+        prose = prose.strip()
+        if prose:
+            return prose
+        # Marker-only / JSON-first payload — try to recover narrative from JSON.
+        rest = strip_json_fence(rest.strip())
+        try:
+            obj = json.loads(rest)
+            if isinstance(obj, dict):
+                for key in (
+                    "canonical_narrative",
+                    "summary",
+                    "narrative",
+                    "text",
+                    "content",
+                ):
+                    v = obj.get(key)
+                    if isinstance(v, str) and v.strip():
+                        return strip_trailing_llm_json(v.strip())
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return ""
+
+    # Trailing fenced JSON without the ---JSON--- marker
+    for m in _JSON_TRAILER_MARKERS:
+        idx = s.find(m)
+        if idx > 0:
+            return s[:idx].rstrip()
+
+    # Whole-value JSON object with a narrative field
+    if s.startswith("{") and ("canonical_narrative" in s or '"lede"' in s):
+        try:
+            obj = json.loads(strip_json_fence(s))
+            if isinstance(obj, dict):
+                for key in (
+                    "canonical_narrative",
+                    "summary",
+                    "narrative",
+                    "lede",
+                    "text",
+                    "content",
+                ):
+                    v = obj.get(key)
+                    if isinstance(v, str) and v.strip():
+                        return strip_trailing_llm_json(v.strip())
+        except (json.JSONDecodeError, TypeError):
+            pass
+
     return s
 
 
@@ -148,7 +270,7 @@ def strip_llm_wrapping_artifacts(text: Optional[str], *, max_length: Optional[in
     """
     if text is None:
         return ""
-    s = str(text).strip()
+    s = strip_trailing_llm_json(str(text).strip())
     if not s:
         return ""
 
@@ -263,6 +385,14 @@ _READER_LABEL_LINE_RE = re.compile(
     r"|overview"
     r"|analysis"
     r"|summary"
+    r"|lede"
+    r"|why\s+this\s+is\s+in\s+play"
+    r"|timeline\s+of\s+events"
+    r"|context"
+    r"|current\s+brief(?:\s*:.*)?"
+    r"|what\s+happened"
+    r"|why\s+it\s+matters"
+    r"|now"
     r")\s*:?\s*$",
     re.I,
 )
@@ -273,11 +403,17 @@ _READER_INLINE_LABEL_RE = re.compile(
     r"|main\s+narrative\s+thread\s*:?\s*"
     r"|the\s+main\s+narrative\s+thread\s+of\s+this\s+story\s+revolves\s+around\s+"
     r"|key\s+developments?\s*:?\s*"
+    r"|current\s+brief\s*:?\s*"
+    r"|what\s+happened\s*:?\s*"
+    r"|why\s+it\s+matters\s*:?\s*"
+    r"|now\s*:?\s*"
     r")",
     re.I,
 )
 _MD_BOLD_RE = re.compile(r"\*\*([^*]+)\*\*")
 _MD_EMPHASIS_RE = re.compile(r"(?<!\*)\*(?!\*)([^*]+)\*(?!\*)")
+_MD_UNDERSCORE_EMPH_RE = re.compile(r"(?<!_)_([^_\n]+)_(?!_)")
+_MD_UNDERSCORE_BOLD_RE = re.compile(r"__([^_]+)__")
 
 
 def _truncate_at_word(text: str, max_length: int) -> str:
@@ -301,6 +437,162 @@ def _sentence_case_start(text: str) -> str:
     return text
 
 
+_INVENTORY_SUMMARY_RE = re.compile(
+    r"(?:📊\s*)?Story\s+Overview|components\s+analyzed|"
+    r"different\s+outlets|Story\s+Elements\s*:|"
+    r"Generated by AI-powered narrative analysis|"
+    r"This storyline tracks developments across|"
+    r"providing comprehensive coverage of|"
+    r"##\s*📖\s*Narrative Analysis|"
+    r"The coverage reveals several interconnected themes",
+    re.IGNORECASE,
+)
+
+_DESK_WALKTHROUGH_RE = re.compile(
+    r"(?:^|\n)##\s+(?:Lede|Update|Background|Competing views|What happened|"
+    r"Why this is in play|Why it matters)",
+    re.IGNORECASE,
+)
+
+_FLUFF_THEME_RE = re.compile(
+    r"Multiple perspectives on the same core story|"
+    r"Evolving developments over time|"
+    r"Different sources providing unique angles|"
+    r"A complex narrative with multiple stakeholders",
+    re.IGNORECASE,
+)
+
+
+_EXCERPT_HEADLINE_RE = re.compile(
+    r"\*\*([^*]{12,160})\*\*\s*(?:\([^)]{0,80}\))?\s*—",
+)
+
+
+def is_multi_topic_excerpt_mash(text: Optional[str]) -> bool:
+    """
+    True when summary is stitched article excerpts from unrelated headlines
+    (inventory rebuild format) rather than one coherent narrative.
+    """
+    if text is None:
+        return False
+    s = str(text).strip()
+    if not s:
+        return False
+    heads = [h.strip() for h in _EXCERPT_HEADLINE_RE.findall(s)]
+    if len(heads) < 2:
+        return False
+
+    def _toks(h: str) -> set[str]:
+        stop = {
+            "the", "and", "for", "with", "from", "that", "this", "have", "has",
+            "after", "over", "into", "as", "it", "happened", "news", "said",
+            "what", "know", "amid", "near", "new", "says",
+        }
+        return {
+            t
+            for t in re.findall(r"[a-z0-9][a-z0-9'-]{3,}", h.lower())
+            if t not in stop
+        }
+
+    token_sets = [_toks(h) for h in heads]
+    # Pairwise: if any pair shares no tokens, treat as mash
+    for i in range(len(token_sets)):
+        for j in range(i + 1, len(token_sets)):
+            if token_sets[i] and token_sets[j] and token_sets[i].isdisjoint(token_sets[j]):
+                return True
+    # Three+ distinct excerpt blocks is almost always a bag
+    return len(heads) >= 3
+
+
+def is_inventory_metadata_summary(text: Optional[str]) -> bool:
+    """
+    True when prose is ML pipeline inventory (source counts, date span, fluff themes)
+    rather than article-grounded substance.
+    """
+    if text is None:
+        return False
+    s = str(text).strip()
+    if not s:
+        return False
+    hits = len(_INVENTORY_SUMMARY_RE.findall(s))
+    fluff = len(_FLUFF_THEME_RE.findall(s))
+    if hits >= 2:
+        return True
+    if hits >= 1 and fluff >= 1:
+        return True
+    if "Story Overview" in s and "components analyzed" in s.casefold():
+        return True
+    # Pure fallback: overview header + no concrete proper nouns beyond title echo
+    if hits >= 1 and len(s) < 2200 and fluff >= 2:
+        return True
+    return False
+
+
+def is_desk_walkthrough(text: Optional[str]) -> bool:
+    """Editorial walkthrough with desk section headings (not ML inventory)."""
+    if not text:
+        return False
+    s = str(text)
+    if is_inventory_metadata_summary(s):
+        return False
+    matches = _DESK_WALKTHROUGH_RE.findall(s)
+    # At least two desk sections, or one section with enough body
+    if len(matches) >= 2 and len(s) > 200:
+        return True
+    return bool(matches) and len(s) > 500
+
+
+def strip_inventory_metadata_summary(text: Optional[str]) -> str:
+    """
+    Drop ML inventory wrappers. Prefer any remaining article-grounded prose;
+    return empty when the blob is only metadata/fluff.
+    """
+    if text is None:
+        return ""
+    s = str(text).strip()
+    if not s:
+        return ""
+    if not is_inventory_metadata_summary(s):
+        return s
+
+    # Try to salvage body after Narrative Analysis / after first ---
+    body = s
+    for marker in (
+        "## 📖 Narrative Analysis",
+        "## Narrative Analysis",
+        "📖 Narrative Analysis",
+        "\n---\n",
+    ):
+        idx = body.find(marker)
+        if idx >= 0:
+            body = body[idx + len(marker) :].strip()
+            body = re.sub(r"^#+\s*", "", body).strip()
+            break
+
+    # Drop trailing generator footer
+    body = re.sub(
+        r"\n\*Generated by AI-powered narrative analysis[^*]*\*\s*$",
+        "",
+        body,
+        flags=re.I,
+    ).strip()
+
+    if is_inventory_metadata_summary(body) or _FLUFF_THEME_RE.search(body or ""):
+        # Body still inventory / theme boilerplate
+        if _FLUFF_THEME_RE.search(body or "") and not re.search(
+            r"\b(?:said|announced|voted|ruled|killed|signed|fired|met)\b",
+            body or "",
+            re.I,
+        ):
+            return ""
+    if is_inventory_metadata_summary(body):
+        return ""
+    # Still mostly the overview template
+    if re.search(r"Sources:\s*\d+\s+different", body or "", re.I):
+        return ""
+    return body.strip()
+
+
 def sanitize_reader_dek(
     text: Optional[str],
     *,
@@ -321,7 +613,7 @@ def sanitize_reader_dek(
     """
     if text is None:
         return ""
-    raw = str(text).strip()
+    raw = strip_inventory_metadata_summary(str(text).strip())
     if not raw:
         return ""
 
@@ -353,6 +645,18 @@ def sanitize_reader_dek(
             t = re.sub(r"\s+", " ", t).strip()
             if not t:
                 continue
+            # Drop title echo when it prefixes the line (common in expansion summaries)
+            if title_norm:
+                t_cf = re.sub(r"\s+", " ", t).casefold()
+                if t_cf.startswith(title_norm):
+                    rest = t[len(title_norm) :].lstrip(" :-—")
+                    t = rest or t
+            # Inline structural labels mid-line (e.g. "Title What happened: …")
+            t = re.sub(
+                r"(?i)\b(?:what\s+happened|why\s+it\s+matters|current\s+brief|now)\s*:\s*",
+                "",
+                t,
+            ).strip()
             label_candidate = t.rstrip(":").strip()
             if _READER_LABEL_LINE_RE.match(label_candidate):
                 continue
@@ -393,3 +697,113 @@ def sanitize_reader_dek(
 
     chosen = _sentence_case_start(chosen)
     return _truncate_at_word(chosen, max_length)
+
+
+def sanitize_reader_prose(
+    text: Optional[str],
+    *,
+    title: Optional[str] = None,
+    max_length: int = 4000,
+) -> str:
+    """Strip markdown emphasis / banner labels for multi-paragraph reader prose.
+
+    Unlike ``sanitize_reader_dek`` (one standfirst), keeps paragraph breaks for
+    hub CURRENT BRIEF bodies rendered as plain text.
+    """
+    if text is None:
+        return ""
+    raw = str(text).strip()
+    if not raw:
+        return ""
+    title_norm = re.sub(r"\s+", " ", (title or "").strip()).casefold()
+    out_paras: list[str] = []
+    for block in re.split(r"\n\s*\n+", raw):
+        lines: list[str] = []
+        for line in block.split("\n"):
+            t = line.strip()
+            if not t:
+                continue
+            # Drop ATX heading markers so "## Lede" becomes a label we can discard
+            t = re.sub(r"^\s*#{1,6}\s+", "", t).strip()
+            # Markdown list markers → plain bullet (avoid literal "*" in UI)
+            t = re.sub(r"^\s*[\*\-•]\s+", "• ", t)
+            t = _MD_BOLD_RE.sub(r"\1", t)
+            t = _MD_EMPHASIS_RE.sub(r"\1", t)
+            t = _MD_UNDERSCORE_BOLD_RE.sub(r"\1", t)
+            t = _MD_UNDERSCORE_EMPH_RE.sub(r"\1", t)
+            t = t.replace("**", "").replace("__", "").strip()
+            t = re.sub(r"\s+", " ", t).strip()
+            if not t:
+                continue
+            label_candidate = t.rstrip(":").strip()
+            if _READER_LABEL_LINE_RE.match(label_candidate):
+                continue
+            t = _READER_INLINE_LABEL_RE.sub("", t).strip()
+            t = re.sub(
+                r"(?i)\b(?:what\s+happened|why\s+it\s+matters|why\s+this\s+is\s+in\s+play|current\s+brief|now|lede|context)\s*:\s*",
+                "",
+                t,
+            ).strip()
+            if not t or _READER_LABEL_LINE_RE.match(t.rstrip(":").strip()):
+                continue
+            if title_norm and re.sub(r"\s+", " ", t).casefold() == title_norm:
+                continue
+            lines.append(t)
+        if lines:
+            # Keep bullet lines on their own rows; join prose lines only.
+            chunk: list[str] = []
+            prose: list[str] = []
+
+            def _flush_prose() -> None:
+                if prose:
+                    chunk.append(" ".join(prose))
+                    prose.clear()
+
+            for t in lines:
+                if t.startswith("• "):
+                    _flush_prose()
+                    chunk.append(t)
+                else:
+                    prose.append(t)
+            _flush_prose()
+            out_paras.append("\n".join(chunk))
+    joined = "\n\n".join(out_paras).strip()
+    # Repair previously jammed "• a. • b." runs into real list rows
+    joined = re.sub(r"\s+•\s+", "\n• ", joined)
+    if not joined:
+        flat = _MD_BOLD_RE.sub(r"\1", raw).replace("**", "")
+        flat = _MD_UNDERSCORE_BOLD_RE.sub(r"\1", flat)
+        flat = _MD_UNDERSCORE_EMPH_RE.sub(r"\1", flat)
+        flat = re.sub(r"(?m)^\s*[\*\-]\s+", "• ", flat)
+        flat = re.sub(r"[ \t]+", " ", flat).strip()
+        flat = re.sub(r"\s+•\s+", "\n• ", flat)
+        return flat[:max_length] if flat else ""
+    if len(joined) <= max_length:
+        return joined
+    return joined[: max_length - 1].rstrip() + "…"
+
+
+def sanitize_reader_note_body(
+    text: Optional[str],
+    *,
+    title: Optional[str] = None,
+    max_length: int = 8000,
+) -> str:
+    """Reader-facing vault note: drop YAML frontmatter / HTML comments, then prose sanitize."""
+    if text is None:
+        return ""
+    raw = str(text).strip()
+    if not raw:
+        return ""
+    try:
+        from shared.vault_note_contract import split_frontmatter_body
+
+        _fm, body = split_frontmatter_body(raw)
+        raw = (body or "").strip() or raw
+    except Exception:
+        # Inline YAML fence: --- ... ---
+        raw = re.sub(r"\A---[\s\S]*?---\s*", "", raw, count=1).strip()
+    raw = re.sub(r"<!--.*?-->", "", raw, flags=re.DOTALL).strip()
+    # Drop markdown heading markers but keep the heading words
+    raw = re.sub(r"(?m)^\s*#{1,6}\s+", "", raw)
+    return sanitize_reader_prose(raw, title=title, max_length=max_length)

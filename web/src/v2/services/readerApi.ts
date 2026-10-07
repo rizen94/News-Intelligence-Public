@@ -24,9 +24,11 @@ export type StoryUnit = {
   hub_id?: number;
   folded_under_hub?: boolean;
   briefing_day?: string;
+  briefing_lane?: string;
   vault_path?: string;
   body_md?: string;
   summary_md?: string;
+  current_brief?: string | null;
 };
 
 export type PaginationMeta = {
@@ -129,6 +131,12 @@ export type ReaderPackResponse = {
     summary_md?: string | null;
     updated_at?: string | null;
     source_article_id?: number | null;
+  } | null;
+  situation_hub?: {
+    id?: number;
+    cluster_key?: string;
+    title?: string;
+    href?: string;
   } | null;
 };
 

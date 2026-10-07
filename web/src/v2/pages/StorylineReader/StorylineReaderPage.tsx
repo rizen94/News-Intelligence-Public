@@ -19,7 +19,10 @@ import {
 } from '../../services/readerApi';
 import { articlesApi } from '../../../services/api/articles';
 
-import { sanitizeSnippet } from '../../../utils/sanitizeSnippet';
+import {
+  sanitizeSnippet,
+  stripReaderMdMarkers,
+} from '../../../utils/sanitizeSnippet';
 
 function MetaSep() {
   return (
@@ -361,13 +364,26 @@ export default function StorylineReaderPage() {
             ? 'Fallback pack summary'
             : '';
   const summaryText = String(pack.summary || '').trim();
+  const cleanedSummary = stripReaderMdMarkers(summaryText);
+  const cleanedBrief = stripReaderMdMarkers(briefMd);
+  // One primary brief: hide Summary when a substantial brief is already shown,
+  // or when cleaned text largely overlaps.
   const summaryDup = Boolean(
-    summaryText &&
-      briefMd &&
-      (summaryText === briefMd ||
-        briefMd.includes(summaryText.slice(0, Math.min(120, summaryText.length))) ||
-        summaryText.includes(briefMd.slice(0, Math.min(120, briefMd.length))))
+    cleanedSummary &&
+      cleanedBrief &&
+      (cleanedBrief.length >= 200 ||
+        cleanedSummary === cleanedBrief ||
+        cleanedBrief.includes(
+          cleanedSummary.slice(0, Math.min(120, cleanedSummary.length))
+        ) ||
+        cleanedSummary.includes(
+          cleanedBrief.slice(0, Math.min(120, cleanedBrief.length))
+        ))
   );
+  const situation = pack.situation_hub;
+  const timelineNarrative = stripReaderMdMarkers(
+    String(pack.timeline_narrative || '')
+  ).trim();
 
   return (
     <div>
@@ -407,8 +423,22 @@ export default function StorylineReaderPage() {
       <div className='v2-reader-layout'>
         <article className='v2-reader-body'>
           <p className='v2-section-label'>
-            {(domain || '').toUpperCase()} · Storyline
+            {(domain || '').toUpperCase()} · Episode
           </p>
+          {situation?.title || situation?.href ? (
+            <p className='v2-story-kicker' style={{ marginBottom: '0.35rem' }}>
+              Situation ·{' '}
+              <Link
+                to={withDomainQuery(
+                  situation.href ||
+                    `/hubs/${situation.cluster_key || situation.id}`,
+                  domain || null
+                )}
+              >
+                {situation.title || situation.cluster_key || 'Hub'}
+              </Link>
+            </p>
+          ) : null}
           <h1>{pack.title}</h1>
           <div className='v2-hero-rule' />
           <div className='v2-story-meta' style={{ marginBottom: '1.25rem' }}>
@@ -425,7 +455,9 @@ export default function StorylineReaderPage() {
             {pack.status ? <span>{pack.status}</span> : null}
           </div>
 
-          {pull ? <blockquote className='v2-pull-quote'>{pull}</blockquote> : null}
+          {pull && !briefMd ? (
+            <blockquote className='v2-pull-quote'>{pull}</blockquote>
+          ) : null}
 
           {briefMd ? (
             <section style={{ marginBottom: '1.25rem' }}>
@@ -475,24 +507,23 @@ export default function StorylineReaderPage() {
             <p className='v2-empty'>Context job: {pullStatus}</p>
           ) : null}
 
-          {!summaryDup ? (
+          {!summaryDup && cleanedSummary ? (
             <section>
               <h2 className='v2-section-label'>Summary</h2>
-              {summaryText && /(?:^|\n)##\s/.test(summaryText) ? (
-                <ReaderMarkdown source={summaryText} />
-              ) : (
-                <p style={{ whiteSpace: 'pre-wrap' }}>
-                  {summaryText || 'No summary yet.'}
-                </p>
-              )}
+              <p style={{ whiteSpace: 'pre-wrap' }}>{cleanedSummary}</p>
             </section>
+          ) : null}
+          {!briefMd && !cleanedSummary ? (
+            <p className='v2-empty'>No brief or summary yet.</p>
           ) : null}
 
           {pack.background_information ? (
             <section>
               <hr className='v2-section-rule' />
               <h2 className='v2-section-label'>Background</h2>
-              <p style={{ whiteSpace: 'pre-wrap' }}>{pack.background_information}</p>
+              <p style={{ whiteSpace: 'pre-wrap' }}>
+                {stripReaderMdMarkers(String(pack.background_information))}
+              </p>
             </section>
           ) : null}
 
@@ -541,7 +572,7 @@ export default function StorylineReaderPage() {
                           whiteSpace: 'pre-wrap',
                         }}
                       >
-                        {n.significance_excerpt}
+                        {stripReaderMdMarkers(String(n.significance_excerpt))}
                       </p>
                     ) : null}
                   </li>
@@ -553,11 +584,24 @@ export default function StorylineReaderPage() {
           <section>
             <hr className='v2-section-rule' />
             <h2 className='v2-section-label'>Timeline</h2>
-            {events.length === 0 ? (
-              <p className='v2-empty'>No timeline events yet.</p>
-            ) : (
+            {timelineNarrative ? (
+              <p
+                style={{
+                  whiteSpace: 'pre-wrap',
+                  marginBottom: '1rem',
+                  lineHeight: 1.5,
+                }}
+              >
+                {timelineNarrative}
+              </p>
+            ) : null}
+            {events.length === 0 && !timelineNarrative ? (
+              <p className='v2-empty'>
+                No timeline events yet — Pull context or wait for event extraction.
+              </p>
+            ) : events.length === 0 ? null : (
               <ol className='v2-timeline'>
-                {events.map((ev, i) => (
+                {events.slice(0, 12).map((ev, i) => (
                   <li key={String(ev.id ?? i)}>
                     <div className='v2-story-kicker'>
                       {String(ev.event_date || ev.actual_event_date || 'Undated')}
@@ -572,7 +616,8 @@ export default function StorylineReaderPage() {
                           color: 'var(--v2-ink-muted)',
                         }}
                       >
-                        {String(ev.description)}
+                        {String(ev.description).slice(0, 280)}
+                        {String(ev.description).length > 280 ? '…' : ''}
                       </p>
                     ) : null}
                   </li>
@@ -608,19 +653,19 @@ export default function StorylineReaderPage() {
 
           <section>
             <hr className='v2-section-rule' />
-            <h2 className='v2-section-label'>Citations</h2>
+            <h2 className='v2-section-label'>Sources</h2>
             {citations.length === 0 ? (
-              <p className='v2-empty'>No member articles.</p>
+              <p className='v2-empty'>No member articles linked yet.</p>
             ) : (
               <ul style={{ paddingLeft: '1.1rem' }}>
                 {citations.map(c => (
-                  <li key={c.id} style={{ marginBottom: '0.65rem' }}>
+                  <li key={c.id} style={{ marginBottom: '0.75rem' }}>
                     {c.url ? (
                       <a href={c.url} target='_blank' rel='noreferrer'>
                         {c.title}
                       </a>
                     ) : (
-                      c.title
+                      <strong>{c.title}</strong>
                     )}
                     <div
                       style={{ fontSize: '0.8rem', color: 'var(--v2-ink-muted)' }}
@@ -650,6 +695,18 @@ export default function StorylineReaderPage() {
                         </>
                       ) : null}
                     </div>
+                    {c.summary ? (
+                      <p
+                        style={{
+                          margin: '0.2rem 0 0',
+                          fontSize: '0.9rem',
+                          color: 'var(--v2-ink-muted)',
+                        }}
+                      >
+                        {stripReaderMdMarkers(String(c.summary)).slice(0, 200)}
+                        {String(c.summary).length > 200 ? '…' : ''}
+                      </p>
+                    ) : null}
                   </li>
                 ))}
               </ul>
@@ -690,7 +747,12 @@ export default function StorylineReaderPage() {
             </div>
           ) : null}
           <DossierTree nodes={tree} />
-          {!tree.length ? <p className='v2-empty'>No entities linked yet.</p> : null}
+          {!tree.length ? (
+            <p className='v2-empty'>
+              No entities linked yet — use Pull context to enrich the living
+              dossier.
+            </p>
+          ) : null}
         </aside>
       </div>
     </div>
