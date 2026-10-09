@@ -42,6 +42,7 @@ from services.domain_synthesis_config import get_domain_synthesis_config
 from services.storyline_coherence_guardrails import (
     assess_cluster_coherence,
     is_overly_generic_storyline_title,
+    title_looks_mega_bag,
     post_process_storyline_description,
     storyline_metadata_prompt_suffix,
 )
@@ -88,6 +89,16 @@ STORYLINE_DISCOVERY_ARTICLE_LIMIT = int(env_str("STORYLINE_DISCOVERY_ARTICLE_LIM
 STORYLINE_DISCOVERY_PDF_CONTEXT_LIMIT = int(env_str("STORYLINE_DISCOVERY_PDF_CONTEXT_LIMIT", "500"))
 DISCOVERY_MAX_CLUSTER_ARTICLES = max(
     10, int(env_str("DISCOVERY_MAX_CLUSTER_ARTICLES", "250"))
+)
+# Hard cap on articles that enter the O(n²) similarity / pair materialization stage.
+# Fetch may still use STORYLINE_DISCOVERY_ARTICLE_LIMIT; clustering slices to this.
+STORYLINE_DISCOVERY_CLUSTERING_MAX_N = max(
+    100, int(env_str("STORYLINE_DISCOVERY_CLUSTERING_MAX_N", "1500"))
+)
+# Cap materialized above-threshold pairs (top-K by similarity). Dense corpora can otherwise
+# materialize millions of pairs (observed ~6.4M) and peg CPU/RAM/DB.
+STORYLINE_DISCOVERY_MAX_PAIRS = max(
+    10_000, int(env_str("STORYLINE_DISCOVERY_MAX_PAIRS", "200000"))
 )
 # Scheduled assembly discovery uses a tighter default than the full discovery limit.
 _DEFAULT_ASSEMBLY_DISCOVERY_ARTICLE_CAP = 1500
@@ -244,42 +255,20 @@ class AIStorylineDiscovery:
 
     def get_embedding_single(self, text: str) -> np.ndarray | None:
         """
-        Generate embedding for a single text using Ollama
+        Generate embedding for a single text using Ollama via CB hub.
         Optimized for dedicated embedding model
         """
         try:
-            response = requests.post(
-                f"{OLLAMA_URL}/api/embeddings",
-                json={
-                    "model": EMBEDDING_MODEL,
-                    "prompt": text[:4000],  # Embedding models handle longer text
-                },
-                timeout=30,
-            )
+            from shared.services.llm_service import ollama_embed_sync
 
-            if response.status_code == 200:
-                data = response.json()
-                embedding = np.array(data.get("embedding", []))
+            vec = ollama_embed_sync(text[:4000], model=EMBEDDING_MODEL)
+            if vec:
+                embedding = np.array(vec, dtype=float)
                 if len(embedding) > 0:
-                    # Normalize embedding
                     norm = np.linalg.norm(embedding)
                     if norm > 0:
                         embedding = embedding / norm
                     return embedding
-
-            # Fallback to generate endpoint
-            response = requests.post(
-                f"{OLLAMA_URL}/api/generate",
-                json={
-                    "model": EMBEDDING_MODEL,
-                    "prompt": f"Represent this text: {text[:1000]}",
-                    "stream": False,
-                },
-                timeout=30,
-            )
-
-            if response.status_code == 200:
-                return self._text_to_embedding(text)
 
         except Exception as e:
             logger.debug(f"Embedding error for text: {e}")
@@ -467,9 +456,10 @@ class AIStorylineDiscovery:
                     cur.execute(
                         f"""
                         SELECT id, title, COALESCE(content, '') as content, created_at,
-                               embedding_vector, embedding_model, extracted_entities
+                               embedding_vector, embedding_model, extracted_entities, metadata
                         FROM {schema}.articles
                         WHERE created_at > NOW() - (%s * INTERVAL '1 hour')
+                          AND COALESCE(metadata->>'content_kind', '') <> 'research_paper'
                         ORDER BY created_at {_ord}
                         LIMIT %s
                         """,
@@ -479,8 +469,9 @@ class AIStorylineDiscovery:
                     cur.execute(
                         f"""
                         SELECT id, title, COALESCE(content, '') as content, created_at,
-                               embedding_vector, embedding_model, extracted_entities
+                               embedding_vector, embedding_model, extracted_entities, metadata
                         FROM {schema}.articles
+                        WHERE COALESCE(metadata->>'content_kind', '') <> 'research_paper'
                         ORDER BY created_at {_ord}
                         LIMIT %s
                         """,
@@ -867,18 +858,61 @@ class AIStorylineDiscovery:
                 rank[px] += 1
             return True
 
-        # Collect all pairs above threshold and sort by similarity (highest first)
-        pairs = []
+        # Collect above-threshold pairs; keep only top-K by similarity to bound RAM/CPU.
+        import heapq
+
+        max_pairs = int(STORYLINE_DISCOVERY_MAX_PAIRS)
+        # Min-heap of (sim, i, j) sized to max_pairs → retains the highest similarities.
+        heap: list[tuple[float, int, int]] = []
+        pairs_seen_above = 0
         for i in range(n):
+            row = similarity_matrix[i]
             for j in range(i + 1, n):
-                sim = similarity_matrix[i][j]
-                if sim >= sim_thresh:
-                    pairs.append((sim, i, j))
+                sim = float(row[j])
+                if sim < sim_thresh:
+                    continue
+                pairs_seen_above += 1
+                item = (sim, i, j)
+                if len(heap) < max_pairs:
+                    heapq.heappush(heap, item)
+                elif sim > heap[0][0]:
+                    heapq.heapreplace(heap, item)
 
-        # Sort by similarity descending
-        pairs.sort(reverse=True)
+        pairs_capped = pairs_seen_above > len(heap)
+        pairs = sorted(heap, reverse=True)
 
-        logger.info(f"Found {len(pairs)} pairs above threshold {sim_thresh}")
+        logger.info(
+            "Found %s pairs above threshold %s (kept=%s max_pairs=%s capped=%s n=%s)",
+            pairs_seen_above,
+            sim_thresh,
+            len(pairs),
+            max_pairs,
+            pairs_capped,
+            n,
+        )
+        # #region agent log
+        try:
+            from shared.debug_session_log import agent_dbg
+
+            agent_dbg(
+                "A",
+                "ai_storyline_discovery.py:pairs",
+                "discovery_pairs_above_threshold",
+                {
+                    "n_articles": n,
+                    "pair_count": len(pairs),
+                    "pairs_seen_above": pairs_seen_above,
+                    "max_pairs": max_pairs,
+                    "pairs_capped": pairs_capped,
+                    "sim_thresh": sim_thresh,
+                    "approx_pair_space": int(n * (n - 1) / 2) if n else 0,
+                    "clustering_max_n": int(STORYLINE_DISCOVERY_CLUSTERING_MAX_N),
+                },
+                run_id="post-fix",
+            )
+        except Exception:
+            pass
+        # #endregion
 
         # Build clusters greedily from highest similarity pairs
         for sim, i, j in pairs:
@@ -1080,22 +1114,15 @@ Reply with ONLY a JSON object:
 {{"title": "headline", "description": "one sentence summary"}}"""
 
         try:
-            response = requests.post(
-                f"{OLLAMA_URL}/api/generate",
-                json={
-                    "model": ANALYSIS_MODEL,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {
-                        "num_predict": 100,  # Limit output tokens
-                        "temperature": 0.3,  # More focused output
-                    },
-                },
-                timeout=15,  # Faster timeout
-            )
+            from shared.services.llm_service import ollama_generate_sync
 
-            if response.status_code == 200:
-                result = response.json().get("response", "")
+            result = ollama_generate_sync(
+                prompt,
+                model=ANALYSIS_MODEL,
+                max_tokens=100,
+                ollama_base_url=OLLAMA_URL,
+            )
+            if result:
                 try:
                     start = result.find("{")
                     end = result.rfind("}") + 1
@@ -1107,7 +1134,9 @@ Reply with ONLY a JSON object:
                         description = post_process_storyline_description(
                             data.get("description", "Related articles cluster"), domain
                         )
-                        if is_overly_generic_storyline_title(title, domain):
+                        if is_overly_generic_storyline_title(title, domain) or title_looks_mega_bag(
+                            title
+                        ):
                             title = self._generate_fast_title(cluster)
                         return {"title": title, "description": description}
                 except json.JSONDecodeError:
@@ -1388,23 +1417,116 @@ Reply with ONLY a JSON object:
         domain: str,
         schema: str,
     ) -> int:
-        """Admit cluster articles through membership_store (write-frozen safe)."""
+        """Admit cluster articles through membership_store with per-article scores."""
+        from shared.membership_scoring import score_article_against_signals
         from shared.membership_store import MembershipIntent, admit as membership_admit
+        from services.domain_synthesis_config import get_domain_synthesis_config
+        from services.storyline_centroid import l2_normalize
 
-        blend = float(getattr(cluster, "avg_similarity", 0.0) or 0.0)
+        cfg = get_domain_synthesis_config(domain)
+        floor = float(cfg.link_score_profile.discovery_seed_floor)
+        # Cluster centroid + dominant entity names as storyline proxy for seed admit
+        centroid = None
+        try:
+            vecs = [
+                a.embedding
+                for a in cluster.articles
+                if getattr(a, "embedding", None) is not None
+            ]
+            if vecs:
+                arr = np.mean(np.stack([np.asarray(v, dtype=float) for v in vecs]), axis=0)
+                centroid = l2_normalize([float(x) for x in arr.tolist()])
+        except Exception:
+            centroid = None
+
+        common_ents = {str(e).strip().lower() for e in (cluster.common_entities or []) if e}
+        # Approximate story canonicals: articles that share common entity names get
+        # scored via name overlap; canonical IDs filled when available from DB.
+        article_canonical_map: dict[int, set[int]] = {}
+        article_name_map: dict[int, set[str]] = {}
+        try:
+            aids = [int(a.article_id) for a in cluster.articles if a.article_id > 0]
+            if aids:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"""
+                        SELECT article_id, canonical_entity_id, lower(entity_name)
+                        FROM {schema}.article_entities
+                        WHERE article_id = ANY(%s)
+                        """,
+                        (aids,),
+                    )
+                    for aid, cid, ename in cur.fetchall() or []:
+                        aid = int(aid)
+                        article_name_map.setdefault(aid, set())
+                        article_canonical_map.setdefault(aid, set())
+                        if ename:
+                            article_name_map[aid].add(str(ename))
+                        if cid:
+                            article_canonical_map[aid].add(int(cid))
+        except Exception as e:
+            logger.debug("discovery entity prefetch: %s", e)
+
+        # Dominant canonicals = ids appearing in ≥2 cluster articles or tied to common names
+        cid_counts: dict[int, int] = {}
+        for cids in article_canonical_map.values():
+            for c in cids:
+                cid_counts[c] = cid_counts.get(c, 0) + 1
+        story_cids = {c for c, n in cid_counts.items() if n >= 2} or set(cid_counts.keys())
+
+        story_ref = None
+        try:
+            dates = [a.created_at for a in cluster.articles if a.created_at]
+            story_ref = max(dates) if dates else None
+        except Exception:
+            story_ref = None
+
         admitted = 0
         for article in cluster.articles:
             if article.article_id <= 0:
+                continue
+            aid = int(article.article_id)
+            emb = None
+            try:
+                if article.embedding is not None:
+                    emb = l2_normalize([float(x) for x in np.asarray(article.embedding).tolist()])
+            except Exception:
+                emb = None
+            ms = score_article_against_signals(
+                domain_key=domain,
+                article_canonical_ids=article_canonical_map.get(aid, set()),
+                article_entity_names=article_name_map.get(aid, set()) | set(article.entities or set()),
+                article_title=article.title or "",
+                article_embedding=emb,
+                article_quality=0.7,
+                article_published_at=article.created_at,
+                story_canonical_ids=story_cids,
+                story_core_entities=common_ents,
+                story_title=cluster.suggested_title or "",
+                story_keywords=set(),
+                story_centroid=centroid,
+                story_ref_time=story_ref,
+            )
+            if ms.rejected or float(ms.combined) < floor:
+                logger.debug(
+                    "discovery skip article %s score=%.3f rejected=%s reason=%s",
+                    aid,
+                    ms.combined,
+                    ms.rejected,
+                    ms.reject_reason,
+                )
                 continue
             ok, _reason = membership_admit(
                 conn,
                 domain_key=domain,
                 schema=schema,
                 episode_id=int(storyline_id),
-                article_id=int(article.article_id),
+                article_id=aid,
                 intent=MembershipIntent.DISCOVERY_SEED,
-                blend_score=blend,
+                blend_score=float(ms.combined),
                 added_by="storyline_discovery",
+                score_parts=ms.as_metadata(),
+                recompute_score=False,
             )
             if ok:
                 admitted += 1
@@ -1431,7 +1553,49 @@ Reply with ONLY a JSON object:
             conn.rollback()
         finally:
             conn.close()
+        if added:
+            self._assemble_time_prune_if_ready(
+                domain, int(storyline_id), hint_count=len(cluster.articles)
+            )
         return added
+
+    @staticmethod
+    def _assemble_time_prune_if_ready(
+        domain: str,
+        storyline_id: int,
+        *,
+        hint_count: int | None = None,
+    ) -> None:
+        """After soft intake, lock page subject and detach bridge-only outliers."""
+        try:
+            from services.storyline_core_prune_service import run_assemble_time_prune
+
+            ac = int(hint_count) if hint_count is not None else None
+            if ac is not None and ac < 3:
+                return
+            stats = run_assemble_time_prune(
+                domain, int(storyline_id), min_articles=3, article_count=ac
+            )
+            if stats.get("skipped"):
+                return
+            unlinked = int(stats.get("unlinked") or 0)
+            if unlinked or stats.get("retitled"):
+                logger.info(
+                    "[%s] assemble-time subject prune storyline=%s unlinked=%s "
+                    "retitled=%s bridge_pruned=%s",
+                    domain,
+                    storyline_id,
+                    unlinked,
+                    bool(stats.get("retitled")),
+                    stats.get("bridge_pruned"),
+                )
+        except Exception as e:
+            logger.debug(
+                "[%s] assemble-time prune skipped for %s: %s",
+                domain,
+                storyline_id,
+                e,
+            )
 
     @staticmethod
     def _clamp_storyline_quality_score(raw: float) -> float:
@@ -1495,6 +1659,16 @@ Reply with ONLY a JSON object:
                     "is_breaking_news": bool(cluster.is_breaking_news),
                 }
             )
+            story_kind = "storyline"
+            automation_enabled = True
+            try:
+                from services.ai_research_storyline_policy import story_kind_for_cluster
+
+                story_kind = story_kind_for_cluster(domain, list(cluster.articles))
+                if story_kind == "one_off":
+                    automation_enabled = False
+            except Exception:
+                pass
             storyline_id: int | None = None
             with conn.cursor() as cur:
                 cur.execute(
@@ -1503,7 +1677,7 @@ Reply with ONLY a JSON object:
                     (storyline_uuid, title, description, status, processing_status,
                      article_count, total_articles, priority, quality_score,
                      automation_enabled, automation_mode, automation_frequency_hours,
-                     metadata, created_at, updated_at)
+                     story_kind, metadata, created_at, updated_at)
                     VALUES (
                         gen_random_uuid(), %s, %s,
                         'active',
@@ -1511,7 +1685,8 @@ Reply with ONLY a JSON object:
                         %s, %s,
                         CASE WHEN %s THEN 1 ELSE 2 END,
                         %s,
-                        true, %s, 6,
+                        %s, %s, 6,
+                        %s,
                         %s::jsonb,
                         NOW(), NOW()
                     )
@@ -1524,14 +1699,35 @@ Reply with ONLY a JSON object:
                         unique_positive,
                         cluster.is_breaking_news,
                         quality_score,
+                        automation_enabled,
                         automation_mode,
+                        story_kind,
                         meta,
                     ),
                 )
-
                 result = cur.fetchone()
                 if result:
                     storyline_id = int(result[0])
+                    try:
+                        from shared.episode_attach_gate import (
+                            lock_episode_signature,
+                            seed_signature_from_entity_names,
+                        )
+
+                        seed_sig = seed_signature_from_entity_names(
+                            domain,
+                            list(cluster.common_entities or []),
+                            title=cluster.suggested_title or "",
+                        )
+                        if seed_sig.get("identity") or seed_sig.get("supporting"):
+                            lock_episode_signature(cur, schema, storyline_id, seed_sig)
+                    except Exception as lock_e:
+                        logger.debug(
+                            "[%s] seed signature lock failed for %s: %s",
+                            domain,
+                            storyline_id,
+                            lock_e,
+                        )
 
             if storyline_id is not None:
                 self._admit_cluster_articles(
@@ -1542,6 +1738,11 @@ Reply with ONLY a JSON object:
                     schema=schema,
                 )
                 conn.commit()
+                self._assemble_time_prune_if_ready(
+                    domain,
+                    int(storyline_id),
+                    hint_count=unique_positive or len(cluster.articles),
+                )
                 try:
                     from services.content_refinement_queue_service import (
                         enqueue_initial_narrative_finisher,
@@ -2071,15 +2272,52 @@ Reply with ONLY a JSON object:
         articles = self._deduplicate_by_title(articles)
         dedup_count = fetched_count - len(articles)
 
+        clustering_cap = int(STORYLINE_DISCOVERY_CLUSTERING_MAX_N)
+        pre_cluster_n = len(articles)
+        if pre_cluster_n > clustering_cap:
+            # Newest-first fetch order — keep the head of the list.
+            articles = articles[:clustering_cap]
+            logger.warning(
+                "[%s] Capping discovery clustering n=%d → %d "
+                "(STORYLINE_DISCOVERY_CLUSTERING_MAX_N; O(n²) guard)",
+                domain,
+                pre_cluster_n,
+                clustering_cap,
+            )
+
         cached_count = sum(1 for a in articles if a.cached)
         stats["phases"]["fetch_articles"] = {
             "duration_ms": (datetime.now() - phase_start).total_seconds() * 1000,
             "fetched": fetched_count,
             "duplicates_removed": dedup_count,
             "article_count": len(articles),
+            "pre_cluster_n": pre_cluster_n,
+            "clustering_max_n": clustering_cap,
+            "clustering_n_capped": pre_cluster_n > clustering_cap,
             "cached_embeddings": cached_count,
             "article_limit_cap": fetch_limit,
         }
+        # #region agent log
+        try:
+            from shared.debug_session_log import agent_dbg
+
+            agent_dbg(
+                "A",
+                "ai_storyline_discovery.py:cluster_n",
+                "discovery_clustering_n_guard",
+                {
+                    "domain": domain,
+                    "pre_cluster_n": pre_cluster_n,
+                    "cluster_n": len(articles),
+                    "clustering_max_n": clustering_cap,
+                    "capped": pre_cluster_n > clustering_cap,
+                    "fetch_limit": fetch_limit,
+                },
+                run_id="post-fix",
+            )
+        except Exception:
+            pass
+        # #endregion
 
         if len(articles) < min_sz:
             if phase_backlog_uses_pass_marker("storyline_discovery"):

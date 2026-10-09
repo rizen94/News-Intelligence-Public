@@ -22,12 +22,73 @@ from config.settings import (
     OLLAMA_MODEL_EXTRACTION,
     OLLAMA_MODEL_PHI,
     OLLAMA_POP_OS_HOST,
+    OLLAMA_TIMEOUT,
 )
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
+
+
+def _httpx_ollama_timeout(lane: str | None = None) -> float:
+    try:
+        default = float(env_str("OLLAMA_TIMEOUT", str(OLLAMA_TIMEOUT)))
+    except ValueError:
+        default = float(OLLAMA_TIMEOUT)
+    lane_key = (lane or "").strip().lower()
+    if lane_key == "gpu":
+        try:
+            return float(env_str("OLLAMA_GPU_TIMEOUT", env_str("BULK_OLLAMA_TIMEOUT", str(default))))
+        except ValueError:
+            return default
+    if lane_key == "cpu":
+        try:
+            return float(env_str("OLLAMA_CPU_TIMEOUT", str(default)))
+        except ValueError:
+            return default
+    return default
+
+
+def ollama_priority_headers() -> dict[str, str]:
+    """
+    Homelab ollama-proxy priority: NI background work is LOW.
+
+    Widow clients are usually LOW via OLLAMA_LOW_PRIORITY_CIDRS (192.168.93.101).
+    PopOS phase workers call 127.0.0.1 and must send X-Ollama-Priority: low so they
+    never set proxy in_flight=high (desk presence treats HIGH as interactive).
+    """
+    raw = (env_str("OLLAMA_PRIORITY", "low") or "low").strip().lower()
+    if raw in ("", "low", "background", "ni"):
+        return {"X-Ollama-Priority": "low"}
+    if raw in ("high", "interactive"):
+        return {"X-Ollama-Priority": "high"}
+    # Unknown → still prefer low for NI callers
+    return {"X-Ollama-Priority": "low"}
+
+
+def _ollama_generate_text(result: dict[str, Any] | None) -> str:
+    """
+    Extract text from an Ollama /api/generate JSON body.
+
+    Qwen3-family tags often put structured output in ``thinking`` and leave
+    ``response`` empty unless ``think: false`` is set — prefer response, then
+    fall back to thinking so extraction does not see an empty string.
+    """
+    if not isinstance(result, dict):
+        return ""
+    text = (result.get("response") or "").strip()
+    if text:
+        return text
+    thinking = (result.get("thinking") or "").strip()
+    if thinking:
+        return thinking
+    return ""
+
 
 logger = logging.getLogger(__name__)
 
-# Global cap. Burst (48h catch-up): 6; revert to 5 after
-OLLAMA_CONCURRENCY = 6
+# Global cap (env OLLAMA_CONCURRENCY; default 6). PopOS noise experiment may set 5.
+try:
+    OLLAMA_CONCURRENCY = max(1, int(__import__("os").environ.get("OLLAMA_CONCURRENCY", "6") or 6))
+except ValueError:
+    OLLAMA_CONCURRENCY = 6
 _ollama_semaphore: asyncio.Semaphore | None = None
 _ollama_semaphore_loop: asyncio.AbstractEventLoop | None = None
 _ollama_cpu_semaphore: asyncio.Semaphore | None = None
@@ -57,6 +118,28 @@ def _get_ollama_semaphore() -> asyncio.Semaphore:
     return _ollama_semaphore
 
 
+def shared_ollama_concurrency_cap() -> int:
+    """Prefer MAX_CONCURRENT_OLLAMA_TASKS (AM) when set; else OLLAMA_CONCURRENCY."""
+    try:
+        raw = os.environ.get("MAX_CONCURRENT_OLLAMA_TASKS", "").strip()
+        if raw:
+            return max(1, int(raw))
+    except ValueError:
+        pass
+    return max(1, OLLAMA_CONCURRENCY)
+
+
+def get_shared_ollama_semaphore() -> asyncio.Semaphore:
+    """Process-wide Ollama concurrency for topic workers and other async callers."""
+    global _ollama_semaphore, _ollama_semaphore_loop
+    cap = shared_ollama_concurrency_cap()
+    loop = asyncio.get_running_loop()
+    if _ollama_semaphore is None or _ollama_semaphore_loop is not loop:
+        _ollama_semaphore = asyncio.Semaphore(cap)
+        _ollama_semaphore_loop = loop
+    return _ollama_semaphore
+
+
 def _get_lane_semaphore(execution_lane: str | None, dual_enabled: bool) -> asyncio.Semaphore:
     if not dual_enabled:
         return _get_ollama_semaphore()
@@ -64,14 +147,14 @@ def _get_lane_semaphore(execution_lane: str | None, dual_enabled: bool) -> async
     lane = (execution_lane or "gpu").strip().lower()
     if lane == "cpu":
         global _ollama_cpu_semaphore, _ollama_cpu_semaphore_loop
-        cpu_cap = max(1, int(os.environ.get("OLLAMA_CPU_CONCURRENCY", "6")))
+        cpu_cap = max(1, int(env_str("OLLAMA_CPU_CONCURRENCY", "6")))
         _ollama_cpu_semaphore, _ollama_cpu_semaphore_loop = _loop_bound_semaphore(
             _ollama_cpu_semaphore, _ollama_cpu_semaphore_loop, cpu_cap
         )
         return _ollama_cpu_semaphore
 
     global _ollama_gpu_semaphore, _ollama_gpu_semaphore_loop
-    gpu_cap = max(1, int(os.environ.get("OLLAMA_GPU_CONCURRENCY", "6")))
+    gpu_cap = max(1, int(env_str("OLLAMA_GPU_CONCURRENCY", "6")))
     _ollama_gpu_semaphore, _ollama_gpu_semaphore_loop = _loop_bound_semaphore(
         _ollama_gpu_semaphore, _ollama_gpu_semaphore_loop, gpu_cap
     )
@@ -108,13 +191,82 @@ def pop_llm_execution_lane(token) -> None:
 
 
 class ModelType(str, Enum):
-    """Ollama text models. Values come from config.settings (env overrides). LLAMA_70B = NARRATIVE_FINISHER_MODEL."""
+    """
+    Ollama *roles* (not frozen host tags).
 
-    LLAMA_8B = MODELS["primary"]
-    MISTRAL_7B = MODELS["secondary"]  # secondary slot (default Mistral-Nemo 12B)
-    QWEN_25_7B = OLLAMA_MODEL_EXTRACTION
-    PHI_35 = OLLAMA_MODEL_PHI
-    LLAMA_70B = NARRATIVE_FINISHER_MODEL
+    Plain-language roles are the SoT. Legacy names are aliases (same ``.value``).
+    Resolve the live Ollama tag with ``resolve_model_tag()`` / ``ModelType.tag``
+    so remapper + env changes apply without import-time freeze.
+    """
+
+    # Canonical tiers
+    LOW = "low"  # fast / simple (env: OLLAMA_MODEL_PHI)
+    DEFAULT = "default"  # workhorse (env: OLLAMA_MODEL_PRIMARY)
+    HIGH = "high"  # larger batch / quality step (env: OLLAMA_MODEL_SECONDARY)
+    EXTRACT = "extract"  # structured JSON (env: OLLAMA_MODEL_EXTRACTION)
+    FINISH = "finish"  # narrative finisher (env: OLLAMA_NARRATIVE_FINISHER_MODEL)
+
+    # Legacy aliases (identical values → Enum aliases)
+    PHI_35 = "low"
+    LLAMA_8B = "default"
+    MISTRAL_7B = "high"
+    QWEN_25_7B = "extract"
+    LLAMA_70B = "finish"
+    # Older role-key aliases used before plain-language rename
+    PRIMARY = "default"
+    SECONDARY = "high"
+    EXTRACTION = "extract"
+    PHI = "low"
+    FINISHER = "finish"
+
+    @property
+    def tag(self) -> str:
+        return resolve_model_tag(self)
+
+
+# role value / synonym → (env keys in priority order, default tag)
+_ROLE_TAG_SPECS: dict[str, tuple[tuple[str, ...], str]] = {
+    "low": (("OLLAMA_MODEL_PHI",), "phi3.5:latest"),
+    "phi": (("OLLAMA_MODEL_PHI",), "phi3.5:latest"),
+    "default": (("OLLAMA_MODEL_PRIMARY",), "llama3.1:8b"),
+    "primary": (("OLLAMA_MODEL_PRIMARY",), "llama3.1:8b"),
+    "high": (("OLLAMA_MODEL_SECONDARY",), "mistral-nemo:12b"),
+    "secondary": (("OLLAMA_MODEL_SECONDARY",), "mistral-nemo:12b"),
+    "extract": (
+        ("BULK_EXTRACTION_MODEL", "OLLAMA_MODEL_EXTRACTION"),
+        "qwen3.6:latest",
+    ),
+    "extraction": (
+        ("BULK_EXTRACTION_MODEL", "OLLAMA_MODEL_EXTRACTION"),
+        "qwen3.6:latest",
+    ),
+    "finish": (
+        ("OLLAMA_NARRATIVE_FINISHER_MODEL", "OLLAMA_OPTIONAL_QUALITY_MODEL"),
+        "qwen3.6:latest",
+    ),
+    "finisher": (
+        ("OLLAMA_NARRATIVE_FINISHER_MODEL", "OLLAMA_OPTIONAL_QUALITY_MODEL"),
+        "qwen3.6:latest",
+    ),
+}
+
+
+def resolve_model_tag(model: ModelType | str | None) -> str:
+    """Map a ModelType role (or raw tag string) to the current Ollama image name."""
+    if model is None:
+        return env_str("OLLAMA_MODEL_PRIMARY", "llama3.1:8b").strip() or "llama3.1:8b"
+    role = model.value if isinstance(model, ModelType) else str(model).strip()
+    role_l = role.lower()
+    spec = _ROLE_TAG_SPECS.get(role_l)
+    if spec is not None:
+        keys, default = spec
+        for key in keys:
+            val = env_str(key, "").strip()
+            if val:
+                return val
+        return default
+    # Raw Ollama tag passed by caller — use as-is.
+    return role
 
 
 class TaskType(Enum):
@@ -135,35 +287,18 @@ class LLMService:
     def __init__(self, ollama_base_url: str | None = None):
         self.ollama_base_url = (ollama_base_url or OLLAMA_HOST).rstrip("/")
         self.ollama_cpu_host = (
-            os.environ.get("OLLAMA_CPU_HOST", self.ollama_base_url).rstrip("/")
+            env_str("OLLAMA_CPU_HOST", self.ollama_base_url).rstrip("/")
         )
         self.ollama_gpu_host = (
-            os.environ.get("OLLAMA_GPU_HOST", self.ollama_base_url).rstrip("/")
+            env_str("OLLAMA_GPU_HOST", self.ollama_base_url).rstrip("/")
         )
         # popOS host for 70B model - heavy summarization work on RTX5090
         self.ollama_pop_os_host = OLLAMA_POP_OS_HOST.rstrip("/")
-        self.dual_host_enabled = os.environ.get(
+        self.dual_host_enabled = env_str(
             "OLLAMA_DUAL_HOST_ROUTING_ENABLED", "false"
         ).lower() in ("1", "true", "yes")
-        self.client = httpx.AsyncClient(
-            timeout=180.0
-        )  # Increased timeout to 180s for comprehensive analysis
-        self.cpu_client = (
-            self.client
-            if self.ollama_cpu_host == self.ollama_base_url
-            else httpx.AsyncClient(timeout=180.0)
-        )
-        self.gpu_client = (
-            self.client
-            if self.ollama_gpu_host == self.ollama_base_url
-            else httpx.AsyncClient(timeout=180.0)
-        )
-        # popOS client for 70B model on remote RTX5090
-        self.pop_os_client = (
-            self.client
-            if self.ollama_pop_os_host == self.ollama_base_url
-            else httpx.AsyncClient(timeout=300.0)
-        )
+        self._client_loop_id: int | None = None
+        self._init_http_clients()
         self._pop_os_available = True
         self._pop_os_last_check = None
         self.model_performance = {
@@ -192,6 +327,66 @@ class LLMService:
                 "best_for": ["fast_simple", "readability_quality"],
             },
         }
+
+    def _init_http_clients(self) -> None:
+        """(Re)create httpx AsyncClients. Bound to the loop that first uses them."""
+        base_timeout = _httpx_ollama_timeout()
+        cpu_timeout = _httpx_ollama_timeout("cpu")
+        gpu_timeout = _httpx_ollama_timeout("gpu")
+        priority_headers = ollama_priority_headers()
+        self.client = httpx.AsyncClient(timeout=base_timeout, headers=priority_headers)
+        self.cpu_client = (
+            self.client
+            if self.ollama_cpu_host == self.ollama_base_url
+            else httpx.AsyncClient(timeout=cpu_timeout, headers=priority_headers)
+        )
+        self.gpu_client = (
+            self.client
+            if self.ollama_gpu_host == self.ollama_base_url
+            else httpx.AsyncClient(timeout=gpu_timeout, headers=priority_headers)
+        )
+        self.pop_os_client = (
+            self.client
+            if self.ollama_pop_os_host == self.ollama_base_url
+            else httpx.AsyncClient(timeout=gpu_timeout, headers=priority_headers)
+        )
+
+    def _collect_distinct_clients(self) -> list[httpx.AsyncClient]:
+        seen: set[int] = set()
+        out: list[httpx.AsyncClient] = []
+        for c in (self.client, self.cpu_client, self.gpu_client, self.pop_os_client):
+            if c is None or id(c) in seen:
+                continue
+            seen.add(id(c))
+            out.append(c)
+        return out
+
+    async def _ensure_clients_for_running_loop(self, *, force: bool = False) -> None:
+        """
+        Recreate AsyncClients when the running event loop changed.
+
+        Nested ``asyncio.run`` / temporary loops (e.g. sync appraisal inside Research)
+        bind httpx to a loop that is then closed — later calls fail with
+        ``Event loop is closed``. Rebind before each Ollama call.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop_id = id(loop)
+        if not force and self._client_loop_id is None:
+            self._client_loop_id = loop_id
+            return
+        if not force and self._client_loop_id == loop_id:
+            return
+        old = self._collect_distinct_clients()
+        self._init_http_clients()
+        self._client_loop_id = loop_id
+        for c in old:
+            try:
+                await c.aclose()
+            except Exception:
+                pass
 
     def select_model(
         self,
@@ -294,7 +489,7 @@ class LLMService:
         """
         # Heavy models (70B) always route to popOS for intensive summarization work
         if model is not None:
-            model_str = model.value.lower()
+            model_str = resolve_model_tag(model).lower()
             if ":70b" in model_str or model == ModelType.LLAMA_70B:
                 return self.ollama_pop_os_host, "ollama_pop_os"
 
@@ -322,27 +517,39 @@ class LLMService:
         chosen_model: str
         model_type: ModelType | None = None
         if isinstance(model, ModelType):
-            chosen_model = model.value
             model_type = model
+            chosen_model = resolve_model_tag(model)
         elif isinstance(model, str) and model.strip():
-            chosen_model = model.strip()
+            raw = model.strip()
             try:
-                model_type = ModelType(model.strip())
+                model_type = ModelType(raw)
+                chosen_model = resolve_model_tag(model_type)
             except ValueError:
-                pass  # Unknown model string, will use as-is
+                model_type = None
+                chosen_model = raw  # Unknown model string, will use as-is
         else:
             selected = self.select_model(
                 self._coerce_task_type(task_type),
                 approx_prompt_chars=len(prompt or ""),
             )
             model_type = selected
-            chosen_model = selected.value
+            chosen_model = resolve_model_tag(selected)
 
         # Resolve execution target based on model (70B -> popOS, smaller -> local)
-        base_url, cb_key = self._resolve_sync_execution_target(model=model_type, execution_lane=execution_lane)
+        base_url, cb_key = self._resolve_sync_execution_target(
+            model=model_type, execution_lane=execution_lane
+        )
+        from services.circuit_breaker_service import get_circuit_breaker_service
+
+        cb = get_circuit_breaker_service().get_circuit_breaker(cb_key)
+        if cb.is_open():
+            raise Exception(
+                f"{cb_key} circuit breaker is OPEN — skipping call to avoid cascading timeouts"
+            )
+        cb.begin_probe_if_due_sync()
 
         try:
-            with httpx.Client(timeout=300.0) as sync_client:  # 300s for 70B on popOS
+            with httpx.Client(timeout=_httpx_ollama_timeout(execution_lane)) as sync_client:
                 response = sync_client.post(
                     f"{base_url}/api/generate",
                     json={
@@ -355,19 +562,30 @@ class LLMService:
                             "num_predict": max(1, int(max_tokens or 2000)),
                         },
                     },
+                    headers=ollama_priority_headers(),
                 )
-                if response.status_code != 200:
-                    logger.error(
-                        "generate sync call failed to %s: status=%s body=%s",
-                        cb_key,
-                        response.status_code,
-                        response.text[:500],
+                if response.status_code == 200:
+                    cb.record_success_sync()
+                    return _ollama_generate_text(response.json())
+                if response.status_code in (502, 503, 504):
+                    raise Exception(
+                        f"{cb_key} overloaded (HTTP {response.status_code})"
                     )
-                    return ""
-                return (response.json().get("response", "") or "").strip()
+                cb.record_failure_sync()
+                raise Exception(
+                    f"{cb_key} API error: {response.status_code} - {response.text[:500]}"
+                )
+        except httpx.TimeoutException:
+            raise Exception(f"{cb_key} overloaded (request timed out)") from None
+        except httpx.ConnectError as e:
+            cb.record_failure_sync(force_open=True)
+            raise Exception(f"Cannot connect to {cb_key} service") from e
         except Exception as e:
+            msg = str(e).lower()
+            if "circuit breaker" in msg or "overloaded" in msg or "cannot connect" in msg:
+                raise
             logger.error("generate sync call failed to %s: %s", cb_key, e)
-            return ""
+            raise
 
     async def generate_summary(
         self, content: str, task_type: TaskType = TaskType.QUICK_SUMMARY
@@ -397,7 +615,7 @@ class LLMService:
             return {
                 "success": True,
                 "summary": response,
-                "model_used": model.value,
+                "model_used": resolve_model_tag(model),
                 "processing_time": processing_time,
                 "task_type": task_type.value,
                 "timestamp": end_time.isoformat(),
@@ -408,7 +626,7 @@ class LLMService:
             return {
                 "success": False,
                 "error": str(e),
-                "model_used": model.value,
+                "model_used": resolve_model_tag(model),
                 "task_type": task_type.value,
             }
 
@@ -460,14 +678,14 @@ class LLMService:
             return {
                 "success": True,
                 "sentiment": sentiment_data,
-                "model_used": model.value,
+                "model_used": resolve_model_tag(model),
                 "processing_time": (end_time - start_time).total_seconds(),
                 "timestamp": end_time.isoformat(),
             }
 
         except Exception as e:
             logger.error(f"Error analyzing sentiment: {e}")
-            return {"success": False, "error": str(e), "model_used": model.value}
+            return {"success": False, "error": str(e), "model_used": resolve_model_tag(model)}
 
     async def extract_entities(self, content: str) -> dict[str, Any]:
         """
@@ -522,35 +740,47 @@ class LLMService:
             return {
                 "success": True,
                 "entities": entities_data,
-                "model_used": model.value,
+                "model_used": resolve_model_tag(model),
                 "processing_time": (end_time - start_time).total_seconds(),
                 "timestamp": end_time.isoformat(),
             }
 
         except Exception as e:
             logger.error(f"Error extracting entities: {e}")
-            return {"success": False, "error": str(e), "model_used": model.value}
+            return {"success": False, "error": str(e), "model_used": resolve_model_tag(model)}
 
     async def generate_storyline_analysis(self, storyline_context: str) -> dict[str, Any]:
         """
-        Generate comprehensive storyline analysis using Llama 3.1 8B
+        Generate comprehensive storyline analysis using Llama 3.1 8B.
+
+        Hard rule: stay anchored to the named storyline — never emit a generic
+        "Global Update / Global Tensions" kitchen-sink wrap-up of unrelated arcs.
         """
         model = ModelType.LLAMA_8B
 
         prompt = f"""
-        Analyze this storyline and provide a comprehensive report:
-        1. Main narrative thread
-        2. Key developments
-        3. Timeline of events
-        4. Stakeholders involved
-        5. Potential future developments
-        6. Quality assessment
+You are writing the analysis for ONE specific news storyline.
+Stay strictly on that storyline's title and the articles provided for it.
 
-        Storyline context:
-        {storyline_context}
+FORBIDDEN:
+- Generic "Global Update", "Global Tensions", "Global Turmoil", "world in flux" roundups
+- Mixing unrelated countries/arcs that are not clearly about this storyline's title
+- Opening with a world-tour lede that could apply to any story
 
-        Write a professional, journalistic analysis that would be suitable for publication.
-        """
+If the article list is thin or off-topic for the title, say so briefly and summarize
+only what clearly belongs to the title — do not invent a global mega-narrative.
+
+Provide a professional journalistic report covering:
+1. Main narrative thread (must match the storyline title)
+2. Key developments for THIS story only
+3. Timeline of events for THIS story
+4. Stakeholders involved in THIS story
+5. Potential future developments for THIS story
+6. Quality / source assessment
+
+Storyline context:
+{storyline_context}
+"""
 
         try:
             start_time = datetime.now()
@@ -560,14 +790,14 @@ class LLMService:
             return {
                 "success": True,
                 "analysis": response,
-                "model_used": model.value,
+                "model_used": resolve_model_tag(model),
                 "processing_time": (end_time - start_time).total_seconds(),
                 "timestamp": end_time.isoformat(),
             }
 
         except Exception as e:
             logger.error(f"Error generating storyline analysis: {e}")
-            return {"success": False, "error": str(e), "model_used": model.value}
+            return {"success": False, "error": str(e), "model_used": resolve_model_tag(model)}
 
     async def generate_briefing_lead(self, context: str, domain: str = "") -> dict[str, Any]:
         """
@@ -623,7 +853,7 @@ class LLMService:
         """
         # Heavy models (70B) always route to popOS for intensive summarization work
         if model is not None:
-            model_str = model.value.lower()
+            model_str = resolve_model_tag(model).lower()
             if ":70b" in model_str or model == ModelType.LLAMA_70B:
                 return self.ollama_pop_os_host, self.pop_os_client, "ollama_pop_os"
 
@@ -649,12 +879,13 @@ class LLMService:
         prompt: str,
         execution_lane: str | None = None,
         invocation_kind: Any | None = None,
+        batch_size: int = 1,
     ) -> str:
         """Make API call to Ollama with circuit breaker protection and lane-aware semaphores."""
         sem = _get_lane_semaphore(execution_lane or _llm_execution_lane.get(), self.dual_host_enabled)
         async with sem:
             return await self._call_ollama_impl(
-                model, prompt, execution_lane=execution_lane, invocation_kind=invocation_kind
+                model, prompt, execution_lane=execution_lane, invocation_kind=invocation_kind, batch_size=batch_size
             )
 
     async def _call_ollama_impl(
@@ -663,61 +894,207 @@ class LLMService:
         prompt: str,
         execution_lane: str | None = None,
         invocation_kind: Any | None = None,
+        batch_size: int = 1,
+        *,
+        _loop_retry: bool = False,
     ) -> str:
         """Inner Ollama call (no semaphore). Routes 70B to popOS, smaller models to local GPU."""
         from services.circuit_breaker_service import get_circuit_breaker_service
+
+        await self._ensure_clients_for_running_loop()
 
         cb_service = get_circuit_breaker_service()
         # Pass model to enable 70B -> popOS routing
         base_url, client, cb_key = self._resolve_execution_target(model=model, execution_lane=execution_lane)
         cb = cb_service.get_circuit_breaker(cb_key)
 
-        if cb.state.value == "open":
+        # Shed only while recovery_timeout has not elapsed. Raw state==open starved
+        # overnight: LLM traffic never probed and never half-opened.
+        if cb.is_open():
             raise Exception(
                 f"{cb_key} circuit breaker is OPEN — skipping call to avoid cascading timeouts"
             )
+        await cb.begin_probe_if_due()
 
         try:
             from shared.services.ollama_model_policy import (
                 InvocationKind,
+                extraction_temperature_for_invocation,
                 keep_alive_for_invocation,
+                num_ctx_for_invocation,
                 num_predict_for_invocation,
             )
 
             kind = invocation_kind if isinstance(invocation_kind, InvocationKind) else None
+            opts: dict = {
+                "temperature": extraction_temperature_for_invocation(kind),
+                "top_p": 0.9,
+                "num_predict": num_predict_for_invocation(kind, batch_size),
+            }
+            num_ctx = num_ctx_for_invocation(kind)
+            if num_ctx is not None:
+                opts["num_ctx"] = num_ctx
+            model_name = resolve_model_tag(model)
+            lane = (execution_lane or _llm_execution_lane.get() or "gpu").strip().lower()
+            if kind == InvocationKind.STRUCTURED_EXTRACTION and lane == "cpu":
+                cpu_extraction = env_str("BULK_CPU_EXTRACTION_MODEL", "").strip()
+                if cpu_extraction:
+                    model_name = cpu_extraction
+            payload: dict[str, Any] = {
+                "model": model_name,
+                "prompt": prompt,
+                "stream": False,
+                "keep_alive": keep_alive_for_invocation(kind),
+                "options": opts,
+            }
+            if kind == InvocationKind.STRUCTURED_EXTRACTION:
+                payload["format"] = "json"
+                # Qwen3 defaults to thinking-mode; JSON then lands in ``thinking``.
+                payload["think"] = False
+            elif kind in (
+                InvocationKind.STORYLINE_NARRATIVE_FINISH,
+                InvocationKind.LONG_SYNTHESIS,
+                InvocationKind.BRIEFING_LEAD,
+            ):
+                # Walkthrough / longform must land in ``response``, not a thinking channel.
+                payload["think"] = False
             response = await client.post(
                 f"{base_url}/api/generate",
-                json={
-                    "model": model.value,
-                    "prompt": prompt,
-                    "stream": False,
-                    "keep_alive": keep_alive_for_invocation(kind),
-                    "options": {
-                        "temperature": 0.7,
-                        "top_p": 0.9,
-                        "num_predict": num_predict_for_invocation(kind),
-                    },
-                },
+                json=payload,
+                headers=ollama_priority_headers(),
             )
 
             if response.status_code == 200:
                 result = response.json()
                 await cb._record_success()
-                return result.get("response", "")
-            else:
-                await cb._record_failure()
-                raise Exception(f"{cb_key} API error: {response.status_code} - {response.text}")
+                return _ollama_generate_text(result)
+            if response.status_code in (502, 503, 504):
+                raise Exception(f"{cb_key} overloaded (HTTP {response.status_code})")
+            await cb._record_failure()
+            raise Exception(f"{cb_key} API error: {response.status_code} - {response.text}")
 
         except httpx.TimeoutException:
-            await cb._record_failure()
-            raise Exception(f"{cb_key} request timed out")
+            # Overload, not host-down: do not trip the breaker. Callers requeue/trickle.
+            raise Exception(f"{cb_key} overloaded (request timed out)")
         except httpx.ConnectError:
-            await cb._record_failure()
+            # Host unreachable: hard shed so we pause intake instead of retry-storming.
+            await cb.trip_open(f"ConnectError to {base_url}")
             raise Exception(f"Cannot connect to {cb_key} service")
         except Exception as e:
-            if "circuit breaker" not in str(e).lower():
-                await cb._record_failure()
+            msg = str(e).lower()
+            if (
+                not _loop_retry
+                and ("event loop is closed" in msg or "bound to a different event loop" in msg)
+            ):
+                await self._ensure_clients_for_running_loop(force=True)
+                return await self._call_ollama_impl(
+                    model,
+                    prompt,
+                    execution_lane=execution_lane,
+                    invocation_kind=invocation_kind,
+                    batch_size=batch_size,
+                    _loop_retry=True,
+                )
+            if "circuit breaker" in msg or "overloaded" in msg or "cannot connect" in msg:
+                raise
+            await cb._record_failure()
             raise Exception(f"{cb_key} API error: {str(e)}")
+
+    def _embedding_target(self, execution_lane: str | None = None) -> tuple[str, str]:
+        """Embeddings prefer CPU host when dual-host is on (same as OllamaModelCaller)."""
+        lane = (execution_lane or "cpu").strip().lower()
+        if not self.dual_host_enabled:
+            return self.ollama_base_url.rstrip("/"), "ollama"
+        if lane == "gpu":
+            return self.ollama_gpu_host.rstrip("/"), "ollama_gpu"
+        return self.ollama_cpu_host.rstrip("/"), "ollama_cpu"
+
+    def embed_text_sync(
+        self,
+        text: str,
+        *,
+        model: str | None = None,
+        execution_lane: str | None = "cpu",
+    ) -> list[float]:
+        """Sync /api/embeddings with the same CB / overload contract as generate."""
+        from services.circuit_breaker_service import get_circuit_breaker_service
+
+        base_url, cb_key = self._embedding_target(execution_lane)
+        cb = get_circuit_breaker_service().get_circuit_breaker(cb_key)
+        if cb.is_open():
+            raise Exception(
+                f"{cb_key} circuit breaker is OPEN — skipping call to avoid cascading timeouts"
+            )
+        cb.begin_probe_if_due_sync()
+        emb_model = (model or env_str("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")).strip()
+        try:
+            with httpx.Client(timeout=_httpx_ollama_timeout(execution_lane)) as sync_client:
+                response = sync_client.post(
+                    f"{base_url}/api/embeddings",
+                    json={"model": emb_model, "prompt": text or ""},
+                    headers=ollama_priority_headers(),
+                )
+                if response.status_code == 200:
+                    cb.record_success_sync()
+                    data = response.json()
+                    emb = data.get("embedding") if isinstance(data, dict) else None
+                    if not isinstance(emb, list):
+                        raise Exception(f"{cb_key} embeddings response missing embedding array")
+                    return emb
+                if response.status_code in (502, 503, 504):
+                    raise Exception(f"{cb_key} overloaded (HTTP {response.status_code})")
+                cb.record_failure_sync()
+                raise Exception(f"{cb_key} embeddings error: {response.status_code}")
+        except httpx.TimeoutException:
+            raise Exception(f"{cb_key} overloaded (request timed out)") from None
+        except httpx.ConnectError as e:
+            cb.record_failure_sync(force_open=True)
+            raise Exception(f"Cannot connect to {cb_key} service") from e
+
+    async def embed_text(
+        self,
+        text: str,
+        *,
+        model: str | None = None,
+        execution_lane: str | None = "cpu",
+    ) -> list[float]:
+        """Async /api/embeddings with CB / overload contract."""
+        from services.circuit_breaker_service import get_circuit_breaker_service
+
+        await self._ensure_clients_for_running_loop()
+        base_url, cb_key = self._embedding_target(execution_lane)
+        cb = get_circuit_breaker_service().get_circuit_breaker(cb_key)
+        if cb.is_open():
+            raise Exception(
+                f"{cb_key} circuit breaker is OPEN — skipping call to avoid cascading timeouts"
+            )
+        await cb.begin_probe_if_due()
+        emb_model = (model or env_str("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")).strip()
+        _, client, _ = self._resolve_execution_target(
+            model=None, execution_lane=execution_lane or "cpu"
+        )
+        try:
+            response = await client.post(
+                f"{base_url}/api/embeddings",
+                json={"model": emb_model, "prompt": text or ""},
+                headers=ollama_priority_headers(),
+            )
+            if response.status_code == 200:
+                await cb._record_success()
+                data = response.json()
+                emb = data.get("embedding") if isinstance(data, dict) else None
+                if not isinstance(emb, list):
+                    raise Exception(f"{cb_key} embeddings response missing embedding array")
+                return emb
+            if response.status_code in (502, 503, 504):
+                raise Exception(f"{cb_key} overloaded (HTTP {response.status_code})")
+            await cb._record_failure()
+            raise Exception(f"{cb_key} embeddings error: {response.status_code}")
+        except httpx.TimeoutException:
+            raise Exception(f"{cb_key} overloaded (request timed out)")
+        except httpx.ConnectError:
+            await cb.trip_open(f"ConnectError to {base_url}")
+            raise Exception(f"Cannot connect to {cb_key} service")
 
     async def get_model_status(self, timeout_seconds: float | None = None) -> dict[str, Any]:
         """
@@ -736,15 +1113,17 @@ class LLMService:
                 models = response.json().get("models", [])
                 available_models = [model["name"] for model in models]
 
-                finisher = ModelType.LLAMA_70B.value
+                finisher = resolve_model_tag(ModelType.LLAMA_70B)
+                primary = resolve_model_tag(ModelType.LLAMA_8B)
+                secondary = resolve_model_tag(ModelType.MISTRAL_7B)
                 return {
                     "success": True,
                     "available_models": available_models,
-                    "primary_model": ModelType.LLAMA_8B.value,
-                    "secondary_model": ModelType.MISTRAL_7B.value,
+                    "primary_model": primary,
+                    "secondary_model": secondary,
                     "narrative_finisher_model": finisher,
-                    "primary_available": ModelType.LLAMA_8B.value in available_models,
-                    "secondary_available": ModelType.MISTRAL_7B.value in available_models,
+                    "primary_available": primary in available_models,
+                    "secondary_available": secondary in available_models,
                     "narrative_finisher_available": finisher in available_models,
                     "timestamp": datetime.now().isoformat(),
                 }
@@ -763,13 +1142,78 @@ class LLMService:
             return {"success": False, "error": f"Cannot connect to Ollama: {str(e)}"}
 
     async def close(self):
-        """Close HTTP client"""
-        await self.client.aclose()
-        if self.cpu_client is not self.client:
-            await self.cpu_client.aclose()
-        if self.gpu_client is not self.client and self.gpu_client is not self.cpu_client:
-            await self.gpu_client.aclose()
+        """Close HTTP clients"""
+        for c in self._collect_distinct_clients():
+            try:
+                await c.aclose()
+            except Exception:
+                pass
+        self._client_loop_id = None
 
 
 # Global LLM service instance
 llm_service = LLMService()
+
+
+def reset_llm_service() -> LLMService:
+    """Recreate global LLMService after env routing changes (bulk PopOS offload)."""
+    global llm_service
+    llm_service = LLMService()
+    return llm_service
+
+
+def ollama_generate_sync(
+    prompt: str,
+    *,
+    model: str,
+    max_tokens: int = 2000,
+    ollama_base_url: str | None = None,
+    execution_lane: str | None = None,
+) -> str:
+    """Sync generate via CB hub. Prefer this over raw requests.post(/api/generate)."""
+    svc = LLMService(ollama_base_url=ollama_base_url) if ollama_base_url else llm_service
+    return svc.generate(
+        prompt,
+        max_tokens=max_tokens,
+        model=model,
+        execution_lane=execution_lane,
+    )
+
+
+async def ollama_generate_async(
+    prompt: str,
+    *,
+    model: str,
+    max_tokens: int = 2000,
+    ollama_base_url: str | None = None,
+    execution_lane: str | None = None,
+) -> str:
+    """Async generate via CB hub (thread offload of sync path for string model tags)."""
+    return await asyncio.to_thread(
+        ollama_generate_sync,
+        prompt,
+        model=model,
+        max_tokens=max_tokens,
+        ollama_base_url=ollama_base_url,
+        execution_lane=execution_lane,
+    )
+
+
+def ollama_embed_sync(
+    text: str,
+    *,
+    model: str | None = None,
+    execution_lane: str | None = "cpu",
+) -> list[float]:
+    """Sync embeddings via CB hub."""
+    return llm_service.embed_text_sync(text, model=model, execution_lane=execution_lane)
+
+
+async def ollama_embed_async(
+    text: str,
+    *,
+    model: str | None = None,
+    execution_lane: str | None = "cpu",
+) -> list[float]:
+    """Async embeddings via CB hub."""
+    return await llm_service.embed_text(text, model=model, execution_lane=execution_lane)

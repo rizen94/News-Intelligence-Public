@@ -8,7 +8,7 @@ Single map of **where** the platform records “how well we are processing,” *
 
 | Surface | Owns | Does not own |
 |---------|------|--------------|
-| **In-app Monitor** (`/:domain/monitor`) | Live health (API/DB/web), automation running + FIFO/LIFO chip, current/recent activity, phase **pulse** (pending / fails / runs-to-clear), **Run phase now**, Open Grafana deep link | Multi-hour charts, GPU history, backlog ETAs, DB sessions |
+| **In-app Monitor** (`/:domain/monitor`) | Live health (API/DB/web), automation running + FIFO/LIFO chip, **DB worker/UI pressure chips** (`resource_router.db_pressure`), current/recent activity, phase **pulse** (pending / fails / runs-to-clear), **Run phase now**, Open Grafana deep link | Multi-hour charts, GPU history, backlog ETAs, DB sessions |
 | **Homelab Grafana** (NI Ops `uid=ni-ops`) | Queue depth / scheduling backlog history, intake SLA (when available), DB size & table growth, automation run rates, RSS feed/article counters (`ni_*`) | Phase triggers and live “what is running now” |
 
 Deep link: build with `VITE_NEWS_INTEL_GRAFANA_URL` (documented as `NEWS_INTEL_GRAFANA_URL`), or set browser `localStorage.news_intel_grafana_url`. Dashboard JSON: `api/monitoring/grafana/` — apply steps in that folder’s README (PopOS Homelab).
@@ -36,6 +36,7 @@ SQL explorer and Work executed stay on **separate admin routes** — not folded 
 | Store | Written by | Used for |
 |-------|------------|----------|
 | **`public.automation_run_history`** | `persist_automation_run_history` on phase completion; `pending_db_flush` replay; optional **`POST /api/system_monitoring/cron_heartbeat`** | Last run, “runs in window,” nightly recent runs in `backlog_status`, **`GET /api/system_monitoring/process_run_summary`**, **`GET /api/system_monitoring/processing_progress`**. |
+| **`public.db_pool_pressure_advisory`** | API (`pool_pressure_advisory.publish_*`) on headroom / status / waiter | Cross-host backpressure for PopOS workers; Monitor chips from live snapshot on `/automation/status`. |
 | **`pipeline_checkpoints` / `pipeline_traces`** | `pipeline_trace_writer` (e.g. orchestrator RSS, manual pipeline trigger) | `process_run_summary` checkpoint list; operator tracing. |
 | **Domain + `intelligence.*` tables** | Pipeline phases | Backlog counts, throughput (articles enriched, contexts→claims, entity profiles, PDFs, storylines) in **`GET /api/system_monitoring/backlog_status`** and **`processing_progress`**. |
 | **`orchestrator_state` (SQLite)** | Orchestrator | `orchestrator_decision_history`, `orchestrator_performance_metrics` — not the primary Postgres Monitor path. |
@@ -58,7 +59,16 @@ SQL explorer and Work executed stay on **separate admin routes** — not folded 
 | `GET /api/system_monitoring/process_run_summary` | Phases run vs not in N hours, pipeline checkpoints, optional `activity.jsonl` tail. **Not on default Monitor.** |
 | `GET /api/system_monitoring/pipeline_status` | Pipeline coordinator snapshot. |
 | `GET /api/system_monitoring/database/connections` | `pg_stat_activity` style sessions. **Not on default Monitor.** |
+| `POST /api/system_monitoring/circuit_breakers/reset` | Reset Ollama CB keys (`name` optional; default all of `ollama` / `ollama_gpu` / `ollama_cpu` / `ollama_pop_os`). Monitor escape hatch after hard shed. |
 | `GET /api/diagnostics_events/...` | Curated diagnostic events (see diagnostics doc). |
+
+### Ollama backpressure terms (Monitor / AM)
+
+| Term | Meaning |
+|------|---------|
+| **defer** | Schedule or worker leaves work pending and retries later (requeue). Preferred under CB open / overload. |
+| **shed** | Hard pause of intake (collection / discovery) while any Ollama breaker is OPEN; must-run cadence also defers. Explicit Monitor phase trigger may still proceed. |
+| **overload** | Timeout / 502–504 from Ollama — raise overloaded, **do not** trip the breaker; trickle drain continues. Host unreachable → `trip_open` hard shed. |
 
 ---
 

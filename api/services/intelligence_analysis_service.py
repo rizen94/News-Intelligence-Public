@@ -128,15 +128,12 @@ class IntelligenceAnalysisService:
     # =========================================================================
 
     def generate_embedding(self, text: str) -> list[float] | None:
-        """Generate embedding using Ollama"""
+        """Generate embedding using Ollama via CB hub."""
         try:
-            response = requests.post(
-                f"{OLLAMA_BASE_URL}/api/embeddings",
-                json={"model": EMBEDDING_MODEL, "prompt": text[:8000]},
-                timeout=30,
-            )
-            if response.status_code == 200:
-                return response.json().get("embedding")
+            from shared.services.llm_service import ollama_embed_sync
+
+            vec = ollama_embed_sync(text[:8000], model=EMBEDDING_MODEL)
+            return vec or None
         except Exception as e:
             logger.error(f"Embedding generation failed: {e}")
         return None
@@ -289,13 +286,15 @@ class IntelligenceAnalysisService:
 {context}
 
 Summary:"""
-            response = requests.post(
-                f"{OLLAMA_BASE_URL}/api/generate",
-                json={"model": LLM_MODEL, "prompt": prompt, "stream": False},
-                timeout=30,
+            from shared.services.llm_service import ollama_generate_sync
+
+            text = ollama_generate_sync(
+                prompt,
+                model=LLM_MODEL,
+                ollama_base_url=OLLAMA_BASE_URL,
             )
-            if response.status_code == 200:
-                return response.json().get("response", "").strip()
+            if text:
+                return text.strip()
         except Exception as e:
             logger.error(f"Context summary generation failed: {e}")
         return "Context summary unavailable"
@@ -312,13 +311,15 @@ Summary:"""
 
 Historical context (2-3 sentences):"""
 
-            response = requests.post(
-                f"{OLLAMA_BASE_URL}/api/generate",
-                json={"model": LLM_MODEL, "prompt": prompt, "stream": False},
-                timeout=30,
+            from shared.services.llm_service import ollama_generate_sync
+
+            text = ollama_generate_sync(
+                prompt,
+                model=LLM_MODEL,
+                ollama_base_url=OLLAMA_BASE_URL,
             )
-            if response.status_code == 200:
-                return response.json().get("response", "").strip()
+            if text:
+                return text.strip()
         except Exception as e:
             logger.error(f"Historical context generation failed: {e}")
         return "Historical context unavailable"
@@ -907,14 +908,14 @@ Article Count: {storyline.get("article_count", 0)}
 
 List potential consequences (one per line):"""
 
-            response = requests.post(
-                f"{OLLAMA_BASE_URL}/api/generate",
-                json={"model": LLM_MODEL, "prompt": prompt, "stream": False},
-                timeout=30,
-            )
+            from shared.services.llm_service import ollama_generate_sync
 
-            if response.status_code == 200:
-                text = response.json().get("response", "")
+            text = ollama_generate_sync(
+                prompt,
+                model=LLM_MODEL,
+                ollama_base_url=OLLAMA_BASE_URL,
+            )
+            if text:
                 lines = [
                     line.strip().lstrip("-•").strip() for line in text.split("\n") if line.strip()
                 ]

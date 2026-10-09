@@ -41,8 +41,18 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_URL = "http://localhost:11434"
+
+def _ollama_url() -> str:
+    for key in ("OLLAMA_HOST", "OLLAMA_URL", "OLLAMA_POP_OS_HOST"):
+        raw = (os.environ.get(key) or "").strip()
+        if raw:
+            return raw.rstrip("/")
+    return "http://127.0.0.1:11434"
+
+
 EMBED_MODEL = "nomic-embed-text"
+# Back-compat alias; prefer _ollama_url() at call sites (env may load after import).
+OLLAMA_URL = _ollama_url()
 
 
 def _dedup_env_float(name: str, default: float) -> float:
@@ -100,20 +110,13 @@ def _dedup_borderline_max_seconds() -> float:
 
 
 async def _get_embedding(text: str) -> list[float] | None:
-    """Get a 768-d embedding from Ollama's nomic-embed-text model."""
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        try:
-            resp = await client.post(
-                f"{OLLAMA_URL}/api/embeddings",
-                json={"model": EMBED_MODEL, "prompt": text},
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                if not isinstance(data, dict):
-                    return None
-                return data.get("embedding")
-        except Exception as e:
-            logger.error(f"Embedding request failed: {e}")
+    """Get a 768-d embedding from Ollama's nomic-embed-text model via CB hub."""
+    try:
+        from shared.services.llm_service import ollama_embed_async
+
+        return await ollama_embed_async(text, model=EMBED_MODEL)
+    except Exception as e:
+        logger.error(f"Embedding request failed: {e}")
     return None
 
 

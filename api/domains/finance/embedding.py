@@ -169,17 +169,11 @@ def embed_with_ollama_fallback(text: str) -> tuple[list[float], str] | None:
         model = FINANCE_MODELS.get("embedding", "BAAI/bge-large-en-v1.5")
         return (vec, model)
     try:
-        import requests
+        from shared.services.llm_service import ollama_embed_sync
 
-        r = requests.post(
-            f"{OLLAMA_HOST}/api/embeddings",
-            json={"model": "nomic-embed-text", "prompt": text[:4000]},
-            timeout=60,
-        )
-        if r.status_code == 200:
-            emb = r.json().get("embedding")
-            if emb:
-                return (emb, "nomic-embed-text")
+        emb = ollama_embed_sync(text[:4000], model="nomic-embed-text")
+        if emb:
+            return (emb, "nomic-embed-text")
     except Exception as e:
         logger.debug("Ollama embedding fallback failed: %s", e)
     return None

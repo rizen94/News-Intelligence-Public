@@ -96,19 +96,12 @@ class RAGGenerationModule:
             return self.embedding_cache[cache_key]
 
         try:
-            response = requests.post(
-                f"{OLLAMA_BASE_URL}/api/embeddings",
-                json={
-                    "model": EMBEDDING_MODEL,
-                    "prompt": text[:2000],  # Limit context
-                },
-                timeout=30,
-            )
-            if response.status_code == 200:
-                embedding = response.json().get("embedding", [])
-                if embedding:
-                    self.embedding_cache[cache_key] = embedding
-                    return embedding
+            from shared.services.llm_service import ollama_embed_sync
+
+            embedding = ollama_embed_sync(text[:2000], model=EMBEDDING_MODEL)
+            if embedding:
+                self.embedding_cache[cache_key] = embedding
+                return embedding
         except Exception as e:
             self.logger.warning(f"Embedding generation failed: {e}")
 
@@ -224,24 +217,16 @@ Answer:"""
             Tuple of (answer, confidence_score)
         """
         try:
-            response = requests.post(
-                f"{OLLAMA_BASE_URL}/api/generate",
-                json={
-                    "model": LLM_MODEL,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {
-                        "num_predict": max_tokens,
-                        "temperature": 0.7,
-                    },
-                },
-                timeout=60,
-            )
+            from shared.services.llm_service import ollama_generate_sync
 
-            if response.status_code == 200:
-                result = response.json()
-                answer = result.get("response", "").strip()
+            answer = ollama_generate_sync(
+                prompt,
+                model=LLM_MODEL,
+                max_tokens=max_tokens,
+                ollama_base_url=OLLAMA_BASE_URL,
+            ).strip()
 
+            if answer:
                 # Estimate confidence based on response characteristics
                 confidence = 0.5
                 if len(answer) > 100:

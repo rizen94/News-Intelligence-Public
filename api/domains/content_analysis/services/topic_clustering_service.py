@@ -164,33 +164,29 @@ class TopicClusteringService:
             Generated text response
         """
         try:
-            payload = {
-                "model": self.model_name,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.3,  # Lower temperature for more consistent results
-                    "top_p": 0.9,
-                    "num_predict": 500,  # 2-5 topics + keywords; 500 sufficient, faster than 1500
-                },
-            }
+            from shared.services.llm_service import ollama_generate_async
 
+            full_prompt = prompt
             if system_prompt:
-                payload["system"] = system_prompt
+                full_prompt = f"{system_prompt}\n\n{prompt}"
 
-            logger.info(f"🤖 Calling Ollama for topic clustering with model: {self.model_name}")
+            logger.info(
+                "🤖 Calling Ollama for topic clustering with model: %s url=%s",
+                self.model_name,
+                self.ollama_url,
+            )
 
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(f"{self.ollama_url}/api/generate", json=payload)
-
-                if response.status_code == 200:
-                    result = response.json()
-                    response_text = result.get("response", "").strip()
-                    logger.info("✅ Ollama response received for topic clustering")
-                    return response_text
-                else:
-                    logger.error(f"❌ Ollama API error: {response.status_code} - {response.text}")
-                    return ""
+            response_text = (
+                await ollama_generate_async(
+                    full_prompt,
+                    model=self.model_name,
+                    max_tokens=500,
+                    ollama_base_url=self.ollama_url,
+                )
+            ).strip()
+            if response_text:
+                logger.info("✅ Ollama response received for topic clustering")
+            return response_text
 
         except Exception as e:
             logger.error(f"❌ Ollama API error: {e}")

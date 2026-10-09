@@ -57,8 +57,8 @@ class LocalTrendAnalyzer:
     No training required - uses statistical analysis and LLM insights
     """
     
-    def __init__(self, ollama_url: str = "http://localhost:11434"):
-        self.ollama_url = ollama_url
+    def __init__(self, ollama_url: str | None = None):
+        self.ollama_url = (ollama_url or __import__("os").environ.get("OLLAMA_HOST") or __import__("os").environ.get("OLLAMA_URL") or "http://127.0.0.1:11434").rstrip("/")
         self.available_models = ["llama3.1:8b", "llama3.1:405b"]
         self.default_model = "llama3.1:8b"  # Fast model (405b available for higher quality)
         self.cache = {}  # Simple in-memory cache
@@ -582,30 +582,15 @@ Guidelines:
 - Consider recent patterns and volatility
 """
             
-            response = requests.post(
-                f"{self.ollama_url}/api/generate",
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "options": {
-                        "temperature": 0.3,
-                        "num_predict": 500
-                    }
-                },
-                timeout=30
+            from shared.services.llm_service import ollama_generate_sync
+
+            result = ollama_generate_sync(
+                prompt,
+                model=model,
+                max_tokens=500,
+                ollama_base_url=self.ollama_url,
             )
-            
-            if response.status_code == 200:
-                result = ""
-                for line in response.text.split('\n'):
-                    if line.strip():
-                        try:
-                            data = json.loads(line)
-                            if 'response' in data:
-                                result += data['response']
-                        except json.JSONDecodeError:
-                            continue
-                
+            if result:
                 # Parse response
                 json_start = result.find('{')
                 json_end = result.rfind('}') + 1

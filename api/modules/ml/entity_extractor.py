@@ -5,6 +5,7 @@ Uses local LLM models via Ollama for reliable entity extraction
 
 import logging
 import json
+import os
 import time
 import re
 from typing import Dict, List, Optional, Tuple, Any, Set
@@ -13,6 +14,53 @@ import requests
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
+
+
+def _default_ollama_url() -> str:
+    """Prefer process env / settings; never assume local Ollama (Widow is masked)."""
+    for key in ("OLLAMA_HOST", "OLLAMA_URL", "OLLAMA_POP_OS_HOST"):
+        raw = (os.environ.get(key) or "").strip()
+        if raw:
+            return raw.rstrip("/")
+    try:
+        from config.settings import OLLAMA_HOST as _settings_host
+
+        if _settings_host:
+            return str(_settings_host).rstrip("/")
+    except Exception:
+        pass
+    return "http://127.0.0.1:11434"
+
+_JSON_RETRY_SUFFIX = (
+    "\n\nYour previous answer was not valid JSON. "
+    'Reply with ONLY a JSON object {"entities": [...]} — no markdown, no commentary.'
+)
+
+
+def _repair_json_object_text(text: str) -> str:
+    """Best-effort fixes for common LLM JSON mistakes."""
+    t = text.strip()
+    if t.startswith("```"):
+        t = t.split("\n", 1)[-1]
+    if t.endswith("```"):
+        t = t.rsplit("```", 1)[0]
+    t = t.strip()
+    t = re.sub(r",\s*]", "]", t)
+    t = re.sub(r",\s*}", "}", t)
+    return t
+
+
+def _extract_entity_dicts_from_text(text: str) -> list[dict[str, Any]]:
+    """Salvage entity objects when the outer JSON object fails to parse."""
+    out: list[dict[str, Any]] = []
+    for chunk in re.findall(r"\{[^{}]*\}", text, flags=re.DOTALL):
+        try:
+            obj = json.loads(_repair_json_object_text(chunk))
+            if isinstance(obj, dict) and (obj.get("text") or obj.get("label")):
+                out.append(obj)
+        except json.JSONDecodeError:
+            continue
+    return out
 
 @dataclass
 class Entity:
@@ -43,8 +91,9 @@ class LocalEntityExtractor:
     No training required - uses pre-trained models with structured prompts
     """
     
-    def __init__(self, ollama_url: str = "http://localhost:11434"):
-        self.ollama_url = ollama_url
+    def __init__(self, ollama_url: str | None = None):
+        self.ollama_url = (ollama_url or _default_ollama_url()).rstrip("/")
+        logger.info("LocalEntityExtractor using ollama_url=%s", self.ollama_url)
         self.available_models = ["llama3.1:8b", "llama3.1:70b"]
         self.default_model = "llama3.1:8b"  # Fast model (70b available for higher quality)
         self.cache = {}  # Simple in-memory cache
@@ -102,11 +151,17 @@ class LocalEntityExtractor:
             # Create structured prompt
             prompt = self._create_entity_prompt(text, entity_types)
             
-            # Call Ollama
+            # Call Ollama (retry once with JSON-only suffix on parse failure)
             response = self._call_ollama(prompt, selected_model)
-            
-            # Parse response
-            entities_data = self._parse_entity_response(response, text)
+            entities_data, json_ok = self._parse_entity_response(response, text, selected_model)
+            if not json_ok:
+                retry_prompt = prompt + _JSON_RETRY_SUFFIX
+                retry_response = self._call_ollama(retry_prompt, selected_model)
+                retry_entities, retry_ok = self._parse_entity_response(
+                    retry_response, text, selected_model, log_parse_warning=True
+                )
+                if retry_ok or len(retry_entities) > len(entities_data):
+                    entities_data = retry_entities
             
             # Create result
             processing_time = time.time() - start_time
@@ -291,75 +346,89 @@ Guidelines:
 - Only extract entities that are clearly identifiable
 """
     
+    def _ollama_cb_key(self) -> str:
+        pop = (os.environ.get("OLLAMA_POP_OS_HOST") or "").rstrip("/")
+        if pop and self.ollama_url.rstrip("/") == pop:
+            return "ollama_pop_os"
+        return "ollama"
+
     def _call_ollama(self, prompt: str, model: str) -> str:
-        """Call Ollama API for entity extraction"""
+        """Call Ollama via shared CB hub (no direct HTTP)."""
+        from shared.services.llm_service import ollama_generate_sync
+
         try:
-            response = requests.post(
-                f"{self.ollama_url}/api/generate",
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "options": {
-                        "temperature": 0.1,  # Very low temperature for consistent extraction
-                        "num_predict": 500,   # Entity list; 500 sufficient, faster
-                        "top_p": 0.9
-                    }
-                },
-                timeout=30
+            return ollama_generate_sync(
+                prompt,
+                model=model,
+                max_tokens=500,
+                ollama_base_url=self.ollama_url,
             )
-            
-            if response.status_code != 200:
-                raise Exception(f"Ollama API error: {response.status_code}")
-            
-            # Parse streaming response
-            result = ""
-            for line in response.text.split('\n'):
-                if line.strip():
-                    try:
-                        data = json.loads(line)
-                        if 'response' in data:
-                            result += data['response']
-                    except json.JSONDecodeError:
-                        continue
-            
-            return result
-            
         except Exception as e:
-            logger.error(f"Error calling Ollama: {e}")
+            msg = str(e).lower()
+            if "overloaded" in msg or "circuit breaker" in msg:
+                logger.warning("Ollama hub defer/shed for entity extract: %s", e)
+            else:
+                logger.error("Error calling Ollama: %s", e)
             raise
     
-    def _parse_entity_response(self, response: str, original_text: str) -> List[Entity]:
-        """Parse Ollama response and extract entities"""
-        try:
-            # Try to find JSON in response
-            json_start = response.find('{')
-            json_end = response.rfind('}') + 1
-            
-            if json_start != -1 and json_end > json_start:
-                json_str = response[json_start:json_end]
+    def _parse_entity_response(
+        self,
+        response: str,
+        original_text: str,
+        model: str | None = None,
+        *,
+        log_parse_warning: bool = True,
+    ) -> tuple[List[Entity], bool]:
+        """Parse Ollama response. Second value is True when JSON parsed cleanly."""
+        model_used = model or self.default_model
+        json_start = response.find("{")
+        json_end = response.rfind("}") + 1
+
+        if json_start != -1 and json_end > json_start:
+            json_str = _repair_json_object_text(response[json_start:json_end])
+            try:
                 data = json.loads(json_str)
-                
                 entities = []
-                for entity_data in data.get('entities', []):
+                for entity_data in data.get("entities", []):
+                    if not isinstance(entity_data, dict):
+                        continue
                     entity = Entity(
-                        text=entity_data.get('text', ''),
-                        label=entity_data.get('label', 'UNKNOWN'),
-                        confidence=max(0.0, min(1.0, float(entity_data.get('confidence', 0.5)))),
-                        start_pos=int(entity_data.get('start_pos', 0)),
-                        end_pos=int(entity_data.get('end_pos', 0)),
-                        context=entity_data.get('context', ''),
-                        model_used=self.default_model
+                        text=entity_data.get("text", ""),
+                        label=entity_data.get("label", "UNKNOWN"),
+                        confidence=max(
+                            0.0, min(1.0, float(entity_data.get("confidence", 0.5)))
+                        ),
+                        start_pos=int(entity_data.get("start_pos", 0)),
+                        end_pos=int(entity_data.get("end_pos", 0)),
+                        context=entity_data.get("context", ""),
+                        model_used=model_used,
                     )
                     entities.append(entity)
-                
-                return entities
-            else:
-                # Fallback parsing if JSON not found
-                return self._fallback_parse(response, original_text)
-                
-        except Exception as e:
-            logger.error(f"Error parsing entity response: {e}")
-            return self._fallback_parse(response, original_text)
+                if isinstance(data, dict) and "entities" in data:
+                    return entities, True
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                if log_parse_warning:
+                    logger.warning("Error parsing entity response: %s", e)
+                salvaged = _extract_entity_dicts_from_text(response)
+                if salvaged:
+                    return [
+                        Entity(
+                            text=str(item.get("text") or ""),
+                            label=str(item.get("label") or "UNKNOWN"),
+                            confidence=max(
+                                0.0,
+                                min(1.0, float(item.get("confidence", 0.5))),
+                            ),
+                            start_pos=int(item.get("start_pos", 0)),
+                            end_pos=int(item.get("end_pos", 0)),
+                            context=str(item.get("context") or ""),
+                            model_used=model_used,
+                        )
+                        for item in salvaged
+                        if item.get("text")
+                    ], True
+
+        return self._fallback_parse(response, original_text), False
     
     def _fallback_parse(self, response: str, original_text: str) -> List[Entity]:
         """Fallback parsing when JSON parsing fails"""
@@ -408,7 +477,7 @@ Guidelines:
             "entity_types": list(self.entity_types.keys())
         }
 
-# Global instance
+# Global instance (resolves OLLAMA_HOST / PopOS at import / first use)
 entity_extractor = LocalEntityExtractor()
 
 

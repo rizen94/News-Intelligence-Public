@@ -617,14 +617,14 @@ Write in encyclopedic, authoritative style."""
 
         exec_summary = ""
         try:
-            response = requests.post(
-                f"{OLLAMA_BASE_URL}/api/generate",
-                json={"model": LLM_MODEL, "prompt": exec_prompt, "stream": False},
-                timeout=LLM_TIMEOUT,
-            )
-            if response.status_code == 200:
-                exec_summary = response.json().get("response", "").strip()
-        except:
+            from shared.services.llm_service import ollama_generate_sync
+
+            exec_summary = ollama_generate_sync(
+                exec_prompt,
+                model=LLM_MODEL,
+                ollama_base_url=OLLAMA_BASE_URL,
+            ).strip()
+        except Exception:
             exec_summary = f"This mega-storyline encompasses {len(child_syntheses)} related storylines covering various aspects of {mega_title}."
 
         # Calculate stats

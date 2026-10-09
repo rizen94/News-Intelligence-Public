@@ -15,9 +15,10 @@ import httpx
 
 from config.settings import MODELS, OLLAMA_HOST, OLLAMA_TIMEOUT
 
-from shared.services.llm_service import LLMService, ModelType, llm_service
+from shared.services.llm_service import LLMService, ModelType, llm_service, resolve_model_tag
 from shared.services.optional_llm_redis_cache import cache_get, cache_set
 from shared.services.ollama_model_policy import InvocationKind, resolve_model_for_invocation
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,9 @@ class OllamaModelCaller:
         self._llm = llm or llm_service
         base = (self._llm.ollama_base_url or OLLAMA_HOST).rstrip("/")
         self._ollama_base_url = base
-        self._embedding_model = MODELS.get("embedding", "nomic-embed-text")
+        self._embedding_model = env_str(
+            "OLLAMA_MODEL_EMBEDDING", MODELS.get("embedding", "nomic-embed-text")
+        ).strip() or "nomic-embed-text"
 
     def resolve_text_model(
         self,
@@ -51,6 +54,20 @@ class OllamaModelCaller:
     @staticmethod
     def _execution_lane_for_kind(kind: InvocationKind) -> str:
         """Default lane policy by invocation purpose."""
+        import os
+
+        from shared.services.llm_service import _llm_execution_lane
+
+        ctx_lane = _llm_execution_lane.get()
+        if ctx_lane in ("cpu", "gpu"):
+            return ctx_lane
+
+        # Intake / structured JSON stays on Widow CPU unless catchup explicitly opts in.
+        if kind == InvocationKind.STRUCTURED_EXTRACTION:
+            if env_str("BULK_USE_POPOS_EXTRACTION", "").lower() in ("1", "true", "yes"):
+                return "gpu"
+            return "cpu"
+        # Quality-bound finish (+ other large generative) → GPU host when dual-host on.
         gpu_kinds = {
             InvocationKind.LONG_SYNTHESIS,
             InvocationKind.STORYLINE_NARRATIVE_FINISH,
@@ -67,35 +84,39 @@ class OllamaModelCaller:
         kind: InvocationKind,
         urgency: str = "standard",
         approx_prompt_chars: Optional[int] = None,
+        batch_size: Optional[int] = None,
     ) -> GenerationResult:
         """
         Run /api/generate with the model chosen by policy.
 
         approx_prompt_chars: defaults to len(prompt) for batch thresholding.
+        batch_size: number of items in the batch (for structured extraction token scaling).
         """
         chars = approx_prompt_chars if approx_prompt_chars is not None else len(prompt or "")
         model = self.resolve_text_model(kind, urgency, chars)
+        model_tag = resolve_model_tag(model)
         logger.debug(
             "ollama_caller.generate kind=%s urgency=%s chars=%s model=%s",
             kind.value,
             urgency,
             chars,
-            model.value,
+            model_tag,
         )
-        cached = cache_get(prompt=prompt or "", model=model.value, kind=kind.value)
+        cached = cache_get(prompt=prompt or "", model=model_tag, kind=kind.value)
         if cached is not None:
-            return GenerationResult(text=cached, model=model.value, kind=kind)
+            return GenerationResult(text=cached, model=model_tag, kind=kind)
         text = await self._llm._call_ollama(
             model,
             prompt,
             execution_lane=self._execution_lane_for_kind(kind),
             invocation_kind=kind,
+            batch_size=batch_size,
         )
         out = text or ""
         # Do not cache empty responses — allows retry after transient failures
         if out.strip():
-            cache_set(prompt=prompt or "", model=model.value, kind=kind.value, text=out)
-        return GenerationResult(text=out, model=model.value, kind=kind)
+            cache_set(prompt=prompt or "", model=model_tag, kind=kind.value, text=out)
+        return GenerationResult(text=out, model=model_tag, kind=kind)
 
     def _embedding_base_url(self) -> str:
         """Match batch LLM routing: CPU host when dual-host is enabled."""
@@ -105,21 +126,16 @@ class OllamaModelCaller:
 
     async def embed_text(self, text: str) -> tuple[List[float], str]:
         """
-        Single-document embedding via Ollama /api/embeddings.
+        Single-document embedding via Ollama /api/embeddings (CB hub).
         Returns (vector, model_name).
         """
-        payload = {"model": self._embedding_model, "prompt": text}
-        base = self._embedding_base_url()
-        async with httpx.AsyncClient(timeout=float(OLLAMA_TIMEOUT)) as client:
-            r = await client.post(f"{base}/api/embeddings", json=payload)
-            r.raise_for_status()
-            data = r.json()
-            if not isinstance(data, dict):
-                raise ValueError("Ollama embeddings response is not a JSON object")
-            emb = data.get("embedding")
-            if not isinstance(emb, list):
-                raise ValueError("Ollama embeddings response missing embedding array")
-            return emb, self._embedding_model
+        lane = "cpu" if self._llm.dual_host_enabled else None
+        emb = await self._llm.embed_text(
+            text or "",
+            model=self._embedding_model,
+            execution_lane=lane or "cpu",
+        )
+        return emb, self._embedding_model
 
     async def embed_batch(self, texts: List[str]) -> List[tuple[List[float], str]]:
         """Sequential embeddings (Ollama typically one request per doc)."""
@@ -137,3 +153,9 @@ def get_ollama_model_caller() -> OllamaModelCaller:
     if _caller is None:
         _caller = OllamaModelCaller()
     return _caller
+
+
+def reset_ollama_model_caller() -> None:
+    """Recreate caller after bulk env routing changes (PopOS GPU offload)."""
+    global _caller
+    _caller = OllamaModelCaller()

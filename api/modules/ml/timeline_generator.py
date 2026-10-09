@@ -36,9 +36,9 @@ class TimelineEvent:
 class TimelineGenerator:
     """Generates intelligent timeline events using ML/LLM"""
     
-    def __init__(self, db_config: Dict[str, str], ollama_url: str = "http://localhost:11434"):
+    def __init__(self, db_config: Dict[str, str], ollama_url: str | None = None):
         self.db_config = db_config
-        self.ollama_url = ollama_url
+        self.ollama_url = (ollama_url or __import__("os").environ.get("OLLAMA_HOST") or __import__("os").environ.get("OLLAMA_URL") or "http://127.0.0.1:11434").rstrip("/")
         self.model_name = "llama3.1:8b"  # Use fast 8B model (llama3.1:405b available for quality)
         
         # Update database config to use correct database name
@@ -342,26 +342,15 @@ Return as JSON array with this format:
     def _call_llm_for_events(self, context: str) -> List[Dict[str, Any]]:
         """Call LLM to generate timeline events"""
         try:
-            # Use Ollama API
-            response = requests.post(
-                f"{self.ollama_url}/api/generate",
-                json={
-                    "model": self.model_name,
-                    "prompt": context,
-                    "stream": False,
-                    "options": {
-                        "temperature": 0.3,  # Lower temperature for more consistent output
-                        "top_p": 0.9,
-                        "max_tokens": 2000
-                    }
-                },
-                timeout=30
+            from shared.services.llm_service import ollama_generate_sync
+
+            response_text = ollama_generate_sync(
+                context,
+                model=self.model_name,
+                max_tokens=2000,
+                ollama_base_url=self.ollama_url,
             )
-            
-            if response.status_code == 200:
-                result = response.json()
-                response_text = result.get('response', '')
-                
+            if response_text:
                 # Extract JSON from response
                 try:
                     # Find JSON array in response
@@ -376,7 +365,7 @@ Return as JSON array with this format:
                     logger.warning("Failed to parse LLM response as JSON")
                     return []
             
-            logger.warning(f"LLM API call failed: {response.status_code}")
+            logger.warning("LLM API call returned empty response")
             return []
             
         except Exception as e:
