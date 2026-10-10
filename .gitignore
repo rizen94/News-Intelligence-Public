@@ -35,11 +35,18 @@ __pycache__/
 
 # Environment files
 .env
+.env.*
+!.env.example
 .env.local
 .env.production
 configs/ddns.env
 config/.secrets
 api/config/.secrets
+
+# Local runtime / deploy stamps (not source)
+BUILD_INFO
+.config/
+.cursor/debug-*
 
 # Logs
 *.log
