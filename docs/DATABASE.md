@@ -50,18 +50,22 @@ Key tables (non-exhaustive):
 
 Four psycopg2 pools + SQLAlchemy (see `connection.py`):
 
-| Pool | Purpose | Env vars |
-|------|---------|----------|
-| UI | Page loads, monitoring | `DB_POOL_UI_MIN/MAX` |
-| Worker | Automation, batch | `DB_POOL_WORKER_MIN/MAX` |
-| Health | Health probes | `DB_POOL_HEALTH_MIN/MAX` |
-| SA | ORM services | `DB_POOL_SA_SIZE/OVERFLOW` |
+| Pool | Purpose | Env vars | Checkout |
+|------|---------|----------|----------|
+| UI | Page loads, monitoring | `DB_POOL_UI_MIN/MAX` | Wait/retry default **12 s** (`DB_UI_GETCONN_TIMEOUT_SECONDS`) |
+| Worker | Automation, batch | `DB_POOL_WORKER_MIN/MAX` | Wait/retry default **30 s** |
+| Health | Health probes | `DB_POOL_HEALTH_MIN/MAX` | Short wait default **2 s** |
+| SA | ORM services | `DB_POOL_SA_SIZE/OVERFLOW` | SQLAlchemy pool |
 
 Rules:
 
 1. Use `get_db_connection_context()` — always close connections.
 2. Never hold connections across LLM calls, HTTP, or sleeps.
-3. Total pool max across all processes must stay under PostgreSQL `max_connections`.
+3. On exhaustion, checkout **waits/retries** then raises. `DB_ALLOW_DIRECT_FALLBACK` defaults **false**.
+4. `get_db_pool_snapshot()` exposes `waiters` and `pressure=(in_use+waiters)/max`. AutomationManager defers *new* schedules when worker pressure is hot; it also publishes `public.db_pool_pressure_advisory` for PopOS workers (`POPOS_DB_PRESSURE_DEFER_ENABLED`).
+5. Total pool max across all processes must stay under PostgreSQL `max_connections` / PgBouncer limits.
+
+**Same code on Widow and PopOS:** deploy from this repo (PopOS `~/ni-popos-worker` → workspace symlink). Do not fork `connection.py` per host.
 
 See [PGBOUNCER_AND_CONNECTION_BUDGET.md](PGBOUNCER_AND_CONNECTION_BUDGET.md) and [CODING_STYLE_GUIDE.md](CODING_STYLE_GUIDE.md).
 

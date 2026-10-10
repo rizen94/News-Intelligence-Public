@@ -3895,47 +3895,69 @@ class AutomationManager:
                         logger.debug("Chain request %s: %s", other_name, e)
 
         except Exception as e:
-            # Handle task failure
-            task.status = TaskStatus.FAILED
-            task.error_message = str(e)
-            task.retry_count += 1
-            self.metrics["tasks_failed"] += 1
-            finished_at = datetime.now(timezone.utc)
-            if task.name in self.schedules:
-                self.schedules[task.name]["last_run"] = finished_at
-            _persist_automation_run(
-                task.name,
-                task.started_at,
-                finished_at,
-                False,
-                str(e),
-            )
-            # Record failure for last-60m run counts (used by monitoring timeline).
+            # Mid-run CB/overload: defer+requeue (same contract as admission shed), not fail-storm.
             try:
-                cutoff = datetime.now(timezone.utc) - timedelta(minutes=60)
-                dq = self._phase_run_times_last_60m[task.name]
-                dq.append(finished_at)
-                while dq and dq[0] < cutoff:
-                    dq.popleft()
-                dq_lane = self._lane_run_times_last_60m[effective_lane]
-                dq_lane.append(finished_at)
-                while dq_lane and dq_lane[0] < cutoff:
-                    dq_lane.popleft()
+                from shared.services.llm_service import is_ollama_pressure_error
+
+                _pressure = is_ollama_pressure_error(e)
             except Exception:
-                pass
-
-            logger.error(f"Task {task.name} failed: {e}")
-
-            # Retry if under max retries
-            if task.retry_count < task.max_retries:
-                task.status = TaskStatus.RETRYING
-                await asyncio.sleep(min(60 * task.retry_count, 300))  # Exponential backoff
-                await self._enqueue_scheduled_task(
-                    task,
-                    bypass_nightly_cap=True,
-                    bypass_schedule_depth_cap=True,
+                _pressure = False
+            if _pressure and not (task.metadata or {}).get("requested_activity_id"):
+                logger.info(
+                    "Ollama pressure during %s — defer/requeue (not fail): %s",
+                    task.name,
+                    e,
                 )
-                logger.info(f"Retrying task {task.name} (attempt {task.retry_count + 1})")
+                await self._requeue_deferred_task(task)
+                try:
+                    _shed_sleep = float(
+                        os.environ.get("AUTOMATION_OLLAMA_CB_DEFER_SLEEP_SECONDS", "15")
+                    )
+                except ValueError:
+                    _shed_sleep = 15.0
+                await asyncio.sleep(max(2.0, min(_shed_sleep, 120.0)))
+            else:
+                # Handle task failure
+                task.status = TaskStatus.FAILED
+                task.error_message = str(e)
+                task.retry_count += 1
+                self.metrics["tasks_failed"] += 1
+                finished_at = datetime.now(timezone.utc)
+                if task.name in self.schedules:
+                    self.schedules[task.name]["last_run"] = finished_at
+                _persist_automation_run(
+                    task.name,
+                    task.started_at,
+                    finished_at,
+                    False,
+                    str(e),
+                )
+                # Record failure for last-60m run counts (used by monitoring timeline).
+                try:
+                    cutoff = datetime.now(timezone.utc) - timedelta(minutes=60)
+                    dq = self._phase_run_times_last_60m[task.name]
+                    dq.append(finished_at)
+                    while dq and dq[0] < cutoff:
+                        dq.popleft()
+                    dq_lane = self._lane_run_times_last_60m[effective_lane]
+                    dq_lane.append(finished_at)
+                    while dq_lane and dq_lane[0] < cutoff:
+                        dq_lane.popleft()
+                except Exception:
+                    pass
+
+                logger.error(f"Task {task.name} failed: {e}")
+
+                # Retry if under max retries
+                if task.retry_count < task.max_retries:
+                    task.status = TaskStatus.RETRYING
+                    await asyncio.sleep(min(60 * task.retry_count, 300))  # Exponential backoff
+                    await self._enqueue_scheduled_task(
+                        task,
+                        bypass_nightly_cap=True,
+                        bypass_schedule_depth_cap=True,
+                    )
+                    logger.info(f"Retrying task {task.name} (attempt {task.retry_count + 1})")
 
         finally:
             # Keep per-phase worker counts in sync even when task fails.
@@ -6340,6 +6362,10 @@ class AutomationManager:
                             saved,
                         )
                 except Exception as e:
+                    from shared.services.llm_service import is_ollama_pressure_error
+
+                    if is_ollama_pressure_error(e):
+                        raise
                     logger.warning("Storyline discovery failed for %s: %s", domain, e)
             logger.info("Storyline discovery complete: %d new storylines created", total_created)
             if total_created > 0:
@@ -6360,6 +6386,11 @@ class AutomationManager:
                 except Exception as hub_e:
                     logger.debug("Vault cluster hub post-discovery: %s", hub_e)
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                # Propagate so _execute_task retries / does not mark a clean success with junk clusters
+                raise
             logger.warning("Storyline discovery task failed: %s", e)
 
     async def _execute_proactive_detection(self, task: Task):
@@ -7824,6 +7855,12 @@ class AutomationManager:
             }
         except Exception as e:
             rr["llm_endpoints"] = {"error": str(e)}
+        try:
+            from shared.services.api_request_tracker import get_api_yield_snapshot
+
+            rr["api_yield"] = get_api_yield_snapshot()
+        except Exception as e:
+            rr["api_yield"] = {"error": str(e)[:120]}
         out["resource_router"] = rr
         return out
 

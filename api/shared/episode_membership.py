@@ -1,18 +1,27 @@
-"""Episode membership reads via intelligence.event_episode_links (v12 SSOT)."""
+"""Episode membership reads via intelligence.event_episode_links (v12 SSOT).
+
+``chronological_events.storyline_id`` may be stamped as a legacy mirror after a
+successful EEL insert, but product counts/citations must join through EEL —
+never treat the CE stamp alone as membership.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
 
-def list_episode_articles_sql(schema: str) -> str:
+def list_episode_articles_sql(schema: str, *, with_content: bool = False) -> str:
     """
     SELECT list for articles linked to an episode through EEL → CE.source_article_id.
 
     Params: (domain_key, episode_id)
     """
+    content_col = (
+        ", left(coalesce(a.content, ''), 8000) AS content" if with_content else ""
+    )
     return f"""
         SELECT DISTINCT a.id, a.title, a.url, a.source_domain, a.published_at, a.summary
+               {content_col}
         FROM intelligence.event_episode_links eel
         JOIN public.chronological_events ce ON ce.id = eel.event_id
         JOIN {schema}.articles a ON a.id = ce.source_article_id
@@ -20,7 +29,29 @@ def list_episode_articles_sql(schema: str) -> str:
           AND eel.episode_id = %s
           AND ce.source_article_id IS NOT NULL
           AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
+          AND COALESCE(eel.inference_stage, '') <> 'quarantined'
         ORDER BY a.published_at DESC NULLS LAST
+    """
+
+
+def list_episode_entities_sql(schema: str) -> str:
+    """
+    Entities on articles that have at least one non-quarantined EEL for this episode.
+
+    Params: (domain_key, episode_id)
+    """
+    return f"""
+        SELECT DISTINCT ON (e.id)
+            e.id, e.name, e.entity_type, e.description
+        FROM {schema}.entities e
+        JOIN {schema}.article_entities ae ON ae.entity_id = e.id
+        JOIN public.chronological_events ce ON ce.source_article_id = ae.article_id
+        JOIN intelligence.event_episode_links eel ON eel.event_id = ce.id
+        WHERE eel.domain_key = %s
+          AND eel.episode_id = %s
+          AND COALESCE(eel.inference_stage, '') <> 'quarantined'
+        ORDER BY e.id, e.name
+        LIMIT 40
     """
 
 
@@ -108,6 +139,7 @@ def count_episode_articles(
           AND eel.episode_id = %s
           AND ce.source_article_id IS NOT NULL
           AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
+          AND COALESCE(eel.inference_stage, '') <> 'quarantined'
         """,
         (domain_key, int(episode_id)),
     )

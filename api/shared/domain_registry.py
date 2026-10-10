@@ -21,6 +21,7 @@ import logging
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 try:
     import yaml
@@ -229,7 +230,7 @@ def get_pipeline_excluded_domain_keys() -> frozenset[str]:
     """
     import os
 
-    raw = os.environ.get("PIPELINE_EXCLUDE_DOMAIN_KEYS", "").strip()
+    raw = env_str("PIPELINE_EXCLUDE_DOMAIN_KEYS", "").strip()
     if not raw:
         return frozenset()
     return frozenset(x.strip().lower() for x in raw.split(",") if x.strip())
@@ -242,7 +243,7 @@ def get_pipeline_included_domain_keys() -> frozenset[str] | None:
     """
     import os
 
-    raw = os.environ.get("PIPELINE_INCLUDE_DOMAIN_KEYS", "").strip()
+    raw = env_str("PIPELINE_INCLUDE_DOMAIN_KEYS", "").strip()
     if not raw:
         return None
     return frozenset(x.strip().lower().replace("_", "-") for x in raw.split(",") if x.strip())

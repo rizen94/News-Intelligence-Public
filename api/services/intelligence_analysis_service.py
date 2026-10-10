@@ -128,13 +128,15 @@ class IntelligenceAnalysisService:
     # =========================================================================
 
     def generate_embedding(self, text: str) -> list[float] | None:
-        """Generate embedding using Ollama via CB hub."""
-        try:
-            from shared.services.llm_service import ollama_embed_sync
+        """Generate embedding using Ollama via CB hub. Re-raises CB/overload (no invent)."""
+        from shared.services.llm_service import is_ollama_pressure_error, ollama_embed_sync
 
+        try:
             vec = ollama_embed_sync(text[:8000], model=EMBEDDING_MODEL)
             return vec or None
         except Exception as e:
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Embedding generation failed: {e}")
         return None
 

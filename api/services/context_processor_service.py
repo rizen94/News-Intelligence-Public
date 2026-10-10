@@ -88,8 +88,12 @@ def ensure_context_for_article(domain_key: str, article_id: int) -> int | None:
                     am = mrow[0]
                     if isinstance(am, str):
                         am = json.loads(am)
-                    if isinstance(am, dict) and am.get("source_credibility"):
-                        ctx_metadata["source_credibility"] = am["source_credibility"]
+                    if isinstance(am, dict):
+                        if am.get("source_credibility"):
+                            ctx_metadata["source_credibility"] = am["source_credibility"]
+                        if (am.get("content_kind") or "").strip().lower() == "research_paper":
+                            ctx_metadata["content_kind"] = "research_paper"
+                            ctx_metadata["claim_extraction_skip"] = True
             except Exception as meta_err:
                 logger.debug("Context processor: article metadata not read (%s)", meta_err)
 

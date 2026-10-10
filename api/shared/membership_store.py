@@ -50,6 +50,38 @@ def _log_admit(
     )
 
 
+def _maybe_enqueue_finisher_after_admit(
+    *,
+    domain_key: str,
+    episode_id: int,
+    article_id: int,
+    intent: MembershipIntent,
+    membership_changed: bool,
+) -> None:
+    """Materiality-gated narrative finisher after a real membership change."""
+    if not membership_changed:
+        return
+    try:
+        from services.content_refinement_queue_service import (
+            maybe_enqueue_narrative_finisher_on_membership,
+        )
+
+        maybe_enqueue_narrative_finisher_on_membership(
+            domain_key,
+            int(episode_id),
+            source="membership_admit",
+            article_id=int(article_id),
+            intent=intent.value,
+        )
+    except Exception as exc:
+        logger.debug(
+            "membership finisher enqueue skip episode=%s article=%s: %s",
+            episode_id,
+            article_id,
+            exc,
+        )
+
+
 def _set_bag_write_session(cur) -> None:
     cur.execute("SELECT set_config(%s, %s, true)", (_MEMBERSHIP_STORE_SESSION_KEY, "1"))
 
@@ -507,6 +539,13 @@ def admit(
                 article_id=aid,
                 reason=f"events:{n_ev}",
             )
+            _maybe_enqueue_finisher_after_admit(
+                domain_key=domain_key,
+                episode_id=eid,
+                article_id=aid,
+                intent=intent,
+                membership_changed=bool(n_ev) or attach_reason == "ok",
+            )
             return True, f"episode_events:{n_ev}"
 
         if mode == MembershipMode.EPISODE_EEL or intent in _floor_intents:
@@ -569,6 +608,14 @@ def admit(
             article_id=aid,
             reason=attach_reason,
         )
+        if inserted:
+            _maybe_enqueue_finisher_after_admit(
+                domain_key=domain_key,
+                episode_id=eid,
+                article_id=aid,
+                intent=intent,
+                membership_changed=True,
+            )
         return inserted, f"episode_seed:{attach_reason}"
 
     # LEGACY_BAG
@@ -615,6 +662,14 @@ def admit(
             episode_id=eid,
             article_id=aid,
         )
+        if inserted:
+            _maybe_enqueue_finisher_after_admit(
+                domain_key=domain_key,
+                episode_id=eid,
+                article_id=aid,
+                intent=intent,
+                membership_changed=True,
+            )
         return inserted or True, "membership_ok"
 
     return False, "unexpected_mode"

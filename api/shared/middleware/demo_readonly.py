@@ -16,6 +16,7 @@ from typing import Callable
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +28,11 @@ def _parse_host_header(host: str | None) -> str:
 
 
 def news_intel_demo_readonly_enabled() -> bool:
-    return os.environ.get("NEWS_INTEL_DEMO_READ_ONLY", "").lower() in ("1", "true", "yes")
+    return env_str("NEWS_INTEL_DEMO_READ_ONLY", "").lower() in ("1", "true", "yes")
 
 
 def news_intel_demo_hosts_list() -> list[str]:
-    raw = os.environ.get("NEWS_INTEL_DEMO_HOSTS", "").strip()
+    raw = env_str("NEWS_INTEL_DEMO_HOSTS", "").strip()
     out: list[str] = []
     for part in raw.split(","):
         p = part.strip()
@@ -42,11 +43,11 @@ def news_intel_demo_hosts_list() -> list[str]:
 
 def news_intel_demo_readonly_all_hosts() -> bool:
     """If true with empty DEMO_HOSTS, apply read-only to every Host (single-purpose demo server)."""
-    return os.environ.get("NEWS_INTEL_DEMO_READ_ONLY_ALL", "").lower() in ("1", "true", "yes")
+    return env_str("NEWS_INTEL_DEMO_READ_ONLY_ALL", "").lower() in ("1", "true", "yes")
 
 
 def news_intel_demo_post_allowlist_prefixes() -> tuple[str, ...]:
-    raw = os.environ.get("NEWS_INTEL_DEMO_POST_ALLOWLIST", "").strip()
+    raw = env_str("NEWS_INTEL_DEMO_POST_ALLOWLIST", "").strip()
     return tuple(x.strip() for x in raw.split(",") if x.strip())
 
 

@@ -4,6 +4,7 @@ Focuses on narrative building rather than content dumping
 """
 
 import logging
+import re
 import threading
 import time
 from datetime import datetime
@@ -260,15 +261,15 @@ class MLProcessingService:
 
         for i, article in enumerate(sorted_articles, 1):
             published_date = article.get("published_at", "Unknown date")
-            source = article.get("source", "Unknown source")
             title = article.get("title", "Untitled")
             content = article.get("content") or article.get("summary", "")
 
-            # Extract key narrative elements instead of full content
+            # Extract key narrative elements from substantial content (not title-only)
             narrative_elements = self._extract_narrative_elements(content, title)
 
+            src = article.get("source_domain") or article.get("source") or "Unknown source"
             narrative_input.append(f"--- STORY ELEMENT {i} ---")
-            narrative_input.append(f"Source: {source}")
+            narrative_input.append(f"Source: {src}")
             narrative_input.append(f"Date: {published_date}")
             narrative_input.append(f"Headline: {title}")
             narrative_input.append("Key Narrative Points:")
@@ -280,36 +281,42 @@ class MLProcessingService:
 
     def _extract_narrative_elements(self, content: str, title: str) -> list[str]:
         """Extract key narrative elements from article content"""
+        from shared.llm_text_sanitize import html_to_visible_text
+
         if not content:
             return [f"Headline: {title}"]
 
-        # Limit content to first 300 characters to focus on key points
-        content_preview = content[:300] + "..." if len(content) > 300 else content
+        prose = html_to_visible_text(str(content), max_length=1400)
+        if not prose:
+            return [f"Headline: {title}"]
 
-        # Extract key sentences that contain important information
-        sentences = content_preview.split(". ")
+        # Prefer first ~1200 chars of visible prose for substance
+        content_preview = prose[:1200]
+        sentences = re.split(r"(?<=[.!?])\s+", content_preview)
         narrative_elements = []
 
-        # Look for sentences that contain key information (quotes, facts, developments)
-        for sentence in sentences[:3]:
-            if sentence.strip() and len(sentence.strip()) > 15:
-                # Clean up the sentence
+        for sentence in sentences[:6]:
+            if sentence.strip() and len(sentence.strip()) > 25:
                 clean_sentence = sentence.strip().replace("\n", " ").replace("\r", " ")
-                if clean_sentence and not clean_sentence.endswith("."):
+                if clean_sentence and not clean_sentence.endswith((".", "!", "?")):
                     clean_sentence += "."
                 narrative_elements.append(clean_sentence)
 
-        # If we don't have enough elements, add the title as context
         if len(narrative_elements) < 2:
             narrative_elements.insert(0, f"Headline: {title}")
 
-        return narrative_elements[:4]  # Limit to 4 elements max
+        return narrative_elements[:6]
 
     def _create_narrative_prompt(
         self, narrative_input: str, articles: list[dict[str, Any]], storyline
     ) -> str:
         """Create a focused prompt for narrative building"""
-        sources = list(set(article.get("source", "Unknown") for article in articles))
+        sources = list(
+            {
+                (article.get("source_domain") or article.get("source") or "Unknown")
+                for article in articles
+            }
+        )
         date_range = self._get_date_range(articles)
 
         prompt = f"""
@@ -325,12 +332,16 @@ Based on the story elements above, create a cohesive narrative summary that:
 - Key themes and patterns that emerge across sources
 - The significance and implications of the overall story
 
-**STRUCTURE YOUR RESPONSE AS:**
-1. **Story Overview** - What is this story fundamentally about?
-2. **Key Developments** - How has the story evolved and what are the main turning points?
-3. **Stakeholders & Perspectives** - Who are the key players and what are their positions?
-4. **Context & Significance** - Why does this story matter and what are the broader implications?
-5. **Current Status** - Where does the story stand now and what might happen next?
+**STRUCTURE YOUR RESPONSE AS plain markdown (no inventory counts):**
+1. **Lede** — what happened, grounded in the article text
+2. **Background** — durable context from the evidence
+3. **What happened** — sequence of moves / developments
+4. **Competing views** — labeled perspectives when sources disagree
+5. **Why it matters** — stakes and what to watch
+
+Do NOT list source counts, outlet tallies, "story elements analyzed", or date-span inventory.
+Do NOT invent themes like "multiple perspectives on the same core story".
+Every sentence must be supported by the story elements above.
 
 **WRITING STYLE:**
 - Write as a journalist creating a comprehensive story report
@@ -353,83 +364,71 @@ Create a narrative that shows how these individual story elements combine to tel
     def _enhance_narrative_summary(
         self, raw_summary: str, articles: list[dict[str, Any]], storyline
     ) -> str:
-        """Post-process summary for narrative quality"""
-        if not raw_summary or len(raw_summary.strip()) < 100:
+        """Keep article-grounded prose only — never wrap with inventory metadata."""
+        from shared.llm_text_sanitize import (
+            is_inventory_metadata_summary,
+            strip_inventory_metadata_summary,
+            strip_trailing_llm_json,
+        )
+
+        cleaned = strip_trailing_llm_json(strip_inventory_metadata_summary(raw_summary or ""))
+        if not cleaned or len(cleaned.strip()) < 100 or is_inventory_metadata_summary(cleaned):
             return self._generate_narrative_fallback(articles, storyline)
-
-        # Extract core metadata
-        sources = list(set(article.get("source", "Unknown") for article in articles))
-        article_count = len(articles)
-        date_range = self._get_date_range(articles)
-
-        # Create enhanced narrative structure
-        enhanced_summary = f"""# {storyline.title}
-
-## 📊 Story Overview
-- **Sources:** {len(sources)} different outlets ({", ".join(sources)})
-- **Time Period:** {date_range}
-- **Story Elements:** {article_count} components analyzed
-- **Last Updated:** {datetime.now().strftime("%B %d, %Y at %I:%M %p")}
-
----
-
-## 📖 Narrative Analysis
-
-{raw_summary}
-
----
-
-*Generated by AI-powered narrative analysis of multiple news sources*"""
-
-        return enhanced_summary
+        # Drop accidental title-only echo
+        title = (getattr(storyline, "title", None) or "").strip()
+        if title and cleaned.strip().casefold() == title.casefold():
+            return self._generate_narrative_fallback(articles, storyline)
+        return cleaned.strip()
 
     def _generate_narrative_fallback(self, articles: list[dict[str, Any]], storyline) -> str:
-        """Generate a narrative-focused fallback summary"""
+        """Article-grounded fallback — never emit Story Overview inventory fluff."""
+        from shared.llm_text_sanitize import html_to_visible_text
+
         if not articles:
-            return "No articles available for this storyline."
+            return ""
 
-        sources = list(set(article.get("source", "Unknown") for article in articles))
-        date_range = self._get_date_range(articles)
+        title = (getattr(storyline, "title", None) or "").strip()
+        chunks: list[str] = []
+        ranked = sorted(
+            articles,
+            key=lambda a: len(str(a.get("content") or a.get("summary") or "")),
+            reverse=True,
+        )
+        for article in ranked[:4]:
+            raw = article.get("content") or article.get("summary") or ""
+            prose = html_to_visible_text(str(raw), max_length=900)
+            if not prose or len(prose) < 80:
+                continue
+            prose = re.sub(r"^##\s+[^\n]+\n+", "", prose).strip()
+            paras = [p.strip() for p in re.split(r"\n\s*\n+", prose) if p.strip()]
+            excerpt = " ".join(paras[:2]) if paras else prose
+            excerpt = re.sub(r"\s+", " ", excerpt).strip()
+            if len(excerpt) < 80:
+                continue
+            headline = (article.get("title") or "").strip()
+            src = (
+                article.get("source_domain")
+                or article.get("source")
+                or ""
+            ).strip()
+            lead = excerpt if len(excerpt) <= 560 else excerpt[:540].rsplit(" ", 1)[0] + "…"
+            if headline and headline.casefold() != title.casefold():
+                label = f"**{headline}**" + (f" ({src})" if src else "")
+                chunks.append(f"{label} — {lead}")
+            else:
+                chunks.append(lead)
+            if sum(len(c) for c in chunks) >= 1600:
+                break
 
-        # Create a narrative-focused fallback
-        fallback_summary = f"""# {storyline.title}
-
-## 📊 Story Overview
-- **Sources:** {len(sources)} different outlets ({", ".join(sources)})
-- **Time Period:** {date_range}
-- **Story Elements:** {len(articles)} components analyzed
-- **Last Updated:** {datetime.now().strftime("%B %d, %Y at %I:%M %p")}
-
----
-
-## 📖 Narrative Analysis
-
-### Story Summary
-This storyline tracks developments across {len(articles)} news articles from {len(sources)} different sources, providing comprehensive coverage of {storyline.title.lower()}. The articles span {date_range}, offering a chronological view of how the story has evolved over time.
-
-### Key Themes
-The coverage reveals several interconnected themes:
-- Multiple perspectives on the same core story
-- Evolving developments over time
-- Different sources providing unique angles and insights
-- A complex narrative with multiple stakeholders and viewpoints
-
-### Story Development
-The articles provide multiple angles and perspectives on this developing story, with coverage that includes:
-- Breaking news developments and updates
-- Analysis and commentary from different sources
-- Background context and historical perspective
-- Stakeholder reactions and responses
-- Policy implications and broader impact
-
-### Current Status
-As new articles are added to this storyline, the narrative analysis will be automatically updated to incorporate the latest developments and provide increasingly comprehensive coverage of this important story.
-
----
-
-*Generated by AI-powered narrative analysis of multiple news sources*"""
-
-        return fallback_summary
+        if not chunks:
+            # Minimal honest stub — still not inventory metadata
+            return (
+                f"Coverage on «{title}» is thin in stored article bodies; "
+                "await enrichment or narrative finish."
+                if title
+                else ""
+            )
+        return "\n\n".join(chunks)
 
     def _get_date_range(self, articles: list[dict[str, Any]]) -> str:
         """Get date range for articles"""

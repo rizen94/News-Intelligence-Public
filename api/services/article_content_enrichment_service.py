@@ -391,7 +391,8 @@ def format_article_body_paragraphs(text: str) -> str:
 
 def _finalize_extracted_text(text: str) -> str:
     """Paywall check + paragraph spacing for stored and returned article bodies."""
-    text = (text or "").strip()
+    # PDF extractors can emit NUL bytes; Postgres rejects them in text columns.
+    text = (text or "").replace("\x00", "").strip()
     if not text:
         return ""
     if _is_paywall_content(text):
@@ -709,13 +710,16 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                     break
                 if not url or not url.strip():
                     continue
-                # Strict-ingest long RSS: pending without a second trafilatura pass
+                # Strict-ingest long RSS: pending without a second trafilatura pass.
+                # ArXiv abs abstracts are 1–2k chars (above MIN_CONTENT_TO_ENRICH) but
+                # still need PDF/HTML fulltext — do not fast-path mark them enriched.
                 if (
                     strict_enrichment_cutoff_utc() is not None
                     and strict_enrichment_applies(created_at)
                     and existing_content
                     and len((existing_content or "").strip()) >= MIN_CONTENT_TO_ENRICH
                     and (row_status is None or (row_status or "").strip() == "pending")
+                    and not needs_arxiv_fulltext(url, existing_content)
                 ):
                     fast_rows = 0
                     if is_false_enriched_body(existing_content):
@@ -982,7 +986,12 @@ def fetch_full_content_for_article(domain_key: str, article_id: int) -> dict[str
                 }
             url, existing = row[0], (row[1] or "")
             existing_stripped = format_article_body_paragraphs(existing.strip())
-            if len(existing_stripped) >= 80:
+            # ArXiv abs abstracts are typically 1–2k chars — skip early return so
+            # on-demand UI still fetches full PDF/HTML paper text.
+            if (
+                len(existing_stripped) >= 80
+                and not needs_arxiv_fulltext(str(url or ""), existing)
+            ):
                 return {
                     "success": True,
                     "not_found": False,
