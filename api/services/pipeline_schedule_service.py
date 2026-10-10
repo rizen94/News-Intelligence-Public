@@ -122,6 +122,40 @@ def _quiet_allowed_phases() -> frozenset[str]:
     return frozenset(x.strip() for x in raw.split(",") if x.strip())
 
 
+def _quiet_severe_backlog_phases() -> frozenset[str]:
+    """
+    Phases that may run in the quiet window when their pending backlog is severe.
+
+    Default: story_enhancement only (fact_change_log catch-up). Override with
+    PIPELINE_QUIET_SEVERE_BACKLOG_PHASES=comma,list (empty string disables).
+    Threshold: PIPELINE_QUIET_SEVERE_BACKLOG_THRESHOLD (default 25000).
+    """
+    raw = os.environ.get("PIPELINE_QUIET_SEVERE_BACKLOG_PHASES")
+    if raw is None:
+        return frozenset({"story_enhancement"})
+    raw = raw.strip()
+    if not raw:
+        return frozenset()
+    return frozenset(x.strip() for x in raw.split(",") if x.strip())
+
+
+def _quiet_severe_backlog_threshold() -> int:
+    try:
+        return int(os.environ.get("PIPELINE_QUIET_SEVERE_BACKLOG_THRESHOLD", "25000"))
+    except (TypeError, ValueError):
+        return 25000
+
+
+def _phase_pending_for_quiet_gate(phase_name: str) -> int:
+    """Best-effort pending count for quiet severe-backlog exception (0 on failure)."""
+    try:
+        from services.backlog_metrics import get_all_pending_counts
+
+        return int((get_all_pending_counts() or {}).get(phase_name, 0) or 0)
+    except Exception:
+        return 0
+
+
 def automation_phase_allowed(phase_name: str, *, now_local: datetime | None = None) -> bool:
     """Whether AutomationManager may schedule this phase under the operating schedule."""
     name = (phase_name or "").strip()
@@ -131,6 +165,11 @@ def automation_phase_allowed(phase_name: str, *, now_local: datetime | None = No
         return True
     window = active_pipeline_window(now_local)
     if window == "quiet":
+        # Catch-up exception: do not leave multi-day enhancement piles idle 16:00–00:00.
+        if name in _quiet_severe_backlog_phases():
+            pending = _phase_pending_for_quiet_gate(name)
+            if pending >= _quiet_severe_backlog_threshold():
+                return True
         return False
     return window in ("nightly_heavy", "weekday_daytime")
 

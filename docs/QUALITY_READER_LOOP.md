@@ -2,6 +2,8 @@
 
 Tracks Q0–Q3 from the quality reader product plan. Baselines are SQL + hand-proxy on Widow prod.
 
+Upstream product intent (why briefs should improve on the same subject over time): [`KNOWLEDGE_LOOP.md`](KNOWLEDGE_LOOP.md).
+
 ## Best product acceptance bar
 
 Final product under test: **Home + storyline brief + Pull**. Packages-as-binder / FTM / domain-as-routing stay parked.
@@ -68,6 +70,14 @@ Acceptance bar (Q3b): Home / Pull / Reading / Durable-not-competing **PASS**. St
 ### Q3c — F9 metric aligned to yieldable (2026-10-04)
 
 [`QUALITY_READER_BASELINE_Q3c.md`](QUALITY_READER_BASELINE_Q3c.md): F9 pain **0.113 → 0.000** after baseline uses `is_false_enriched_body` (drops noisy `cookie` ILIKE false positives). Hand sheet: [`HAND_F4_SCORING_SHEET.md`](HAND_F4_SCORING_SHEET.md).
+
+### Fact gold (Trump grounding)
+
+Complement to arc F4: score n=15–20 ledger facts after morning prime on Trump accountability arcs.
+
+- Kit: `api/scripts/hand_fact_gold_kit.py` → [`HAND_FACT_GOLD_SHEET.md`](HAND_FACT_GOLD_SHEET.md) + `data/hand_fact_gold_sheet.json`
+- Pass bar: mean ≥ **3.5** (Supported sequence match; CONFLICT sides not asserted as settled)
+- Ledger SSOT: vault `40_Reference/timelines/trump_politics_background_review.md` (vn 41752)
 
 ## Q3 shape — Parked (after Q0–Q2 gains)
 
