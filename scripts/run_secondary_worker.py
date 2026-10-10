@@ -50,12 +50,29 @@ def _log_registry_domains_for_rss() -> None:
         logger.warning("Could not read domain registry: %s", e)
 
 
+def _disk_io_should_skip_rss() -> bool:
+    """True when USB/root disk pressure asks automation to shed new work (fail-open)."""
+    try:
+        from shared.database.disk_io_pressure_advisory import read_run_file
+
+        adv = read_run_file()
+        if not adv.get("available") or adv.get("stale"):
+            return False
+        return bool(adv.get("defer_new_work"))
+    except Exception as e:
+        logger.debug("disk IO pressure check failed (fail-open): %s", e)
+        return False
+
+
 def run_rss_collection():
     try:
         from services.pipeline_schedule_service import rss_collection_allowed
 
         if not rss_collection_allowed():
             logger.info("RSS skipped (pipeline quiet window — weekday daytime or nightly only)")
+            return 0
+        if _disk_io_should_skip_rss():
+            logger.info("RSS skipped (disk IO pressure)")
             return 0
         from collectors.rss_collector import collect_rss_feeds
         return collect_rss_feeds()

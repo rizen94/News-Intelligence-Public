@@ -88,6 +88,7 @@ This section states **what "good" means per layer**, **what we deliberately igno
 | **Workload-driven scheduling** (`automation_manager`) | If a phase has pending work (`get_all_pending_counts`), it becomes eligible every tick (subject to cooldown + `depends_on`), not only on its idle interval. |
 | **`depends_on`** | **Scheduling order only**: a task is not eligible until dependencies have run at least once in the manager's history window; it does *not* mean "upstream must be empty." Downstream backlog counts are the real "is there work?" signal. |
 | **Collection throttle** | When the configured downstream pending sum exceeds `COLLECTION_THROTTLE_PENDING_THRESHOLD`, **`collection_cycle` is not scheduled** (entire cycle) so quality-sensitive steps can drain — **quality before volume**. Standalone enrichment and nightly drain still run. |
+| **Pending-driven phases** | `SKIP_WHEN_EMPTY` in `backlog_metrics.py` includes LLM/interval-noise phases with cheap SQL pending (`extracted_claims_dedupe`, `event_deduplication`, `story_continuation`, `event_coherence_review`, plus existing drain phases). True polls stay interval-at-zero (`collection_cycle`, `health_check`, …). |
 | **Pipeline domain scope** | Per-domain automation loops use **`get_pipeline_active_domain_keys()`** / **`pipeline_url_schema_pairs()`** so paused legacy silos are not enriched, synced, or story-processed. |
 | **`BATCH_SIZE_PER_TASK`** | Defines "normal" batch per run; pending **above** this is treated as backlog (shorter effective interval in backlog mode). |
 | **`BATCH_PHASES_CONTINUOUS`** + `MAX_REQUEUE_PER_WINDOW` | After `collection_cycle`, some phases may re-enqueue in the same analysis window up to a cap so one pass does not starve others. |
@@ -146,6 +147,20 @@ Phases that are **DB-heavy** and also call the LLM stack (e.g. some extraction p
 Phases **not** in `OLLAMA_AUTOMATION_PHASES` (e.g. `collection_cycle`, `context_sync`, `claims_to_facts`, `health_check`) do **not** take the semaphore/yield path at the top of `_execute_task` unless they are added to the frozenset.
 
 **To add or remove an Ollama-gated phase:** update **`OLLAMA_AUTOMATION_PHASES`** only; **`GPU_LANE_PHASES`** follows automatically.
+
+### Circuit breaker backpressure (defer / shed / overload)
+
+Single policy for all hosts — see [`MONITOR_REPORTING_AND_METRICS.md`](MONITOR_REPORTING_AND_METRICS.md):
+
+| Signal | AM / drain behavior |
+|--------|---------------------|
+| Any of `OLLAMA_CB_KEYS` `is_open()` | **Shed** intake phases; workers **requeue** deferred (must-run also defers). Monitor-requested phases may still run. |
+| Timeout / 502–504 | **Overload** — do not trip CB; shrink batches (**trickle**) and leave due work pending. |
+| ConnectError / no route | `trip_open` hard shed until recovery probe succeeds. |
+
+Call sites must use `llm_service` / `ollama_generate_*` / `ollama_embed_*` (not raw `requests` to `/api/generate`). Prefer `POST /api/system_monitoring/circuit_breakers/reset` after the host recovers.
+
+**UI yield proxy:** `should_yield_to_api()` / `resource_router.api_yield` combines **in-flight non-polling HTTP** + a short recency window (`API_YIELD_WINDOW_SECONDS`, default 15). Monitor/health polls are excluded. This is still not a true accept-queue metric — use it to explain defer depth, not as capacity planning.
 
 ---
 
@@ -243,7 +258,9 @@ Below: **Task** = scheduler key in `schedules`. **Backlog key** = name in `backl
 | `timeline_generation` | 300s | `rag_enhancement` | `_execute_timeline_generation` | Storylines / events for chronological_events | `chronological_events` |
 | `entity_enrichment` | 1800s | `entity_profile_sync` | `_execute_entity_enrichment` | Profile IDs to enrich (e.g. Wikipedia) | `entity_profiles` external fields |
 | `story_enhancement` | 300s | — | `_execute_story_enhancement` | Story update queues | Story enhancement records |
-| `content_refinement_queue` | 120s | — | `_execute_content_refinement_queue` | `intelligence.content_refinement_queue` | Deep storyline narratives / finisher jobs |
+| `content_refinement_queue` | 120s | — | `_execute_content_refinement_queue` | `intelligence.content_refinement_queue` | Deep storyline narratives / ~70B finisher jobs (materiality-gated) |
+
+**Knowledge loop (finisher):** Jobs are enqueued on material membership attach and material fact snapshots; the runner skips unchanged fingerprints and defers narrow deltas (`narrow_debt_pending`). Nightly GPU refinement drain force-enqueues aged narrow debt. Design: [`KNOWLEDGE_LOOP.md`](KNOWLEDGE_LOOP.md); env: [`STORYLINE_HISTORICAL_MEMORY.md`](STORYLINE_HISTORICAL_MEMORY.md).
 
 ### Phase 10–12 — Editorial, Digests, Watchlist
 
@@ -289,6 +306,14 @@ Below: **Task** = scheduler key in `schedules`. **Backlog key** = name in `backl
 5. **Observability:** `public.automation_run_history` (phase completions), `pipeline_traces` / `pipeline_checkpoints` (stage timing), Monitor UI backlog — use for before/after comparisons when changing methodology.
 
 ---
+
+## Major backlog catchup (ops force-drain only)
+
+**Continuous drain** of `story_enhancement`, `entity_profile_build`, dossier compile, and intake/extraction is owned by **AutomationManager** on the Widow systemd API (`news-intelligence-api-public` under `/opt/news-intelligence`).
+
+[`api/services/run_major_backlog_catchup.py`](../api/services/run_major_backlog_catchup.py) (and thin shell wrappers) are **emergency / ops `--force` CLIs**. They pause competing automation, call the **same** service entrypoints AM uses, and must not be treated as the overnight source of truth. Stale `data/major_backlog_catchup_state.json` / dead `*.pid` files are reset on version mismatch or refused when another catchup PID is alive.
+
+See also `scripts/ensure_widow_api_runtime.sh` so workspace uvicorn does not steal `:8000` from systemd.
 
 ## Operator mental model (June 2026 repair)
 

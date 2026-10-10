@@ -79,7 +79,12 @@ fi
 # 7. Cron for backups (if cron.d template exists)
 CRON_SRC="$PROJECT_DIR/infrastructure/newsplatform-backup.cron"
 if [ -f "$CRON_SRC" ]; then
-  sed "s|/opt/news-intelligence|$PROJECT_DIR|g; s|WIDOW_USER|$WIDOW_USER|g" "$CRON_SRC" | sudo tee /etc/cron.d/newsplatform-backup > /dev/null
+  # cron.d requires a trailing newline or the entire file is ignored
+  {
+    sed "s|/opt/news-intelligence|$PROJECT_DIR|g; s|WIDOW_USER|$WIDOW_USER|g" "$CRON_SRC"
+    printf '\n'
+  } | sudo tee /etc/cron.d/newsplatform-backup > /dev/null
+  sudo chmod 644 /etc/cron.d/newsplatform-backup
   echo "✅ Backup cron installed"
 fi
 

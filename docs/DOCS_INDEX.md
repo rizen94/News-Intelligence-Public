@@ -21,7 +21,8 @@ Use this index for **current** documentation. See **[../PROJECT_STATUS.md](../PR
 | Doc | Purpose |
 |-----|---------|
 | [CODEBASE_MAP.md](CODEBASE_MAP.md) | Directory map — API / web / scripts layout. |
-| [PIPELINE_AND_AUTOMATION.md](PIPELINE_AND_AUTOMATION.md) | Pipeline phases, automation, order of operations. |
+| [PIPELINE_AND_AUTOMATION.md](PIPELINE_AND_AUTOMATION.md) | Pipeline phases, automation, order of operations; Ollama CB defer/shed/overload. |
+| [MONITOR_REPORTING_AND_METRICS.md](MONITOR_REPORTING_AND_METRICS.md) | Monitor vs Grafana; health/`ni_*`; **Ollama backpressure** + CB reset. |
 | [WIDOW_BOOT_RESILIENCE.md](WIDOW_BOOT_RESILIENCE.md) | **Reboot / systemd runbook** — boot stack, verify, troubleshooting. |
 | [PIPELINE_OPERATIONS_WIDOW.md](PIPELINE_OPERATIONS_WIDOW.md) | **Widow operator checklist** — schedulers, full phase list, `.env`. |
 | [CODE_REVIEW_AND_RUN_CAVEATS.md](CODE_REVIEW_AND_RUN_CAVEATS.md) | Run requirements and ops caveats. |
@@ -32,9 +33,12 @@ Use this index for **current** documentation. See **[../PROJECT_STATUS.md](../PR
 
 | Doc | Purpose |
 |-----|---------|
+| [KNOWLEDGE_LOOP.md](KNOWLEDGE_LOOP.md) | **Product intent** — content improves over time; materiality gate, prior canonical, narrow debt, vault twin. |
+| [RESEARCH_PAPER_PATHWAY.md](RESEARCH_PAPER_PATHWAY.md) | Research twin — papers → appraisal → subject ledger / knowledge_profiles → `/research` board. |
 | [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md) | System map — routes, UI, services. |
 | [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) | Hosts, DB, Widow, scripts, pipeline visibility. |
 | [PIPELINE_INGESTION_AND_PROCESS_METHODOLOGY.md](PIPELINE_INGESTION_AND_PROCESS_METHODOLOGY.md) | Ingestion through storylines and editorial. |
+| [STORYLINE_HISTORICAL_MEMORY.md](STORYLINE_HISTORICAL_MEMORY.md) | Memory vs hot queues; narrative finisher env knobs. |
 | [DATABASE.md](DATABASE.md) | **Canonical DB reference** — connection, schema, pools. |
 | [API_REFERENCE.md](API_REFERENCE.md) | API endpoint areas and methods. |
 | [WIDOW_SERVER_MIGRATION_2026_06.md](WIDOW_SERVER_MIGRATION_2026_06.md) | Migration record (completed June 2026). |
@@ -88,9 +92,10 @@ Use this index for **current** documentation. See **[../PROJECT_STATUS.md](../PR
 
 | Doc | Purpose |
 |-----|---------|
-| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common issues. |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common issues (incl. Ollama CB reset vs API restart). |
 | [EVENTS_ZERO_AND_HOW_TO_POPULATE.md](EVENTS_ZERO_AND_HOW_TO_POPULATE.md) | Populate `tracked_events`. |
 | [MONITOR_BLOCKAGES_AND_GPU.md](MONITOR_BLOCKAGES_AND_GPU.md) | Monitor / GPU blockages. |
+| [MONITOR_REPORTING_AND_METRICS.md](MONITOR_REPORTING_AND_METRICS.md) | Live health, pulse, CB reset, defer/shed/overload terms. |
 | [STORYLINE_AUTOMATION_GUIDE.md](STORYLINE_AUTOMATION_GUIDE.md) | Storyline automation. |
 
 ---
@@ -100,6 +105,8 @@ Use this index for **current** documentation. See **[../PROJECT_STATUS.md](../PR
 | Location | Purpose |
 |----------|---------|
 | [vault/README.md](vault/README.md) | Sync to `/mnt/obsidian-vault` |
+| [VAULT_NOTES_AND_PULL_CONTEXT.md](VAULT_NOTES_AND_PULL_CONTEXT.md) | Living vault notes, tag sync, context packs, Pull context (v2 default path) |
+| [MEMPALACE_NI.md](MEMPALACE_NI.md) | MemPalace wing/rooms for NI; audit/hygiene (process memory vs app RAG) |
 
 ---
 
