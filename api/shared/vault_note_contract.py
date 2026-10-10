@@ -35,7 +35,7 @@ NoteStatus = Literal[
     "note_pending",
     "note_ready",
 ]
-Lifecycle = Literal["absent", "stub", "seeded", "living", "frozen"]
+Lifecycle = Literal["absent", "stub", "seeded", "living", "frozen", "index", "archived"]
 VaultAction = Literal["create", "update", "seed", "significance"]
 LinkKind = Literal["wikilink", "tag_ref"]
 TagsSource = Literal["obsidian", "ni_structural", "merged"]
@@ -50,7 +50,15 @@ NOTE_TYPES: tuple[str, ...] = (
     "expansion",
     "daily_briefing",
 )
-LIFECYCLES: tuple[str, ...] = ("absent", "stub", "seeded", "living", "frozen")
+LIFECYCLES: tuple[str, ...] = (
+    "absent",
+    "stub",
+    "seeded",
+    "living",
+    "frozen",
+    "index",
+    "archived",
+)
 
 # Fan-out caps per article (plan)
 MAX_ENTITY_NOTES_PER_ARTICLE = 3
@@ -90,6 +98,7 @@ DEFAULT_PACK_HOPS = 2
 DEFAULT_PACK_MAX_NOTES = 12
 
 ENTITY_DIR = "40_Reference/entities"
+TIMELINE_DIR = "40_Reference/timelines"
 CONNECTION_DIR = "25_Connections"
 EVENT_DIR = "40_Reference/events"
 STORYLINE_DIR = "30_Stories"
@@ -153,6 +162,7 @@ SHARED_VAULT_ENTITY_TYPES: frozenset[str] = frozenset(
 
 VAULT_SYNC_ROOTS: tuple[str, ...] = (
     ENTITY_DIR,
+    TIMELINE_DIR,
     CONNECTION_DIR,
     EVENT_DIR,
     STORYLINE_DIR,

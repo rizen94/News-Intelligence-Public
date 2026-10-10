@@ -604,7 +604,12 @@ export default function StorylineReaderPage() {
                 {events.slice(0, 12).map((ev, i) => (
                   <li key={String(ev.id ?? i)}>
                     <div className='v2-story-kicker'>
-                      {String(ev.event_date || ev.actual_event_date || 'Undated')}
+                      {String(
+                        ev.date ||
+                          ev.event_date ||
+                          ev.actual_event_date ||
+                          'Undated'
+                      )}
                     </div>
                     <strong style={{ fontFamily: 'var(--v2-font-display)' }}>
                       {String(ev.title || 'Event')}

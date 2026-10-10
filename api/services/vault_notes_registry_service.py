@@ -521,7 +521,9 @@ def get_latest_daily_briefing(
     domain_key: str = "global",
     branch: str | None = None,
 ) -> dict[str, Any] | None:
-    """Most recent daily_briefing for domain (global news or science)."""
+    """Most recent citation-ok daily_briefing for domain (global news or science)."""
+    from services.vault_quality_gates import daily_briefing_serve_allowed
+
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -531,31 +533,37 @@ def get_latest_daily_briefing(
                 FROM intelligence.vault_notes
                 WHERE note_type = 'daily_briefing'
                   AND domain_key = %s
+                  AND COALESCE(lifecycle, 'living') = 'living'
                 ORDER BY object_id DESC, note_updated_at DESC NULLS LAST
-                LIMIT 1
+                LIMIT 8
                 """,
                 (domain_key,),
             )
-            row = cur.fetchone()
-    if not row:
-        return None
-    meta = row[8] if isinstance(row[8], dict) else {}
-    if branch and str(meta.get("branch") or "") != branch:
-        return None
-    return {
-        "id": row[0],
-        "domain_key": row[1],
-        "note_type": row[2],
-        "object_id": row[3],
-        "vault_path": row[4],
-        "title": row[5],
-        "body_md": row[6],
-        "summary_md": row[7],
-        "metadata": meta,
-        "note_updated_at": row[9].isoformat() if row[9] else None,
-        "updated_at": row[10].isoformat() if row[10] else None,
-        "briefing_day": meta.get("briefing_day") or str(row[3]),
-    }
+            rows = cur.fetchall() or []
+    for row in rows:
+        meta = row[8] if isinstance(row[8], dict) else {}
+        if branch and str(meta.get("branch") or "") != branch:
+            continue
+        briefing_day = meta.get("briefing_day") or str(row[3])
+        body = row[6] or row[7] or ""
+        ok, _reason = daily_briefing_serve_allowed(body, briefing_day=str(briefing_day or ""))
+        if not ok:
+            continue
+        return {
+            "id": row[0],
+            "domain_key": row[1],
+            "note_type": row[2],
+            "object_id": row[3],
+            "vault_path": row[4],
+            "title": row[5],
+            "body_md": row[6],
+            "summary_md": row[7],
+            "metadata": meta,
+            "note_updated_at": row[9].isoformat() if row[9] else None,
+            "updated_at": row[10].isoformat() if row[10] else None,
+            "briefing_day": briefing_day,
+        }
+    return None
 
 
 def list_morning_expansions(
@@ -563,8 +571,12 @@ def list_morning_expansions(
     briefing_day: str | None = None,
     limit: int = 40,
 ) -> list[dict[str, Any]]:
-    """Recent expansion notes for home catalog (ongoing then new)."""
+    """Recent expansion notes for home catalog (ongoing then new).
+
+    Reader gate: hide coherence-failed expansions and oversized magnet bags.
+    """
     day = (briefing_day or "").strip()[:10]
+    fetch_n = max(int(limit) * 3, int(limit))
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
             if day:
@@ -574,7 +586,9 @@ def list_morning_expansions(
                            title, body_md, summary_md, metadata, note_updated_at
                     FROM intelligence.vault_notes
                     WHERE note_type = 'expansion'
+                      AND COALESCE(lifecycle, 'living') = 'living'
                       AND COALESCE(body_md, summary_md, '') <> ''
+                      AND COALESCE(metadata->>'needs_reprime', '') NOT IN ('true', '1')
                       AND (
                         (metadata->>'briefing_day') = %s
                         OR (metadata->>'window_end') = %s
@@ -585,7 +599,7 @@ def list_morning_expansions(
                       note_updated_at DESC NULLS LAST
                     LIMIT %s
                     """,
-                    (day, day, day, int(limit)),
+                    (day, day, day, fetch_n),
                 )
             else:
                 cur.execute(
@@ -594,19 +608,74 @@ def list_morning_expansions(
                            title, body_md, summary_md, metadata, note_updated_at
                     FROM intelligence.vault_notes
                     WHERE note_type = 'expansion'
+                      AND COALESCE(lifecycle, 'living') = 'living'
                       AND COALESCE(body_md, summary_md, '') <> ''
-                      AND note_updated_at >= NOW() - INTERVAL '2 days'
+                      AND COALESCE(metadata->>'needs_reprime', '') NOT IN ('true', '1')
+                      AND note_updated_at >= NOW() - INTERVAL '7 days'
                     ORDER BY
                       CASE WHEN metadata->>'briefing_lane' = 'ongoing' THEN 0 ELSE 1 END,
                       note_updated_at DESC NULLS LAST
                     LIMIT %s
                     """,
-                    (int(limit),),
+                    (fetch_n,),
                 )
             rows = cur.fetchall() or []
+    try:
+        from services.morning_briefing_manager_service import _magnet_member_cap
+        from services.vault_quality_gates import expansion_coherence_ok
+        from shared.domain_registry import resolve_domain_schema
+    except Exception:
+        _magnet_member_cap = lambda: 32  # type: ignore
+        expansion_coherence_ok = None  # type: ignore
+        resolve_domain_schema = None  # type: ignore
+
+    magnet_cap = int(_magnet_member_cap() or 32)
     out: list[dict[str, Any]] = []
     for row in rows:
         meta = row[8] if isinstance(row[8], dict) else {}
+        title = row[5]
+        body = row[6] or row[7] or ""
+        dk = str(row[1] or "")
+        sid = int(row[3] or 0)
+        acount = None
+        member_titles: list[str] = []
+        if resolve_domain_schema and sid > 0 and dk:
+            try:
+                schema = resolve_domain_schema(dk)
+                with get_db_connection_context() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            f"SELECT COALESCE(article_count, 0) FROM {schema}.storylines WHERE id = %s",
+                            (sid,),
+                        )
+                        r = cur.fetchone()
+                        acount = int(r[0] or 0) if r else 0
+                        cur.execute(
+                            f"""
+                            SELECT a.title
+                            FROM {schema}.storyline_articles sa
+                            JOIN {schema}.articles a ON a.id = sa.article_id
+                            WHERE sa.storyline_id = %s
+                            ORDER BY COALESCE(a.published_at, a.created_at) DESC NULLS LAST
+                            LIMIT 40
+                            """,
+                            (sid,),
+                        )
+                        member_titles = [str(x[0]) for x in (cur.fetchall() or []) if x and x[0]]
+            except Exception:
+                acount = None
+                member_titles = []
+        if acount is not None and acount >= magnet_cap:
+            continue
+        if expansion_coherence_ok is not None:
+            ok, _reason = expansion_coherence_ok(
+                title=str(title or ""),
+                body=str(body or ""),
+                member_titles=member_titles,
+                article_count=acount,
+            )
+            if not ok:
+                continue
         out.append(
             {
                 "id": row[0],
@@ -614,15 +683,18 @@ def list_morning_expansions(
                 "note_type": row[2],
                 "object_id": row[3],
                 "vault_path": row[4],
-                "title": row[5],
+                "title": title,
                 "body_md": row[6],
                 "summary_md": row[7],
                 "metadata": meta,
                 "briefing_lane": meta.get("briefing_lane") or "new",
                 "briefing_day": meta.get("briefing_day") or meta.get("window_end"),
                 "note_updated_at": row[9].isoformat() if row[9] else None,
+                "article_count": acount,
             }
         )
+        if len(out) >= int(limit):
+            break
     return out
 
 

@@ -524,8 +524,23 @@ def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any
     # Flag kitchen-sink bags so the UI can avoid presenting them as one arc
     try:
         from services.storyline_coherence_guardrails import title_looks_mega_bag
+        from services.vault_quality_gates import expansion_coherence_ok
 
         mega_bag = bool(is_mega_storyline) or title_looks_mega_bag(title or "")
+        if not mega_bag and citations:
+            member_titles = [
+                str(c.get("title") or "")
+                for c in citations
+                if isinstance(c, dict) and c.get("title")
+            ]
+            ok_coh, _reason = expansion_coherence_ok(
+                title=title or "",
+                body=(summary or durable_brief or title or "")[:4000],
+                member_titles=member_titles,
+                article_count=len(member_titles) or article_count,
+            )
+            if not ok_coh and "magnet_membership" in (_reason or ""):
+                mega_bag = True
     except Exception:
         mega_bag = bool(is_mega_storyline)
     if mega_bag:

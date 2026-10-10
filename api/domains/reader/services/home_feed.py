@@ -66,15 +66,38 @@ def _parse_editorial(raw: Any) -> dict[str, Any]:
     return {}
 
 
-def _dek_from_row(editorial: dict[str, Any], description: str | None, title: str) -> str:
+def _dek_from_row(
+    editorial: dict[str, Any],
+    description: str | None,
+    title: str,
+    *,
+    document_status: str | None = None,
+) -> str:
     from shared.llm_text_sanitize import sanitize_reader_dek
 
-    for raw in (
+    def _as_text(raw: Any) -> str:
+        if raw is None:
+            return ""
+        if isinstance(raw, list):
+            parts = [str(x).strip() for x in raw if str(x).strip()]
+            return "; ".join(parts[:3])
+        return str(raw).strip()
+
+    status = str(document_status or "")
+    prefer_analysis = status in (
+        "package_projected",
+        "desk_promoted",
+        "refined",
+        "rag_analyzed",
+    )
+    candidates = [
         editorial.get("lede"),
+        editorial.get("analysis") if prefer_analysis else None,
         editorial.get("what"),
         description,
-    ):
-        cleaned = sanitize_reader_dek(raw, title=title, max_length=280)
+    ]
+    for raw in candidates:
+        cleaned = sanitize_reader_dek(_as_text(raw), title=title, max_length=280)
         if cleaned:
             return cleaned
     return ""
@@ -313,15 +336,25 @@ def _apply_vault_hub_feed_hygiene(
                 updated = _as_aware(datetime.fromisoformat(str(h["updated_at"])))
             except Exception:
                 updated = None
+        from shared.llm_text_sanitize import sanitize_reader_dek, sanitize_reader_prose
+
         brief = (h.get("current_brief") or "").strip()
+        headline = h.get("title") or ck
         dek = (
-            (brief[:240] + ("…" if len(brief) > 240 else ""))
+            sanitize_reader_dek(brief, title=str(headline), max_length=240)
             if brief
             else f"Situation index — {member_n} related episodes."
         )
+        if not dek:
+            dek = f"Situation index — {member_n} related episodes."
+        brief_clean = (
+            sanitize_reader_prose(brief, title=str(headline), max_length=4000)
+            if brief
+            else ""
+        )
         hub_unit = _story_unit(
             section_label="Situation",
-            headline=h.get("title") or ck,
+            headline=headline,
             dek=dek,
             domain=str(h.get("domain_key") or "politics"),
             storyline_id=0,
@@ -333,8 +366,8 @@ def _apply_vault_hub_feed_hygiene(
         )
         hub_unit["cluster_key"] = ck
         hub_unit["hub_id"] = int(h["id"])
-        if brief:
-            hub_unit["current_brief"] = brief
+        if brief_clean:
+            hub_unit["current_brief"] = brief_clean
         hub_units.append(hub_unit)
 
     # Place primary hub after the lead story when present
@@ -389,11 +422,21 @@ def _morning_expansion_units(*, lane_filter: str | None = None) -> list[dict[str
                 updated_at = datetime.fromisoformat(raw_u.replace("Z", "+00:00"))
             except ValueError:
                 updated_at = None
+        from shared.llm_text_sanitize import sanitize_reader_dek
+
+        headline = ex.get("title") or f"Storyline {sid}"
+        dek = (
+            sanitize_reader_dek(
+                ex.get("summary_md") or "",
+                title=str(headline),
+                max_length=280,
+            )
+            or "Morning expansion ready."
+        )
         unit = _story_unit(
             section_label="Ongoing" if lane == "ongoing" else "New of note",
-            headline=ex.get("title") or f"Storyline {sid}",
-            dek=(ex.get("summary_md") or "").strip()[:320]
-            or "Morning expansion ready.",
+            headline=headline,
+            dek=dek,
             domain=dk,
             storyline_id=sid,
             updated_at=updated_at,
@@ -404,7 +447,7 @@ def _morning_expansion_units(*, lane_filter: str | None = None) -> list[dict[str
         )
         unit["briefing_lane"] = lane
         unit["vault_path"] = ex.get("vault_path")
-        unit["summary_md"] = ex.get("summary_md")
+        unit["summary_md"] = dek if dek != "Morning expansion ready." else None
         out.append(unit)
     return out
 
@@ -454,6 +497,8 @@ def _priority_current_event_units(*, limit: int = 40) -> list[dict[str, Any]]:
                 updated_at = datetime.fromisoformat(raw_u.replace("Z", "+00:00"))
             except ValueError:
                 updated_at = None
+        from shared.llm_text_sanitize import sanitize_reader_dek
+
         age_days = int(arc.get("age_days") or 0)
         note_chars = int(arc.get("note_chars") or 0)
         badges = ["ongoing"]
@@ -461,11 +506,19 @@ def _priority_current_event_units(*, limit: int = 40) -> list[dict[str, Any]]:
             badges.append("deep")
         if age_days >= 14:
             badges.append("long-running")
+        headline = arc.get("title") or f"Storyline {sid}"
+        dek = (
+            sanitize_reader_dek(
+                arc.get("summary_md") or "",
+                title=str(headline),
+                max_length=280,
+            )
+            or "Living vault coverage for this arc."
+        )
         unit = _story_unit(
             section_label="Ongoing",
-            headline=arc.get("title") or f"Storyline {sid}",
-            dek=(arc.get("summary_md") or "").strip()[:320]
-            or "Living vault coverage for this arc.",
+            headline=headline,
+            dek=dek,
             domain=dk,
             storyline_id=sid,
             updated_at=updated_at,
@@ -476,7 +529,9 @@ def _priority_current_event_units(*, limit: int = 40) -> list[dict[str, Any]]:
         )
         unit["briefing_lane"] = "ongoing"
         unit["vault_path"] = arc.get("vault_path")
-        unit["summary_md"] = arc.get("summary_md")
+        unit["summary_md"] = (
+            dek if dek != "Living vault coverage for this arc." else None
+        )
         unit["note_chars"] = note_chars
         unit["age_days"] = age_days
         out.append(unit)
@@ -517,6 +572,7 @@ def _fetch_candidate_rows(cur, schema: str, domain_key: str, since: datetime) ->
             s.updated_at,
             s.last_refinement,
             s.editorial_document,
+            s.document_status,
             s.article_count,
             s.parent_storyline_id,
             COALESCE(s.is_mega_storyline, FALSE) AS is_mega_storyline,
@@ -629,7 +685,12 @@ def classify_and_build_feeds(
     for row in rows:
         editorial = _parse_editorial(row.get("editorial_document"))
         title = (row.get("title") or "Untitled").strip()
-        dek = _dek_from_row(editorial, row.get("description"), title)
+        dek = _dek_from_row(
+            editorial,
+            row.get("description"),
+            title,
+            document_status=row.get("document_status"),
+        )
         domain = row["domain"]
         sid = int(row["id"])
         updated_at = _as_aware(row.get("updated_at"))
@@ -646,11 +707,14 @@ def classify_and_build_feeds(
         age_days = (now - created_at).days if created_at else 0
 
         # --- News: material update in 48h + non-empty dek ---
+        status = str(row.get("status") or "active").lower()
         is_news = bool(
             material_at
             and material_at >= news_cutoff
             and dek
             and len(dek) >= 12
+            and not is_mega
+            and status not in ("dormant", "watching", "concluded", "completed", "failed")
         )
         # Reject shells / membership-only (material_at already excludes last_article_added_at alone)
         if is_news and article_count <= 0 and not editorial.get("lede"):

@@ -2,6 +2,8 @@
 
 Two-level living knowledge for long-running arcs, surfaced on the **v2** reader (default News product).
 
+Product intent (compounding clarity; vault as living twin of the Postgres narrative loop): [`KNOWLEDGE_LOOP.md`](KNOWLEDGE_LOOP.md).
+
 **Brief layers (reader storyline page):** vault morning expansions / Pull context are the living authored brief; `{domain}.storylines.editorial_document` is the durable Postgres projection from package publish (`editorial_projection_service`) or desk promote. Reader preference: Pull → vault expansion → durable editorial → pack summary.
 
 ## Quality bar (readable vault)

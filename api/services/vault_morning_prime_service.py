@@ -37,34 +37,6 @@ _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 NEWS_DOMAINS_DEFAULT = ("politics", "finance")
 SCIENCE_DOMAINS_DEFAULT = tuple(sorted(SCIENCE_VAULT_DOMAINS))
 
-# #region agent log
-_DBG_LOG = "/home/pete/Documents/projects/News Intelligence/.cursor/debug-fb1ed2.log"
-
-
-def _agent_dbg(hypothesis_id: str, location: str, message: str, data: dict | None = None) -> None:
-    try:
-        import json as _json
-        import time as _time
-
-        with open(_DBG_LOG, "a", encoding="utf-8") as _f:
-            _f.write(
-                _json.dumps(
-                    {
-                        "sessionId": "fb1ed2",
-                        "hypothesisId": hypothesis_id,
-                        "location": location,
-                        "message": message,
-                        "data": data or {},
-                        "timestamp": int(_time.time() * 1000),
-                    }
-                )
-                + "\n"
-            )
-    except Exception:
-        pass
-
-
-# #endregion
 
 
 def vault_morning_prime_enabled() -> bool:
@@ -122,20 +94,19 @@ def _fingerprint(parts: list[str]) -> str:
 
 
 def _dek_from_body(body: str, *, max_len: int = 280) -> str:
+    """Plain-text standfirst for reader cards (StoryUnit renders dek as text, not MD)."""
+    from shared.llm_text_sanitize import sanitize_reader_dek
+
     text = (body or "").strip()
     if not text:
         return ""
-    # Drop markdown headings / empty lines for dek
-    lines = []
-    for line in text.splitlines():
-        s = line.strip()
-        if not s or s.startswith("#") or s.startswith("<!--"):
-            continue
-        lines.append(s)
-    joined = " ".join(lines)
-    if len(joined) <= max_len:
-        return joined
-    return joined[: max_len - 1].rstrip() + "…"
+    # Prefer the first real update paragraph when the LLM opens with a banner title
+    for marker in ("Here's today's update", "Here is today's update"):
+        idx = text.find(marker)
+        if idx >= 0:
+            text = text[idx:]
+            break
+    return sanitize_reader_dek(text, max_length=max_len)
 
 
 def scan_active_leads(
@@ -151,28 +122,9 @@ def scan_active_leads(
     # Soft caps for candidate pool size (manager + concurrency), not hard product limit
     pool_news = max(news_limit * 3, 60)
     pool_science = max(science_limit * 3, 20)
-    # #region agent log
-    _agent_dbg(
-        "A",
-        "vault_morning_prime_service.py:scan_active_leads:entry",
-        "scan start",
-        {"since": since.isoformat(), "domains": list(NEWS_DOMAINS_DEFAULT) + list(SCIENCE_DOMAINS_DEFAULT)},
-    )
-    # #endregion
 
     for domain_key in list(NEWS_DOMAINS_DEFAULT) + list(SCIENCE_DOMAINS_DEFAULT):
         schema = _schema(domain_key)
-        # #region agent log
-        import time as _time
-
-        _t0 = _time.time()
-        _agent_dbg(
-            "A",
-            "vault_morning_prime_service.py:scan_active_leads:domain",
-            "domain query start",
-            {"domain_key": domain_key, "schema": schema},
-        )
-        # #endregion
         try:
             with get_db_connection_context() as conn:
                 with conn.cursor() as cur:
@@ -188,7 +140,16 @@ def scan_active_leads(
                                    AND vn.note_type = 'expansion'
                                    AND vn.object_id = s.id
                                    AND COALESCE(vn.body_md, vn.summary_md, '') <> ''
-                               ) AS has_prior_expansion
+                               ) AS has_prior_expansion,
+                               (
+                                 SELECT COUNT(*)::int
+                                 FROM {schema}.storyline_articles sa2
+                                 JOIN {schema}.articles a2 ON a2.id = sa2.article_id
+                                 WHERE sa2.storyline_id = s.id
+                                   AND COALESCE(a2.published_at, a2.created_at)
+                                       >= NOW() - INTERVAL '2 days'
+                               ) AS new_members_2d,
+                               COALESCE(s.quality_score, 0)::float AS quality_score
                         FROM {schema}.storylines s
                         LEFT JOIN LATERAL (
                           SELECT a.id AS article_id
@@ -206,8 +167,18 @@ def scan_active_leads(
                           AND COALESCE(s.story_kind, '') <> 'container_index'
                           AND COALESCE(s.article_count, 0) >= 2
                           AND COALESCE(s.updated_at, s.created_at) >= %s
-                        ORDER BY COALESCE(s.updated_at, s.created_at) DESC NULLS LAST,
-                                 COALESCE(s.article_count, 0) DESC
+                        ORDER BY
+                          (
+                            SELECT COUNT(*)::int
+                            FROM {schema}.storyline_articles sa3
+                            JOIN {schema}.articles a3 ON a3.id = sa3.article_id
+                            WHERE sa3.storyline_id = s.id
+                              AND COALESCE(a3.published_at, a3.created_at)
+                                  >= NOW() - INTERVAL '2 days'
+                          ) DESC,
+                          COALESCE(s.updated_at, s.created_at) DESC NULLS LAST,
+                          COALESCE(s.quality_score, 0) DESC,
+                          COALESCE(s.article_count, 0) DESC
                         LIMIT %s
                         """,
                         (
@@ -219,36 +190,23 @@ def scan_active_leads(
                         ),
                     )
                     rows = cur.fetchall() or []
-            # #region agent log
-            _agent_dbg(
-                "A",
-                "vault_morning_prime_service.py:scan_active_leads:domain_done",
-                "domain query done",
-                {
-                    "domain_key": domain_key,
-                    "rows": len(rows),
-                    "elapsed_ms": int((_time.time() - _t0) * 1000),
-                },
-            )
-            # #endregion
         except Exception as e:
-            # #region agent log
-            _agent_dbg(
-                "A",
-                "vault_morning_prime_service.py:scan_active_leads:domain_err",
-                "domain query failed",
-                {
-                    "domain_key": domain_key,
-                    "error": str(e)[:300],
-                    "elapsed_ms": int((_time.time() - _t0) * 1000),
-                },
-            )
-            # #endregion
             logger.debug("scan leads %s: %s", domain_key, e)
             continue
 
         bucket = science if is_science_vault_domain(domain_key) else news
-        for sid, title, acount, updated, lead_aid, created, has_prior in rows:
+        for row in rows:
+            (
+                sid,
+                title,
+                acount,
+                updated,
+                lead_aid,
+                created,
+                has_prior,
+                new_members_2d,
+                quality_score,
+            ) = row
             if not lead_aid:
                 continue
             created_dt = created or updated
@@ -274,18 +232,12 @@ def scan_active_leads(
                     "branch": "science" if is_science_vault_domain(domain_key) else "news",
                     "has_prior_expansion": bool(has_prior),
                     "age_days": int(age_days),
+                    "new_members_2d": int(new_members_2d or 0),
+                    "quality_score": float(quality_score or 0),
                 }
             )
 
     out = {"news": news, "science": science}
-    # #region agent log
-    _agent_dbg(
-        "A",
-        "vault_morning_prime_service.py:scan_active_leads:exit",
-        "scan complete",
-        {"news": len(out["news"]), "science": len(out["science"])},
-    )
-    # #endregion
     return out
 
 
@@ -425,7 +377,12 @@ async def _llm_expansion(prompt: str) -> str:
 
 def _stub_expansion_body(*, title: str, article: dict[str, Any]) -> str:
     """Cacheable brief when LLM times out — title + cleaned lead excerpt only."""
-    excerpt = (article.get("summary") or article.get("body") or "").strip()
+    from shared.llm_text_sanitize import html_to_visible_text
+
+    excerpt = html_to_visible_text(
+        (article.get("summary") or article.get("body") or "").strip(),
+        max_length=1600,
+    )
     cleaned_lines: list[str] = []
     for line in excerpt.splitlines():
         s = line.strip()
@@ -530,27 +487,47 @@ def write_or_refresh_expansion(
     if briefing_lane == "ongoing":
         tone = (
             f"Write TODAY'S UPDATE on the ongoing narrative «{title}». "
-            "Lead with what changed recently; place background in a short context section."
+            "Lead with what changed recently; then give background and competing views."
         )
     else:
         tone = (
             f"Write a NEW ITEM OF NOTE brief on «{title}». "
-            "Keep it self-contained; do not force a long historical arc."
+            "Keep it self-contained with enough background for a first-time reader."
         )
 
-    # Keep evidence compact: PopOS shared 8b lane + MAX_CONCURRENT_OLLAMA_TASKS=1
-    # otherwise 6k+ vault dumps routinely hit OLLAMA_TIMEOUT.
-    prompt = f"""You are a news intelligence analyst writing a concise EXPANSION for readers.
+    # Mirror narrative-finisher desk quality: update + background + opinions.
+    # Do NOT emit ---JSON--- or code fences — expansions are reader prose only.
+    prompt = f"""You are a senior news desk analyst writing a reader-facing EXPANSION.
 
 {tone}
 
-Ground only in the evidence below. Structure briefly:
-1) What happened
-2) Context (vault) if relevant
-3) Web corroboration only if present (label clearly; do not invent)
-4) Why it matters / watch next
+Ground ONLY in the evidence below. Use these markdown headings in order
+(omit a section only if evidence is truly absent — then one honest sentence):
 
-Plain prose. 250–400 words. No invented facts. No markdown headings except an optional short dek.
+## Lede
+One short beat: what happened.
+
+## Why this is in play
+Why this dispute / decision / development matters *now*.
+
+## Background
+Durable context from vault / prior coverage (do not invent history).
+
+## What happened
+The update and sequence of moves.
+
+## Competing views
+At least two labeled perspectives when sources disagree or are thin
+(each: claim + supporting signal + counter-signal). If sources agree, say so briefly.
+
+## Why it matters / watch next
+Stakes and plausible next steps.
+
+Rules:
+- Plain markdown prose. 350–550 words.
+- No invented facts, quotes, dates, or plan clauses.
+- No ---JSON---, no code fences, no raw HTML, no inventory dumps.
+- Label web corroboration clearly when using Web evidence.
 
 Storyline: {title}
 Domain: {domain_key}
@@ -587,6 +564,38 @@ Web evidence:
             used_stub = True
 
     body = body.strip()[:12000]
+    from services.vault_quality_gates import (
+        expansion_coherence_ok,
+        load_storyline_member_titles,
+        sanitize_vault_prose,
+    )
+
+    body = sanitize_vault_prose(body, max_length=12000)
+    member_titles = load_storyline_member_titles(domain_key, storyline_id)
+    coherent, coh_reason = expansion_coherence_ok(
+        title=title,
+        body=body,
+        member_titles=member_titles,
+        article_count=int(lead.get("article_count") or len(member_titles) or 0),
+    )
+    if not coherent:
+        logger.info(
+            "expansion coherence reject %s/%s: %s (keep prior if any)",
+            domain_key,
+            storyline_id,
+            coh_reason,
+        )
+        return {
+            "ok": False,
+            "skipped": True,
+            "reason": f"coherence:{coh_reason}",
+            "storyline_id": storyline_id,
+            "domain_key": domain_key,
+            "title": title,
+            "vault_path": (existing or {}).get("vault_path") if existing else None,
+            "briefing_lane": briefing_lane,
+        }
+
     summary = _dek_from_body(body)
     # Stub fingerprints never match a live LLM pass, so the next prime retries.
     if used_stub:
@@ -699,6 +708,24 @@ def compose_daily_briefing(
         slate=slate,
     )
     body = (assembled.get("body_md") or "").strip()[:14000]
+    from services.vault_quality_gates import briefing_citations_ok, sanitize_vault_prose
+
+    body = sanitize_vault_prose(body, max_length=14000)
+    ok_cite, cite_reason = briefing_citations_ok(body, expansions=expansions)
+    if not ok_cite:
+        logger.warning(
+            "daily briefing skip branch=%s day=%s reason=%s",
+            branch,
+            briefing_day,
+            cite_reason,
+        )
+        return {
+            "ok": False,
+            "skipped": True,
+            "reason": f"citation_gate:{cite_reason}",
+            "briefing_day": briefing_day,
+            "branch": branch,
+        }
     summary = _dek_from_body(body, max_len=320)
     rel = daily_briefing_vault_rel_path(briefing_day, branch=branch)
     oid = daily_briefing_object_id(briefing_day)
@@ -786,14 +813,6 @@ def run_vault_morning_prime(
         selected_leads_from_slate,
     )
 
-    # #region agent log
-    _agent_dbg(
-        "B",
-        "vault_morning_prime_service.py:run_vault_morning_prime:entry",
-        "prime start",
-        {"delta_days": delta_days, "force": force, "skip_llm": skip_llm},
-    )
-    # #endregion
     if not vault_morning_prime_enabled():
         return {"ok": False, "skipped": True, "reason": "disabled"}
 
@@ -824,22 +843,6 @@ def run_vault_morning_prime(
             r["branch"] = lead.get("branch")
             r["briefing_lane"] = lead.get("briefing_lane") or r.get("briefing_lane")
             stats["expansions"].append(r)
-            # #region agent log
-            _agent_dbg(
-                "B",
-                "vault_morning_prime_service.py:expansion_result",
-                "expansion result",
-                {
-                    "storyline_id": lead.get("storyline_id"),
-                    "domain_key": lead.get("domain_key"),
-                    "lane": lead.get("briefing_lane"),
-                    "ok": r.get("ok"),
-                    "skipped": r.get("skipped"),
-                    "error": (r.get("error") or "")[:200],
-                    "vault_path": r.get("vault_path"),
-                },
-            )
-            # #endregion
             if r.get("ok"):
                 all_written.append({**lead, **r})
         except Exception as e:
@@ -871,7 +874,8 @@ def run_vault_morning_prime(
     except Exception as e:
         logger.warning("news daily briefing: %s", e)
         stats["briefings"].append({"ok": False, "branch": "news", "error": str(e)})
-    if sci_ex or any(is_science_vault_domain(d) for d in SCIENCE_DOMAINS_DEFAULT):
+    # Only compose science when we have expansions (empty slate was a guaranteed citation_gate skip)
+    if sci_ex:
         try:
             stats["briefings"].append(
                 compose_daily_briefing(
@@ -886,6 +890,15 @@ def run_vault_morning_prime(
             stats["briefings"].append(
                 {"ok": False, "branch": "science", "error": str(e)}
             )
+    elif any(is_science_vault_domain(d) for d in SCIENCE_DOMAINS_DEFAULT):
+        stats["briefings"].append(
+            {
+                "ok": False,
+                "skipped": True,
+                "reason": "no_science_expansions",
+                "branch": "science",
+            }
+        )
 
     written = sum(1 for e in stats["expansions"] if e.get("ok") and not e.get("skipped"))
     skipped = sum(1 for e in stats["expansions"] if e.get("skipped"))
@@ -900,22 +913,4 @@ def run_vault_morning_prime(
         skipped,
         stats["slate_source"],
     )
-    # #region agent log
-    _agent_dbg(
-        "B",
-        "vault_morning_prime_service.py:run_vault_morning_prime:exit",
-        "prime complete",
-        {
-            "candidates": stats["candidates"],
-            "selected": stats["selected"],
-            "written": written,
-            "skipped": skipped,
-            "slate_source": stats["slate_source"],
-            "briefings": [
-                {"ok": b.get("ok"), "branch": b.get("branch"), "path": b.get("vault_path")}
-                for b in (stats.get("briefings") or [])
-            ],
-        },
-    )
-    # #endregion
     return stats
