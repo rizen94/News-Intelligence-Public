@@ -30,7 +30,7 @@ function saveState(s: CheckState) {
 const ITEMS: { id: string; label: string; hint?: string }[] = [
   {
     id: 'v2-home',
-    label: 'Scan /v2 home — hero + News cascade have real deks',
+    label: 'Scan News home (/) — hero + News cascade have real deks',
     hint: 'Reject membership-only bumps.',
   },
   {

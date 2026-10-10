@@ -37,12 +37,13 @@ export default function OneOffsPage() {
           margin: '0 0 0.5rem',
         }}
       >
-        Announcements &amp; dated events
+        Announcements, papers &amp; dated events
       </h1>
       <p style={{ color: 'var(--v2-ink-muted)', maxWidth: '38rem' }}>
         Calendar uses <strong>expected_on</strong> when known; otherwise{' '}
-        <strong>announced_on</strong>. Month phrases resolve to the 1st of that
-        month.
+        <strong>announced_on</strong>. Thin AI research clusters (one or two
+        papers) land here instead of storylines. Month phrases resolve to the
+        1st of that month.
       </p>
       <hr className='v2-section-rule' />
 

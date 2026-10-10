@@ -87,6 +87,9 @@ const V2NewsPage = React.lazy(() => import('./v2/pages/News/NewsPage'));
 const V2CurrentPage = React.lazy(() => import('./v2/pages/Current/CurrentPage'));
 const V2OneOffsPage = React.lazy(() => import('./v2/pages/OneOffs/OneOffsPage'));
 const V2ResearchPage = React.lazy(() => import('./v2/pages/Research/ResearchPage'));
+const V2ResearchSubjectPage = React.lazy(
+  () => import('./v2/pages/Research/ResearchSubjectPage')
+);
 const V2StorylineReaderPage = React.lazy(
   () => import('./v2/pages/StorylineReader/StorylineReaderPage')
 );
@@ -163,6 +166,10 @@ function App() {
                   <Route path='current' element={<V2CurrentPage />} />
                   <Route path='one-offs' element={<V2OneOffsPage />} />
                   <Route path='research' element={<V2ResearchPage />} />
+                  <Route
+                    path='research/subjects/:domainKey/:entityId'
+                    element={<V2ResearchSubjectPage />}
+                  />
                   <Route path='hubs' element={<V2SituationsPage />} />
                   <Route
                     path='storylines/:domain/:id'

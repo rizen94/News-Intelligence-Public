@@ -1,80 +1,83 @@
 /**
- * Top-level product root toggle: News (/v2) · Finance (/finance) · Admin (/v2/admin).
- * Shared across broadsheet, finance, and admin shells so switching feels like one product.
+ * Top-level product root toggle: News (/) · Finance (/finance) · Admin (/admin).
+ * Shared across broadsheet, finance, and admin shells.
+ * Public site: https://news-intelligence-ag.duckdns.org
  */
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import './productChrome.css';
-import { getDefaultDomainKey } from '../utils/domainHelper';
 import { getGrafanaOpsUrl } from '../config/grafanaConfig';
+import {
+  ADMIN_HOME,
+  FINANCE_HOME,
+  NEWS_HOME,
+  newsHomePath,
+} from '../paths';
 
 export type ProductRoot = 'news' | 'finance' | 'admin';
 
 const ROOTS: Array<{ id: ProductRoot; label: string; to: string }> = [
-  { id: 'news', label: 'News', to: '/v2' },
-  { id: 'finance', label: 'Finance', to: '/finance' },
-  { id: 'admin', label: 'Admin', to: '/v2/admin' },
+  { id: 'news', label: 'News', to: newsHomePath() },
+  { id: 'finance', label: 'Finance', to: FINANCE_HOME },
+  { id: 'admin', label: 'Admin', to: ADMIN_HOME },
 ];
 
 export function detectProductRoot(pathname: string): ProductRoot | null {
-  if (
-    pathname === '/admin' ||
-    pathname.startsWith('/admin/') ||
-    pathname === '/v2/admin' ||
-    pathname.startsWith('/v2/admin/')
-  ) {
+  if (pathname === ADMIN_HOME || pathname.startsWith(`${ADMIN_HOME}/`)) {
     return 'admin';
   }
   if (
-    pathname === '/finance' ||
+    pathname === FINANCE_HOME ||
     pathname.startsWith('/finance/trackers') ||
     pathname.startsWith('/finance/markets') ||
     pathname.startsWith('/finance/reporting')
   ) {
     return 'finance';
   }
-  if (pathname === '/v2' || pathname.startsWith('/v2/')) {
+  if (
+    pathname === NEWS_HOME ||
+    pathname === '/news' ||
+    pathname.startsWith('/news/') ||
+    pathname === '/current' ||
+    pathname.startsWith('/current/') ||
+    pathname === '/research' ||
+    pathname.startsWith('/research/') ||
+    pathname === '/one-offs' ||
+    pathname.startsWith('/one-offs/') ||
+    pathname.startsWith('/storylines/') ||
+    pathname.startsWith('/entities/') ||
+    pathname === '/v2' ||
+    pathname.startsWith('/v2/')
+  ) {
     return 'news';
   }
   return null;
 }
 
-/** Admin base path — prefer /v2/admin; /admin is an alias. */
-export function adminBaseFromPath(pathname: string): '/v2/admin' | '/admin' {
-  return pathname === '/admin' || pathname.startsWith('/admin/')
-    ? '/admin'
-    : '/v2/admin';
+export function adminBaseFromPath(_pathname?: string): typeof ADMIN_HOME {
+  return ADMIN_HOME;
 }
 
 type SwitcherProps = {
-  /** Optional brand subtitle (e.g. Finance, Admin). */
   subtitle?: string;
-  /** Brand link target; defaults to active root home. */
   brandTo?: string;
-  /** Extra actions rendered after the switcher (domain filter, etc.). */
   children?: React.ReactNode;
-  /** Show Classic app link (default true). */
-  showClassic?: boolean;
-  classicTo?: string;
 };
 
 export function ProductRootSwitcher({
   subtitle,
   brandTo,
   children,
-  showClassic = true,
-  classicTo,
 }: SwitcherProps) {
   const { pathname } = useLocation();
   const active = detectProductRoot(pathname) ?? 'news';
   const home =
     brandTo ??
-    (active === 'finance' ? '/finance' : active === 'admin' ? '/v2/admin' : '/v2');
-  const classic =
-    classicTo ??
-    (active === 'admin'
-      ? `/${getDefaultDomainKey()}/monitor`
-      : `/${getDefaultDomainKey()}/dashboard`);
+    (active === 'finance'
+      ? FINANCE_HOME
+      : active === 'admin'
+        ? ADMIN_HOME
+        : newsHomePath());
 
   return (
     <div className='ni-product-chrome'>
@@ -96,16 +99,10 @@ export function ProductRootSwitcher({
       </nav>
       <div className='ni-chrome-spacer' />
       {children}
-      {showClassic ? (
-        <Link className='ni-classic-link' to={classic}>
-          Classic app
-        </Link>
-      ) : null}
     </div>
   );
 }
 
-/** Ops-only Admin sidebar — no Dashboard / Storylines / Articles / etc. */
 const ADMIN_NAV = [
   { segment: '', label: 'Overview', end: true },
   { segment: 'monitor', label: 'Monitor' },
@@ -115,7 +112,7 @@ const ADMIN_NAV = [
 ] as const;
 
 type AdminSidebarProps = {
-  base?: '/v2/admin' | '/admin';
+  base?: typeof ADMIN_HOME;
 };
 
 export function AdminOpsSidebar({ base }: AdminSidebarProps) {

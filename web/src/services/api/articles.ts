@@ -133,4 +133,68 @@ export const articlesApi = {
       return { success: false, error: (error as any).message };
     }
   },
+
+  async pullContext(
+    articleId: number | string,
+    domain?: string,
+    storylineId?: number | string
+  ) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const params: Record<string, string | number> = { domain: domainKey };
+      if (storylineId != null && String(storylineId).trim() !== '') {
+        params.storyline_id = Number(storylineId);
+      }
+      const response = await getApi().post(
+        `/api/reader/articles/${articleId}/pull-context`,
+        null,
+        { params }
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to start pull context', error as Error);
+      return { ok: false, error: (error as any).message };
+    }
+  },
+
+  async getContextPull(pullId: number | string) {
+    try {
+      const response = await getApi().get(
+        `/api/reader/articles/context-pulls/${pullId}`
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch context pull', error as Error);
+      return { ok: false, error: (error as any).message };
+    }
+  },
+
+  async latestContextPull(articleId: number | string, domain?: string) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(
+        `/api/reader/articles/${articleId}/pull-context`,
+        { params: { domain: domainKey } }
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch latest context pull', error as Error);
+      return { ok: false, error: (error as any).message };
+    }
+  },
+
+  async pullStorylineContext(storylineId: number | string, domain?: string) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().post(
+        `/api/reader/storylines/${storylineId}/pull-context`,
+        null,
+        { params: { domain: domainKey } }
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to start storyline pull context', error as Error);
+      return { ok: false, error: (error as any).message };
+    }
+  },
 };

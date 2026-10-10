@@ -2,6 +2,8 @@
 
 interface ImportMetaEnv {
   readonly VITE_API_URL?: string;
+  /** Public site origin (default https://news-intelligence-ag.duckdns.org). */
+  readonly VITE_PUBLIC_ORIGIN?: string;
   /** When true at build time, SPA hides mutation UI without calling /api/public/demo_config */
   readonly VITE_PUBLIC_DEMO?: string;
   /** Homelab Grafana deep link for Monitor "Open Grafana" (NI Ops dashboard). */

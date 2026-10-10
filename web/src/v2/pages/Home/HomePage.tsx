@@ -217,7 +217,7 @@ export default function HomePage() {
             <h2 className='v2-section-label' style={{ margin: 0 }}>
               Research
             </h2>
-            <Link to={withDomainQuery('/research', domain)}>All papers</Link>
+            <Link to={withDomainQuery('/research', domain)}>Topics</Link>
           </div>
           <div className='v2-rail-list'>
             {!data ? (
