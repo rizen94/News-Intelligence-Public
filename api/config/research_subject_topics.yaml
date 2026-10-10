@@ -1,0 +1,57 @@
+# Curated research subject boards + vault keywords shown under each domain
+# on /research. Keywords are mirrored onto vault science topic notes.
+#
+# subjects: standing fact-sheet entities (entity_canonical / knowledge_profiles)
+# keywords: short labels under the domain title (from vault coverage + corpus intent)
+
+neurodiversity:
+  label: Neurodiversity
+  subjects:
+    - Autism
+    - ADHD
+    - AuDHD
+    - Neurodiversity
+  keywords:
+    - Autism
+    - ASD
+    - ADHD
+    - AuDHD
+    - neurodiversity
+    - genetics
+    - intervention
+    - clinical trials
+
+artificial-intelligence:
+  label: Artificial intelligence
+  subjects:
+    - Artificial Intelligence
+    - Large Language Models
+    - Computer Vision
+    - AI Alignment
+    - Robotics
+  keywords:
+    - LLMs
+    - agents
+    - alignment
+    - computer vision
+    - VLMs
+    - reinforcement learning
+    - robotics
+    - machine learning
+
+medicine:
+  label: Medicine
+  subjects:
+    - Clinical Trials
+    - Epidemiology
+    - Oncology
+    - Infectious Disease
+    - Public Health
+    - Genomics
+  keywords:
+    - clinical trials
+    - epidemiology
+    - oncology
+    - infectious disease
+    - public health
+    - genomics

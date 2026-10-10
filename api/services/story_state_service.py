@@ -225,20 +225,59 @@ def update_story_state(
         if metadata.get("historical_fact_count", 0) > 0:
             import os
 
-            if os.environ.get("STORY_STATE_FACT_CHANGE_REFINEMENT", "0").strip().lower() in (
+            # Default ON — materiality gate prevents thrash when the pile is unchanged.
+            if os.environ.get("STORY_STATE_FACT_CHANGE_REFINEMENT", "1").strip().lower() in (
                 "1",
                 "true",
                 "yes",
             ):
                 try:
                     from services.content_refinement_queue_service import enqueue_content_refinement
-
-                    enqueue_content_refinement(
-                        domain_key,
-                        storyline_id,
-                        job_type="narrative_finisher",
-                        metadata={"source": "story_state_fact_snapshot"},
+                    from services.storyline_narrative_materiality import (
+                        classify_narrative_materiality,
                     )
+
+                    decision = classify_narrative_materiality(
+                        domain_key, storyline_id, conn=conn
+                    )
+                    if decision.get("action") == "run":
+                        enqueue_content_refinement(
+                            domain_key,
+                            storyline_id,
+                            job_type="narrative_finisher",
+                            metadata={
+                                "source": "story_state_fact_snapshot",
+                                "materiality_class": decision.get("class"),
+                                "materiality_reason": decision.get("reason"),
+                            },
+                        )
+                    else:
+                        if decision.get("action") == "defer":
+                            try:
+                                from services.storyline_narrative_materiality import (
+                                    set_narrow_debt_pending,
+                                )
+
+                                set_narrow_debt_pending(
+                                    domain_key,
+                                    storyline_id,
+                                    pending=True,
+                                    reason=str(
+                                        decision.get("reason") or "narrow_delta"
+                                    ),
+                                    conn=conn,
+                                )
+                            except Exception as debt_err:
+                                logger.debug(
+                                    "story_state narrow_debt mark: %s", debt_err
+                                )
+                        logger.debug(
+                            "story_state refinement skip %s/%s action=%s class=%s",
+                            domain_key,
+                            storyline_id,
+                            decision.get("action"),
+                            decision.get("class"),
+                        )
                 except Exception as ref_err:
                     logger.debug("story_state refinement enqueue: %s", ref_err)
 

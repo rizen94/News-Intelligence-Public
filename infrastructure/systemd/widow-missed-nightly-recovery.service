@@ -1,0 +1,19 @@
+# Detect skipped 00:45 graceful reboot after abrupt halt; ensure NI stack for heavy band.
+# Install: scripts/setup_widow_boot_stack.sh
+
+[Unit]
+Description=Widow missed-nightly reboot recovery (ensure stack after abrupt halt)
+Documentation=file:///opt/news-intelligence/docs/WIDOW_BOOT_RESILIENCE.md
+After=network-online.target multi-user.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pete
+Group=pete
+ExecStart=/opt/news-intelligence/scripts/widow_missed_nightly_recovery.sh
+Nice=5
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

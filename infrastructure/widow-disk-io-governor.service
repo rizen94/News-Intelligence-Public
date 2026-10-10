@@ -1,0 +1,10 @@
+[Unit]
+Description=Widow disk IO pressure sampler (USB root governor)
+After=local-fs.target
+
+[Service]
+Type=oneshot
+Environment=NEWS_INTEL_ROOT=/opt/news-intelligence
+ExecStart=/usr/local/sbin/widow_disk_io_governor.sh
+Nice=10
+IOSchedulingClass=idle

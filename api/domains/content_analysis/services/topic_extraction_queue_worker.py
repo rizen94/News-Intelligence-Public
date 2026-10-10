@@ -30,15 +30,13 @@ from services.article_entity_extraction_service import get_article_entity_extrac
 logger = logging.getLogger(__name__)
 
 STARTUP_DELAY_SECONDS = 45
-_ollama_semaphore: asyncio.Semaphore | None = None
 
 
 def _get_ollama_semaphore() -> asyncio.Semaphore:
-    """Lazy-init a shared semaphore so only one worker calls Ollama at a time."""
-    global _ollama_semaphore
-    if _ollama_semaphore is None:
-        _ollama_semaphore = asyncio.Semaphore(1)
-    return _ollama_semaphore
+    """Shared process-wide Ollama concurrency (matches AutomationManager / LLM hub)."""
+    from shared.services.llm_service import get_shared_ollama_semaphore
+
+    return get_shared_ollama_semaphore()
 
 
 class TopicExtractionQueueWorker:
@@ -51,18 +49,27 @@ class TopicExtractionQueueWorker:
         self,
         db_connection_func,
         schema: str = "politics",
-        ollama_url: str = "http://localhost:11434",
+        ollama_url: str | None = None,
     ):
+        from domains.content_analysis.services.topic_clustering_service import (
+            default_batch_ollama_url,
+        )
+
         self.get_db_connection = db_connection_func
         self.schema = schema
-        self.ollama_url = ollama_url
+        self.ollama_url = (ollama_url or default_batch_ollama_url()).rstrip("/")
+        logger.info(
+            "TopicExtractionQueueWorker schema=%s ollama_url=%s", schema, self.ollama_url
+        )
         self.is_running = False
         self.batch_size = 10
         self.poll_interval = 60
         self.poll_interval_busy = 10
         self.max_retries = 10
 
-        self.extractor = LLMTopicExtractor(db_connection_func, schema=schema, ollama_url=ollama_url)
+        self.extractor = LLMTopicExtractor(
+            db_connection_func, schema=schema, ollama_url=self.ollama_url
+        )
         self.entity_service = get_article_entity_extraction_service()
 
     async def start(self):
@@ -141,12 +148,16 @@ class TopicExtractionQueueWorker:
             return False
 
     async def _process_queue_batch_inner(self, should_yield_to_api) -> bool:
-        """Inner batch logic, called while holding the Ollama semaphore."""
+        """Inner batch logic, called while holding the Ollama semaphore.
+
+        DB connections are released before LLM/HTTP so we never sit idle-in-transaction.
+        """
         conn = self.get_db_connection()
         if not conn:
             logger.warning("Cannot process queue: database connection failed")
             return False
 
+        queued_items: list[tuple] = []
         try:
             with conn.cursor() as cur:
                 cur.execute(f"SET search_path TO {self.schema}, public")
@@ -165,7 +176,7 @@ class TopicExtractionQueueWorker:
                     (self.max_retries, self.batch_size),
                 )
 
-                queued_items = cur.fetchall()
+                queued_items = list(cur.fetchall())
 
                 if not queued_items:
                     logger.debug("Queue empty for %s, finding unprocessed articles…", self.schema)
@@ -218,192 +229,249 @@ class TopicExtractionQueueWorker:
                         """,
                             (self.max_retries, self.batch_size),
                         )
-                        queued_items = cur.fetchall()
+                        queued_items = list(cur.fetchall())
 
-                if not queued_items:
-                    return False
+                conn.commit()
+        finally:
+            conn.close()
+            conn = None
 
-                logger.info(
-                    "📋 Processing %d queued articles for topic extraction (%s)",
-                    len(queued_items),
-                    self.schema,
-                )
+        if not queued_items:
+            return False
 
-                for queue_id, article_id, retry_count in queued_items:
-                    # --- per-article yield: time.sleep guarantees GIL release so
-                    # the main uvicorn thread can process HTTP requests ---
-                    time.sleep(0.5)
-                    if should_yield_to_api():
-                        logger.debug("Yielding mid-batch to API for %s", self.schema)
-                        return True
+        logger.info(
+            "📋 Processing %d queued articles for topic extraction (%s)",
+            len(queued_items),
+            self.schema,
+        )
 
-                    try:
+        for queue_id, article_id, retry_count in queued_items:
+            time.sleep(0.5)
+            if should_yield_to_api():
+                logger.debug("Yielding mid-batch to API for %s", self.schema)
+                return True
+
+            title = ""
+            content = ""
+            summary = None
+            need_entity = False
+
+            # --- short DB checkout: claim + load article ---
+            conn = self.get_db_connection()
+            if not conn:
+                logger.warning("Cannot process queue item: database connection failed")
+                return True
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(f"SET search_path TO {self.schema}, public")
+                    cur.execute(
+                        f"""
+                        UPDATE {self.schema}.topic_extraction_queue
+                        SET status = 'processing', started_at = NOW()
+                        WHERE id = %s
+                    """,
+                        (queue_id,),
+                    )
+                    conn.commit()
+
+                    cur.execute(
+                        f"""
+                        SELECT id, title, content, summary, published_at, sentiment_score, source_domain
+                        FROM {self.schema}.articles
+                        WHERE id = %s
+                          AND (enrichment_status IS NULL OR enrichment_status != 'removed')
+                    """,
+                        (article_id,),
+                    )
+                    article = cur.fetchone()
+                    if not article:
                         cur.execute(
                             f"""
                             UPDATE {self.schema}.topic_extraction_queue
-                            SET status = 'processing', started_at = NOW()
+                            SET status = 'completed', completed_at = NOW(),
+                                error_message = 'Article not found'
                             WHERE id = %s
                         """,
                             (queue_id,),
                         )
                         conn.commit()
+                        continue
 
+                    (
+                        article_id,
+                        title,
+                        content,
+                        summary,
+                        _published_at,
+                        _sentiment_score,
+                        _source_domain,
+                    ) = article
+                    content = content or ""
+                    need_entity = not self.entity_service.entity_extraction_done(
+                        conn, self.schema, article_id
+                    )
+                    conn.commit()
+            finally:
+                conn.close()
+                conn = None
+
+            # --- LLM / entity work with no pool connection held ---
+            try:
+                if need_entity:
+                    try:
+                        result = await self.entity_service.extract_and_store(
+                            article_id, title, content, schema=self.schema
+                        )
+                        if result.get("success") and result.get("counts"):
+                            logger.debug(
+                                "Entity extraction for %s: %s", article_id, result["counts"]
+                            )
+                    except Exception as ent_err:
+                        logger.debug(
+                            "Entity extraction skipped for %s: %s", article_id, ent_err
+                        )
+
+                tracker = get_llm_activity_tracker()
+                queue_task_id = f"queue_{queue_id}_{uuid.uuid4()}"
+                tracker.start_task(
+                    task_id=queue_task_id,
+                    task_type="queue_topic_extraction",
+                    article_id=article_id,
+                    domain=self.schema,
+                    metadata={
+                        "queue_id": queue_id,
+                        "retry_count": retry_count,
+                        "title": title[:100],
+                    },
+                )
+
+                try:
+                    topics = await self.extractor._extract_topics_from_single_article(
+                        article_id, title, content, summary
+                    )
+                    tracker.complete_task(queue_task_id, success=True)
+                except Exception as extract_error:
+                    tracker.complete_task(
+                        queue_task_id, success=False, error=str(extract_error)
+                    )
+                    raise
+
+                if topics:
+                    topics = filter_topic_list(topics, name_key="name")
+                if topics:
+                    success = self.extractor.save_topics_to_database(topics)
+                    if not success:
+                        raise Exception("Failed to save topics to database")
+                    topic_count = len(topics)
+                else:
+                    topic_count = 0
+
+                conn = self.get_db_connection()
+                if not conn:
+                    raise Exception("Database connection failed after LLM")
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(f"SET search_path TO {self.schema}, public")
                         cur.execute(
                             f"""
-                            SELECT id, title, content, summary, published_at, sentiment_score, source_domain
-                            FROM {self.schema}.articles
+                            UPDATE {self.schema}.topic_extraction_queue
+                            SET status = 'completed', completed_at = NOW(),
+                                metadata = jsonb_build_object('topics_extracted', %s)
                             WHERE id = %s
-                              AND (enrichment_status IS NULL OR enrichment_status != 'removed')
                         """,
-                            (article_id,),
+                            (topic_count, queue_id),
                         )
+                        conn.commit()
+                    logger.info(
+                        "✅ Successfully processed article %s (extracted %d topics)",
+                        article_id,
+                        topic_count,
+                    )
+                finally:
+                    conn.close()
+                    conn = None
 
-                        article = cur.fetchone()
-                        if not article:
-                            cur.execute(
-                                f"""
-                                UPDATE {self.schema}.topic_extraction_queue
-                                SET status = 'completed', completed_at = NOW(),
-                                    error_message = 'Article not found'
-                                WHERE id = %s
-                            """,
-                                (queue_id,),
-                            )
-                            conn.commit()
-                            continue
+            except Exception as article_error:
+                from shared.services.llm_service import is_ollama_pressure_error
 
-                        (
-                            article_id,
-                            title,
-                            content,
-                            summary,
-                            published_at,
-                            sentiment_score,
-                            source_domain,
-                        ) = article
-                        content = content or ""
-
+                if is_ollama_pressure_error(article_error):
+                    # Defer without burning retries — CB/overload is host pressure
+                    logger.warning(
+                        "Topic extract deferred (Ollama pressure) for article %s: %s",
+                        article_id,
+                        article_error,
+                    )
+                    conn = self.get_db_connection()
+                    if conn:
                         try:
-                            if not self.entity_service.entity_extraction_done(
-                                conn, self.schema, article_id
-                            ):
-                                result = await self.entity_service.extract_and_store(
-                                    article_id, title, content, schema=self.schema
-                                )
-                                if result.get("success") and result.get("counts"):
-                                    logger.debug(
-                                        "Entity extraction for %s: %s", article_id, result["counts"]
-                                    )
-                        except Exception as ent_err:
-                            logger.debug(
-                                "Entity extraction skipped for %s: %s", article_id, ent_err
-                            )
-
-                        tracker = get_llm_activity_tracker()
-                        queue_task_id = f"queue_{queue_id}_{uuid.uuid4()}"
-                        tracker.start_task(
-                            task_id=queue_task_id,
-                            task_type="queue_topic_extraction",
-                            article_id=article_id,
-                            domain=self.schema,
-                            metadata={
-                                "queue_id": queue_id,
-                                "retry_count": retry_count,
-                                "title": title[:100],
-                            },
-                        )
-
-                        try:
-                            topics = await self.extractor._extract_topics_from_single_article(
-                                article_id, title, content, summary
-                            )
-                            tracker.complete_task(queue_task_id, success=True)
-                        except Exception as extract_error:
-                            tracker.complete_task(
-                                queue_task_id, success=False, error=str(extract_error)
-                            )
-                            raise
-
-                        if topics:
-                            topics = filter_topic_list(topics, name_key="name")
-                        if topics:
-                            success = self.extractor.save_topics_to_database(topics)
-                            if success:
+                            with conn.cursor() as cur:
+                                cur.execute(f"SET search_path TO {self.schema}, public")
                                 cur.execute(
                                     f"""
                                     UPDATE {self.schema}.topic_extraction_queue
-                                    SET status = 'completed', completed_at = NOW(),
-                                        metadata = jsonb_build_object('topics_extracted', %s)
+                                    SET status = 'pending', last_error = %s,
+                                        last_attempt_at = NOW(),
+                                        next_retry_at = NOW() + INTERVAL '2 minutes'
                                     WHERE id = %s
                                 """,
-                                    (len(topics), queue_id),
+                                    (str(article_error), queue_id),
                                 )
                                 conn.commit()
-                                logger.info(
-                                    "✅ Successfully processed article %s (extracted %d topics)",
+                        finally:
+                            conn.close()
+                            conn = None
+                    continue
+
+                logger.error("Error processing article %s: %s", article_id, article_error)
+
+                new_retry_count = retry_count + 1
+                backoff_minutes = min(60 * 2 ** min(new_retry_count, 8), 480)
+                next_retry = datetime.now() + timedelta(minutes=backoff_minutes)
+
+                conn = self.get_db_connection()
+                if conn:
+                    try:
+                        with conn.cursor() as cur:
+                            cur.execute(f"SET search_path TO {self.schema}, public")
+                            if new_retry_count >= self.max_retries:
+                                cur.execute(
+                                    f"""
+                                    UPDATE {self.schema}.topic_extraction_queue
+                                    SET status = 'failed', last_error = %s,
+                                        last_attempt_at = NOW()
+                                    WHERE id = %s
+                                """,
+                                    (str(article_error), queue_id),
+                                )
+                                logger.error(
+                                    "❌ Article %s failed after %d retries",
                                     article_id,
-                                    len(topics),
+                                    new_retry_count,
                                 )
                             else:
-                                raise Exception("Failed to save topics to database")
-                        else:
-                            cur.execute(
-                                f"""
-                                UPDATE {self.schema}.topic_extraction_queue
-                                SET status = 'completed', completed_at = NOW(),
-                                    metadata = jsonb_build_object('topics_extracted', 0)
-                                WHERE id = %s
-                            """,
-                                (queue_id,),
-                            )
+                                cur.execute(
+                                    f"""
+                                    UPDATE {self.schema}.topic_extraction_queue
+                                    SET status = 'pending', retry_count = %s,
+                                        next_retry_at = %s, last_error = %s,
+                                        last_attempt_at = NOW()
+                                    WHERE id = %s
+                                """,
+                                    (new_retry_count, next_retry, str(article_error), queue_id),
+                                )
+                                logger.info(
+                                    "🔄 Queued article %s for retry %d (next: %s)",
+                                    article_id,
+                                    new_retry_count,
+                                    next_retry,
+                                )
                             conn.commit()
-                            logger.info("✅ Processed article %s (no topics found)", article_id)
+                    finally:
+                        conn.close()
+                        conn = None
 
-                    except Exception as article_error:
-                        logger.error("Error processing article %s: %s", article_id, article_error)
+            time.sleep(0.3)
 
-                        new_retry_count = retry_count + 1
-                        backoff_minutes = min(60 * 2 ** min(new_retry_count, 8), 480)
-                        next_retry = datetime.now() + timedelta(minutes=backoff_minutes)
-
-                        if new_retry_count >= self.max_retries:
-                            cur.execute(
-                                f"""
-                                UPDATE {self.schema}.topic_extraction_queue
-                                SET status = 'failed', last_error = %s,
-                                    last_attempt_at = NOW()
-                                WHERE id = %s
-                            """,
-                                (str(article_error), queue_id),
-                            )
-                            logger.error(
-                                "❌ Article %s failed after %d retries", article_id, new_retry_count
-                            )
-                        else:
-                            cur.execute(
-                                f"""
-                                UPDATE {self.schema}.topic_extraction_queue
-                                SET status = 'pending', retry_count = %s,
-                                    next_retry_at = %s, last_error = %s,
-                                    last_attempt_at = NOW()
-                                WHERE id = %s
-                            """,
-                                (new_retry_count, next_retry, str(article_error), queue_id),
-                            )
-                            logger.info(
-                                "🔄 Queued article %s for retry %d (next: %s)",
-                                article_id,
-                                new_retry_count,
-                                next_retry,
-                            )
-
-                        conn.commit()
-
-                    # Brief GIL release after error handling DB writes
-                    time.sleep(0.3)
-
-        finally:
-            conn.close()
         return True
 
     async def _process_queue_batch_legacy(self) -> bool:

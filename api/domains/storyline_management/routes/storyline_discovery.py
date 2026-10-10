@@ -279,15 +279,22 @@ Respond in JSON format:
 
 JSON:"""
 
-        response = requests.post(
-            "http://localhost:11434/api/generate",
-            json={"model": "llama3.1:8b", "prompt": prompt, "stream": False},
-            timeout=60,
+        import os as _os
+
+        from shared.services.llm_service import ollama_generate_sync
+
+        _ollama = (
+            _os.environ.get("OLLAMA_HOST")
+            or _os.environ.get("OLLAMA_URL")
+            or "http://127.0.0.1:11434"
+        ).rstrip("/")
+        result_text = ollama_generate_sync(
+            prompt,
+            model="llama3.1:8b",
+            ollama_base_url=_ollama,
         )
 
-        if response.status_code == 200:
-            result_text = response.json().get("response", "")
-
+        if result_text:
             # Extract JSON
             import json
 

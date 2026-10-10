@@ -224,22 +224,41 @@ async def health_check():
         # Redis removed from architecture; report not_used so frontend can show N/A
         redis_status = "not_used"
 
-        # Circuit breaker status
+        # Circuit breaker status (all Ollama host keys + any others)
         cb_summary = {}
         try:
-            from services.circuit_breaker_service import get_circuit_breaker_service
+            from services.circuit_breaker_service import (
+                OLLAMA_CB_KEYS,
+                get_circuit_breaker_service,
+            )
 
             cb_service = get_circuit_breaker_service()
             cb_health = cb_service.get_health_status()
+            breakers = {
+                name: info["state"]
+                for name, info in cb_health.get("circuit_breakers", {}).items()
+            }
+            # Ensure every Ollama key is present even if never touched
+            for key in OLLAMA_CB_KEYS:
+                breakers.setdefault(key, cb_service.get_circuit_breaker(key).state.value)
+            ollama_open = [
+                k
+                for k in OLLAMA_CB_KEYS
+                if breakers.get(k) in ("open", "half_open")
+            ]
             cb_summary = {
                 "open_circuits": cb_health.get("open_circuits", 0),
-                "breakers": {
-                    name: info["state"]
-                    for name, info in cb_health.get("circuit_breakers", {}).items()
-                },
+                "breakers": breakers,
+                "ollama_keys": list(OLLAMA_CB_KEYS),
+                "ollama_shedding": ollama_open,
             }
         except Exception:
-            cb_summary = {"open_circuits": 0, "breakers": {}}
+            cb_summary = {
+                "open_circuits": 0,
+                "breakers": {},
+                "ollama_keys": [],
+                "ollama_shedding": [],
+            }
 
         # GPU metric sampling is best-effort — must not block health responses.
         try:
@@ -279,7 +298,7 @@ async def health_check():
                 "database": db_status,
                 "redis": redis_status,
                 "ollama": "circuit_open"
-                if cb_summary.get("breakers", {}).get("ollama") == "open"
+                if cb_summary.get("ollama_shedding")
                 else "available",
                 "system": "healthy" if cpu_percent < 80 and memory.percent < 80 else "warning",
             },
@@ -866,8 +885,48 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
     (queued/running counts and how many times it ran in the last 60 minutes).
     last_run is augmented from automation_run_history when in-memory is missing (survives API restart).
     Never blocks on pipeline: uses a short timeout so the web UI always loads with current data.
+    Always includes ``resource_router.db_pressure`` from a live pool snapshot when possible.
     """
     import asyncio
+
+    def _live_db_pressure_block() -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        try:
+            from shared.services.api_request_tracker import get_api_yield_snapshot
+
+            out["api_yield"] = get_api_yield_snapshot()
+        except Exception as e:
+            out["api_yield"] = {"error": str(e)[:120]}
+        try:
+            from shared.database.connection import get_db_pool_snapshot
+            from shared.database.pool_pressure_advisory import (
+                build_pool_pressure_signal,
+                publish_db_pool_pressure_advisory,
+            )
+
+            snap = get_db_pool_snapshot()
+            signal = build_pool_pressure_signal(snap, source="api_status")
+            try:
+                publish_db_pool_pressure_advisory(snap, source="api_status")
+            except Exception:
+                pass
+            out["db_pool"] = snap
+            out["db_pressure"] = {
+                "defer_new_work": signal.get("defer_new_work"),
+                "worker_waiters": signal.get("worker_waiters"),
+                "worker_pressure": signal.get("worker_pressure"),
+                "worker_utilization": signal.get("worker_utilization"),
+                "worker_in_use": signal.get("worker_in_use"),
+                "worker_max": signal.get("worker_max"),
+                "ui_waiters": signal.get("ui_waiters"),
+                "ui_pressure": signal.get("ui_pressure"),
+                "ui_in_use": signal.get("ui_in_use"),
+                "ui_max": signal.get("ui_max"),
+                "threshold": signal.get("threshold"),
+            }
+        except Exception as e:
+            out["db_pool"] = {"error": str(e)[:120]}
+        return out
 
     automation = getattr(request.app.state, "automation", None)
     thread_alive = _automation_thread_alive(request)
@@ -892,6 +951,7 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
                 "disabled_schedules": disabled,
                 "pipeline_schedule": schedule_info,
                 "startup_ready": False,
+                "resource_router": _live_db_pressure_block(),
                 "message": "Automation manager not available"
                 if automation is None
                 else "Automation thread not running",
@@ -907,6 +967,7 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
                 "phases": [],
                 "automation_thread_alive": False,
                 "startup_ready": False,
+                "resource_router": _live_db_pressure_block(),
                 "message": "Automation thread died",
             },
         }
@@ -1045,6 +1106,15 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
             else []
         )
         startup_ready = thread_alive and bool(status.get("is_running", False))
+        rr = dict(status.get("resource_router") or {})
+        # Always refresh cheap live signals (yield + pool) even if AM snapshot is stale/partial
+        live_rr = _live_db_pressure_block()
+        if live_rr.get("api_yield") is not None:
+            rr["api_yield"] = live_rr["api_yield"]
+        if live_rr.get("db_pressure") is not None:
+            rr["db_pressure"] = live_rr["db_pressure"]
+        if live_rr.get("db_pool") is not None:
+            rr["db_pool"] = live_rr["db_pool"]
         return {
             "success": True,
             "data": {
@@ -1065,7 +1135,7 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
                 "pending_counts": status.get("pending_counts") or {},
                 "document_pipeline": status.get("document_pipeline") or {},
                 "work_balancer": status.get("work_balancer") or {},
-                "resource_router": status.get("resource_router") or {},
+                "resource_router": rr,
                 "queued_tasks_by_lane": status.get("queued_tasks_by_lane") or {},
                 "active_tasks_by_lane": status.get("active_tasks_by_lane") or {},
                 "runs_last_60m_by_lane": status.get("runs_last_60m_by_lane") or {},
@@ -1081,6 +1151,7 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
                 "queue_size": 0,
                 "active_workers": 0,
                 "phases": [],
+                "resource_router": _live_db_pressure_block(),
                 "message": "Status temporarily unavailable (pipeline busy); refresh in a moment.",
             },
         }
@@ -1226,6 +1297,35 @@ async def get_sources_collected(
     out["summary"] = parts if parts else [f"No sources collected in the last {minutes} minutes"]
 
     return {"success": True, "data": out}
+
+
+@router.post("/circuit_breakers/reset")
+async def reset_circuit_breakers(body: dict[str, Any] | None = Body(None)):
+    """
+    Reset Ollama circuit breakers (Monitor escape hatch after hard shed).
+
+    Body optional: ``{"name": "ollama_gpu"}`` to reset one key; omit to reset all
+    ``OLLAMA_CB_KEYS`` (ollama, ollama_gpu, ollama_cpu, ollama_pop_os).
+    """
+    try:
+        from services.circuit_breaker_service import get_circuit_breaker_service
+
+        name = (body or {}).get("name")
+        if isinstance(name, str):
+            name = name.strip() or None
+        else:
+            name = None
+        reset_names = get_circuit_breaker_service().reset_ollama_circuits(name)
+        return {
+            "success": True,
+            "reset": reset_names,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.error("circuit_breakers reset failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/monitoring/trigger_phase")
@@ -3059,19 +3159,22 @@ def get_process_run_summary(
     if conn:
         try:
             with conn.cursor() as cur:
+                try:
+                    cur.execute("SET LOCAL statement_timeout = '15s'")
+                except Exception:
+                    pass
+                # Aggregate in SQL — never pull every history row in the window.
                 cur.execute(
                     """
-                    SELECT phase_name, finished_at
+                    SELECT phase_name, MAX(finished_at) AS last_finished
                     FROM automation_run_history
                     WHERE finished_at >= %s
-                    ORDER BY finished_at DESC
+                    GROUP BY phase_name
                     """,
                     (cutoff,),
                 )
                 for row in cur.fetchall():
-                    name, finished = row[0], row[1]
-                    if name not in run_in_window:
-                        run_in_window[name] = finished
+                    run_in_window[row[0]] = row[1]
                 cur.execute(
                     """
                     SELECT phase_name, MAX(finished_at) AS last_finished
@@ -3196,10 +3299,13 @@ def get_process_run_summary(
                 pass
 
     # 3) Recent activity from activity.jsonl (if present)
+    # Never readlines() the whole file — production activity.jsonl can be multi‑GB.
     if activity_lines > 0:
         log_path = None
         try:
             from pathlib import Path
+
+            from services.diagnostics_event_collector_service import _tail_lines_from_file
 
             try:
                 from config.paths import LOG_DIR
@@ -3208,9 +3314,14 @@ def get_process_run_summary(
             except Exception:
                 log_path = Path(__file__).resolve().parents[4] / "logs" / "activity.jsonl"
             if log_path.exists():
-                with open(log_path) as f:
-                    lines = [ln.strip() for ln in f.readlines() if ln.strip()]
-                for line in lines[-activity_lines:]:
+                # ~4KB/line worst case → cap bytes for requested line count
+                max_bytes = min(2_000_000, max(64_000, activity_lines * 8_000))
+                for line in _tail_lines_from_file(
+                    log_path, max_bytes=max_bytes, max_lines=activity_lines
+                ):
+                    line = line.strip()
+                    if not line:
+                        continue
                     try:
                         import json
 

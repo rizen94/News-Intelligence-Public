@@ -36,6 +36,15 @@ fred:
     M2SL:
       description: "M2 Money Supply"
       scope: shared
+    BAMLH0A0HYM2:
+      description: "ICE BofA US High Yield Index Option-Adjusted Spread"
+      scope: finance
+    BAMLC0A0CM:
+      description: "ICE BofA US Corporate Index Option-Adjusted Spread (investment grade)"
+      scope: finance
+    USREC:
+      description: "NBER recession indicator (peak through trough)"
+      scope: shared
 
 metals_dev:
   name: "Metals.dev"

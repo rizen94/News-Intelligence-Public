@@ -1,0 +1,19 @@
+# Daily check: if 00:45 graceful reboot was skipped (hard hang / Persistent=false),
+# ensure the NI stack is up for the heavy band. Also runs on boot via the .service WantedBy.
+#
+# Install: scripts/setup_widow_boot_stack.sh
+
+[Unit]
+Description=Timer — Widow missed-nightly recovery check at 01:15
+Documentation=file:///opt/news-intelligence/docs/WIDOW_BOOT_RESILIENCE.md
+
+[Timer]
+OnCalendar=*-*-* 01:15:00
+# Catch boots that happen after 01:00 without waiting for next calendar day.
+OnBootSec=3min
+Persistent=true
+RandomizedDelaySec=30
+Unit=widow-missed-nightly-recovery.service
+
+[Install]
+WantedBy=timers.target

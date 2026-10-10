@@ -8,40 +8,36 @@ display_order: 1
 data_sources:
   rss:
     seed_feed_urls:
-    - feed_url: https://feeds.reuters.com/Reuters/worldNews
-      feed_name: Reuters World
+    - feed_url: https://www.pbs.org/newshour/feeds/rss/headlines
+      feed_name: PBS NewsHour
+      arc_relevance:
+      - political_tensions_multipolar
+    - feed_url: https://www.theguardian.com/us-news/us-politics/rss
+      feed_name: Guardian US Politics
+      arc_relevance:
+      - political_tensions_multipolar
+    - feed_url: https://feeds.npr.org/1001/rss.xml
+      feed_name: NPR News
+      arc_relevance:
+      - political_tensions_multipolar
+    - feed_url: https://www.theguardian.com/us-news/rss
+      feed_name: Guardian US
+      arc_relevance:
+      - political_tensions_multipolar
+    - feed_url: https://www.theguardian.com/world/rss
+      feed_name: Guardian World
+      arc_relevance:
+      - political_tensions_multipolar
+    - feed_url: https://www.theguardian.com/environment/rss
+      feed_name: Guardian Environment
       arc_relevance:
       - resource_geopolitics
-      - political_tensions_multipolar
-    - feed_url: https://rsshub.app/apnews/topics/apf-topnews
-      feed_name: AP Top News
+    - feed_url: https://feeds.bbci.co.uk/news/world/rss.xml
+      feed_name: BBC World
       arc_relevance:
       - political_tensions_multipolar
-    - feed_url: https://www.foreignaffairs.com/rss.xml
-      feed_name: Foreign Affairs
-      arc_relevance:
-      - political_tensions_multipolar
-      - resource_geopolitics
-    - feed_url: https://foreignpolicy.com/feed/
-      feed_name: Foreign Policy
-      arc_relevance:
-      - political_tensions_multipolar
-      - resource_geopolitics
-    - feed_url: https://www.lawfaremedia.org/rss.xml
-      feed_name: Lawfare
-      arc_relevance:
-      - political_tensions_multipolar
-    - feed_url: https://www.csis.org/analysis/feed
-      feed_name: CSIS Analysis
-      arc_relevance:
-      - political_tensions_multipolar
-      - resource_geopolitics
-    - feed_url: https://www.crisisgroup.org/rss
-      feed_name: International Crisis Group
-      arc_relevance:
-      - political_tensions_multipolar
-    - feed_url: https://www.chathamhouse.org/rss.xml
-      feed_name: Chatham House
+    - feed_url: https://rss.politico.com/politics-news.xml
+      feed_name: Politico
       arc_relevance:
       - political_tensions_multipolar
     - feed_url: https://www.atlanticcouncil.org/feed/
@@ -53,16 +49,31 @@ data_sources:
       feed_name: War on the Rocks
       arc_relevance:
       - political_tensions_multipolar
-    - feed_url: https://www.politico.com/rss/politics08.xml
-      feed_name: Politico
+    - feed_url: https://www.crisisgroup.org/rss
+      feed_name: International Crisis Group
       arc_relevance:
       - political_tensions_multipolar
-    - feed_url: https://feeds.bbci.co.uk/news/world/rss.xml
-      feed_name: BBC World
+    - feed_url: https://www.csis.org/rss.xml
+      feed_name: CSIS Analysis
       arc_relevance:
       - political_tensions_multipolar
-    - feed_url: https://www.theguardian.com/world/rss
-      feed_name: Guardian World
+      - resource_geopolitics
+    - feed_url: https://www.chathamhouse.org/path/whatsnew.xml
+      feed_name: Chatham House
+      arc_relevance:
+      - political_tensions_multipolar
+    - feed_url: https://foreignpolicy.com/feed/
+      feed_name: Foreign Policy
+      arc_relevance:
+      - political_tensions_multipolar
+      - resource_geopolitics
+    - feed_url: https://www.foreignaffairs.com/rss.xml
+      feed_name: Foreign Affairs
+      arc_relevance:
+      - political_tensions_multipolar
+      - resource_geopolitics
+    - feed_url: https://www.aljazeera.com/xml/rss/all.xml
+      feed_name: Al Jazeera
       arc_relevance:
       - political_tensions_multipolar
     - feed_url: https://www.ft.com/world?format=rss
@@ -75,12 +86,40 @@ data_sources:
       arc_relevance:
       - resource_geopolitics
       - political_tensions_multipolar
-    - feed_url: https://www.aljazeera.com/xml/rss/all.xml
-      feed_name: Al Jazeera
+    - feed_url: https://www.justsecurity.org/feed/
+      feed_name: Just Security
       arc_relevance:
       - political_tensions_multipolar
-    - feed_url: https://carnegieendowment.org/rss/solr/?fa=topics
-      feed_name: Carnegie Endowment
+    - feed_url: https://www.carbonbrief.org/feed
+      feed_name: Carbon Brief
+      arc_relevance:
+      - resource_geopolitics
+    - feed_url: https://www.climate.gov/rss.xml
+      feed_name: Climate.gov
+      arc_relevance:
+      - resource_geopolitics
+    - feed_url: https://www.eenews.net/articles/feed/
+      feed_name: E&E News
+      arc_relevance:
+      - resource_geopolitics
+    - feed_url: https://www.nature.com/nclimate.rss
+      feed_name: Nature Climate
+      arc_relevance:
+      - resource_geopolitics
+    - feed_url: https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml
+      feed_name: NYT Politics
+      arc_relevance:
+      - political_tensions_multipolar
+    - feed_url: https://rss.nytimes.com/services/xml/rss/nyt/World.xml
+      feed_name: NYT World
+      arc_relevance:
+      - political_tensions_multipolar
+    - feed_url: https://www.whitehouse.gov/news/feed/
+      feed_name: White House Briefing Room
+      arc_relevance:
+      - political_tensions_multipolar
+    - feed_url: https://www.state.gov/rss-feed/press-releases/feed/
+      feed_name: State Department Press
       arc_relevance:
       - political_tensions_multipolar
 focus_areas:
@@ -89,6 +128,6 @@ focus_areas:
 llm_prompt_guidance: Align with institutional politics, diplomacy, and structural geopolitical analysis — not breaking sports
   or entertainment.
 workload_assumptions:
-  expected_active_feeds: 17
-  rough_new_articles_per_day: 120
+  expected_active_feeds: 27
+  rough_new_articles_per_day: 150
   llm_heavy_phases_enabled: true

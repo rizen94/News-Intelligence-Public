@@ -10,6 +10,7 @@
  */
 
 import { getApiOrigin, getCurrentApiUrl } from '../config/apiConfig';
+import { NEWS_HOME } from '../paths';
 
 export type DomainKey = string;
 
@@ -131,19 +132,20 @@ export async function fetchRegistryDomains(): Promise<Domain[]> {
 }
 
 /**
- * Path after the domain segment: `/politics/storylines` → `/storylines`; `/politics` → `/dashboard`.
+ * Path after a legacy domain segment (classic UI retired).
+ * `/politics/storylines` → `/storylines`; unknown → `/`.
  */
 export function getPathAfterDomain(pathname: string): string {
   const m = pathname.match(/^\/([^/]+)(\/.*)?$/);
   if (!m) {
-    return '/dashboard';
+    return NEWS_HOME;
   }
   const seg = m[1];
   const rest = m[2];
   if (!isValidDomain(seg)) {
-    return '/dashboard';
+    return rest && rest.length > 0 ? rest : NEWS_HOME;
   }
-  return rest && rest.length > 0 ? rest : '/dashboard';
+  return rest && rest.length > 0 ? rest : NEWS_HOME;
 }
 
 /**

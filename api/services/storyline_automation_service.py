@@ -46,7 +46,7 @@ class StorylineAutomationService(DomainAwareService):
         self.default_settings = {
             "min_relevance_score": 0.6,  # Minimum relevance to suggest
             "min_quality_score": 0.5,  # Minimum article quality
-            "min_semantic_score": 0.55,  # Minimum semantic similarity
+            "min_semantic_score": 0.80,  # Align with tight-bag auto_approve_combined
             "max_articles_per_run": 20,  # Max articles to suggest per run
             "date_range_days": 90,  # v8: entity/search window
             "source_diversity": True,  # Prefer diverse sources
@@ -380,9 +380,33 @@ class StorylineAutomationService(DomainAwareService):
                     suggestions_count = 0
                     added_count = 0
                     if automation_mode == "auto_approve":
-                        added_count = await self._auto_add_articles(
-                            conn, storyline_id, discovered_articles, settings
-                        )
+                        from shared.assembly_link_funnel import automation_auto_attach_enabled
+
+                        if not automation_auto_attach_enabled():
+                            # Soft-bag absorb off by default — queue suggestions only.
+                            store_result = await self._store_suggestions(
+                                conn,
+                                storyline_id,
+                                discovered_articles,
+                                settings,
+                                search_query,
+                            )
+                            if isinstance(store_result, dict):
+                                suggestions_count = int(store_result.get("stored", 0))
+                                store_filter_stats = store_result.get("skip_reasons") or {}
+                            else:
+                                suggestions_count = int(store_result or 0)
+                            added_count = 0
+                            logger.info(
+                                "Storyline %s auto_approve with AUTO_ATTACH off — "
+                                "stored %s suggestions (no silent absorb)",
+                                storyline_id,
+                                suggestions_count,
+                            )
+                        else:
+                            added_count = await self._auto_add_articles(
+                                conn, storyline_id, discovered_articles, settings
+                            )
                     else:
                         store_result = await self._store_suggestions(
                             conn, storyline_id, discovered_articles, settings, search_query
@@ -1202,7 +1226,13 @@ class StorylineAutomationService(DomainAwareService):
         """Unified pre-store validation (quality gates + suggestion thresholds)."""
         min_score = float(settings.get("min_relevance_score", 0.6))
         min_quality = float(settings.get("min_quality_score", 0.5))
-        min_semantic = float(settings.get("min_semantic_score", 0.55))
+        try:
+            floor = float(self.domain_config.link_score_profile.auto_approve_combined)
+        except Exception:
+            floor = 0.80
+        min_semantic = float(settings.get("min_semantic_score", floor))
+        if min_semantic < floor:
+            min_semantic = floor
 
         relevance = float(article.get("relevance_score", 0.6) or 0.6)
         quality = float(article.get("quality_score", 0.5) or 0.5)
@@ -1403,65 +1433,85 @@ class StorylineAutomationService(DomainAwareService):
     async def _auto_add_articles(
         self, conn, storyline_id: int, articles: list[dict[str, Any]], settings: dict[str, Any]
     ) -> int:
-        """Auto-add articles that meet threshold criteria"""
+        """Auto-add articles that meet threshold criteria via membership_store."""
         try:
+            from shared.membership_scoring import score_article_storyline_membership
+            from shared.membership_store import MembershipIntent, admit
+
             added_count = 0
-            min_score = settings.get("min_relevance_score", 0.7)  # Higher threshold for auto-add
+            min_score = settings.get("min_relevance_score", 0.7)
 
-            with conn.cursor() as cur:
-                for article in articles:
-                    relevance = float(article.get("relevance_score", 0.6) or 0.6)
-                    quality = float(article.get("quality_score", 0.5) or 0.5)
-                    combined = article.get("combined_score")
-                    if combined is None:
-                        combined = relevance * 0.7 + quality * 0.3
-                    if combined >= min_score:
-                        # Auto-add article to domain schema
+            for article in articles:
+                aid = int(article.get("id") or 0)
+                if aid <= 0:
+                    continue
+                relevance = float(article.get("relevance_score", 0.6) or 0.6)
+                quality = float(article.get("quality_score", 0.5) or 0.5)
+                combined = article.get("combined_score")
+                if combined is None:
+                    combined = relevance * 0.7 + quality * 0.3
+                if float(combined) < float(min_score):
+                    continue
+                try:
+                    ms = score_article_storyline_membership(
+                        conn,
+                        domain_key=self.domain,
+                        storyline_id=int(storyline_id),
+                        article_id=aid,
+                        schema=self.schema,
+                    )
+                    if ms.rejected or float(ms.combined) < float(min_score):
+                        continue
+                    ok, _reason = admit(
+                        conn,
+                        domain_key=self.domain,
+                        schema=self.schema,
+                        episode_id=int(storyline_id),
+                        article_id=aid,
+                        intent=MembershipIntent.AUTOMATION,
+                        blend_score=float(ms.combined),
+                        added_by="storyline_automation",
+                        score_parts=ms.as_metadata(),
+                        recompute_score=False,
+                    )
+                    if ok:
+                        added_count += 1
                         try:
-                            cur.execute(
-                                f"""
-                                INSERT INTO {self.schema}.storyline_articles
-                                (storyline_id, article_id, added_at, relevance_score)
-                                VALUES (%s, %s, %s, %s)
-                                ON CONFLICT (storyline_id, article_id) DO NOTHING
-                            """,
-                                (storyline_id, article.get("id"), datetime.now(), relevance),
-                            )
-
-                            if cur.rowcount > 0:
-                                added_count += 1
+                            with conn.cursor() as cur:
                                 self._merge_article_entities_to_storyline(
-                                    cur, storyline_id, article.get("id")
+                                    cur, storyline_id, aid
                                 )
-                                
-                                # Check if this article should trigger consolidation
-                                # This is a simple check - in a real implementation, 
-                                # you might want to check article frequency or other criteria
-                                if added_count % 10 == 0:  # Every 10 articles, run consolidation
-                                    try:
-                                        from services.storyline_consolidation_service import consolidation_task
-                                        consolidation_task()
-                                    except Exception as consolidation_error:
-                                        logger.warning(f"Error running consolidation: {consolidation_error}")
                         except Exception as e:
-                            logger.warning(f"Error adding article {article.get('id')}: {e}")
-                            continue
+                            logger.debug(f"story_entity_index merge skip: {e}")
+                        if added_count % 10 == 0:
+                            try:
+                                from services.storyline_consolidation_service import (
+                                    consolidation_task,
+                                )
 
-                # Only touch storyline.updated_at when membership actually changed (avoids "daily
-                # updates" when automation scores articles but adds nothing).
-                if added_count > 0:
+                                consolidation_task()
+                            except Exception as consolidation_error:
+                                logger.warning(
+                                    f"Error running consolidation: {consolidation_error}"
+                                )
+                except Exception as e:
+                    logger.warning(f"Error adding article {aid}: {e}")
+                    continue
+
+            if added_count > 0:
+                with conn.cursor() as cur:
                     cur.execute(
                         f"""
                         UPDATE {self.schema}.storylines
                         SET article_count = (
-                            SELECT COUNT(*) FROM {self.schema}.storyline_articles WHERE storyline_id = %s
+                            SELECT COUNT(*) FROM {self.schema}.storyline_articles
+                            WHERE storyline_id = %s
                         ),
                         updated_at = %s
                         WHERE id = %s
                         """,
                         (storyline_id, datetime.now(), storyline_id),
                     )
-
                 conn.commit()
 
             return added_count

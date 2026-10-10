@@ -237,20 +237,16 @@ Output as JSON array:
 Focus on the most important and newsworthy facts. Extract 5-15 key facts."""
 
         try:
-            response = requests.post(
-                f"{OLLAMA_BASE_URL}/api/generate",
-                json={
-                    "model": LLM_MODEL,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"num_predict": 2000, "temperature": 0.3},
-                },
-                timeout=LLM_TIMEOUT,
-            )
+            from shared.services.llm_service import ollama_generate_sync
 
-            if response.status_code == 200:
-                result = response.json().get("response", "").strip()
+            result = ollama_generate_sync(
+                prompt,
+                model=LLM_MODEL,
+                max_tokens=2000,
+                ollama_base_url=OLLAMA_BASE_URL,
+            ).strip()
 
+            if result:
                 # Parse JSON from response
                 json_match = re.search(r"\[[\s\S]*\]", result)
                 if json_match:
@@ -274,9 +270,13 @@ Focus on the most important and newsworthy facts. Extract 5-15 key facts."""
 
                     return facts
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.warning(f"Fact extraction failed for article {article_id}: {e}")
 
-        # Fallback: extract basic facts using patterns
+        # Soft miss only — pattern fallback must not run under CB/overload
         return self._extract_facts_fallback(article_id, title, content, url, published_at)
 
     def _extract_facts_fallback(
@@ -976,31 +976,47 @@ Write in neutral, encyclopedic tone. Be informative and comprehensive."""
     # =========================================================================
 
     def _generate_llm_content(self, prompt: str, max_tokens: int = 500) -> str:
-        """Generate content using LLM"""
+        """Generate content using LLM via CB hub."""
         try:
-            response = requests.post(
-                f"{OLLAMA_BASE_URL}/api/generate",
-                json={
-                    "model": LLM_MODEL,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"num_predict": max_tokens, "temperature": 0.7},
-                },
-                timeout=LLM_TIMEOUT,
-            )
+            from shared.services.llm_service import ollama_generate_sync
 
-            if response.status_code == 200:
-                return response.json().get("response", "").strip()
+            text = ollama_generate_sync(
+                prompt,
+                model=LLM_MODEL,
+                max_tokens=max_tokens,
+                ollama_base_url=OLLAMA_BASE_URL,
+            )
+            if text:
+                return text.strip()
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"LLM generation failed: {e}")
 
         return f"[Content generation failed for this section. Topic: {prompt[:100]}...]"
 
     def iter_stream_llm_content(self, prompt: str, max_tokens: int = 800):
-        """Yield text chunks from Ollama streaming /api/generate (interactive synthesis preview)."""
+        """Yield text chunks from Ollama streaming /api/generate.
+
+        **Interactive preview only** (desk presence). Batch/automation must use
+        ``ollama_generate_sync`` / hub generate — not this streamer.
+
+        Admission: shed gate + treat timeout/502–504 as overload (no trip);
+        ConnectError trips hard shed like the hub.
+        """
         import json as _json
 
         try:
+            from services.circuit_breaker_service import (
+                any_ollama_circuit_shedding,
+                get_circuit_breaker_service,
+            )
+
+            if any_ollama_circuit_shedding():
+                yield "[Ollama circuit shedding — stream deferred]"
+                return
             with requests.post(
                 f"{OLLAMA_BASE_URL}/api/generate",
                 json={
@@ -1013,7 +1029,11 @@ Write in neutral, encyclopedic tone. Be informative and comprehensive."""
                 timeout=LLM_TIMEOUT,
                 stream=True,
             ) as response:
+                if response.status_code in (502, 503, 504):
+                    yield f"[Ollama overloaded (HTTP {response.status_code}) — stream deferred]"
+                    return
                 if response.status_code != 200:
+                    # Soft failure (not overload): do not invent content
                     yield f"[Stream error: HTTP {response.status_code}]"
                     return
                 for raw in response.iter_lines(decode_unicode=True):
@@ -1028,6 +1048,17 @@ Write in neutral, encyclopedic tone. Be informative and comprehensive."""
                         yield chunk
                     if payload.get("done"):
                         break
+        except requests.exceptions.Timeout:
+            yield "[Ollama overloaded (request timed out) — stream deferred]"
+        except requests.exceptions.ConnectionError as e:
+            try:
+                get_circuit_breaker_service().get_circuit_breaker("ollama").record_failure_sync(
+                    force_open=True
+                )
+            except Exception:
+                pass
+            logger.error("LLM stream connect failed: %s", e)
+            yield "[Ollama unreachable — stream deferred (circuit shed)]"
         except Exception as e:
             logger.error("LLM stream generation failed: %s", e)
             yield f"[Content stream failed: {e}]"
@@ -1084,17 +1115,24 @@ Write in neutral, encyclopedic tone. Be informative and comprehensive."""
             if term.lower() in key.lower() or term.lower() in entity.name.lower():
                 return entity.description
 
-        # Fall back to LLM
+        # Fall back to LLM via CB hub
         prompt = f"Explain '{term}' in 1-2 sentences for a general audience. Be concise and clear."
         try:
-            response = requests.post(
-                f"{OLLAMA_BASE_URL}/api/generate",
-                json={"model": LLM_MODEL, "prompt": prompt, "stream": False},
-                timeout=30,
+            from shared.services.llm_service import ollama_generate_sync
+
+            text = ollama_generate_sync(
+                prompt,
+                model=LLM_MODEL,
+                max_tokens=200,
+                ollama_base_url=OLLAMA_BASE_URL,
             )
-            if response.status_code == 200:
-                return response.json().get("response", "").strip()[:200]
-        except:
+            if text:
+                return text.strip()[:200]
+        except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             pass
 
         return None

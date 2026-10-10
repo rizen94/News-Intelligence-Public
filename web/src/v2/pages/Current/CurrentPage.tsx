@@ -19,8 +19,8 @@ export default function CurrentPage() {
         Long-running arcs
       </h1>
       <p style={{ color: 'var(--v2-ink-muted)', maxWidth: '36rem' }}>
-        Mega storylines, parent trees, and high-cadence coverage — last
-        meaningful beat, not a raw article dump.
+        Biggest, most updated, longest-running vault notes for living events —
+        each opens as its own storyline article.
       </p>
       <hr className='v2-section-rule' />
       {error ? <p className='v2-empty'>{error}</p> : null}

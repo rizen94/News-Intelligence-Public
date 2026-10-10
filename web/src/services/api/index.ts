@@ -2,6 +2,11 @@
  * API domain modules — load only what you need.
  */
 export { articlesApi } from './articles';
+export { readerApi } from './readerResearch';
+export type {
+  ResearchSubjectSummary,
+  ResearchSubjectBoard,
+} from './readerResearch';
 export { watchlistApi } from './watchlist';
 export { storylinesApi } from './storylines';
 export { topicsApi } from './topics';

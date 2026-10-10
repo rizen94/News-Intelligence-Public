@@ -435,14 +435,91 @@ class StoryContinuationService:
         cursor = self.conn.cursor()
         schema = self.schema or "public"
         try:
-            storyline_id = match["storyline_id"]
+            storyline_id = int(match["storyline_id"])
+            event_id = int(event["id"])
+            article_id = event.get("source_article_id") or event.get("article_id")
+            domain_key = getattr(self, "domain_key", None) or ""
+            if not domain_key:
+                try:
+                    from shared.domain_registry import schema_to_primary_domain_key
+
+                    domain_key = schema_to_primary_domain_key(schema)
+                except Exception:
+                    domain_key = schema.replace("_", "-") if schema and schema != "public" else "politics"
+
+            # Prefer episode attach gate + EEL when assembly is on.
+            gated = False
+            try:
+                from shared.episode_attach_gate import (
+                    allow_event_episode_attach,
+                    episode_container_assembly_enabled,
+                    insert_event_episode_link,
+                    lock_episode_signature,
+                )
+
+                if episode_container_assembly_enabled():
+                    ok, reason, details = allow_event_episode_attach(
+                        self.conn,
+                        domain_key=domain_key,
+                        schema=schema,
+                        episode_id=storyline_id,
+                        event_id=event_id,
+                        article_id=int(article_id) if article_id else None,
+                        blend_rank=float(match.get("confidence") or 0.0) or None,
+                    )
+                    if not ok:
+                        logger.info(
+                            "Continuation gate rejected event %s -> episode %s (%s)",
+                            event_id,
+                            storyline_id,
+                            reason,
+                        )
+                        self.conn.rollback()
+                        return
+                    link_type = details.get("link_type") or "continuation"
+                    if link_type == "founding" and details.get("seed_signature"):
+                        lock_episode_signature(
+                            cursor, schema, storyline_id, details["seed_signature"]
+                        )
+                    insert_event_episode_link(
+                        cursor,
+                        event_id=event_id,
+                        domain_key=domain_key,
+                        episode_id=storyline_id,
+                        link_type=link_type,
+                        matched_anchors=list(details.get("matched_anchors") or []),
+                        inference_stage="established"
+                        if match.get("auto_linked")
+                        else "candidate",
+                        blend_rank=float(match.get("confidence") or 0.0) or None,
+                        added_by="story_continuation",
+                        metadata={
+                            "confidence": match.get("confidence"),
+                            "reasoning": (match.get("reasoning") or "")[:500],
+                        },
+                    )
+                    gated = True
+            except Exception as gate_e:
+                logger.warning(
+                    "Continuation gate path failed event=%s episode=%s: %s",
+                    event_id,
+                    storyline_id,
+                    gate_e,
+                )
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
+                cursor = self.conn.cursor()
+
+            # Always stamp CE for legacy readers; EEL is SSOT when gated.
             cursor.execute(
                 """
                 UPDATE chronological_events
                 SET storyline_id = %s::text
                 WHERE id = %s
             """,
-                (storyline_id, event["id"]),
+                (storyline_id, event_id),
             )
 
             # Reactivate dormant storylines
@@ -473,8 +550,9 @@ class StoryContinuationService:
             self.conn.commit()
             self.update_entity_index(storyline_id)
             logger.info(
-                f"Linked event {event['id']} to storyline {storyline_id} "
-                f"(confidence={match.get('confidence', 0):.2f}, auto={match.get('auto_linked')})"
+                f"Linked event {event_id} to storyline {storyline_id} "
+                f"(confidence={match.get('confidence', 0):.2f}, auto={match.get('auto_linked')}, "
+                f"gated={gated})"
             )
         except Exception as e:
             logger.error(f"Event linking failed: {e}")

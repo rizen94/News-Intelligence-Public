@@ -16,6 +16,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ def _project_root() -> Path:
 
 
 def _queue_dir() -> Path:
-    raw = os.getenv("DB_PENDING_WRITES_DIR")
+    raw = env_str("DB_PENDING_WRITES_DIR")
     if raw:
         return Path(raw)
     return _project_root() / ".local" / "db_pending_writes"
@@ -46,6 +47,8 @@ def enqueue_automation_run_history(
     finished_at: str,
     success: bool,
     error_message: str | None,
+    *,
+    metadata: str | None = None,
 ) -> None:
     """Append one automation_run_history-equivalent row for later flush."""
     rec = {
@@ -55,6 +58,7 @@ def enqueue_automation_run_history(
         "finished_at": finished_at,
         "success": success,
         "error_message": error_message,
+        "metadata": metadata,
         "enqueued_at": datetime.utcnow().isoformat() + "Z",
     }
     _append_record(rec)
@@ -81,6 +85,19 @@ def pending_line_count() -> int:
         return 0
 
 
+def _pending_line_is_irrecoverable(line: str) -> bool:
+    """True for NUL/garbage/non-JSON lines that can never be flushed."""
+    if not line or not line.strip():
+        return True
+    if "\x00" in line:
+        return True
+    try:
+        json.loads(line)
+    except json.JSONDecodeError:
+        return True
+    return False
+
+
 def flush_pending_writes() -> dict[str, Any]:
     """
     Replay queued records. Returns stats dict.
@@ -91,16 +108,25 @@ def flush_pending_writes() -> dict[str, Any]:
 
     with _lock:
         try:
-            lines = path.read_text(encoding="utf-8").splitlines()
+            # Binary-safe read: a NUL-corrupted spill is valid UTF-8 but not JSON.
+            raw = path.read_bytes()
         except OSError as e:
             logger.warning("pending_db_writes: cannot read %s: %s", path, e)
             return {"flushed": 0, "failed": 0, "skipped": 0, "error": str(e)}
 
+        if not raw.strip():
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return {"flushed": 0, "failed": 0, "skipped": 0}
+
+        lines = raw.decode("utf-8", errors="replace").splitlines()
         if not lines:
             return {"flushed": 0, "failed": 0, "skipped": 0}
 
         remaining: list[str] = []
-        flushed = failed = skipped = 0
+        flushed = failed = skipped = discarded = 0
 
         try:
             from shared.database.connection import get_db_connection
@@ -120,27 +146,41 @@ def flush_pending_writes() -> dict[str, Any]:
                 line = line.strip()
                 if not line:
                     continue
+                if _pending_line_is_irrecoverable(line):
+                    discarded += 1
+                    logger.warning(
+                        "pending_db_writes: discarding irrecoverable spill line (%d bytes, nul=%s)",
+                        len(line),
+                        "\x00" in line,
+                    )
+                    continue
                 try:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
-                    skipped += 1
-                    remaining.append(line)
+                    discarded += 1
                     continue
                 rtype = rec.get("type")
                 if rtype == "automation_run_history":
                     try:
+                        err = rec.get("error_message")
+                        meta = rec.get("metadata")
+                        if meta and err and str(err).strip().startswith('{"batch":'):
+                            err = None
                         with conn.cursor() as cur:
                             cur.execute(
                                 """
-                                INSERT INTO automation_run_history (phase_name, started_at, finished_at, success, error_message)
-                                VALUES (%s, %s, %s, %s, %s)
+                                INSERT INTO automation_run_history (
+                                    phase_name, started_at, finished_at, success, error_message, metadata
+                                )
+                                VALUES (%s, %s, %s, %s, %s, COALESCE(%s::jsonb, '{}'::jsonb))
                                 """,
                                 (
                                     rec.get("phase_name"),
                                     rec.get("started_at"),
                                     rec.get("finished_at"),
                                     rec.get("success"),
-                                    rec.get("error_message"),
+                                    err,
+                                    meta,
                                 ),
                             )
                         conn.commit()
@@ -177,4 +217,7 @@ def flush_pending_writes() -> dict[str, Any]:
         except Exception:
             pass
 
-        return {"flushed": flushed, "failed": failed, "skipped": skipped}
+        out = {"flushed": flushed, "failed": failed, "skipped": skipped}
+        if discarded:
+            out["discarded"] = discarded
+        return out

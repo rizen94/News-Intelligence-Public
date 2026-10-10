@@ -1,11 +1,14 @@
 /**
- * Domain filter for v2 — query param ?domain=, not URL spine.
+ * Domain filter for News — query param ?domain=, not URL spine.
+ * Default (no param) = politics — same as former /v2?domain=politics home.
+ * Use domain=all for cross-domain feeds.
  */
 import React from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { getDefaultDomainKey } from '../../utils/domainHelper';
 
 const DOMAINS = [
-  { value: '', label: 'All domains' },
+  { value: 'all', label: 'All domains' },
   { value: 'politics', label: 'Politics' },
   { value: 'finance', label: 'Finance' },
   { value: 'legal', label: 'Legal' },
@@ -13,15 +16,34 @@ const DOMAINS = [
   { value: 'artificial-intelligence', label: 'AI' },
 ];
 
+/** Active domain for reader APIs. Null = all domains. */
 export function useV2Domain(): string | null {
   const [params] = useSearchParams();
-  const d = params.get('domain');
-  return d && d.trim() ? d.trim().toLowerCase() : null;
+  if (!params.has('domain')) {
+    return getDefaultDomainKey();
+  }
+  const d = (params.get('domain') || '').trim().toLowerCase();
+  if (!d || d === 'all') {
+    return null;
+  }
+  return d;
+}
+
+/** Value shown in the domain select. */
+function selectValue(params: URLSearchParams): string {
+  if (!params.has('domain')) {
+    return getDefaultDomainKey();
+  }
+  const d = (params.get('domain') || '').trim().toLowerCase();
+  if (!d || d === 'all') {
+    return 'all';
+  }
+  return d;
 }
 
 export function DomainFilter() {
   const [params, setParams] = useSearchParams();
-  const current = params.get('domain') || '';
+  const current = selectValue(params);
 
   return (
     <label className='v2-chrome-actions' style={{ gap: '0.35rem' }}>
@@ -32,15 +54,20 @@ export function DomainFilter() {
         aria-label='Filter by domain'
         onChange={e => {
           const next = new URLSearchParams(params);
-          if (e.target.value) next.set('domain', e.target.value);
-          else next.delete('domain');
-          // Reset page when domain changes
+          const v = e.target.value;
+          if (v === 'all') {
+            next.set('domain', 'all');
+          } else if (v) {
+            next.set('domain', v);
+          } else {
+            next.delete('domain');
+          }
           next.delete('page');
           setParams(next, { replace: true });
         }}
       >
         {DOMAINS.map(d => (
-          <option key={d.value || 'all'} value={d.value}>
+          <option key={d.value} value={d.value}>
             {d.label}
           </option>
         ))}
@@ -50,18 +77,17 @@ export function DomainFilter() {
 }
 
 export function withDomainQuery(path: string, domain: string | null): string {
-  if (!domain) return path;
+  const effective = domain ?? 'all';
   try {
-    // Absolute or root-relative — avoid duplicating ?domain=
     const url = new URL(path, 'https://ni.local');
-    if (url.searchParams.get('domain') === domain) {
+    if (url.searchParams.get('domain') === effective) {
       return `${url.pathname}${url.search}${url.hash}`;
     }
-    url.searchParams.set('domain', domain);
+    url.searchParams.set('domain', effective);
     return `${url.pathname}${url.search}${url.hash}`;
   } catch {
     if (path.includes('domain=')) return path;
     const join = path.includes('?') ? '&' : '?';
-    return `${path}${join}domain=${encodeURIComponent(domain)}`;
+    return `${path}${join}domain=${encodeURIComponent(effective)}`;
   }
 }

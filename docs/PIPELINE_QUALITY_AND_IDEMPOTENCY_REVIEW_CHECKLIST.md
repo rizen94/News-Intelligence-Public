@@ -274,10 +274,12 @@ RSS-only path: `_execute_rss_processing` (invoked from collection cycle).
 ## §4 `SKIP_WHEN_EMPTY` membership (from `backlog_metrics.py`)
 
 **Y — in `SKIP_WHEN_EMPTY`:**  
-`content_enrichment`, `context_sync`, `event_tracking`, `claim_extraction`, `entity_profile_build`, `investigation_report_refresh`, `pending_db_flush`, `nightly_enrichment_context`, `metadata_enrichment`, `ml_processing`, `entity_extraction`, `sentiment_analysis`, `quality_scoring`, `storyline_processing`, `topic_clustering`, `timeline_generation`, `storyline_discovery`, `proactive_detection`, `storyline_automation`, `rag_enhancement`, `event_extraction`, `claims_to_facts`, `legislative_references`, `entity_profile_sync`, `entity_enrichment`, `entity_dossier_compile`, `story_enhancement`, `storyline_synthesis`, `graph_connection_distillation`
+`content_enrichment`, `context_sync`, `event_tracking`, `claim_extraction`, `entity_profile_build`, `investigation_report_refresh`, `pending_db_flush`, `nightly_enrichment_context`, `metadata_enrichment`, `ml_processing`, `entity_extraction`, `sentiment_analysis`, `quality_scoring`, `storyline_processing`, `topic_clustering`, `timeline_generation`, `storyline_discovery`, `proactive_detection`, `storyline_automation`, `rag_enhancement`, `event_extraction`, `claims_to_facts`, `legislative_references`, `entity_profile_sync`, `entity_enrichment`, `entity_dossier_compile`, `story_enhancement`, `storyline_synthesis`, `graph_connection_distillation`, `extracted_claims_dedupe`, `event_deduplication`, `story_continuation`, `event_coherence_review`
 
 **N — not in set (interval can fire at zero pending):**  
-`collection_cycle`, `document_processing`, `claim_subject_gap_refresh`, `extracted_claims_dedupe`, `event_coherence_review`, `cross_domain_synthesis`, `pattern_recognition`, `entity_position_tracker`, `entity_organizer`, `fact_verification`, `storyline_enrichment`, `event_deduplication`, `story_continuation`, `content_refinement_queue`, `cache_cleanup`, `editorial_document_generation`, `editorial_briefing_generation`, `digest_generation`, `daily_briefing_synthesis`, `watchlist_alerts`, `pattern_matching`, `research_topic_refinement`, `narrative_thread_build`, `data_cleanup`, `health_check`
+`collection_cycle`, `document_processing`, `claim_subject_gap_refresh`, `cross_domain_synthesis`, `pattern_recognition`, `entity_position_tracker`, `entity_organizer`, `fact_verification`, `storyline_enrichment`, `content_refinement_queue`, `cache_cleanup`, `watchlist_alerts`, `pattern_matching`, `research_topic_refinement`, `narrative_thread_build`, `data_cleanup`, `health_check`
+
+Hard-retired schedules (no default schedule entry): `editorial_document_generation`, `editorial_briefing_generation`, `digest_generation`, `daily_briefing_synthesis` (see `shared/retired_phase_registry.py`).
 
 ---
 

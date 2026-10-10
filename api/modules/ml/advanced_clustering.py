@@ -49,8 +49,8 @@ class LocalAdvancedClustering:
     No training required - uses pre-trained embeddings and clustering algorithms
     """
     
-    def __init__(self, ollama_url: str = "http://localhost:11434"):
-        self.ollama_url = ollama_url
+    def __init__(self, ollama_url: str | None = None):
+        self.ollama_url = (ollama_url or __import__("os").environ.get("OLLAMA_HOST") or __import__("os").environ.get("OLLAMA_URL") or "http://127.0.0.1:11434").rstrip("/")
         self.available_models = ["llama3.1:8b", "llama3.1:405b", "nomic-embed-text"]
         self.default_model = "nomic-embed-text"  # Best for embeddings (8b/405b available for LLM)
         self.cache = {}  # Simple in-memory cache
@@ -166,8 +166,12 @@ class LocalAdvancedClustering:
             return result
             
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error in clustering: {e}")
-            # Return empty result on error
+            # Soft miss only — never invent clusters under CB/overload
             return ClusteringAnalysis(
                 clusters=[],
                 total_articles=len(articles) if articles else 0,
@@ -210,32 +214,25 @@ class LocalAdvancedClustering:
             return np.array(embeddings)
             
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error generating embeddings: {e}")
-            # Fallback to TF-IDF
+            # Soft-miss only: TF-IDF when hub is reachable but model path failed
             return self._generate_tfidf_embeddings(texts)
     
     def _call_embedding_model(self, texts: List[str], model: str) -> List[List[float]]:
-        """Call specialized embedding model"""
+        """Call specialized embedding model via CB hub."""
         try:
+            from shared.services.llm_service import ollama_embed_sync
+
             embeddings = []
-            
             for text in texts:
-                response = requests.post(
-                    f"{self.ollama_url}/api/embeddings",
-                    json={
-                        "model": model,
-                        "prompt": text
-                    },
-                    timeout=30
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    embedding = data.get('embedding', [])
-                    embeddings.append(embedding)
-                else:
-                    raise Exception(f"Embedding API error: {response.status_code}")
-            
+                embedding = ollama_embed_sync(text, model=model)
+                if not embedding:
+                    raise Exception("Embedding API returned empty vector")
+                embeddings.append(embedding)
             return embeddings
             
         except Exception as e:
@@ -243,12 +240,12 @@ class LocalAdvancedClustering:
             raise
     
     def _call_llm_for_embeddings(self, texts: List[str], model: str) -> List[List[float]]:
-        """Use general LLM to generate embeddings"""
+        """Use general LLM to generate embeddings via CB hub."""
         try:
+            from shared.services.llm_service import ollama_generate_sync
+
             embeddings = []
-            
             for text in texts:
-                # Create prompt for embedding generation
                 prompt = f"""
 Convert the following text into a numerical vector representation (embedding) that captures its semantic meaning.
 
@@ -259,38 +256,14 @@ The embedding should be 384 numbers long.
 
 Format: [0.1, -0.2, 0.3, ...]
 """
-                
-                response = requests.post(
-                    f"{self.ollama_url}/api/generate",
-                    json={
-                        "model": model,
-                        "prompt": prompt,
-                        "options": {
-                            "temperature": 0.1,
-                            "num_predict": 500
-                        }
-                    },
-                    timeout=30
+                result = ollama_generate_sync(
+                    prompt,
+                    model=model,
+                    max_tokens=500,
+                    ollama_base_url=self.ollama_url,
                 )
-                
-                if response.status_code == 200:
-                    # Parse response to extract embedding
-                    result = ""
-                    for line in response.text.split('\n'):
-                        if line.strip():
-                            try:
-                                data = json.loads(line)
-                                if 'response' in data:
-                                    result += data['response']
-                            except json.JSONDecodeError:
-                                continue
-                    
-                    # Extract embedding from response
-                    embedding = self._parse_embedding_response(result)
-                    embeddings.append(embedding)
-                else:
-                    raise Exception(f"LLM API error: {response.status_code}")
-            
+                embedding = self._parse_embedding_response(result or "")
+                embeddings.append(embedding)
             return embeddings
             
         except Exception as e:
@@ -314,12 +287,12 @@ Format: [0.1, -0.2, 0.3, ...]
                     embedding = [max(-1, min(1, float(x))) for x in embedding]
                     return embedding
             
-            # Fallback: generate random embedding
-            return [np.random.uniform(-1, 1) for _ in range(384)]
+            # Soft miss — never invent random embeddings (looks like success)
+            return []
             
         except Exception as e:
             logger.error(f"Error parsing embedding response: {e}")
-            return [np.random.uniform(-1, 1) for _ in range(384)]
+            return []
     
     def _generate_tfidf_embeddings(self, texts: List[str]) -> np.ndarray:
         """Generate TF-IDF embeddings as fallback"""
@@ -468,30 +441,15 @@ Guidelines:
 - Be objective and factual
 """
             
-            response = requests.post(
-                f"{self.ollama_url}/api/generate",
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "options": {
-                        "temperature": 0.3,
-                        "num_predict": 300
-                    }
-                },
-                timeout=30
+            from shared.services.llm_service import ollama_generate_sync
+
+            result = ollama_generate_sync(
+                prompt,
+                model=model,
+                max_tokens=300,
+                ollama_base_url=self.ollama_url,
             )
-            
-            if response.status_code == 200:
-                result = ""
-                for line in response.text.split('\n'):
-                    if line.strip():
-                        try:
-                            data = json.loads(line)
-                            if 'response' in data:
-                                result += data['response']
-                        except json.JSONDecodeError:
-                            continue
-                
+            if result:
                 # Parse response
                 json_start = result.find('{')
                 json_end = result.rfind('}') + 1
@@ -501,10 +459,14 @@ Guidelines:
                     data = json.loads(json_str)
                     return data.get('keywords', []), data.get('summary', 'No summary available')
             
-            # Fallback
+            # Soft miss parse path
             return ["topic1", "topic2", "topic3"], "Cluster of related articles"
             
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error analyzing cluster content: {e}")
             return ["topic1", "topic2", "topic3"], "Cluster of related articles"
     

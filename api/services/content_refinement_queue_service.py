@@ -17,8 +17,10 @@ when the refinement phase is starved (`AUTO_ENQUEUE_RAG_SCHEDULER_SECONDS`).
 Nightly pipeline (America/New_York by default): automation phase `nightly_enrichment_context` runs
 02:00–07:00 (`NIGHTLY_PIPELINE_*`): kickoff RSS once per local day, drain enrichment and context_sync,
 run configured sequential automation phases (see `nightly_ingest_window_service`), then this queue with
-higher per-batch caps. When enrichment, context, sequential metrics, and this queue are all idle, the
-phase exits and normal automation resumes (`NIGHTLY_PIPELINE_EXCLUSIVE` off-hours scheduling).
+higher per-batch caps. Before the nightly drain loop, `auto_enqueue_narrow_debt_narrative_finishers()`
+force-queues ~70B finishers for storylines with deferred narrow evidence debt. When enrichment,
+context, sequential metrics, and this queue are all idle, the phase exits and normal automation
+resumes (`NIGHTLY_PIPELINE_EXCLUSIVE` off-hours scheduling).
 """
 
 from __future__ import annotations
@@ -253,6 +255,105 @@ def enqueue_initial_narrative_finisher(
     )
 
 
+def maybe_enqueue_narrative_finisher_on_membership(
+    domain_key: str,
+    storyline_id: int,
+    *,
+    source: str,
+    article_id: int | None = None,
+    intent: str | None = None,
+) -> dict[str, Any]:
+    """
+    After a successful membership attach: enqueue ~70B finisher only when needed.
+
+    - Empty canonical → initial high-priority finisher
+    - Material evidence delta → refresh finisher
+    - Narrow delta → mark narrow_debt_pending (nightly drain); no enqueue
+    - Unchanged fingerprint → no-op
+
+    Disabled with STORYLINE_ENQUEUE_FINISHER_ON_NEW_ARTICLE=0.
+    """
+    if os.getenv("STORYLINE_ENQUEUE_FINISHER_ON_NEW_ARTICLE", "1").strip().lower() in (
+        "0",
+        "false",
+        "no",
+        "off",
+    ):
+        return {"success": True, "skipped": True, "reason": "disabled_by_env"}
+
+    try:
+        if storyline_needs_initial_master_narrative(domain_key, storyline_id):
+            out = enqueue_initial_narrative_finisher(
+                domain_key, storyline_id, source=source
+            )
+            out["materiality_class"] = "initial"
+            return out
+
+        from services.storyline_narrative_finisher_service import PROMPT_VERSION
+        from services.storyline_narrative_materiality import (
+            classify_narrative_materiality,
+            set_narrow_debt_pending,
+        )
+
+        decision = classify_narrative_materiality(
+            domain_key, storyline_id, prompt_version=PROMPT_VERSION
+        )
+        action = decision.get("action") or "run"
+        meta_base: dict[str, Any] = {
+            "finisher_pass": "refresh",
+            "source": source,
+            "materiality_class": decision.get("class"),
+            "materiality_reason": decision.get("reason"),
+        }
+        if article_id is not None:
+            meta_base["article_id"] = int(article_id)
+        if intent:
+            meta_base["membership_intent"] = str(intent)
+
+        if action == "run":
+            out = enqueue_content_refinement(
+                domain_key,
+                storyline_id,
+                JOB_NARRATIVE_FINISHER,
+                priority="medium",
+                metadata=meta_base,
+            )
+            out["materiality_class"] = decision.get("class")
+            out["materiality_reason"] = decision.get("reason")
+            return out
+
+        if action == "defer":
+            set_narrow_debt_pending(
+                domain_key,
+                storyline_id,
+                pending=True,
+                reason=str(decision.get("reason") or "narrow_delta"),
+            )
+            return {
+                "success": True,
+                "skipped": True,
+                "reason": "narrow_deferred",
+                "materiality_class": decision.get("class"),
+                "materiality_reason": decision.get("reason"),
+            }
+
+        return {
+            "success": True,
+            "skipped": True,
+            "reason": "fingerprint_match",
+            "materiality_class": decision.get("class"),
+            "materiality_reason": decision.get("reason"),
+        }
+    except Exception as e:
+        logger.debug(
+            "maybe_enqueue_narrative_finisher_on_membership %s/%s: %s",
+            domain_key,
+            storyline_id,
+            e,
+        )
+        return {"success": False, "error": str(e)}
+
+
 def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
     """
     Enqueue comprehensive_rag (deep storyline analysis) for storylines that should not depend
@@ -386,6 +487,121 @@ def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
             stats["already_queued"],
             stats.get("errors", 0),
             stats.get("by_domain", {}),
+        )
+    return stats
+
+
+def auto_enqueue_narrow_debt_narrative_finishers() -> dict[str, Any]:
+    """
+    Force-enqueue narrative_finisher for storylines with narrow_debt_pending.
+
+    Called from the nightly GPU refinement drain so deferred (+1 article / chrono-only)
+    deltas still get a full ~70B rewrite after they age, without thrashing daytime GPU.
+    """
+    from services.storyline_narrative_materiality import (
+        narrow_debt_drain_enabled,
+        narrow_debt_min_age_hours,
+        narrow_debt_per_domain_limit,
+    )
+
+    if not narrow_debt_drain_enabled():
+        return {"skipped": True, "reason": "disabled_by_env", "enqueued": 0}
+
+    min_age_h = narrow_debt_min_age_hours()
+    limit = narrow_debt_per_domain_limit()
+    stats: dict[str, Any] = {
+        "enqueued": 0,
+        "already_queued": 0,
+        "errors": 0,
+        "by_domain": {},
+        "min_age_hours": min_age_h,
+    }
+
+    for domain_key in sorted(get_active_domain_keys()):
+        schema = domain_key.replace("-", "_")
+        d_stats = {"enqueued": 0, "already_queued": 0}
+        conn = get_db_connection()
+        if not conn:
+            stats["errors"] += 1
+            continue
+        rows: list[int] = []
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT s.id
+                    FROM {schema}.storylines s
+                    WHERE s.status = 'active'
+                      AND s.canonical_narrative IS NOT NULL
+                      AND btrim(s.canonical_narrative) <> ''
+                      AND COALESCE(s.narrative_finisher_meta->>'narrow_debt_pending', 'false')
+                          IN ('true', 't', '1')
+                      AND (
+                        %s <= 0
+                        OR COALESCE(
+                             NULLIF(s.narrative_finisher_meta->>'narrow_debt_at', '')::timestamptz,
+                             s.narrative_finisher_at,
+                             s.updated_at
+                           ) <= NOW() - (%s * INTERVAL '1 hour')
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM intelligence.content_refinement_queue q
+                          WHERE q.domain_key = %s
+                            AND q.storyline_id = s.id
+                            AND q.job_type = %s
+                            AND q.status IN ('pending', 'processing')
+                      )
+                    ORDER BY COALESCE(
+                      NULLIF(s.narrative_finisher_meta->>'narrow_debt_at', '')::timestamptz,
+                      s.narrative_finisher_at,
+                      s.updated_at
+                    ) ASC NULLS FIRST
+                    LIMIT %s
+                    """,
+                    (min_age_h, min_age_h, domain_key, JOB_NARRATIVE_FINISHER, limit),
+                )
+                rows = [int(r[0]) for r in cur.fetchall() or []]
+        except Exception as e:
+            logger.warning("narrow_debt_drain domain=%s: %s", domain_key, e)
+            stats["errors"] += 1
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            rows = []
+        finally:
+            conn.close()
+
+        for sid in rows:
+            res = enqueue_content_refinement(
+                domain_key,
+                sid,
+                JOB_NARRATIVE_FINISHER,
+                priority="medium",
+                metadata={
+                    "source": "narrow_debt_drain",
+                    "force": True,
+                    "finisher_pass": "narrow_debt",
+                },
+            )
+            if not res.get("success"):
+                stats["errors"] += 1
+                continue
+            if res.get("already_queued"):
+                d_stats["already_queued"] += 1
+                stats["already_queued"] += 1
+            else:
+                d_stats["enqueued"] += 1
+                stats["enqueued"] += 1
+        stats["by_domain"][domain_key] = d_stats
+
+    if stats["enqueued"] or stats["already_queued"] or stats["errors"]:
+        logger.info(
+            "narrow_debt_drain: enqueued=%s already_queued=%s errors=%s by_domain=%s",
+            stats["enqueued"],
+            stats["already_queued"],
+            stats["errors"],
+            stats["by_domain"],
         )
     return stats
 
@@ -531,21 +747,40 @@ def _claim_pending_batch(conn, limit: int) -> list[tuple[Any, ...]]:
         return list(cur.fetchall())
 
 
-def _complete_job(job_id: int, ok: bool, err: str | None = None) -> None:
+def _complete_job(
+    job_id: int,
+    ok: bool,
+    err: str | None = None,
+    *,
+    result_meta: dict[str, Any] | None = None,
+) -> None:
     conn = get_db_connection()
     if not conn:
         return
     try:
         with conn.cursor() as cur:
             if ok:
-                cur.execute(
-                    """
-                    UPDATE intelligence.content_refinement_queue
-                    SET status = 'completed', completed_at = NOW(), error_message = NULL
-                    WHERE id = %s
-                    """,
-                    (job_id,),
-                )
+                if result_meta:
+                    cur.execute(
+                        """
+                        UPDATE intelligence.content_refinement_queue
+                        SET status = 'completed',
+                            completed_at = NOW(),
+                            error_message = NULL,
+                            metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb
+                        WHERE id = %s
+                        """,
+                        (json.dumps(result_meta), job_id),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE intelligence.content_refinement_queue
+                        SET status = 'completed', completed_at = NOW(), error_message = NULL
+                        WHERE id = %s
+                        """,
+                        (job_id,),
+                    )
             else:
                 cur.execute(
                     """
@@ -573,16 +808,82 @@ async def _run_comprehensive_rag(domain_key: str, storyline_id: int) -> None:
     await process_storyline_rag_analysis(domain_key, storyline_id, storyline_tuple, articles)
 
 
-async def _run_narrative_finisher(domain_key: str, storyline_id: int) -> None:
+async def _run_narrative_finisher(
+    domain_key: str,
+    storyline_id: int,
+    *,
+    job_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """
+    Run ~70B narrative finisher, or skip/defer when evidence materiality gate says so.
+
+    Returns optional result_meta for the queue row (skip/defer reasons).
+    """
     from services.storyline_narrative_finisher_service import (
+        PROMPT_VERSION,
         persist_narrative_finish_to_db,
         run_narrative_finish_from_db,
     )
+    from services.storyline_narrative_materiality import classify_narrative_materiality
+
+    meta = job_metadata if isinstance(job_metadata, dict) else {}
+    force = bool(meta.get("force")) or str(meta.get("force") or "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    decision = classify_narrative_materiality(
+        domain_key,
+        storyline_id,
+        force=force,
+        prompt_version=PROMPT_VERSION,
+    )
+    action = decision.get("action") or "run"
+    if action in ("skip", "defer"):
+        reason_key = (
+            "skipped_materiality" if action == "skip" else "deferred_narrow"
+        )
+        logger.info(
+            "narrative_finisher %s domain=%s storyline_id=%s class=%s reason=%s",
+            action,
+            domain_key,
+            storyline_id,
+            decision.get("class"),
+            decision.get("reason"),
+        )
+        if action == "defer":
+            try:
+                from services.storyline_narrative_materiality import (
+                    set_narrow_debt_pending,
+                )
+
+                set_narrow_debt_pending(
+                    domain_key,
+                    storyline_id,
+                    pending=True,
+                    reason=str(decision.get("reason") or "narrow_delta"),
+                )
+            except Exception as debt_err:
+                logger.debug("narrow_debt mark on defer: %s", debt_err)
+        return {
+            reason_key: True,
+            "materiality_class": decision.get("class"),
+            "materiality_reason": decision.get("reason"),
+            "evidence_fingerprint": decision.get("fingerprint"),
+        }
 
     result = await run_narrative_finish_from_db(domain_key, storyline_id, parse_json=True)
     if not result.get("success"):
         raise RuntimeError(result.get("error", "finisher_failed"))
+    if decision.get("fingerprint"):
+        result["evidence_fingerprint"] = decision.get("fingerprint")
+        result["evidence_fingerprint_parts"] = decision.get("parts") or {}
     persist_narrative_finish_to_db(domain_key, storyline_id, result)
+    return {
+        "materiality_class": decision.get("class"),
+        "materiality_reason": decision.get("reason"),
+        "evidence_fingerprint": decision.get("fingerprint"),
+    }
 
 
 async def _run_headline_refiner(domain_key: str, storyline_id: int) -> None:
@@ -860,12 +1161,22 @@ async def process_content_refinement_queue_batch(
             pass
 
     for row in to_process:
-        job_id, domain_key, storyline_id, job_type, _priority, _metadata = row[:6]
+        job_id, domain_key, storyline_id, job_type, _priority, job_metadata = row[:6]
+        if isinstance(job_metadata, str):
+            try:
+                job_metadata = json.loads(job_metadata)
+            except (json.JSONDecodeError, TypeError):
+                job_metadata = {}
+        if not isinstance(job_metadata, dict):
+            job_metadata = {}
         try:
+            result_meta: dict[str, Any] | None = None
             if job_type == JOB_COMPREHENSIVE_RAG:
                 await _run_comprehensive_rag(domain_key, storyline_id)
             elif job_type == JOB_NARRATIVE_FINISHER:
-                await _run_narrative_finisher(domain_key, storyline_id)
+                result_meta = await _run_narrative_finisher(
+                    domain_key, storyline_id, job_metadata=job_metadata
+                )
             elif job_type == JOB_HEADLINE_REFINER:
                 await _run_headline_refiner(domain_key, storyline_id)
             elif job_type == JOB_TIMELINE_CHRONO:
@@ -875,9 +1186,13 @@ async def process_content_refinement_queue_batch(
             else:
                 raise RuntimeError(f"unknown_job_type:{job_type}")
 
-            _complete_job(job_id, True)
+            _complete_job(job_id, True, result_meta=result_meta)
             stats["processed"] += 1
             stats["by_type"][job_type] = stats["by_type"].get(job_type, 0) + 1
+            if result_meta and (
+                result_meta.get("skipped_materiality") or result_meta.get("deferred_narrow")
+            ):
+                stats["materiality_skipped"] = int(stats.get("materiality_skipped") or 0) + 1
         except Exception as e:
             logger.exception("content_refinement job %s failed: %s", job_id, e)
             _complete_job(job_id, False, str(e))
@@ -914,6 +1229,8 @@ async def _nightly_gpu_refinement_drain_inner(
         "stopped_reason": None,
     }
     auto_enqueue_comprehensive_rag_for_automation()
+    debt = auto_enqueue_narrow_debt_narrative_finishers()
+    aggregate["narrow_debt_drain"] = debt
     while aggregate["batches"] < _NIGHTLY_MAX_BATCH_LOOPS:
         if not window_active():
             aggregate["stopped_reason"] = "window_ended"

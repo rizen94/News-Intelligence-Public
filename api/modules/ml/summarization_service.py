@@ -17,7 +17,7 @@ class MLSummarizationService:
     AI-powered summarization service using Ollama and Llama 3.1
     """
     
-    def __init__(self, ollama_url: str = "http://localhost:11434", model_name: str = "llama3.1:8b"):
+    def __init__(self, ollama_url: str | None = None, model_name: str = "llama3.1:8b"):
         """
         Initialize the ML Summarization Service
         
@@ -25,7 +25,7 @@ class MLSummarizationService:
             ollama_url: URL of the Ollama service
             model_name: Name of the model to use for summarization
         """
-        self.ollama_url = ollama_url
+        self.ollama_url = (ollama_url or __import__("os").environ.get("OLLAMA_HOST") or __import__("os").environ.get("OLLAMA_URL") or "http://127.0.0.1:11434").rstrip("/")
         self.model_name = model_name
         self.timeout = 300  # 5 minutes timeout for large models
         self.ml_available = False
@@ -72,45 +72,27 @@ class MLSummarizationService:
             Generated text response
         """
         try:
-            payload = {
-                "model": self.model_name,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.3,  # Lower temperature for more consistent summaries
-                    "top_p": 0.9,
-                    "num_predict": 2000,  # Significantly increased for comprehensive analysis
-                    "stop": ["\n\n\n\n", "---", "##", "###", "####"]
-                }
-            }
-            
+            from shared.services.llm_service import ollama_generate_sync
+
+            full_prompt = prompt
             if system_prompt:
-                payload["system"] = system_prompt
-            
+                full_prompt = f"{system_prompt}\n\n{prompt}"
             logger.info(f"🤖 Calling Ollama with model: {self.model_name}")
             start_time = time.time()
-            
-            response = requests.post(
-                f"{self.ollama_url}/api/generate",
-                json=payload,
-                timeout=self.timeout
+            response_text = ollama_generate_sync(
+                full_prompt,
+                model=self.model_name,
+                max_tokens=2000,
+                ollama_base_url=self.ollama_url,
             )
-            
-            if response.status_code == 200:
-                result = response.json()
-                response_text = result.get('response', '').strip()
-                generation_time = time.time() - start_time
-                
-                logger.info(f"✅ Ollama response received in {generation_time:.2f}s")
-                return response_text
-            else:
-                logger.error(f"❌ Ollama API error: {response.status_code} - {response.text}")
-                return ""
-                
-        except requests.exceptions.Timeout:
-            logger.error(f"❌ Ollama request timeout after {self.timeout}s")
-            return ""
+            generation_time = time.time() - start_time
+            logger.info(f"✅ Ollama response received in {generation_time:.2f}s")
+            return response_text or ""
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"❌ Ollama API error: {e}")
             return ""
     
@@ -174,6 +156,10 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 }
                 
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"❌ Error generating summary: {e}")
             return {
                 "summary": "",
@@ -241,6 +227,10 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 }
                 
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"❌ Error extracting key points: {e}")
             return {
                 "key_points": [],
@@ -297,6 +287,10 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 }
                 
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"❌ Error analyzing arguments: {e}")
             return {
                 "argument_analysis": "",
@@ -369,6 +363,10 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 }
                 
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"❌ Error analyzing sentiment: {e}")
             return {
                 "sentiment": "neutral",
@@ -496,6 +494,10 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
             }
             
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"❌ Error summarizing articles: {e}")
             return {
                 "summary": "Error generating summary.",

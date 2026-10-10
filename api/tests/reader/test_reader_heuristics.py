@@ -63,3 +63,53 @@ def test_news_requires_dek_and_material_update():
     news_ids = {n["storyline_id"] for n in feeds["news"]}
     assert 1 in news_ids
     assert 2 not in news_ids
+
+
+def test_ai_thin_cluster_is_one_off_not_news():
+    now = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc)
+    rows = [
+        {
+            "id": 10,
+            "title": "Structured Driving-State Narratives for GNSS Spoofing",
+            "description": "arXiv paper on SLM-based spoofing detection.",
+            "editorial_document": {
+                "lede": "A Clemson team frames GNSS spoofing as a small-language-model classification task."
+            },
+            "updated_at": datetime(2026, 9, 20, 10, 0, tzinfo=timezone.utc),
+            "last_refinement": datetime(2026, 9, 20, 10, 0, tzinfo=timezone.utc),
+            "article_count": 1,
+            "parent_storyline_id": None,
+            "is_mega_storyline": False,
+            "created_at": datetime(2026, 9, 18, tzinfo=timezone.utc),
+            "articles_21d": 1,
+            "domain": "artificial-intelligence",
+            "last_article_added_at": datetime(2026, 9, 18, tzinfo=timezone.utc),
+        },
+        {
+            "id": 11,
+            "title": "Open-weight models under EU scrutiny",
+            "description": "Multiple papers and regulator actions over weeks.",
+            "editorial_document": {
+                "lede": "Regulators and labs trade claims as open-weight releases accelerate."
+            },
+            "updated_at": datetime(2026, 9, 20, 9, 0, tzinfo=timezone.utc),
+            "last_refinement": datetime(2026, 9, 20, 9, 0, tzinfo=timezone.utc),
+            "article_count": 5,
+            "parent_storyline_id": None,
+            "is_mega_storyline": False,
+            "created_at": datetime(2026, 8, 1, tzinfo=timezone.utc),
+            "articles_21d": 4,
+            "domain": "artificial-intelligence",
+            "last_article_added_at": datetime(2026, 9, 19, tzinfo=timezone.utc),
+        },
+    ]
+    feeds = classify_and_build_feeds(rows, now=now)
+    news_ids = {n["storyline_id"] for n in feeds["news"]}
+    one_off_ids = {n["storyline_id"] for n in feeds["one_offs"]}
+    assert 10 in one_off_ids
+    assert 10 not in news_ids
+    assert 11 in news_ids
+    assert 11 not in one_off_ids
+    paper = next(x for x in feeds["one_offs"] if x["storyline_id"] == 10)
+    assert "Paper" in paper["badges"]
+    assert paper["announced_on"] == "2026-09-18"

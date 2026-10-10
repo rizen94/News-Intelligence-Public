@@ -1,0 +1,8 @@
+[Unit]
+Description=Widow API health watchdog (recycle hung uvicorn)
+After=network-online.target news-intelligence-api-public.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/widow_api_health_watchdog.sh
+Nice=10

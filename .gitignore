@@ -35,11 +35,16 @@ __pycache__/
 
 # Environment files
 .env
-.env.local
-.env.production
+.env.*
+!.env.example
 configs/ddns.env
 config/.secrets
 api/config/.secrets
+
+# Local runtime / deploy stamps (not source)
+BUILD_INFO
+.config/
+.cursor/debug*
 
 # Logs
 *.log
@@ -68,7 +73,11 @@ api/temp/
 # Code assistant files (legacy)
 *code-assistant*
 *aider*
-*ollama*
+
+# Local Ollama runtime artifacts only (do NOT use *ollama* — it hid api/scripts and docs)
+/ollama/
+ollama.sock
+*.gguf
 
 # OS generated files
 .DS_Store

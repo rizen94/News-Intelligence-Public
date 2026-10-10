@@ -16,16 +16,17 @@ import {
 } from '../components/PaginationBar';
 import { withDomainQuery } from './useV2Domain';
 
-export type FeedSection = 'news' | 'current_events' | 'one_offs';
+export type FeedSection = 'news' | 'current_events' | 'one_offs' | 'research';
 
-const SECTION_KEY: Record<FeedSection, 'news' | 'current_events' | 'one_offs'> = {
+const SECTION_KEY: Record<FeedSection, 'news' | 'current_events' | 'one_offs' | 'research'> = {
   news: 'news',
   current_events: 'current_events',
   one_offs: 'one_offs',
+  research: 'research',
 };
 
 function withNavHref(it: { domain: string; storyline_id: number; href?: string }): NavId {
-  const base = it.href || `/v2/storylines/${it.domain}/${it.storyline_id}`;
+  const base = it.href || `/storylines/${it.domain}/${it.storyline_id}`;
   return {
     domain: it.domain,
     storyline_id: it.storyline_id,
@@ -57,7 +58,7 @@ export function usePagedFeed(section: FeedSection, pageSize = 12) {
         const list = ((res[key] as StoryUnit[]) || []).map(it => ({
           ...it,
           href: withDomainQuery(
-            it.href || `/v2/storylines/${it.domain}/${it.storyline_id}`,
+            it.href || `/storylines/${it.domain}/${it.storyline_id}`,
             it.domain || domain
           ),
         }));

@@ -59,7 +59,7 @@ export default function EntityDossierPage() {
       </h1>
       <div className='v2-hero-rule' />
       <p>
-        <Link to='/v2'>← Home</Link>
+        <Link to='/'>← Home</Link>
       </p>
       {error ? <p className='v2-empty'>{error}</p> : null}
       {!data && !error ? <p className='v2-empty'>Loading…</p> : null}

@@ -17,7 +17,9 @@ Each process that imports `shared.database.connection` holds **up to**:
 | Health | `DB_POOL_HEALTH_MIN` / `DB_POOL_HEALTH_MAX` | `health_check` + `automation_run_history` for that phase |
 | SQLAlchemy | `DB_POOL_SA_SIZE` / `DB_POOL_SA_OVERFLOW` | ORM paths |
 
-**Footprint rule:** sum, over **every** running process (API workers, automation host, scripts, cron), each pool’s **max** connections. That total must stay under PostgreSQL `max_connections` and any **PgBouncer** server pool limit.
+**Footprint rule:** sum, over **every** running process (API workers, automation host, PopOS phase workers, scripts, cron), each pool’s **max** connections. That total must stay under PostgreSQL `max_connections` and any **PgBouncer** server pool limit.
+
+Checkout uses **wait/retry** (UI 12s / worker 30s defaults). Cross-host backpressure: Widow/API publishes `db_pool_pressure_advisory`; PopOS workers defer drains when hot.
 
 See `docs/PGBOUNCER_AND_CONNECTION_BUDGET.md` and `docs/CODING_STYLE_GUIDE.md` (connection pools).
 
@@ -27,9 +29,11 @@ Relevant env vars (see `configs/env.example` and `api/services/automation_manage
 
 - `AUTOMATION_MAX_CONCURRENT_TASKS` — asyncio phase workers (fixed at process start).
 - `AUTOMATION_EXECUTOR_MAX_WORKERS` — `ThreadPoolExecutor` for sync CPU work.
-- `MAX_CONCURRENT_OLLAMA_TASKS` — global semaphore for Ollama-backed phase execution.
+- `MAX_CONCURRENT_OLLAMA_TASKS` — global semaphore for Ollama-backed phase execution (shared with topic workers via `get_shared_ollama_semaphore()`).
 - `OLLAMA_CPU_CONCURRENCY` / `OLLAMA_GPU_CONCURRENCY` — per-lane HTTP concurrency when dual-host routing is on (`api/shared/services/llm_service.py`).
 - `AUTOMATION_QUEUE_SOFT_CAP` — `0` = off (recommended); set only as a safety valve.
+
+**Ollama pressure model:** prefer **defer + trickle** over skip-and-burn; **shed** intake only when a CB is OPEN; **overload** (timeout/5xx) must not trip the breaker. Details: [`MONITOR_REPORTING_AND_METRICS.md`](MONITOR_REPORTING_AND_METRICS.md).
 
 **Rule:** raising one knob without headroom elsewhere (DB, GPU VRAM, Ollama queue) just moves the queue.
 
@@ -72,6 +76,7 @@ Scheduling is **not** “as fast as possible”; it is **controlled** so DB and 
 | `WORKLOAD_BALANCER_ENABLED` | Optional extra variable cooldown for some phases (default off in code). |
 | Resource router multipliers | `AUTOMATION_ROUTER_COOLDOWN_MULT_*` — soften or tighten backoff when CPU/GPU/DB look hot. |
 | `COLLECTION_THROTTLE_PENDING_THRESHOLD` | Slows RSS when downstream enrichment/context work is heavy. |
+| `any_ollama_circuit_shedding()` / `OLLAMA_CB_KEYS` | Hard shed of intake when an Ollama host breaker is OPEN. |
 | `AUTOMATION_QUEUE_SOFT_CAP` | Optional pause on most scheduled enqueues when queue depth is high (`0` = disabled). |
 
 **Unbounded enqueue** (infinite pending `Task` objects) is **debt**—use `0` soft cap only with monitoring, or a very high cap as a last-resort safety valve.

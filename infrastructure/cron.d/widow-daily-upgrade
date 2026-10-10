@@ -1,0 +1,5 @@
+# Widow daily apt — 03:30 local (quieter than 06:00 NI morning ramp).
+# Gated by disk IO governor inside widow-daily-upgrade.sh.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+30 3 * * * root /usr/local/sbin/widow-daily-upgrade.sh

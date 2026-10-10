@@ -14,6 +14,22 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# All Ollama host breakers — keep automation, health, and LLMService in sync.
+OLLAMA_CB_KEYS: tuple[str, ...] = (
+    "ollama",
+    "ollama_gpu",
+    "ollama_cpu",
+    "ollama_pop_os",
+)
+
+_OLLAMA_CB_CONFIG = dict(
+    failure_threshold=2,
+    recovery_timeout=300,
+    timeout=60,
+    retry_attempts=0,
+    success_threshold=1,  # one good probe closes after shed
+)
+
 
 class CircuitState(Enum):
     """Circuit breaker states"""
@@ -118,11 +134,16 @@ class CircuitBreaker:
 
     async def _close_circuit(self):
         """Close the circuit breaker"""
+        closed_after = self.success_count
         self.state = CircuitState.CLOSED
         self.failure_count = 0
         self.success_count = 0
         self.circuit_closed_count += 1
-        logger.info(f"Circuit breaker {self.name} closed after {self.success_count} successes")
+        logger.info(
+            "Circuit breaker %s closed after %s successes",
+            self.name,
+            closed_after,
+        )
 
     async def _execute_with_retry(self, func: Callable, *args, **kwargs) -> Any:
         """Execute function with retry logic"""
@@ -174,6 +195,14 @@ class CircuitBreaker:
 
     async def _record_success(self):
         """Record successful operation"""
+        # Match sync path: recovery-due OPEN → HALF_OPEN so a probe can close.
+        if self.state == CircuitState.OPEN and self._should_attempt_reset():
+            self.state = CircuitState.HALF_OPEN
+            self.success_count = 0
+            logger.info(
+                "Circuit breaker %s moved to half-open state (async success)",
+                self.name,
+            )
         self.success_count += 1
         self.total_successes += 1
         self.last_success_time = datetime.now(timezone.utc)
@@ -194,6 +223,79 @@ class CircuitBreaker:
         # If in half-open state, open circuit immediately
         if self.state == CircuitState.HALF_OPEN:
             await self._open_circuit()
+        # Open immediately once threshold is reached (don't wait for the next call).
+        elif self.state == CircuitState.CLOSED and self._should_open_circuit():
+            await self._open_circuit()
+
+    async def trip_open(self, reason: str = "") -> None:
+        """Force the circuit open (host unreachable / fail-closed shedding)."""
+        self.failure_count = max(self.failure_count, self.config.failure_threshold)
+        self.total_failures += 1
+        self.last_failure_time = datetime.now(timezone.utc)
+        if self.state != CircuitState.OPEN:
+            await self._open_circuit()
+        if reason:
+            logger.warning("Circuit breaker %s tripped open: %s", self.name, reason)
+
+    def is_open(self) -> bool:
+        """Sync probe — True when OPEN and recovery timeout has not elapsed."""
+        if self.state != CircuitState.OPEN:
+            return False
+        return not self._should_attempt_reset()
+
+    def begin_probe_if_due_sync(self) -> None:
+        """If OPEN past recovery_timeout, enter HALF_OPEN so a probe can close the breaker.
+
+        Callers that skip on ``is_open()`` must call this before the real request;
+        otherwise successes never leave OPEN (async ``_record_success`` only closes
+        from HALF_OPEN) and failed probes keep extending ``last_failure_time``.
+        """
+        if self.state == CircuitState.OPEN and self._should_attempt_reset():
+            self.state = CircuitState.HALF_OPEN
+            self.success_count = 0
+            logger.info(
+                "Circuit breaker %s moved to half-open state (sync probe)",
+                self.name,
+            )
+
+    async def begin_probe_if_due(self) -> None:
+        """Async variant of ``begin_probe_if_due_sync``."""
+        if self.state == CircuitState.OPEN and self._should_attempt_reset():
+            await self._half_open_circuit()
+
+    def record_failure_sync(self, *, force_open: bool = False) -> None:
+        """Sync failure path for non-async Ollama callers (entity extractor, etc.)."""
+        self.failure_count += 1
+        self.total_failures += 1
+        self.last_failure_time = datetime.now(timezone.utc)
+        if force_open or self.state == CircuitState.HALF_OPEN or self._should_open_circuit():
+            if self.state != CircuitState.OPEN:
+                self.state = CircuitState.OPEN
+                self.circuit_opened_count += 1
+                logger.warning(
+                    "Circuit breaker %s opened (sync) due to %s failures%s",
+                    self.name,
+                    self.failure_count,
+                    " [force]" if force_open else "",
+                )
+
+    def record_success_sync(self) -> None:
+        """Sync success path for non-async Ollama callers."""
+        self.success_count += 1
+        self.total_successes += 1
+        self.last_success_time = datetime.now(timezone.utc)
+        if (
+            self.state == CircuitState.HALF_OPEN
+            and self.success_count >= self.config.success_threshold
+        ):
+            self.state = CircuitState.CLOSED
+            self.failure_count = 0
+            self.success_count = 0
+            self.circuit_closed_count += 1
+            logger.info("Circuit breaker %s closed (sync)", self.name)
+        elif self.state == CircuitState.OPEN and self._should_attempt_reset():
+            self.state = CircuitState.HALF_OPEN
+            self.success_count = 1
 
     def get_stats(self) -> CircuitBreakerStats:
         """Get circuit breaker statistics"""
@@ -248,11 +350,16 @@ class CircuitBreakerService:
                 timeout=10,
                 retry_attempts=1,
             ),
-            "ollama": CircuitBreakerConfig(
-                failure_threshold=3,
-                recovery_timeout=60,
+            "ollama": CircuitBreakerConfig(**_OLLAMA_CB_CONFIG),
+            "ollama_gpu": CircuitBreakerConfig(**_OLLAMA_CB_CONFIG),
+            "ollama_cpu": CircuitBreakerConfig(**_OLLAMA_CB_CONFIG),
+            # Remote PopOS host: fail-closed quickly on "no route" / connect storms.
+            "ollama_pop_os": CircuitBreakerConfig(
+                failure_threshold=1,
+                recovery_timeout=300,
                 timeout=60,
-                retry_attempts=1,
+                retry_attempts=0,
+                success_threshold=1,
             ),
             "wikipedia": CircuitBreakerConfig(
                 failure_threshold=3,
@@ -311,6 +418,21 @@ class CircuitBreakerService:
             cb.reset()
         logger.info("All circuit breakers reset")
 
+    def reset_ollama_circuits(self, name: str | None = None) -> list[str]:
+        """Reset one or all Ollama host breakers. Returns names reset."""
+        if name:
+            key = name.strip()
+            if key not in OLLAMA_CB_KEYS:
+                raise ValueError(f"unknown ollama breaker: {key}")
+            self.get_circuit_breaker(key).reset()
+            return [key]
+        reset_names: list[str] = []
+        for key in OLLAMA_CB_KEYS:
+            self.get_circuit_breaker(key).reset()
+            reset_names.append(key)
+        logger.info("Ollama circuit breakers reset: %s", ",".join(reset_names))
+        return reset_names
+
     def get_health_status(self) -> dict[str, Any]:
         """Get overall health status of circuit breakers"""
         stats = self.get_all_stats()
@@ -346,6 +468,15 @@ class CircuitBreakerService:
 
 # Global instance
 _circuit_breaker_service = None
+
+
+def any_ollama_circuit_shedding() -> bool:
+    """True while any Ollama breaker is inside its hard OPEN recovery window."""
+    svc = get_circuit_breaker_service()
+    for key in OLLAMA_CB_KEYS:
+        if svc.get_circuit_breaker(key).is_open():
+            return True
+    return False
 
 
 def get_circuit_breaker_service() -> CircuitBreakerService:
