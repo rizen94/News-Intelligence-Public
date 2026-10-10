@@ -623,6 +623,10 @@ Guidelines:
             ]
             
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error generating predictions: {e}")
             return []
     

@@ -51,6 +51,10 @@ Summary:"""
             }
 
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error in content summarization: {e}")
             return {"success": False, "error": str(e), "timestamp": datetime.utcnow().isoformat()}
 
@@ -85,5 +89,9 @@ Sentiment:"""
             }
 
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error in sentiment analysis: {e}")
             return {"success": False, "error": str(e), "timestamp": datetime.utcnow().isoformat()}

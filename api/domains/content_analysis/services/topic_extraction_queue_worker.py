@@ -392,6 +392,36 @@ class TopicExtractionQueueWorker:
                     conn = None
 
             except Exception as article_error:
+                from shared.services.llm_service import is_ollama_pressure_error
+
+                if is_ollama_pressure_error(article_error):
+                    # Defer without burning retries — CB/overload is host pressure
+                    logger.warning(
+                        "Topic extract deferred (Ollama pressure) for article %s: %s",
+                        article_id,
+                        article_error,
+                    )
+                    conn = self.get_db_connection()
+                    if conn:
+                        try:
+                            with conn.cursor() as cur:
+                                cur.execute(f"SET search_path TO {self.schema}, public")
+                                cur.execute(
+                                    f"""
+                                    UPDATE {self.schema}.topic_extraction_queue
+                                    SET status = 'pending', last_error = %s,
+                                        last_attempt_at = NOW(),
+                                        next_retry_at = NOW() + INTERVAL '2 minutes'
+                                    WHERE id = %s
+                                """,
+                                    (str(article_error), queue_id),
+                                )
+                                conn.commit()
+                        finally:
+                            conn.close()
+                            conn = None
+                    continue
+
                 logger.error("Error processing article %s: %s", article_id, article_error)
 
                 new_retry_count = retry_count + 1

@@ -575,11 +575,14 @@ legacy_editorial_writers:
     - api/_archived/editorial/editorial_document_service.py
     - api/_archived/editorial/editorial_room_loop_service.py
     - api/shared/legacy_editorial_rollback.py
+    - api/config/prompts/_archived/editorial_room/
   flags:
     env: LEGACY_EDITORIAL_WRITERS_ENABLED
   notes: >
     Archived desk/doc writers. Shims at old service paths no-op unless
     LEGACY_EDITORIAL_WRITERS_ENABLED=1 (or EDITORIAL_ROOM_LOOP_ENABLED on Widow).
+    Matching prompts live under api/config/prompts/_archived/editorial_room/
+    (not gated by the live prompt-path check).
 
 editorial_room_investigation_round:
   lifecycle: staged
@@ -623,9 +626,12 @@ causal_edges:
   modules:
     - api/services/causal_edges_service.py
     - api/services/narrative_reasoning_service.py
+    - api/config/prompts/narrative/causal_narrative.md
   notes: >
     Typed evidence-graded causal edges (Postgres SSOT). Optional Neo4j projection
-    via NEO4J_URI. Narrative CoT scaffold cites edge ids.
+    via NEO4J_URI. Narrative CoT scaffold cites edge ids
+    (prompt: narrative/causal_narrative.md). Archived editorial_room/*.md are
+    not live — see api/config/prompts/_archived/editorial_room/README.md.
 
 rolling_12m_arcs:
   lifecycle: incorporated
@@ -1014,19 +1020,23 @@ pubmed_eutils_collector:
     Optional NCBI_EMAIL / NCBI_API_KEY. Also NEURODIVERSITY_COLLECTORS_ENABLED.
 
 claim_evidence_appraisal:
-  lifecycle: under_developed
-  enabled: false
+  lifecycle: staged
+  enabled: true
   introduced_in: "11.0.0"
   phase_name: claim_evidence_appraisal
   modules:
     - api/services/claim_evidence_appraisal_service.py
+    - api/services/research_literature_bridge_service.py
+    - api/services/knowledge_profile_service.py
     - api/shared/evidence_grade.py
     - api/config/prompts/research/evidence_appraisal.md
   flags:
     env: CLAIM_EVIDENCE_APPRAISAL_ENABLED
   notes: >
-    Corpus evidence appraisal → intelligence.claim_evidence_appraisal.
+    Profiled papers → literature processed_documents → claim_evidence_appraisal
+    → knowledge_profiles / research_claim_ledger (is / is_not / open).
     Refusal contract: no quotes ⇒ insufficient_reporting.
+    Requires CLAIM_EVIDENCE_APPRAISAL_ENABLED=true.
 
 pulse_digest:
   lifecycle: staged

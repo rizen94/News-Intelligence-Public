@@ -624,7 +624,11 @@ Write in encyclopedic, authoritative style."""
                 model=LLM_MODEL,
                 ollama_base_url=OLLAMA_BASE_URL,
             ).strip()
-        except Exception:
+        except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             exec_summary = f"This mega-storyline encompasses {len(child_syntheses)} related storylines covering various aspects of {mega_title}."
 
         # Calculate stats

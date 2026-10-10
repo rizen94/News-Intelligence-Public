@@ -210,8 +210,12 @@ class LocalEntityExtractor:
             return result
             
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error in entity extraction: {e}")
-            # Return empty result on error
+            # Soft miss only — never invent entities under CB/overload
             return EntityExtractionResult(
                 entities=[],
                 text=text,

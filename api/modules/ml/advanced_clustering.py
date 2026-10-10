@@ -166,8 +166,12 @@ class LocalAdvancedClustering:
             return result
             
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error in clustering: {e}")
-            # Return empty result on error
+            # Soft miss only — never invent clusters under CB/overload
             return ClusteringAnalysis(
                 clusters=[],
                 total_articles=len(articles) if articles else 0,
@@ -210,8 +214,12 @@ class LocalAdvancedClustering:
             return np.array(embeddings)
             
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error generating embeddings: {e}")
-            # Fallback to TF-IDF
+            # Soft-miss only: TF-IDF when hub is reachable but model path failed
             return self._generate_tfidf_embeddings(texts)
     
     def _call_embedding_model(self, texts: List[str], model: str) -> List[List[float]]:
@@ -279,12 +287,12 @@ Format: [0.1, -0.2, 0.3, ...]
                     embedding = [max(-1, min(1, float(x))) for x in embedding]
                     return embedding
             
-            # Fallback: generate random embedding
-            return [np.random.uniform(-1, 1) for _ in range(384)]
+            # Soft miss — never invent random embeddings (looks like success)
+            return []
             
         except Exception as e:
             logger.error(f"Error parsing embedding response: {e}")
-            return [np.random.uniform(-1, 1) for _ in range(384)]
+            return []
     
     def _generate_tfidf_embeddings(self, texts: List[str]) -> np.ndarray:
         """Generate TF-IDF embeddings as fallback"""
@@ -451,10 +459,14 @@ Guidelines:
                     data = json.loads(json_str)
                     return data.get('keywords', []), data.get('summary', 'No summary available')
             
-            # Fallback
+            # Soft miss parse path
             return ["topic1", "topic2", "topic3"], "Cluster of related articles"
             
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error analyzing cluster content: {e}")
             return ["topic1", "topic2", "topic3"], "Cluster of related articles"
     

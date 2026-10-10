@@ -270,9 +270,13 @@ Focus on the most important and newsworthy facts. Extract 5-15 key facts."""
 
                     return facts
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.warning(f"Fact extraction failed for article {article_id}: {e}")
 
-        # Fallback: extract basic facts using patterns
+        # Soft miss only — pattern fallback must not run under CB/overload
         return self._extract_facts_fallback(article_id, title, content, url, published_at)
 
     def _extract_facts_fallback(
@@ -985,19 +989,30 @@ Write in neutral, encyclopedic tone. Be informative and comprehensive."""
             if text:
                 return text.strip()
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"LLM generation failed: {e}")
 
         return f"[Content generation failed for this section. Topic: {prompt[:100]}...]"
 
     def iter_stream_llm_content(self, prompt: str, max_tokens: int = 800):
-        """Yield text chunks from Ollama streaming /api/generate (interactive synthesis preview).
+        """Yield text chunks from Ollama streaming /api/generate.
 
-        Streaming stays on raw HTTP (token delivery); shed check gates admission.
+        **Interactive preview only** (desk presence). Batch/automation must use
+        ``ollama_generate_sync`` / hub generate — not this streamer.
+
+        Admission: shed gate + treat timeout/502–504 as overload (no trip);
+        ConnectError trips hard shed like the hub.
         """
         import json as _json
 
         try:
-            from services.circuit_breaker_service import any_ollama_circuit_shedding
+            from services.circuit_breaker_service import (
+                any_ollama_circuit_shedding,
+                get_circuit_breaker_service,
+            )
 
             if any_ollama_circuit_shedding():
                 yield "[Ollama circuit shedding — stream deferred]"
@@ -1014,7 +1029,11 @@ Write in neutral, encyclopedic tone. Be informative and comprehensive."""
                 timeout=LLM_TIMEOUT,
                 stream=True,
             ) as response:
+                if response.status_code in (502, 503, 504):
+                    yield f"[Ollama overloaded (HTTP {response.status_code}) — stream deferred]"
+                    return
                 if response.status_code != 200:
+                    # Soft failure (not overload): do not invent content
                     yield f"[Stream error: HTTP {response.status_code}]"
                     return
                 for raw in response.iter_lines(decode_unicode=True):
@@ -1029,6 +1048,17 @@ Write in neutral, encyclopedic tone. Be informative and comprehensive."""
                         yield chunk
                     if payload.get("done"):
                         break
+        except requests.exceptions.Timeout:
+            yield "[Ollama overloaded (request timed out) — stream deferred]"
+        except requests.exceptions.ConnectionError as e:
+            try:
+                get_circuit_breaker_service().get_circuit_breaker("ollama").record_failure_sync(
+                    force_open=True
+                )
+            except Exception:
+                pass
+            logger.error("LLM stream connect failed: %s", e)
+            yield "[Ollama unreachable — stream deferred (circuit shed)]"
         except Exception as e:
             logger.error("LLM stream generation failed: %s", e)
             yield f"[Content stream failed: {e}]"
@@ -1098,7 +1128,11 @@ Write in neutral, encyclopedic tone. Be informative and comprehensive."""
             )
             if text:
                 return text.strip()[:200]
-        except Exception:
+        except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             pass
 
         return None

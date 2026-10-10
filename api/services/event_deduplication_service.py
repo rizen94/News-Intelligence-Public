@@ -111,11 +111,13 @@ def _dedup_borderline_max_seconds() -> float:
 
 async def _get_embedding(text: str) -> list[float] | None:
     """Get a 768-d embedding from Ollama's nomic-embed-text model via CB hub."""
-    try:
-        from shared.services.llm_service import ollama_embed_async
+    from shared.services.llm_service import is_ollama_pressure_error, ollama_embed_async
 
+    try:
         return await ollama_embed_async(text, model=EMBED_MODEL)
     except Exception as e:
+        if is_ollama_pressure_error(e):
+            raise
         logger.error(f"Embedding request failed: {e}")
     return None
 

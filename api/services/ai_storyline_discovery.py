@@ -256,11 +256,14 @@ class AIStorylineDiscovery:
     def get_embedding_single(self, text: str) -> np.ndarray | None:
         """
         Generate embedding for a single text using Ollama via CB hub.
-        Optimized for dedicated embedding model
-        """
-        try:
-            from shared.services.llm_service import ollama_embed_sync
 
+        Under CB-open / overload / connect failure: re-raise so discovery defers
+        (do not invent SHA-hash vectors that look like successful embeddings).
+        Soft miss (empty vector) returns None.
+        """
+        from shared.services.llm_service import is_ollama_pressure_error, ollama_embed_sync
+
+        try:
             vec = ollama_embed_sync(text[:4000], model=EMBEDDING_MODEL)
             if vec:
                 embedding = np.array(vec, dtype=float)
@@ -269,16 +272,17 @@ class AIStorylineDiscovery:
                     if norm > 0:
                         embedding = embedding / norm
                     return embedding
-
+            return None
         except Exception as e:
+            if is_ollama_pressure_error(e):
+                raise
             logger.debug(f"Embedding error for text: {e}")
-
-        return self._text_to_embedding(text)
+            return None
 
     def _text_to_embedding(self, text: str, dim: int = 768) -> np.ndarray:
         """
-        Deterministic feature-hash fallback when Ollama embeddings are unavailable.
-        Uses SHA-256 (not Python hash()) so vectors are stable across processes.
+        Deterministic feature-hash vector (tests / explicit offline only).
+        Do not use as a silent success path under CB shed or overload.
         """
         text = text.lower()
         embedding = np.zeros(dim)
@@ -604,6 +608,7 @@ class AIStorylineDiscovery:
                 for article in uncached
             }
 
+            pressure_err: Exception | None = None
             for future in as_completed(futures):
                 try:
                     future.result()
@@ -612,7 +617,16 @@ class AIStorylineDiscovery:
                     if progress_callback and completed % 10 == 0:
                         progress_callback(completed + cached_count, total + cached_count)
                 except Exception as e:
+                    from shared.services.llm_service import is_ollama_pressure_error
+
+                    if is_ollama_pressure_error(e):
+                        pressure_err = e
+                        for pending in futures:
+                            pending.cancel()
+                        break
                     logger.error(f"Embedding generation failed: {e}")
+            if pressure_err is not None:
+                raise pressure_err
 
         # Cache new embeddings in database
         self._cache_embeddings(uncached)
@@ -1143,9 +1157,13 @@ Reply with ONLY a JSON object:
                     pass
 
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error generating metadata: {e}")
 
-        # Enhanced fallback with entities
+        # Soft-miss fallback only (never under CB/overload)
         fallback_title = (
             f"Breaking: {cluster.articles[0].title[:50]}"
             if cluster.is_breaking_news
@@ -2416,6 +2434,10 @@ Reply with ONLY a JSON object:
                         cluster.suggested_description = metadata["description"]
                         llm_count += 1
                     except Exception as e:
+                        from shared.services.llm_service import is_ollama_pressure_error
+
+                        if is_ollama_pressure_error(e):
+                            raise
                         logger.warning(f"LLM failed, using fallback: {e}")
                         cluster.suggested_title = self._generate_fast_title(cluster)
                         cluster.suggested_description = self._generate_fast_description(cluster)

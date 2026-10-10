@@ -281,6 +281,22 @@ export const monitoringApi = {
     }
   },
 
+  /** Reset Ollama circuit breakers after hard shed (optional single key). */
+  async resetCircuitBreakers(name?: string) {
+    try {
+      const body = name ? { name } : {};
+      const response = await getApi().post(
+        '/api/system_monitoring/circuit_breakers/reset',
+        body,
+        { timeout: 15000 }
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to reset circuit breakers', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
   async triggerPipeline() {
     try {
       const response = await getApi().post(

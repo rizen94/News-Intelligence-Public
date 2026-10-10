@@ -189,6 +189,10 @@ class TopicClusteringService:
             return response_text
 
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"❌ Ollama API error: {e}")
             return ""
 
@@ -318,6 +322,10 @@ JSON Response:"""
             return []
 
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error extracting topics from article: {e}")
             return []
 
@@ -652,6 +660,10 @@ JSON Response:"""
             return assignment_result
 
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error processing article {article_id} for topic clustering: {e}")
             return {"success": False, "error": str(e)}
         finally:

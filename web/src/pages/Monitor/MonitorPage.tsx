@@ -197,6 +197,8 @@ export default function MonitorPage() {
     message: string;
     warning?: string;
   } | null>(null);
+  const [ollamaShedding, setOllamaShedding] = useState<string[]>([]);
+  const [resettingCb, setResettingCb] = useState(false);
   const { ctxStatus: ccStatus } = useShellStatus();
   const [pipelineArticleSelection, setPipelineArticleSelection] = useState<{
     mode?: string;
@@ -207,6 +209,23 @@ export default function MonitorPage() {
   const [automationRunning, setAutomationRunning] = useState<boolean | null>(
     null
   );
+  const [dbPressure, setDbPressure] = useState<{
+    defer_new_work?: boolean;
+    worker_waiters?: number;
+    worker_pressure?: number;
+    worker_in_use?: number;
+    worker_max?: number;
+    ui_waiters?: number;
+    ui_pressure?: number;
+    ui_in_use?: number;
+    ui_max?: number;
+  } | null>(null);
+  const [apiYield, setApiYield] = useState<{
+    yielding?: boolean;
+    inflight_user_requests?: number;
+    seconds_since_last_user_request?: number | null;
+    yield_window_seconds?: number;
+  } | null>(null);
   const [pendingMetricsLoading, setPendingMetricsLoading] = useState(false);
 
   const refreshOverview = useCallback(async () => {
@@ -220,6 +239,7 @@ export default function MonitorPage() {
       apiService.getPipelineStatus(),
       apiService.getProcessingProgress({ includePendingMetrics: false }),
       apiService.getAutomationStatus().catch(() => null),
+      apiService.getHealth().catch(() => null),
     ]);
     const settledErr = (r: PromiseSettledResult<unknown>, label: string) =>
       r.status === 'rejected'
@@ -250,6 +270,25 @@ export default function MonitorPage() {
         data?: {
           running?: boolean;
           is_running?: boolean;
+          resource_router?: {
+            db_pressure?: {
+              defer_new_work?: boolean;
+              worker_waiters?: number;
+              worker_pressure?: number;
+              worker_in_use?: number;
+              worker_max?: number;
+              ui_waiters?: number;
+              ui_pressure?: number;
+              ui_in_use?: number;
+              ui_max?: number;
+            };
+            api_yield?: {
+              yielding?: boolean;
+              inflight_user_requests?: number;
+              seconds_since_last_user_request?: number | null;
+              yield_window_seconds?: number;
+            };
+          };
           pipeline_article_selection?: {
             mode?: string;
             label?: string;
@@ -260,6 +299,8 @@ export default function MonitorPage() {
       } | null
     )?.data;
     setPipelineArticleSelection(autoData?.pipeline_article_selection ?? null);
+    setDbPressure(autoData?.resource_router?.db_pressure ?? null);
+    setApiYield(autoData?.resource_router?.api_yield ?? null);
     if (autoData) {
       if (typeof autoData.running === 'boolean') {
         setAutomationRunning(autoData.running);
@@ -269,6 +310,14 @@ export default function MonitorPage() {
         setAutomationRunning(true);
       }
     }
+    const healthEnvelope =
+      results[3]?.status === 'fulfilled' ? results[3].value : null;
+    const shedding = (
+      healthEnvelope as {
+        circuit_breakers?: { ollama_shedding?: string[] };
+      } | null
+    )?.circuit_breakers?.ollama_shedding;
+    setOllamaShedding(Array.isArray(shedding) ? shedding : []);
   }, []);
 
   const fetchPendingMetrics = useCallback(async () => {
@@ -383,6 +432,40 @@ export default function MonitorPage() {
       setTimeout(() => setTriggerResult(null), 6000);
     } finally {
       setTriggering(false);
+    }
+  };
+
+  const handleResetCircuitBreakers = async () => {
+    if (!apiService.resetCircuitBreakers) return;
+    setResettingCb(true);
+    setTriggerResult(null);
+    try {
+      const result = (await apiService.resetCircuitBreakers()) as {
+        success?: boolean;
+        reset?: string[];
+        error?: string;
+      };
+      if (result?.success !== false) {
+        const keys = Array.isArray(result?.reset)
+          ? result.reset.join(', ')
+          : 'ollama keys';
+        setTriggerResult({
+          success: true,
+          message: `Circuit breakers reset: ${keys}`,
+        });
+        void refreshHeavyPanels();
+      } else {
+        setTriggerResult({
+          success: false,
+          message: (result?.error as string) || 'CB reset failed.',
+        });
+      }
+      setTimeout(() => setTriggerResult(null), 6000);
+    } catch (e) {
+      setTriggerResult({ success: false, message: (e as Error).message });
+      setTimeout(() => setTriggerResult(null), 6000);
+    } finally {
+      setResettingCb(false);
     }
   };
 
@@ -567,6 +650,53 @@ export default function MonitorPage() {
                       : 'Automation …'
                 }
               />
+              {dbPressure && (
+                <>
+                  <Chip
+                    size='small'
+                    variant='outlined'
+                    color={
+                      dbPressure.defer_new_work
+                        ? 'warning'
+                        : (dbPressure.worker_pressure ?? 0) >= 0.5
+                          ? 'info'
+                          : 'default'
+                    }
+                    title='Worker pool pressure = (in_use + waiters) / max. Gate defers new schedules when hot.'
+                    label={`DB worker ${dbPressure.worker_in_use ?? '?'}/${dbPressure.worker_max ?? '?'} p=${(
+                      dbPressure.worker_pressure ?? 0
+                    ).toFixed(2)}${(dbPressure.worker_waiters ?? 0) > 0 ? ` w=${dbPressure.worker_waiters}` : ''}${
+                      dbPressure.defer_new_work ? ' defer' : ''
+                    }`}
+                  />
+                  <Chip
+                    size='small'
+                    variant='outlined'
+                    color={
+                      (dbPressure.ui_waiters ?? 0) > 0
+                        ? 'warning'
+                        : (dbPressure.ui_pressure ?? 0) >= 0.75
+                          ? 'info'
+                          : 'default'
+                    }
+                    title='UI/Monitor pool — waiters do not pause automation.'
+                    label={`DB UI ${dbPressure.ui_in_use ?? '?'}/${dbPressure.ui_max ?? '?'}${(dbPressure.ui_waiters ?? 0) > 0 ? ` w=${dbPressure.ui_waiters}` : ''}`}
+                  />
+                </>
+              )}
+              {apiYield && (
+                <Chip
+                  size='small'
+                  variant='outlined'
+                  color={apiYield.yielding ? 'warning' : 'default'}
+                  title='Coarse UI-yield proxy (inflight non-polling + recency window). Not accept-queue depth.'
+                  label={
+                    apiYield.yielding
+                      ? `UI yield inflight=${apiYield.inflight_user_requests ?? 0}`
+                      : 'UI yield idle'
+                  }
+                />
+              )}
               {pipelineStatus && (
                 <Chip
                   size='small'
@@ -583,6 +713,21 @@ export default function MonitorPage() {
                   label={`Pipeline: ${pipelineStatus}`}
                 />
               )}
+              <Chip
+                size='small'
+                variant='outlined'
+                color={ollamaShedding.length > 0 ? 'error' : 'success'}
+                title={
+                  ollamaShedding.length > 0
+                    ? `Open/half-open: ${ollamaShedding.join(', ')}. Prefer Reset Ollama CB after host recovers.`
+                    : 'All OLLAMA_CB_KEYS closed'
+                }
+                label={
+                  ollamaShedding.length > 0
+                    ? `Ollama CB: ${ollamaShedding.join(',')}`
+                    : 'Ollama CB closed'
+                }
+              />
               {pipelineArticleSelection?.mode && (
                 <Chip
                   size='small'
@@ -943,6 +1088,22 @@ export default function MonitorPage() {
                   {triggering ? 'Requesting…' : 'Run phase now'}
                 </Button>
               </>
+            )}
+            {apiService.resetCircuitBreakers && (
+              <Button
+                size='small'
+                variant={ollamaShedding.length > 0 ? 'contained' : 'outlined'}
+                color={ollamaShedding.length > 0 ? 'warning' : 'inherit'}
+                onClick={handleResetCircuitBreakers}
+                disabled={resettingCb}
+                title='After Ollama is reachable again — closes hard shed without restarting the API'
+              >
+                {resettingCb
+                  ? 'Resetting CB…'
+                  : ollamaShedding.length > 0
+                    ? 'Reset Ollama CB'
+                    : 'Reset Ollama CB'}
+              </Button>
             )}
             {grafanaUrl ? (
               <Button

@@ -68,7 +68,11 @@ api/temp/
 # Code assistant files (legacy)
 *code-assistant*
 *aider*
-*ollama*
+
+# Local Ollama runtime artifacts only (do NOT use *ollama* — it hid api/scripts and docs)
+/ollama/
+ollama.sock
+*.gguf
 
 # OS generated files
 .DS_Store

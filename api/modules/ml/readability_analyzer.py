@@ -180,8 +180,12 @@ class LocalReadabilityAnalyzer:
             return result
             
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error in content analysis: {e}")
-            # Return basic result on error
+            # Soft miss only — inventing quality scores under shed skips real work
             readability = self._calculate_readability_metrics(text)
             quality = QualityMetrics(
                 overall_quality_score=0.5,
@@ -331,6 +335,10 @@ class LocalReadabilityAnalyzer:
             )
             
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error in LLM quality analysis: {e}")
             return QualityMetrics(
                 overall_quality_score=0.5,

@@ -89,6 +89,10 @@ class MLSummarizationService:
             logger.info(f"✅ Ollama response received in {generation_time:.2f}s")
             return response_text or ""
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"❌ Ollama API error: {e}")
             return ""
     
@@ -152,6 +156,10 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 }
                 
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"❌ Error generating summary: {e}")
             return {
                 "summary": "",
@@ -219,6 +227,10 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 }
                 
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"❌ Error extracting key points: {e}")
             return {
                 "key_points": [],
@@ -275,6 +287,10 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 }
                 
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"❌ Error analyzing arguments: {e}")
             return {
                 "argument_analysis": "",
@@ -347,6 +363,10 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 }
                 
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"❌ Error analyzing sentiment: {e}")
             return {
                 "sentiment": "neutral",
@@ -474,6 +494,10 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
             }
             
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"❌ Error summarizing articles: {e}")
             return {
                 "summary": "Error generating summary.",

@@ -91,6 +91,10 @@ class TopicClusteringService:
             return self._extract_fallback_topics(title, content)
 
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error extracting topics: {e}")
             return self._extract_fallback_topics(title, content)
 
@@ -248,6 +252,10 @@ class TopicClusteringService:
             return self._fallback_clustering(articles)
 
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error clustering articles: {e}")
             return self._fallback_clustering(articles)
 

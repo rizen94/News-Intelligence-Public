@@ -103,6 +103,10 @@ class RAGGenerationModule:
                 self.embedding_cache[cache_key] = embedding
                 return embedding
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error as _pressure
+
+            if _pressure(e):
+                raise
             self.logger.warning(f"Embedding generation failed: {e}")
 
         return None

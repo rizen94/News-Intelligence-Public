@@ -97,6 +97,10 @@ class TimelineGenerator:
             return stored_events[:max_events]
             
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error generating timeline events: {e}")
             return []
     
@@ -282,6 +286,10 @@ class TimelineGenerator:
             return events
             
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error generating events for date {date}: {e}")
             return []
     
@@ -369,8 +377,12 @@ Return as JSON array with this format:
             return []
             
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error calling LLM: {e}")
-            # Fallback to simple event generation
+            # Soft miss only — inventing timeline events under shed is skip-and-burn
             return self._generate_fallback_events(context)
     
     def _generate_fallback_events(self, context: str) -> List[Dict[str, Any]]:

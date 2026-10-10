@@ -1162,6 +1162,16 @@ def reset_llm_service() -> LLMService:
     return llm_service
 
 
+def is_ollama_pressure_error(exc: BaseException | str | None) -> bool:
+    """True when the failure is CB-open, overload, or connect — callers must defer, not invent fallbacks."""
+    msg = str(exc or "").lower()
+    return (
+        "overloaded" in msg
+        or "circuit breaker" in msg
+        or "cannot connect" in msg
+    )
+
+
 def ollama_generate_sync(
     prompt: str,
     *,

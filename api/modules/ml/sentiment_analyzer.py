@@ -109,8 +109,12 @@ class LocalSentimentAnalyzer:
             return result
             
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error in sentiment analysis: {e}")
-            # Return neutral result on error
+            # Soft miss only — do not invent "neutral success" under CB/overload
             return SentimentResult(
                 sentiment_score=0.0,
                 confidence=0.0,

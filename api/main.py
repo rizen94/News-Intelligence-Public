@@ -361,10 +361,21 @@ async def lifespan(app: FastAPI):
                     async def start_workers():
                         from shared.domain_registry import pipeline_url_schema_pairs
 
+                        from domains.content_analysis.services.topic_clustering_service import (
+                            default_batch_ollama_url,
+                        )
+
+                        _batch_ollama = default_batch_ollama_url()
+                        logger.info(
+                            "Topic extraction queue workers using ollama_url=%s",
+                            _batch_ollama,
+                        )
                         for _domain_key, schema in pipeline_url_schema_pairs():
                             try:
                                 worker = TopicExtractionQueueWorker(
-                                    get_db_connection, schema=schema
+                                    get_db_connection,
+                                    schema=schema,
+                                    ollama_url=_batch_ollama,
                                 )
                                 asyncio.create_task(worker.start())
                                 logger.info(
@@ -667,6 +678,24 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down News Intelligence System v5.0")
+    # #region agent log
+    try:
+        import traceback
+
+        from shared.debug_session_log import agent_dbg
+
+        agent_dbg(
+            "D",
+            "main.py:lifespan_shutdown",
+            "api_lifespan_shutdown",
+            {
+                "pid": __import__("os").getpid(),
+                "stack_tail": "".join(traceback.format_stack(limit=8))[-1200:],
+            },
+        )
+    except Exception:
+        pass
+    # #endregion
 
     # Close LLM service
     try:
@@ -868,6 +897,9 @@ def _request_timeout_seconds(request: Request) -> float:
         return 120.0
     if path.endswith("/pipeline_status"):
         return 120.0
+    if path.endswith("/process_run_summary"):
+        # Admin Work page; must not inherit the 30s default (activity.jsonl + history).
+        return 90.0
     if path.endswith("/database/connections"):
         return 60.0
     if path.endswith("/sql_explorer/schema"):
@@ -883,13 +915,14 @@ async def request_tracker_middleware(request: Request, call_next):
     import uuid
 
     from shared.logging.activity_logger import log_api_request
-    from shared.services.api_request_tracker import record_request
+    from shared.services.api_request_tracker import begin_request, end_request
 
     request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
     request.state.request_id = request_id
-    record_request(path=request.url.path or "")
+    load_token = begin_request(path=request.url.path or "")
     start = time.perf_counter()
     timeout_sec = _request_timeout_seconds(request)
+    timed_out = False
 
     try:
         response = await asyncio.wait_for(
@@ -897,6 +930,7 @@ async def request_tracker_middleware(request: Request, call_next):
             timeout=timeout_sec,
         )
     except asyncio.TimeoutError:
+        timed_out = True
         duration_ms = (time.perf_counter() - start) * 1000
         path = request.url.path or "/"
         logger.warning(
@@ -915,6 +949,8 @@ async def request_tracker_middleware(request: Request, call_next):
                 "timestamp": datetime.now().isoformat(),
             },
         )
+    finally:
+        end_request(load_token, timed_out=timed_out)
 
     duration_ms = (time.perf_counter() - start) * 1000
     status_code = response.status_code if hasattr(response, "status_code") else 200

@@ -323,11 +323,11 @@ CREATE TABLE articles (
 
 The system uses four independent psycopg2 pools plus SQLAlchemy. In production, point **`DB_HOST` / `DB_PORT`** at **PgBouncer** so many app slots multiplex onto fewer PostgreSQL backends; see **`docs/PGBOUNCER_AND_CONNECTION_BUDGET.md`**.
 
-All pool sizes are configurable via environment variables. Defaults favor **UI responsiveness** (reserved pool, short checkout timeout) and a **moderate worker cap** so automation does not crowd out small `max_connections` budgets; raise worker limits when metrics show headroom.
+All pool sizes are configurable via environment variables. Defaults favor **UI wait/retry under load** (12 s checkout) and a **moderate worker cap** so automation does not crowd out small `max_connections` budgets; raise worker limits when metrics show headroom. `DB_ALLOW_DIRECT_FALLBACK` defaults **false**.
 
 | Pool | Library | Env Vars | Defaults | Purpose |
 |------|---------|----------|----------|---------|
-| **UI** | psycopg2 `ThreadedConnectionPool` | `DB_POOL_UI_MIN/MAX` | 2 / 16 | Page loads, monitoring, hot read paths (3 s checkout) |
+| **UI** | psycopg2 `ThreadedConnectionPool` | `DB_POOL_UI_MIN/MAX` | 2 / 16 | Page loads, monitoring, hot read paths (12 s checkout wait/retry) |
 | **Worker** | psycopg2 `ThreadedConnectionPool` | `DB_POOL_WORKER_MIN/MAX` | 2 / 28 | Automation, enrichment, collection; `DB_POOL_MAX` legacy if `DB_POOL_WORKER_MAX` unset |
 | **Health** | psycopg2 `ThreadedConnectionPool` | `DB_POOL_HEALTH_MIN/MAX` | 1 / 2 | Automation `health_check` probes + `automation_run_history` for that phase only (2 s checkout; `DB_HEALTH_GETCONN_TIMEOUT_SECONDS`) |
 | **SQLAlchemy** | SQLAlchemy `QueuePool` | `DB_POOL_SA_SIZE/OVERFLOW` | 3 / 8 | ORM-based services (storylines, RSS, timelines) |
@@ -337,7 +337,7 @@ Ensure PostgreSQL **`max_connections`** (and PgBouncer **`default_pool_size`**) 
 
 **Checkout timeouts** (how long to wait for a free connection before raising):
 - Worker pool: 30 s (env `DB_WORKER_GETCONN_TIMEOUT_SECONDS`)
-- UI pool: 3 s (env `DB_UI_GETCONN_TIMEOUT_SECONDS`)
+- UI pool: 12 s wait/retry (env `DB_UI_GETCONN_TIMEOUT_SECONDS`); `DB_ALLOW_DIRECT_FALLBACK` defaults false
 - Health pool: 2 s (env `DB_HEALTH_GETCONN_TIMEOUT_SECONDS`)
 - SQLAlchemy pool: 30 s (built-in `pool_timeout`)
 
@@ -357,6 +357,7 @@ Align with **Core principle 5** (above). When adding or changing background work
 | Concern | What to do |
 |--------|------------|
 | **Budgets** | Treat `DB_POOL_*`, `AUTOMATION_MAX_CONCURRENT_TASKS`, `MAX_CONCURRENT_OLLAMA_TASKS`, `OLLAMA_CPU_CONCURRENCY` / `OLLAMA_GPU_CONCURRENCY`, and `AUTOMATION_EXECUTOR_MAX_WORKERS` as a **single system**. Raising automation concurrency without DB or Ollama headroom moves waits, not magic throughput. |
+| **Ollama hub** | Call generate/embed only via `shared.services.llm_service` (`ollama_generate_*` / `ollama_embed_*` or `LLMService`). Do **not** `requests`/`httpx` to `/api/generate` or `/api/embeddings` in production paths (unload/`keep_alive:0` helpers excepted). On `is_ollama_pressure_error(e)` **re-raise / defer** — never invent hash/TF‑IDF “success” embeddings. Overload → defer/trickle; host down → CB shed. See `docs/MONITOR_REPORTING_AND_METRICS.md`. |
 | **Chunking** | Read and process **large text in slices**; truncate prompts consistently; avoid loading full corpora into Python lists for routine paths. |
 | **No duplicate expensive work** | One canonical place for embeddings, parsed HTML, or normalized content where feasible; if two phases need the same artifact, **read from storage** or a shared service—do not re-embed the same row twice. |
 | **Scheduling** | Bounded tick (`AUTOMATION_SCHEDULER_TICK_SECONDS`), cooldown (`AUTOMATION_WORKLOAD_MIN_COOLDOWN_SECONDS`), collection throttle, optional `AUTOMATION_QUEUE_SOFT_CAP` (prefer `0` = off). Unbounded queue growth is a bug. |
@@ -641,7 +642,7 @@ conn.close()               # NameError if get_db_connection raised
   always `db.close()` in a `finally` block, and initialise `db = None` before the
   `try` so the `finally` guard never hits a `NameError`.
 - For UI/monitoring endpoints, use `get_ui_db_connection()` (or `get_ui_db_connection_context()`)
-  which draws from a dedicated pool with a 3-second checkout timeout.
+  which draws from a dedicated pool with a **12 s** checkout wait/retry (not fail-fast direct connect).
 - Direct `psycopg2.connect()` calls are **forbidden** in services; use
   `get_db_connect_kwargs()` only in one-off scripts that genuinely cannot use the pool.
 
