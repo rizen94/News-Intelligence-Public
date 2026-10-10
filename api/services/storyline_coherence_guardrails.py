@@ -271,6 +271,80 @@ def _title_content_words(title: str) -> list[str]:
     return [w.lower() for w in re.findall(r"[A-Za-z0-9]+", title or "") if len(w) >= 2]
 
 
+def title_looks_mega_bag(title: str | None) -> bool:
+    """
+    Kitchen-sink / bridge titles that launder heterogeneous clusters.
+
+    Shared by mint-time coherence and post-hoc prune/reader demotion.
+    """
+    lower = (title or "").strip().lower()
+    if not lower:
+        return False
+    if "live update" in lower:
+        return True
+    if lower.startswith("ongoing:") or lower.startswith("ongoing "):
+        return True
+    if "global update" in lower:
+        return True
+    # Dual-theater LLM mash titles ("X Mirror Y", "Global Crises", "Scramble as …")
+    if " mirror " in lower and (
+        "zelensky" in lower or "putin" in lower or "modi" in lower or "trump" in lower
+    ):
+        return True
+    if " mirror " in lower and ("crisis" in lower or "crises" in lower or "crackdown" in lower):
+        return True
+    if "global crises" in lower or "global crisis" in lower:
+        return True
+    if "scramble" in lower and (
+        "crisis" in lower or "crises" in lower or "turbulent" in lower
+    ):
+        return True
+    if "power shifts" in lower and "adapt" in lower:
+        return True
+    return False
+
+
+def assess_kitchen_sink_risk(
+    title: str | None, articles: list[dict[str, Any]] | None = None
+) -> tuple[bool, str]:
+    """Cheap kitchen-sink signal for prune/reader (title + optional article sample)."""
+    if title_looks_mega_bag(title):
+        return True, "bridge_title"
+    if articles and len(articles) >= 4:
+        titles = [(a.get("title") or "") for a in articles[:12]]
+        # Pairwise title-token disjoint pairs → mash risk
+        def _toks(t: str) -> set[str]:
+            return {
+                w
+                for w in re.findall(r"[a-z0-9][a-z0-9'-]{3,}", (t or "").lower())
+                if w
+                not in {
+                    "that",
+                    "this",
+                    "with",
+                    "from",
+                    "have",
+                    "after",
+                    "over",
+                    "into",
+                    "said",
+                    "news",
+                    "what",
+                    "know",
+                }
+            }
+
+        sets = [_toks(t) for t in titles if t.strip()]
+        disjoint = 0
+        for i in range(len(sets)):
+            for j in range(i + 1, len(sets)):
+                if sets[i] and sets[j] and sets[i].isdisjoint(sets[j]):
+                    disjoint += 1
+        if disjoint >= max(2, len(sets) // 2):
+            return True, "disjoint_member_headlines"
+    return False, "ok"
+
+
 def is_overly_generic_storyline_title(title: str | None, domain: str = "") -> bool:
     """True when title is too vague to stand alone as a storyline label."""
     t = _norm_title(title)
@@ -374,6 +448,9 @@ def assess_cluster_coherence(
     if is_overly_generic_storyline_title(title, domain):
         return False, "generic_title"
 
+    if title_looks_mega_bag(title):
+        return False, "kitchen_sink_bridge_title"
+
     entity_counts = extract_cluster_specific_entities(articles)
     if common_entities:
         for ent in common_entities:
@@ -382,6 +459,12 @@ def assess_cluster_coherence(
                 entity_counts[key] = max(entity_counts.get(key, 0), 1)
 
     dk = (domain or "").lower().replace("_", "-")
+    # Politics: require at least one entity recurring across ≥2 articles (not
+    # two one-off proper nouns from unrelated liveblogs).
+    if dk.startswith("politics"):
+        recurring = sum(1 for _, n in entity_counts.items() if n >= 2)
+        if recurring < 1 and len(articles) >= 3:
+            return False, "politics_no_shared_non_hub_entity"
     if dk.startswith("finance") and _cluster_has_earnings_report_vocabulary(articles):
         if _cluster_has_shared_theme(articles):
             return True, "finance_earnings_theme"

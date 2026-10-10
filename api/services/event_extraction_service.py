@@ -354,8 +354,14 @@ class EventExtractionService:
             "temporal_status": temporal_status,
         }
 
-    async def save_events(self, events: list[dict[str, Any]], conn) -> int:
-        """Persist extracted events into the chronological_events table."""
+    async def save_events(
+        self, events: list[dict[str, Any]], conn, *, commit: bool = True
+    ) -> int:
+        """Persist extracted events into the chronological_events table.
+
+        When ``commit=False``, the caller owns the transaction (UIE / catchup
+        fuse paths that write entities + events in one commit).
+        """
         if not events:
             return 0
 
@@ -363,6 +369,7 @@ class EventExtractionService:
         saved = 0
         for evt in events:
             try:
+                cursor.execute("SAVEPOINT save_event_row")
                 cursor.execute(
                     """
                     INSERT INTO public.chronological_events (
@@ -389,12 +396,18 @@ class EventExtractionService:
                 """,
                     evt,
                 )
+                cursor.execute("RELEASE SAVEPOINT save_event_row")
                 saved += 1
             except Exception as e:
-                # Do not rollback the whole batch — other events in this article can still persist
+                # Isolate row failure so callers sharing this txn (UIE) can continue.
+                try:
+                    cursor.execute("ROLLBACK TO SAVEPOINT save_event_row")
+                except Exception:
+                    pass
                 logger.error(f"Failed to save event '{evt.get('title')}': {e}")
 
-        conn.commit()
+        if commit:
+            conn.commit()
         cursor.close()
         logger.info(f"Saved {saved}/{len(events)} events to database")
         return saved

@@ -129,6 +129,8 @@ class StorylineFinisherBundle:
     storyline_title: str
     storyline_status: str = ""
     existing_narrative: str = ""
+    # Prior stored walkthrough only (not bones) — refresh passes must ground on this.
+    prior_canonical: str = ""
     analysis_bones: str = ""
     article_summaries: list[dict[str, Any]] = field(default_factory=list)
     # e.g. [{"title": "...", "published_at": "...", "summary": "..."}]
@@ -187,6 +189,20 @@ def parse_finisher_response(raw_text: str) -> tuple[dict[str, Any] | None, str |
                         cut = cut[idx:]
                         break
                 data["canonical_narrative"] = cut.strip()[:12000]
+            # Never persist machine trailer inside canonical_narrative.
+            from shared.llm_text_sanitize import strip_trailing_llm_json
+
+            canon = strip_trailing_llm_json(str(data.get("canonical_narrative") or ""))
+            if canon:
+                data["canonical_narrative"] = canon[:12000]
+            elif prose.strip():
+                cut = prose
+                for m in ("## Lede", "## lede"):
+                    idx = cut.find(m)
+                    if idx >= 0:
+                        cut = cut[idx:]
+                        break
+                data["canonical_narrative"] = strip_trailing_llm_json(cut)[:12000]
             return data, None
         logger.warning("finisher JSON parse failed after marker")
 
@@ -211,7 +227,9 @@ def parse_finisher_response(raw_text: str) -> tuple[dict[str, Any] | None, str |
         lede_idx = text.lower().find("## lede")
     if lede_idx >= 0:
         text = text[lede_idx:]
-    body = text.strip()
+    from shared.llm_text_sanitize import strip_trailing_llm_json
+
+    body = strip_trailing_llm_json(text.strip())
     if "## " in body and ("lede" in body.lower() or "background" in body.lower()):
         return {
             "canonical_narrative": body[:12000],
@@ -303,9 +321,10 @@ def load_finisher_bundle_from_db(
                 analysis_bones = _analysis_bones_from_row(
                     description, analysis_summary, editorial_document
                 )
+                prior_canonical = (canonical_narrative or "").strip()
                 existing_parts = [
                     p.strip()
-                    for p in (canonical_narrative, analysis_bones)
+                    for p in (prior_canonical, analysis_bones)
                     if p and str(p).strip()
                 ]
                 existing_narrative = "\n\n".join(existing_parts)
@@ -490,6 +509,7 @@ def load_finisher_bundle_from_db(
                     storyline_title=title,
                     storyline_status=status,
                     existing_narrative=existing_narrative,
+                    prior_canonical=prior_canonical,
                     analysis_bones=analysis_bones,
                     article_summaries=article_summaries,
                     entity_highlights=entity_highlights,
@@ -507,13 +527,25 @@ def load_finisher_bundle_from_db(
 def build_finisher_prompt(bundle: StorylineFinisherBundle) -> str:
     """
     Editorial walkthrough prompt: integrate bones + RAG into a durable canonical narrative.
+
+    On refresh, prior_canonical is a first-class input so the rewrite improves the last
+    good walkthrough rather than ignoring it when analysis_bones are present.
     """
     instructions = _load_walkthrough_prompt()
     articles_block = json.dumps(bundle.article_summaries, indent=2)[:24000]
     entities = "\n".join(f"- {e}" for e in bundle.entity_highlights[:80])
     contexts = "\n".join(f"- {c}" for c in bundle.context_labels[:80])
     timeline = "\n".join(f"- {t}" for t in bundle.timeline_bullets[:120])
-    analysis = (bundle.analysis_bones or bundle.existing_narrative or "")[:12000]
+    prior_canonical = (
+        (bundle.prior_canonical or "").strip()
+        or (
+            # Fallback when older callers only filled existing_narrative
+            (bundle.existing_narrative or "").strip()
+            if not (bundle.analysis_bones or "").strip()
+            else ""
+        )
+    )[:12000]
+    analysis = (bundle.analysis_bones or "").strip()[:12000]
     rag = (bundle.rag_context_rendered or "").strip()[:6000] or "(none loaded)"
     vault = (bundle.vault_context_rendered or "").strip()[:6000] or "(none loaded)"
     historical = (
@@ -521,9 +553,16 @@ def build_finisher_prompt(bundle: StorylineFinisherBundle) -> str:
         if bundle.historical_context_rendered
         else "(none loaded)"
     )
+    refresh_note = ""
+    if prior_canonical:
+        refresh_note = (
+            "\nThis is a REFRESH: treat Prior canonical walkthrough as the last desk-approved "
+            "prose. Rewrite the full structure, but preserve still-true framing, actors, and "
+            "stakes; integrate new evidence; correct contradictions; do not invent beyond materials.\n"
+        )
 
     return f"""{instructions}
-
+{refresh_note}
 ---
 Prompt version: {PROMPT_VERSION}
 
@@ -532,7 +571,12 @@ Domain: {bundle.domain_key}
 Title: {bundle.storyline_title}
 Status: {bundle.storyline_status}
 
-Prior analysis / bones (may be draft or template-heavy):
+Prior canonical walkthrough (last finished prose — improve this; do not ignore when bones exist):
+---
+{prior_canonical or "(none — first finish for this storyline)"}
+---
+
+Prior analysis / bones (may be draft or template-heavy; secondary to prior canonical when both exist):
 ---
 {analysis or "(none)"}
 ---
@@ -561,7 +605,8 @@ External RAG context (Wikipedia / GDELT — background only; do not invent beyon
 FINAL INSTRUCTION: Do NOT write chain-of-thought, scratchpads, or "thinking process" text.
 Start the response with `## Lede` for THIS title only ({bundle.storyline_title}).
 Ignore timeline or RAG material that is not about this story. Use living vault for durable
-arc background when present. After the markdown sections,
+arc background when present. When prior canonical exists, improve it with new evidence rather
+than discarding still-valid sections. After the markdown sections,
 output a line with exactly ---JSON--- and the JSON object. Do not omit the ---JSON--- marker.
 """
 
@@ -746,6 +791,7 @@ def persist_narrative_finish_to_db(
     """
     Persist ~70B finisher output to `{schema}.storylines` (migration 181 columns).
     Empty canonical_narrative in parsed output leaves prior canonical text unchanged.
+    Stores evidence_fingerprint (+ parts) for materiality gating on refresh.
     """
     schema = _schema_name(domain_key)
     if not schema:
@@ -753,16 +799,22 @@ def persist_narrative_finish_to_db(
     parsed = run_result.get("parsed")
     if not isinstance(parsed, dict):
         parsed = {}
-    from shared.llm_text_sanitize import strip_json_fence, strip_llm_wrapping_artifacts
+    from shared.llm_text_sanitize import (
+        strip_json_fence,
+        strip_llm_wrapping_artifacts,
+        strip_trailing_llm_json,
+    )
 
     # Keep multi-section markdown intact — sanitize_on_persist/narrative collapses to one line.
-    canonical_raw = (parsed.get("canonical_narrative") or "").strip()
+    canonical_raw = strip_trailing_llm_json((parsed.get("canonical_narrative") or "").strip())
     canonical = strip_json_fence(canonical_raw)
+    canonical = strip_trailing_llm_json(canonical)
     if len(canonical) > 12000:
         canonical = canonical[:11980].rstrip() + "\n…"
     # Only apply light JSON/fence cleanup when the body is not already markdown sections.
     if canonical and "## " not in canonical and not canonical.lower().startswith("lede"):
         canonical = strip_llm_wrapping_artifacts(canonical, max_length=12000)
+        canonical = strip_trailing_llm_json(canonical)
     meta: dict[str, Any] = {
         "prompt_version": run_result.get("prompt_version") or PROMPT_VERSION,
         "suggested_new_entities": parsed.get("suggested_new_entities"),
@@ -775,6 +827,32 @@ def persist_narrative_finish_to_db(
         "parse_error": run_result.get("parse_error"),
         "model": run_result.get("model"),
     }
+    evidence_fp = run_result.get("evidence_fingerprint")
+    evidence_parts = run_result.get("evidence_fingerprint_parts")
+    if not evidence_fp:
+        try:
+            from services.storyline_narrative_materiality import (
+                compute_narrative_evidence_fingerprint,
+            )
+
+            fp_info = compute_narrative_evidence_fingerprint(
+                domain_key,
+                storyline_id,
+                prompt_version=str(meta.get("prompt_version") or PROMPT_VERSION),
+            )
+            if fp_info.get("success"):
+                evidence_fp = fp_info.get("fingerprint")
+                evidence_parts = fp_info.get("parts")
+        except Exception as fp_err:
+            logger.debug("persist fingerprint compute skipped: %s", fp_err)
+    if evidence_fp:
+        meta["evidence_fingerprint"] = str(evidence_fp)
+    if isinstance(evidence_parts, dict) and evidence_parts:
+        meta["evidence_fingerprint_parts"] = evidence_parts
+    # Successful finish clears narrow-debt flag (nightly drain uses this).
+    meta["narrow_debt_pending"] = False
+    meta["narrow_debt_at"] = None
+    meta["narrow_debt_reason"] = None
     raw = run_result.get("raw_text") or ""
     if raw:
         meta["raw_excerpt"] = raw[:4000]
