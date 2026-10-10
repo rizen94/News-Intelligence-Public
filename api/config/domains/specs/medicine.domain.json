@@ -7,7 +7,7 @@
   "display_order": 20,
   "is_active": true,
   "database": {
-    "clone_from": "science_tech",
+        "clone_from": "politics",
     "include_article_topic_clusters": true,
     "migration_ref": "187_medicine_domain_silo.sql"
   },
@@ -24,7 +24,7 @@
         "feed_url": "https://www.thelancet.com/rssfeed/lancet_current.xml"
       },
       {
-        "feed_url": "https://jamanetwork.com/feeds/journals/jama"
+        "feed_url": "https://jamanetwork.com/rss/site_3/67.xml"
       },
       {
         "feed_url": "https://www.bmj.com/content/current.rss"
@@ -45,7 +45,7 @@
         "feed_url": "https://pubmed.ncbi.nlm.nih.gov/rss/create/saved_searches/?term=%28outbreak%5BTitle%2FAbstract%5D+OR+epidemic%5BTitle%2FAbstract%5D%29+AND+%28WHO%5BCorporate%5D+OR+CDC%5BCorporate%5D%29&limit=50"
       },
       {
-        "feed_url": "https://www.fda.gov/news-events/fda-newsroom/rss.xml"
+        "feed_url": "https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/press-releases/rss.xml"
       },
       {
         "feed_url": "https://clinicaltrials.gov/ct2/results/rss.xml?rcv_d=14&lup_d=14&sel_rss=new14&count=10000"

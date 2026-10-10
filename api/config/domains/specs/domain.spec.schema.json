@@ -25,7 +25,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "clone_from": { "type": "string", "default": "science_tech" },
+        "clone_from": { "type": "string", "default": "politics" },
         "include_article_topic_clusters": { "type": "boolean", "default": true },
         "migration_ref": { "type": ["string", "null"] }
       }
