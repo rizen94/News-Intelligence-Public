@@ -72,12 +72,20 @@ const DIRECTION_STROKE: Record<DeltaDirection, string> = {
   flat: '#757575',
 };
 
-const HY_THRESHOLDS = [
-  { bps: 300, label: 'Elevated' },
-  { bps: 450, label: 'Warning' },
-  { bps: 600, label: 'Danger' },
-  { bps: 800, label: 'Crisis' },
+/** Contiguous bands for the ETF snapshot meter (not a time series). */
+const HY_BAND_SEGMENTS: { from: number; to: number; status: SpreadStatus; color: string }[] = [
+  { from: 0, to: 300, status: 'Normal', color: '#2e7d32' },
+  { from: 300, to: 450, status: 'Elevated', color: '#0288d1' },
+  { from: 450, to: 600, status: 'Warning', color: '#ed6c02' },
+  { from: 600, to: 800, status: 'Danger', color: '#d32f2f' },
+  { from: 800, to: 1000, status: 'Crisis', color: '#7f1d1d' },
 ];
+
+/** FRED chart soft guides at band edges. */
+const HY_THRESHOLDS = HY_BAND_SEGMENTS.filter(s => s.from > 0).map(s => ({
+  bps: s.from,
+  label: s.status,
+}));
 
 const HY_LEVELS: { range: string; status: SpreadStatus; interpretation: string }[] = [
   { range: '< 300 bps', status: 'Normal', interpretation: 'Low stress' },
@@ -698,6 +706,110 @@ function StatusChip({ status }: { status?: SpreadStatus }) {
   return <Chip size='small' label={status} color={STATUS_COLOR[status]} />;
 }
 
+/** Single-value placement on HY threshold bands — not a one-point line chart. */
+function HyThresholdMeter({
+  spreadBps,
+  status,
+}: {
+  spreadBps?: number | null;
+  status?: SpreadStatus;
+}) {
+  if (spreadBps == null || Number.isNaN(spreadBps)) {
+    return (
+      <Typography variant='body2' color='text.secondary'>
+        No current spread to place on the scale.
+      </Typography>
+    );
+  }
+  const scaleMax = Math.max(1000, Math.ceil((spreadBps + 50) / 100) * 100);
+  const pct = Math.min(100, Math.max(0, (spreadBps / scaleMax) * 100));
+  const segments = HY_BAND_SEGMENTS.map(seg => ({
+    ...seg,
+    to: Math.min(seg.to, scaleMax),
+  })).filter(seg => seg.to > seg.from);
+
+  return (
+    <Box>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'baseline',
+          gap: 1,
+          flexWrap: 'wrap',
+          mb: 1,
+        }}
+      >
+        <Typography variant='h5' sx={{ fontWeight: 700 }}>
+          {spreadBps.toFixed(0)}
+          <Typography component='span' variant='body2' color='text.secondary' sx={{ ml: 0.5 }}>
+            bps
+          </Typography>
+        </Typography>
+        <StatusChip status={status} />
+      </Box>
+      <Box
+        role='img'
+        aria-label={`HYG minus TLT spread ${spreadBps.toFixed(0)} basis points, status ${status ?? 'unknown'}`}
+        sx={{
+          position: 'relative',
+          height: 28,
+          borderRadius: 1,
+          overflow: 'hidden',
+          display: 'flex',
+          border: '1px solid',
+          borderColor: 'divider',
+        }}
+      >
+        {segments.map(seg => (
+          <Box
+            key={seg.status}
+            title={`${seg.status}: ${seg.from}–${seg.to >= 1000 ? '∞' : seg.to} bps`}
+            sx={{
+              width: `${((seg.to - seg.from) / scaleMax) * 100}%`,
+              bgcolor: seg.color,
+              opacity: 0.85,
+            }}
+          />
+        ))}
+        <Box
+          sx={{
+            position: 'absolute',
+            left: `calc(${pct}% - 1px)`,
+            top: 0,
+            bottom: 0,
+            width: 2,
+            bgcolor: 'common.white',
+            boxShadow: '0 0 0 1px rgba(0,0,0,0.55)',
+          }}
+        />
+      </Box>
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          mt: 0.5,
+          px: 0.25,
+        }}
+      >
+        <Typography variant='caption' color='text.secondary'>
+          0
+        </Typography>
+        {HY_BAND_SEGMENTS.filter(s => s.from > 0 && s.from < scaleMax).map(s => (
+          <Typography key={s.from} variant='caption' color='text.secondary'>
+            {s.from}
+          </Typography>
+        ))}
+        <Typography variant='caption' color='text.secondary'>
+          {scaleMax}
+        </Typography>
+      </Box>
+      <Typography variant='caption' color='text.secondary' sx={{ display: 'block', mt: 0.5 }}>
+        Marker = today’s ETF yield snapshot on the teaching bands (not a history series).
+      </Typography>
+    </Box>
+  );
+}
+
 function SpreadStatCard({
   title,
   bps,
@@ -1096,7 +1208,10 @@ export default function CreditSpreadsPage() {
           </Grid>
 
           <Card variant='outlined' sx={{ mb: 3 }}>
-            <CardHeader title='HYG − TLT threshold bands (bps)' />
+            <CardHeader
+              title='HYG − TLT on threshold scale'
+              subheader='Current snapshot only — FRED tab carries history'
+            />
             <CardContent>
               <ChartCues>
                 <ChartIndicatorCue
@@ -1104,32 +1219,14 @@ export default function CreditSpreadsPage() {
                   status={etfData?.hyg_tlt?.status}
                 />
               </ChartCues>
-              <ResponsiveContainer width='100%' height={200}>
-                <LineChart
-                  data={[{ label: 'now', spread: etfData?.hyg_tlt?.spread_bps ?? 350 }]}
-                  margin={{ top: 8, right: 16, left: 8, bottom: 8 }}
-                >
-                  <XAxis dataKey='label' hide />
-                  <YAxis domain={[0, 900]} tick={{ fontSize: 11 }} />
-                  {HY_THRESHOLDS.map(t => (
-                    <ReferenceLine
-                      key={t.bps}
-                      y={t.bps}
-                      stroke='#9e9e9e'
-                      strokeDasharray='4 4'
-                      label={{ value: t.label, position: 'right', fontSize: 10 }}
-                    />
-                  ))}
-                  <Line
-                    type='monotone'
-                    dataKey='spread'
-                    stroke='#c62828'
-                    strokeWidth={3}
-                    dot={{ r: 6 }}
-                  />
-                  <Tooltip formatter={(v: number) => [`${v?.toFixed(0)} bps`, 'HY spread']} />
-                </LineChart>
-              </ResponsiveContainer>
+              {loadingEtf ? (
+                <Skeleton height={72} />
+              ) : (
+                <HyThresholdMeter
+                  spreadBps={etfData?.hyg_tlt?.spread_bps}
+                  status={etfData?.hyg_tlt?.status}
+                />
+              )}
             </CardContent>
           </Card>
 
