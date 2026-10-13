@@ -7,18 +7,18 @@ Set ``lifo`` to restore newest-first selection. **Backfill:** ``PIPELINE_BACKFIL
 ``PIPELINE_BACKFILL_COLLECTION_RESUME_AT`` (or default 48h state file) pauses RSS + document discovery while
 existing rows are processed.
 
-Workload-driven scheduling (USE_WORKLOAD_DRIVEN_ORDER=True): the scheduler checks every process every tick.
-Order and run eligibility are determined by current workload, not fixed intervals. When a phase has pending
-work it is eligible every WORKLOAD_MIN_COOLDOWN seconds; when idle, intervals apply. Collection is throttled
-when downstream backlog (enrichment + context_sync + document_processing) exceeds
-COLLECTION_THROTTLE_PENDING_THRESHOLD so the sequence collection → processing → synthesis completes before
-adding more RSS. No process is left behind because of fast RSS; phases with no work are skipped or deprioritized.
+Workload-driven scheduling: ``PipelineController`` (default) enqueues phases when backlog counters show
+pending work via ``pick_next_phases`` / ``reconcile_and_enqueue`` — not via fixed cron intervals.
+Kill-switch: ``PIPELINE_CONTROLLER_ENABLED=false`` restores the legacy ``_scheduler`` tick
+(``_work_driven_sort_key`` / cooldowns). Collection is throttled when downstream backlog
+(enrichment + context_sync + document_processing) exceeds ``COLLECTION_THROTTLE_PENDING_THRESHOLD``
+so the sequence collection → processing → synthesis completes before adding more RSS.
 
 When ``AUTOMATION_QUEUE_SOFT_CAP`` > 0 and combined queue depth (scheduled + requested) reaches the cap,
-new scheduled enqueues, continuous batch re-queues, and dependency-chain ``request_phase`` calls are skipped
-except phases in ``AUTOMATION_QUEUE_PAUSE_ALLOW``. Default **0** = disabled (no artificial queue-depth cap;
-throughput is limited by ``AUTOMATION_MAX_CONCURRENT_TASKS``, ``MAX_CONCURRENT_OLLAMA_TASKS``, DB pools, and
-cooldowns). Set a positive value only as a safety valve if the asyncio queue grows without bound.
+new scheduled enqueues are skipped except phases in ``AUTOMATION_QUEUE_PAUSE_ALLOW``. Default **0** = disabled
+(no artificial queue-depth cap; throughput is limited by ``AUTOMATION_MAX_CONCURRENT_TASKS``,
+``MAX_CONCURRENT_OLLAMA_TASKS``, DB pools, and PipelineController replan / legacy cooldowns).
+Set a positive value only as a safety valve if the asyncio queue grows without bound.
 **nightly_enrichment_context** is not allowlisted: one drain run is enough; it was previously allowlisted and
 could stack hundreds of redundant queued sweeps while workers were busy.
 **AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED** caps scheduled+requested+running nightly tasks (default 1; 0=unlimited).
@@ -26,8 +26,8 @@ could stack hundreds of redundant queued sweeps while workers were busy.
 With **CLAIM_EXTRACTION_DRAIN** (default on), **claim_extraction** also skips new scheduler/chain enqueues when running+queued depth already reaches the per-phase concurrent cap (``_should_skip_redundant_phase_request``), so context_sync completion cannot pile hundreds of duplicate tasks on ``_requested_task_queue``.
 If a duplicate still reaches a worker under the cap, ``_discard_redundant_claim_extraction_when_at_cap`` completes it without re-queueing (per-phase defer used ``bypass_schedule_depth_cap`` and recycled the same backlog forever).
 **AUTOMATION_PER_PHASE_CONCURRENT_CAP** caps how many workers may execute the same phase at once (default 2; 0=unlimited); **nightly_sequential_drain** bypasses; nightly window multiplies cap via **AUTOMATION_PER_PHASE_CONCURRENT_NIGHTLY_MULT** for catch-up when those phases are scheduled.
-Default override: **claim_extraction** concurrent = 1 (``AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES`` can raise it). When peer phases (story_enhancement, entity_profile_build, …) have pending ≥ **AUTOMATION_BACKLOG_SEVERE_THRESHOLD**, claim is further demoted (LOW sort priority + **AUTOMATION_CLAIM_YIELD_COOLDOWN_SECONDS**, default 60s).
-**story_enhancement**, **storyline_discovery**, and **storyline_assembly** are in **BATCH_PHASES_CONTINUOUS** so severe linkage/enhancement backlogs drain instead of waiting on idle intervals.
+Default override: **claim_extraction** concurrent = 1 (``AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES`` can raise it). When peer phases (story_enhancement, entity_profile_build, …) have pending ≥ **AUTOMATION_BACKLOG_SEVERE_THRESHOLD**, or research LLM backlog ≥ **AUTOMATION_RESEARCH_CLAIM_YIELD_THRESHOLD** (default 500), claim is further demoted (LOW sort priority + **AUTOMATION_CLAIM_YIELD_COOLDOWN_SECONDS**, default 60s).
+**story_enhancement**, **storyline_discovery**, **storyline_assembly**, **research_paper_profiling**, and **claim_evidence_appraisal** are in **BATCH_PHASES_CONTINUOUS** so severe linkage/enhancement and paper pathways drain instead of waiting on idle intervals.
 **AUTOMATION_DB_POOL_PRESSURE_GATE_ENABLED** (default true): while worker psycopg2 pool **pressure** ≥ **AUTOMATION_DB_WORKER_UTILIZATION_SKIP_THRESHOLD** (default 0.82), or while any thread is waiting on worker checkout, defer *new* scheduled enqueues and continuous batch re-queues except **AUTOMATION_DB_POOL_GATE_EXEMPT_PHASES** (default: health_check, pending_db_flush). Pressure = (in_use + waiters) / max. Manual Monitor phase requests still run (**requested_activity_id** bypasses request_phase deferral).
 
 **Offload to Widow (DB host):** set ``AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE=true`` on the GPU/main API host when
@@ -43,11 +43,11 @@ Reader's guide:
   - For a **ordered map** of phases (v8 collect-then-analyze), start at
     ``docs/PIPELINE_AND_ORDER_OF_OPERATIONS.md``, then search this file for
     ``self.schedules`` (task name → interval, ``depends_on``, ``phase``).
-  - Task execution branches on task name in the main scheduler loop (e.g.
-    ``_execute_collection_cycle``); grep ``_execute_`` for implementations.
+  - Task execution branches on task name in workers (e.g. ``_execute_collection_cycle``);
+    grep ``_execute_`` for implementations. Enqueue SSOT: ``services.pipeline_controller``.
   - Governance overrides may come from ``api/config/orchestrator_governance.yaml``
-    (analysis pipeline budgets, collection interval).
-  - Scheduling semantics (``last_run``, lanes, parallel groups → queue): ``docs/AUTOMATION_MANAGER_SCHEDULING.md``.
+    (analysis pipeline budgets, collection interval, ``pipeline_controller`` modes).
+  - Scheduling semantics: ``docs/PIPELINE_AND_AUTOMATION.md``.
 """
 
 import asyncio
@@ -140,6 +140,9 @@ BATCH_PHASES_CONTINUOUS = {
     "story_enhancement",
     "storyline_discovery",
     "storyline_assembly",
+    # Scientific paper pathway — pick up as soon as CPU slots free (not interval flip)
+    "research_paper_profiling",
+    "claim_evidence_appraisal",
 }
 
 # When these phases have pending ≥ AUTOMATION_BACKLOG_SEVERE_THRESHOLD, claim_extraction
@@ -273,24 +276,7 @@ def automation_compute_heavy_inflight_should_defer_phase(phase_name: str) -> boo
         return False
     with _compute_heavy_inflight_lock:
         total = sum(int(v or 0) for v in _compute_heavy_inflight_counts.values())
-        snapshot = dict(_compute_heavy_inflight_counts) if total else {}
-    if total <= 0:
-        return False
-    # #region agent log
-    try:
-        from shared.debug_session_log import agent_dbg
-
-        agent_dbg(
-            "C",
-            "automation_manager.py:heavy_inflight",
-            "defer_due_to_compute_heavy_inflight",
-            {"phase": phase_name, "inflight": snapshot, "total": total},
-            run_id="post-fix",
-        )
-    except Exception:
-        pass
-    # #endregion
-    return True
+    return total > 0
 
 
 # Product / cadence phases that must not be starved indefinitely by backlog drains.
@@ -482,6 +468,9 @@ def _env_bool(name: str, default: bool) -> bool:
         return default
     return raw.lower() in ("1", "true", "yes", "on")
 
+
+# Default on: PipelineController owns scheduled enqueue. false → legacy _scheduler tick only.
+PIPELINE_CONTROLLER_ENABLED = _env_bool("PIPELINE_CONTROLLER_ENABLED", True)
 
 AUTOMATION_DYNAMIC_RESOURCE_ROUTING_ENABLED = _env_bool(
     "AUTOMATION_DYNAMIC_RESOURCE_ROUTING_ENABLED", True
@@ -692,6 +681,29 @@ def _peer_severe_backlog_present(
     return False
 
 
+def _research_backlog_should_yield_claim() -> bool:
+    """True when paper profiling/appraisal backlog is large enough that claim should yield CPU."""
+    try:
+        thr = int(os.environ.get("AUTOMATION_RESEARCH_CLAIM_YIELD_THRESHOLD", "500"))
+    except ValueError:
+        thr = 500
+    if thr <= 0:
+        return False
+    return research_llm_backlog_pending() >= thr
+
+
+def _claim_should_yield_for_peers(
+    backlog_counts: dict[str, int] | None,
+    pending_counts: dict[str, int] | None = None,
+    *,
+    exclude: str | None = None,
+) -> bool:
+    """Claim yields for severe spine peers or a meaningful research LLM backlog."""
+    if _peer_severe_backlog_present(backlog_counts, pending_counts, exclude=exclude):
+        return True
+    return _research_backlog_should_yield_claim()
+
+
 def _per_phase_nightly_cap_mult_exclude() -> frozenset[str]:
     """
     Phases that do not multiply AUTOMATION_PER_PHASE_CONCURRENT_CAP by
@@ -708,11 +720,12 @@ def _per_phase_nightly_cap_mult_exclude() -> frozenset[str]:
 
 # Ollama tasks normally yield when a non-polling browser request hit the API recently; storyline
 # deep analysis must still run or the UI shows "processing" forever while users read those pages.
+# vault_morning_prime is must-run product work — yielding forever left the reader slate stuck for days.
 _OLLAMA_YIELD_EXEMPT = frozenset(
     x.strip()
     for x in os.environ.get(
         "OLLAMA_YIELD_EXEMPT_TASKS",
-        "content_refinement_queue",
+        "content_refinement_queue,vault_morning_prime",
     ).split(",")
     if x.strip()
 )
@@ -872,6 +885,15 @@ class Task:
     metadata: dict[str, Any] = None
 
 
+def _phase_max_retries(phase_name: str) -> int:
+    try:
+        from services.phase_retry_silence_service import max_retries_for_phase
+
+        return max_retries_for_phase(phase_name)
+    except Exception:
+        return 3
+
+
 # Estimated duration in seconds per phase (single place to tune)
 PHASE_ESTIMATED_DURATION_SECONDS = {
     "rss_processing": 120,
@@ -1003,6 +1025,8 @@ class AutomationManager:
         self._lane_run_times_last_60m: dict[str, deque[datetime]] = defaultdict(deque)
         self._resource_headroom: dict[str, Any] = {}
 
+        self.pipeline_controller = None
+
         # Collection-cycle watchdog: when current cycle started; per-phase last completion (for "has it run since start?")
         self._collection_cycle_started_at: datetime | None = None
         self._last_completed_at_by_phase: dict[str, datetime] = {}
@@ -1078,24 +1102,26 @@ class AutomationManager:
                 "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["document_processing"],
             },
-            # Scientific papers: research axes (not news claims/events)
+            # Scientific papers: research axes (not news claims/events).
+            # No depends_on enrichment: continuous enrichment would keep settle forever and starve papers.
             "research_paper_profiling": {
                 "interval": 600,
                 "last_run": None,
                 "enabled": True,
                 "priority": TaskPriority.NORMAL,
                 "phase": 1,
-                "depends_on": ["content_enrichment"],
+                "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["research_paper_profiling"],
             },
-            # Literature → claim_evidence_appraisal → knowledge_profiles / ledger
+            # Literature → claim_evidence_appraisal → knowledge_profiles / ledger.
+            # Independent of profiling schedule so continuous profile drain does not block appraisal settle.
             "claim_evidence_appraisal": {
                 "interval": 900,
                 "last_run": None,
                 "enabled": True,
                 "priority": TaskPriority.NORMAL,
                 "phase": 1,
-                "depends_on": ["research_paper_profiling"],
+                "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["claim_evidence_appraisal"],
             },
             # Trafilatura full-text for RSS-short articles (all active domain schemas). Runs on its own schedule
@@ -1974,6 +2000,261 @@ class AutomationManager:
         self._scheduled_queue_depth_by_phase[task.name] += 1
         return True
 
+    async def drain_phase_requests_to_queue(self) -> None:
+        """Drain thread-safe phase requests (Monitor / orchestrator) into requested queue."""
+        try:
+            while True:
+                item = self._phase_request_queue.get_nowait()
+                force_nightly_unified_pipeline = False
+                if isinstance(item, dict):
+                    phase_name = item.get("phase")
+                    domain = item.get("domain")
+                    storyline_id = item.get("storyline_id")
+                    requested_activity_id = item.get("requested_activity_id")
+                    force_nightly_unified_pipeline = bool(
+                        item.get("force_nightly_unified_pipeline")
+                    )
+                elif len(item) == 4:
+                    phase_name, domain, storyline_id, requested_activity_id = item
+                else:
+                    phase_name, domain, storyline_id = item[0], item[1], item[2]
+                    requested_activity_id = None
+                if not phase_name or phase_name not in self.schedules:
+                    continue
+                if self._should_skip_redundant_phase_request(
+                    phase_name,
+                    allow_operator_bypass=bool(requested_activity_id),
+                ):
+                    continue
+                schedule = self.schedules[phase_name]
+                if not schedule.get("enabled", True):
+                    continue
+                task = Task(
+                    id=f"{phase_name}_{int(datetime.now(timezone.utc).timestamp())}_req",
+                    name=phase_name,
+                    priority=TaskPriority.CRITICAL,
+                    status=TaskStatus.PENDING,
+                    created_at=datetime.now(timezone.utc),
+                    max_retries=_phase_max_retries(phase_name),
+                    metadata={
+                        "domain": domain,
+                        "storyline_id": storyline_id,
+                        "requested_activity_id": requested_activity_id,
+                        "force_nightly_unified_pipeline": force_nightly_unified_pipeline,
+                        "operator_request": True,
+                        "lane_default": self._phase_default_lane(phase_name),
+                        "resource_class": self._phase_resource_class(phase_name),
+                    },
+                )
+                await self._requested_task_queue.put(task)
+                self._requested_queue_depth_by_phase[phase_name] += 1
+                logger.info(
+                    "Governor requested phase: %s (domain=%s, storyline_id=%s)",
+                    phase_name,
+                    domain,
+                    storyline_id,
+                )
+        except queue.Empty:
+            pass
+
+    def _drain_priority_queue_tasks(self) -> list[Task]:
+        tasks: list[Task] = []
+        while True:
+            try:
+                item = self.task_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            t = item[2] if isinstance(item, tuple) and len(item) >= 3 else item
+            if hasattr(t, "name"):
+                tasks.append(t)
+                self._scheduled_queue_depth_by_phase[t.name] = max(
+                    0, int(self._scheduled_queue_depth_by_phase.get(t.name, 0) or 0) - 1
+                )
+        return tasks
+
+    def _rebuild_priority_queue(self, tasks: list[Task]) -> None:
+        for idx, task in enumerate(tasks):
+            p = (
+                TaskPriority.CRITICAL.value
+                if (task.metadata or {}).get("operator_request")
+                else TaskPriority.NORMAL.value
+            )
+            if isinstance(task.priority, TaskPriority):
+                p = min(p, task.priority.value)
+            self.task_queue.put_nowait((p, idx, task))
+            self._scheduled_queue_depth_by_phase[task.name] += 1
+
+    async def reconcile_and_enqueue(
+        self,
+        *,
+        desired_phases: list[str],
+        plan_generation: int,
+        stall_holds: dict[str, int],
+        controller: Any,
+        pending: dict[str, int] | None = None,
+    ) -> None:
+        """Drop duplicates / stale plans, reorder, enqueue gaps to prefetch target."""
+        from services.pipeline_controller import (
+            host_lane_at_cap,
+            prefetch_multiplier,
+        )
+
+        if pending is None:
+            pending = {}
+            try:
+                from services.backlog_metrics import get_all_pending_counts
+
+                pending = await asyncio.to_thread(get_all_pending_counts)
+            except Exception:
+                pending = {}
+        else:
+            pending = dict(pending)
+
+        existing = self._drain_priority_queue_tasks()
+        kept: list[Task] = []
+        actions: list[str] = []
+        phase_counts: dict[str, int] = defaultdict(int)
+        controller_hosts = getattr(controller, "hosts", None) or {}
+
+        for task in existing:
+            meta = task.metadata or {}
+            if meta.get("requested_activity_id") or meta.get("operator_request"):
+                kept.append(task)
+                phase_counts[task.name] += 1
+                continue
+            gen = meta.get("plan_generation")
+            if gen is not None and int(gen) < plan_generation:
+                actions.append(f"drop_stale:{task.name}")
+                continue
+            if stall_holds.get(task.name, 0) > 0:
+                actions.append(f"drop_stall_hold:{task.name}")
+                continue
+            from shared.bulk_catchup_pause import bulk_catchup_pause_defers_phase
+
+            if bulk_catchup_pause_defers_phase(task.name) and not meta.get("operator_request"):
+                actions.append(f"drop_bulk_pause:{task.name}")
+                continue
+            if int(pending.get(task.name, 0) or 0) <= 0 and task.name != "spine_sql_tail":
+                actions.append(f"drop_empty:{task.name}")
+                continue
+            cap = self._per_phase_scheduler_concurrent_cap(task.name)
+            inflight = self._phase_pipeline_inflight(task.name)
+            if cap > 0 and inflight >= cap:
+                actions.append(f"drop_saturated:{task.name}")
+                continue
+            if host_lane_at_cap(self, task.name, hosts=controller_hosts):
+                actions.append(f"drop_lane_cap:{task.name}")
+                continue
+            if AUTOMATION_MAX_SCHEDULED_DEPTH_PER_PHASE > 0:
+                if phase_counts[task.name] >= AUTOMATION_MAX_SCHEDULED_DEPTH_PER_PHASE:
+                    actions.append(f"drop_dup:{task.name}")
+                    continue
+            phase_counts[task.name] += 1
+            meta["plan_generation"] = plan_generation
+            task.metadata = meta
+            kept.append(task)
+
+        desired_set: list[str] = []
+        seen: set[str] = set()
+        for phase in desired_phases:
+            if phase in seen:
+                continue
+            seen.add(phase)
+            desired_set.append(phase)
+
+        # Reserve Widow-local structure slots so intake cannot consume the whole
+        # prefetch budget while MR/EPB have actionable backlog.
+        _widow_structure_reserve = ("mention_resolution", "entity_profile_build")
+        reserved: list[str] = []
+        for phase in _widow_structure_reserve:
+            if phase in seen and int(pending.get(phase, 0) or 0) > 0:
+                reserved.append(phase)
+        enqueue_order = reserved + [p for p in desired_set if p not in reserved]
+
+        ordered: list[Task] = []
+        kept_by_phase: dict[str, list[Task]] = defaultdict(list)
+        for t in kept:
+            kept_by_phase[t.name].append(t)
+
+        for phase in enqueue_order:
+            ordered.extend(kept_by_phase.pop(phase, []))
+
+        for _phase, tasks in kept_by_phase.items():
+            ordered.extend(tasks)
+
+        self._rebuild_priority_queue(ordered)
+
+        target = min(
+            self.max_concurrent_tasks * prefetch_multiplier(),
+            AUTOMATION_QUEUE_SOFT_CAP
+            if AUTOMATION_QUEUE_SOFT_CAP > 0
+            else self.max_concurrent_tasks * prefetch_multiplier(),
+        )
+        if target <= 0:
+            target = self.max_concurrent_tasks * prefetch_multiplier()
+
+        # Heal ghost scheduled-depth counters when the asyncio queue is empty.
+        if self.task_queue.qsize() == 0:
+            for _ph, _depth in list(self._scheduled_queue_depth_by_phase.items()):
+                if int(_depth or 0) > 0:
+                    actions.append(f"heal_sched_depth:{_ph}:{int(_depth)}")
+                    self._scheduled_queue_depth_by_phase[_ph] = 0
+
+        for phase in enqueue_order:
+            if self._automation_queue_depth() >= target:
+                break
+            if stall_holds.get(phase, 0) > 0:
+                actions.append(f"skip_stall:{phase}")
+                continue
+            if self._should_skip_redundant_phase_request(phase):
+                actions.append(f"skip_redundant:{phase}")
+                continue
+            from shared.bulk_catchup_pause import bulk_catchup_pause_defers_phase
+
+            if bulk_catchup_pause_defers_phase(phase):
+                actions.append(f"drop_bulk_pause:{phase}")
+                continue
+            inflight = self._phase_pipeline_inflight(phase)
+            cap = self._per_phase_scheduler_concurrent_cap(phase)
+            if cap > 0 and inflight >= cap:
+                actions.append(f"skip_cap:{phase}")
+                continue
+            if host_lane_at_cap(self, phase, hosts=controller_hosts):
+                actions.append(f"skip_lane_cap:{phase}")
+                continue
+            if AUTOMATION_MAX_SCHEDULED_DEPTH_PER_PHASE > 0:
+                queued = int(self._scheduled_queue_depth_by_phase.get(phase, 0) or 0)
+                if queued >= AUTOMATION_MAX_SCHEDULED_DEPTH_PER_PHASE:
+                    actions.append(f"skip_sched_depth:{phase}")
+                    continue
+            if phase not in self.schedules:
+                actions.append(f"skip_no_schedule:{phase}")
+                continue
+            schedule = self.schedules[phase]
+            task = Task(
+                id=f"{phase}_{plan_generation}_{int(datetime.now(timezone.utc).timestamp())}",
+                name=phase,
+                priority=schedule.get("priority", TaskPriority.NORMAL),
+                status=TaskStatus.PENDING,
+                created_at=datetime.now(timezone.utc),
+                max_retries=_phase_max_retries(phase),
+                metadata={
+                    "scheduled": True,
+                    "controller": True,
+                    "plan_generation": plan_generation,
+                    "phase": schedule.get("phase", 0),
+                    "lane_default": self._phase_default_lane(phase),
+                    "resource_class": self._phase_resource_class(phase),
+                },
+            )
+            if await self._enqueue_scheduled_task(task):
+                actions.append(f"enqueue:{phase}")
+                phase_counts[phase] += 1
+            else:
+                actions.append(f"enqueue_false:{phase}")
+
+        controller.queue_actions_last_replan = actions
+
     def _scheduled_enqueue_paused(self) -> bool:
         """When True, skip adding new scheduled / chained / continuous tasks (allowlist still runs)."""
         if AUTOMATION_QUEUE_SOFT_CAP <= 0:
@@ -2197,13 +2478,32 @@ class AutomationManager:
 
         await self._sync_phase_worker_tasks()
 
-        scheduler = asyncio.create_task(self._scheduler())
+        enqueue_brain: asyncio.Task
+        if PIPELINE_CONTROLLER_ENABLED:
+            from services.pipeline_controller import PipelineController, set_pipeline_controller
+
+            controller = PipelineController()
+            self.pipeline_controller = controller
+            set_pipeline_controller(controller)
+            enqueue_brain = asyncio.create_task(controller.run(self))
+            brain_label = "PipelineController"
+        else:
+            self.pipeline_controller = None
+            try:
+                from services.pipeline_controller import set_pipeline_controller
+
+                set_pipeline_controller(None)
+            except Exception:
+                pass
+            enqueue_brain = asyncio.create_task(self._scheduler())
+            brain_label = "legacy _scheduler"
+
         standalone_health = asyncio.create_task(self._standalone_health_check_loop())
         health_monitor = asyncio.create_task(self._health_monitor())
         metrics_collector = asyncio.create_task(self._metrics_collector())
         entity_organizer_loop = asyncio.create_task(self._entity_organizer_downtime_loop())
         self._background_automation_tasks = [
-            scheduler,
+            enqueue_brain,
             standalone_health,
             health_monitor,
             metrics_collector,
@@ -2212,7 +2512,8 @@ class AutomationManager:
         self._rebuild_automation_task_list()
 
         logger.info(
-            "Automation Manager started with %s phase dequeue workers (+ background tasks)",
+            "Automation Manager started with %s + %s phase dequeue workers",
+            brain_label,
             len(self._phase_worker_tasks),
         )
 
@@ -2225,6 +2526,20 @@ class AutomationManager:
         """Stop the automation manager gracefully"""
         logger.info("Stopping Automation Manager...")
         self.is_running = False
+        ctrl = getattr(self, "pipeline_controller", None)
+        if ctrl is not None:
+            try:
+                ctrl._running = False
+                ctrl.replan_event.set()
+            except Exception:
+                pass
+        self.pipeline_controller = None
+        try:
+            from services.pipeline_controller import set_pipeline_controller
+
+            set_pipeline_controller(None)
+        except Exception:
+            pass
 
         # Cancel all workers
         for worker in self.workers:
@@ -2270,6 +2585,9 @@ class AutomationManager:
                     "force_nightly_unified_pipeline": bool(force_nightly_unified_pipeline),
                 }
             )
+            ctrl = getattr(self, "pipeline_controller", None)
+            if ctrl is not None:
+                ctrl.request_replan()
         except Exception as e:
             logger.warning("AutomationManager request_phase failed: %s", e)
 
@@ -2325,12 +2643,43 @@ class AutomationManager:
                     task = _pq_item[2]
 
                 if task:
+                    meta = task.metadata or {}
+                    ctrl = getattr(self, "pipeline_controller", None)
+                    gen = meta.get("plan_generation")
+                    if (
+                        ctrl
+                        and gen is not None
+                        and not meta.get("requested_activity_id")
+                        and not meta.get("operator_request")
+                        and int(gen) < ctrl.plan_generation
+                    ):
+                        logger.debug(
+                            "Skip superseded task %s (gen=%s < %s)",
+                            task.name,
+                            gen,
+                            ctrl.plan_generation,
+                        )
+                        # Depth was bumped at enqueue; skipping must release it or
+                        # reconcile permanently hits AUTOMATION_MAX_SCHEDULED_DEPTH.
+                        if from_requested:
+                            self._requested_queue_depth_by_phase[task.name] = max(
+                                0,
+                                int(self._requested_queue_depth_by_phase[task.name]) - 1,
+                            )
+                            self._requested_task_queue.task_done()
+                        else:
+                            self._scheduled_queue_depth_by_phase[task.name] = max(
+                                0,
+                                int(self._scheduled_queue_depth_by_phase[task.name]) - 1,
+                            )
+                            self.task_queue.task_done()
+                        continue
                     if from_requested:
                         self._requested_queue_depth_by_phase[task.name] = max(
                             0,
                             int(self._requested_queue_depth_by_phase[task.name]) - 1,
                         )
-                    elif not from_requested:
+                    else:
                         self._scheduled_queue_depth_by_phase[task.name] = max(
                             0,
                             int(self._scheduled_queue_depth_by_phase[task.name]) - 1,
@@ -2610,6 +2959,26 @@ class AutomationManager:
                                 backlog_counts.get("content_enrichment", 0),
                             )
                             continue
+                        # Pipeline exclusive applies to governor/chain requests too (not only
+                        # schedule eligibility). Monitor requests (requested_activity_id) bypass.
+                        if not requested_activity_id:
+                            try:
+                                from services.nightly_ingest_window_service import (
+                                    should_block_phase_for_nightly_pipeline_exclusive,
+                                )
+
+                                if should_block_phase_for_nightly_pipeline_exclusive(
+                                    phase_name
+                                ):
+                                    logger.info(
+                                        "request_phase: skipping %s (nightly pipeline exclusive)",
+                                        phase_name,
+                                    )
+                                    continue
+                            except Exception as e:
+                                logger.warning(
+                                    "request_phase nightly pipeline exclusive gate: %s", e
+                                )
                         if (
                             phase_name == "nightly_enrichment_context"
                             and not self._can_enqueue_nightly_enrichment()
@@ -2792,8 +3161,8 @@ class AutomationManager:
                         )
                         if _iv <= 0 or _age >= _iv:
                             p = TaskPriority.CRITICAL.value
-                    # Yield claim_extraction when spine peers are severely backlogged
-                    if task_name == "claim_extraction" and _peer_severe_backlog_present(
+                    # Yield claim_extraction when spine peers or research LLM backlog need CPU
+                    if task_name == "claim_extraction" and _claim_should_yield_for_peers(
                         backlog_counts,
                         getattr(self, "_pending_counts", None),
                         exclude="claim_extraction",
@@ -2860,10 +3229,10 @@ class AutomationManager:
             except Exception:
                 pass
 
-        # When spine phases are severely backlogged, never let claim take >1 worker.
+        # When spine/research peers need CPU, never let claim take >1 worker.
         if task_name == "claim_extraction" and cap != 0:
             try:
-                if _peer_severe_backlog_present(
+                if _claim_should_yield_for_peers(
                     getattr(self, "_last_backlog_counts", None)
                     or (get_all_backlog_counts() if get_all_backlog_counts else None),
                     getattr(self, "_pending_counts", None),
@@ -3021,19 +3390,15 @@ class AutomationManager:
             return False
 
         # During the unified nightly window, only run the long drain + essentials unless disabled.
-        if _nightly_pipe:
-            raw_exc = os.environ.get("NIGHTLY_PIPELINE_EXCLUSIVE", "1").lower()
-            if raw_exc in ("1", "true", "yes"):
-                allowed = frozenset(
-                    x.strip()
-                    for x in os.environ.get(
-                        "NIGHTLY_PIPELINE_ALLOWED_SCHEDULED_PHASES",
-                        "nightly_enrichment_context,health_check,pending_db_flush",
-                    ).split(",")
-                    if x.strip()
-                )
-                if task_name not in allowed:
-                    return False
+        try:
+            from services.nightly_ingest_window_service import (
+                should_block_phase_for_nightly_pipeline_exclusive,
+            )
+
+            if should_block_phase_for_nightly_pipeline_exclusive(task_name):
+                return False
+        except Exception:
+            pass
 
         backlog_counts = backlog_counts or {}
         if (
@@ -3092,8 +3457,8 @@ class AutomationManager:
                 pass
             mult, _ = self._dynamic_cooldown_multiplier(resource_class)
             cooldown_sec = max(3, int(round(float(cooldown_sec) * float(mult))))
-            # Slow claim ticks when spine peers have severe backlog so continuous drains get workers
-            if task_name == "claim_extraction" and _peer_severe_backlog_present(
+            # Slow claim ticks when spine/research peers need workers for continuous drains
+            if task_name == "claim_extraction" and _claim_should_yield_for_peers(
                 backlog_counts,
                 getattr(self, "_pending_counts", None),
                 exclude="claim_extraction",
@@ -3373,6 +3738,39 @@ class AutomationManager:
                     return
         except Exception as e:
             logger.debug("hard-retired phase gate: %s", e)
+
+        # NIGHTLY_PIPELINE_EXCLUSIVE at execute/dispatch (not only schedule eligibility):
+        # already-queued event_tracking / coherence / investigation / etc. must not occupy
+        # workers during ALL_DAY catch-up while content_enrichment sits in the queue.
+        try:
+            from services.nightly_ingest_window_service import (
+                should_block_phase_for_nightly_pipeline_exclusive,
+            )
+
+            _meta = task.metadata or {}
+            # Monitor-only bypass. Do not treat bare request_phase/chain metadata as bypass
+            # (chains put tasks on the requested queue with requested_activity_id=None).
+            _exclusive_bypass = bool(
+                _meta.get("nightly_sequential_drain")
+                or _meta.get("operator_request")
+                or _meta.get("requested_activity_id")
+            )
+            if (
+                not _exclusive_bypass
+                and should_block_phase_for_nightly_pipeline_exclusive(task.name)
+            ):
+                logger.info(
+                    "Nightly pipeline exclusive - skipping %s at dispatch "
+                    "(not in NIGHTLY_PIPELINE_ALLOWED_SCHEDULED_PHASES)",
+                    task.name,
+                )
+                task.status = TaskStatus.COMPLETED
+                task.completed_at = datetime.now(timezone.utc)
+                task.metadata["skipped_pipeline_exclusive"] = True
+                return
+        except Exception as e:
+            logger.warning("nightly pipeline exclusive dispatch gate: %s", e)
+
         resource_class = task.metadata.get("resource_class") or self._phase_resource_class(task.name)
         task.metadata["resource_class"] = resource_class
         task.metadata["lane_default"] = task.metadata.get("lane_default") or self._phase_default_lane(
@@ -3568,20 +3966,6 @@ class AutomationManager:
         if task.name in COMPUTE_HEAVY_INFLIGHT_PHASES:
             _mark_compute_heavy_inflight(task.name, 1)
             heavy_inflight_held = True
-            # #region agent log
-            try:
-                from shared.debug_session_log import agent_dbg
-
-                agent_dbg(
-                    "C",
-                    "automation_manager.py:execute",
-                    "compute_heavy_inflight_enter",
-                    {"phase": task.name},
-                    run_id="post-fix",
-                )
-            except Exception:
-                pass
-            # #endregion
         try:
             from services.activity_feed_service import get_activity_feed
 
@@ -3791,6 +4175,7 @@ class AutomationManager:
             ):
                 try:
                     current = self._requeue_counts.get(task.name, 0)
+                    # Continuous iteration: when work remains, queue next run (v8: capped per analysis window)
                     if (
                         self._max_requeue_per_window > 0
                         and current >= self._max_requeue_per_window
@@ -3810,12 +4195,31 @@ class AutomationManager:
                                 task.name,
                                 self._automation_queue_depth(),
                             )
-                        elif automation_should_defer_new_scheduled_work(task.name):
+                        elif (
+                            automation_should_defer_new_scheduled_work(task.name)
+                            # Keep enrichment draining: pool is often hot *because* of the
+                            # just-finished batch; skipping here opened 10–25m idle gaps.
+                            and task.name != "content_enrichment"
+                        ):
                             logger.debug(
                                 "DB worker pool pressure — skip continuous re-queue for %s",
                                 task.name,
                             )
                         else:
+                            _cont_meta = {
+                                "scheduled": True,
+                                "phase": self.schedules[task.name].get("phase", 0),
+                                "estimated_duration": self.schedules[task.name].get(
+                                    "estimated_duration", 60
+                                ),
+                                "continuous": True,
+                                "lane_default": self._phase_default_lane(task.name),
+                                "resource_class": self._phase_resource_class(task.name),
+                            }
+                            # Nightly window no-ops enrichment unless controller/operator;
+                            # continuous must keep draining the same backlog.
+                            if task.name == "content_enrichment":
+                                _cont_meta["controller"] = True
                             next_task = Task(
                                 id=f"{task.name}_{int(task.completed_at.timestamp())}_next",
                                 name=task.name,
@@ -3824,16 +4228,7 @@ class AutomationManager:
                                 ),
                                 status=TaskStatus.PENDING,
                                 created_at=task.completed_at,
-                                metadata={
-                                    "scheduled": True,
-                                    "phase": self.schedules[task.name].get("phase", 0),
-                                    "estimated_duration": self.schedules[task.name].get(
-                                        "estimated_duration", 60
-                                    ),
-                                    "continuous": True,
-                                    "lane_default": self._phase_default_lane(task.name),
-                                    "resource_class": self._phase_resource_class(task.name),
-                                },
+                                metadata=_cont_meta,
                             )
                             if await self._enqueue_scheduled_task(next_task):
                                 self._requeue_counts[task.name] = current + 1
@@ -3845,6 +4240,29 @@ class AutomationManager:
                                 )
                 except Exception as e:
                     logger.debug("Re-enqueue check for %s: %s", task.name, e)
+
+            # When a structured-CPU peer finishes its own drain, nudge paper pathway immediately
+            # so we do not wait for the next 10–15m idle interval after claim/entity/event cools.
+            if (
+                task.name in STRUCTURED_LLM_CPU_LANE_PHASES
+                and task.name
+                not in ("research_paper_profiling", "claim_evidence_appraisal")
+                and not (task.metadata or {}).get("nightly_sequential_drain")
+            ):
+                try:
+                    peer_still_pending = False
+                    if task.name in BATCH_PHASES_CONTINUOUS:
+                        peer_still_pending = await self._has_pending_work(task.name)
+                    else:
+                        pc = getattr(self, "_pending_counts", None) or {}
+                        peer_still_pending = int(pc.get(task.name, 0) or 0) > 0
+                    if not peer_still_pending and research_llm_backlog_pending(max_age_s=15.0) > 0:
+                        if await self._has_pending_work("research_paper_profiling"):
+                            self.request_phase("research_paper_profiling")
+                        if await self._has_pending_work("claim_evidence_appraisal"):
+                            self.request_phase("claim_evidence_appraisal")
+                except Exception as e:
+                    logger.debug("Research pickup nudge after %s: %s", task.name, e)
 
             # Chain: request any phase that depends on this one so the pipeline keeps moving
             # When enrichment-backlog-first is enabled and backlog non-empty, do not chain-request phases outside the whitelist
@@ -3878,6 +4296,20 @@ class AutomationManager:
                             enrichment_backlog,
                         )
                         continue
+                    try:
+                        from services.nightly_ingest_window_service import (
+                            should_block_phase_for_nightly_pipeline_exclusive,
+                        )
+
+                        if should_block_phase_for_nightly_pipeline_exclusive(other_name):
+                            logger.info(
+                                "Chained: skipping %s (nightly pipeline exclusive; depends on %s)",
+                                other_name,
+                                task.name,
+                            )
+                            continue
+                    except Exception as e:
+                        logger.warning("Chained nightly pipeline exclusive gate: %s", e)
                     if (
                         self._scheduled_enqueue_paused()
                         and other_name not in QUEUE_PAUSE_ALLOW_SCHEDULED
@@ -3997,6 +4429,9 @@ class AutomationManager:
                 logger.debug("Activity feed complete: %s", e)
             # Store task result
             self.tasks[task.id] = task
+            ctrl = getattr(self, "pipeline_controller", None)
+            if ctrl is not None:
+                ctrl.notify_worker_done()
 
     def _activity_feed_activity_id(self, task: Task) -> str:
         """
@@ -4118,8 +4553,15 @@ class AutomationManager:
         try:
             from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
 
-            if in_nightly_pipeline_window_est() and not (task.metadata or {}).get(
-                "nightly_sequential_drain"
+            meta = task.metadata or {}
+            # Nightly unified drain owns enrichment in-window — but PipelineController /
+            # Monitor operator requests must still run (otherwise 0s no-ops while backlog grows).
+            if (
+                in_nightly_pipeline_window_est()
+                and not meta.get("nightly_sequential_drain")
+                and not meta.get("controller")
+                and not meta.get("operator_request")
+                and not meta.get("requested_activity_id")
             ):
                 logger.debug(
                     "Content enrichment: nightly pipeline window — handled by nightly_enrichment_context"
@@ -4133,9 +4575,12 @@ class AutomationManager:
         try:
             async with self._content_enrichment_lock:
                 loop = asyncio.get_event_loop()
-                # Burst (48h catch-up): batch 60; revert to 40 after
+                try:
+                    _bs = max(20, int(os.environ.get("CONTENT_ENRICHMENT_BATCH_SIZE", "120") or "120"))
+                except (TypeError, ValueError):
+                    _bs = 120
                 enriched = await loop.run_in_executor(
-                    None, lambda: enrich_articles_batch(batch_size=60)
+                    None, lambda: enrich_articles_batch(batch_size=_bs)
                 )
             if enriched and enriched > 0:
                 await self._maybe_request_storyline_assembly_after_enrichment()
@@ -4265,7 +4710,20 @@ class AutomationManager:
                 await self._execute_rss_processing(dummy)
             except Exception as e:
                 logger.warning(f"Collection cycle RSS step failed: {e}")
-        # 2. Content enrichment — loop until drained or cap (nightly pipeline window: nightly_enrichment_context owns this)
+        # Lift auto-silence after RSS so controller can schedule downstream drains.
+        try:
+            from services.phase_retry_silence_service import lift_auto_silences
+
+            lifted = await asyncio.to_thread(
+                lambda: lift_auto_silences(reason="rss_intake", force=True)
+            )
+            if lifted:
+                self._apply_automation_disabled_schedules()
+                logger.info("RSS intake lifted auto-silence for: %s", lifted)
+        except Exception as e:
+            logger.debug("collection_cycle silence lift: %s", e)
+        # 2. Content enrichment — PipelineController schedules standalone content_enrichment;
+        # legacy kill-switch keeps the inline drain loop.
         skip_enrich_nightly = False
         try:
             from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
@@ -4273,7 +4731,20 @@ class AutomationManager:
             skip_enrich_nightly = in_nightly_pipeline_window_est()
         except Exception:
             pass
-        if not skip_enrich_nightly:
+        ctrl = getattr(self, "pipeline_controller", None)
+        if ctrl is not None:
+            if not skip_enrich_nightly:
+                try:
+                    ctrl.request_replan()
+                except Exception as e:
+                    logger.debug("collection_cycle post-RSS replan: %s", e)
+            try:
+                from shared.chemistry_beaker import kickoff_beaker_phases
+
+                kickoff_beaker_phases(self, reason="collection_cycle_post_rss")
+            except Exception as e:
+                logger.debug("collection_cycle beaker kickoff: %s", e)
+        elif not skip_enrich_nightly:
             max_enrich_iters = 30
             for _ in range(max_enrich_iters):
                 if not get_all_pending_counts:
@@ -7639,6 +8110,40 @@ class AutomationManager:
                         )
                         if cur.fetchone():
                             return True
+                elif phase_name == "research_paper_profiling":
+                    cur.execute(
+                        """
+                        SELECT 1 FROM intelligence.research_paper_profiles
+                        WHERE extraction_status IN ('pending', 'failed')
+                        LIMIT 1
+                        """
+                    )
+                    if cur.fetchone():
+                        return True
+                elif phase_name == "claim_evidence_appraisal":
+                    try:
+                        from services.claim_evidence_appraisal_service import is_enabled
+
+                        if not is_enabled():
+                            return False
+                    except Exception:
+                        return False
+                    cur.execute(
+                        """
+                        SELECT 1 FROM intelligence.processed_documents pd
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM intelligence.claim_evidence_appraisal a
+                            WHERE a.document_id = pd.id
+                        )
+                        AND (
+                            COALESCE(pd.metadata->>'literature', '') IN ('true', '1')
+                            OR pd.source_type IN ('europepmc', 'pubmed', 'literature')
+                        )
+                        LIMIT 1
+                        """
+                    )
+                    if cur.fetchone():
+                        return True
             finally:
                 cur.close()
                 conn.close()
@@ -7749,6 +8254,13 @@ class AutomationManager:
             out["document_pipeline"] = get_document_pipeline_metrics()
         except Exception:
             out["document_pipeline"] = {"error": "unavailable"}
+        try:
+            ctrl = getattr(self, "pipeline_controller", None)
+            out["pipeline_controller"] = (
+                ctrl.get_state() if ctrl is not None else {"active": False}
+            )
+        except Exception:
+            out["pipeline_controller"] = {"error": "unavailable"}
         try:
             from services.workload_balancer import (
                 sample_effective_cooldowns,

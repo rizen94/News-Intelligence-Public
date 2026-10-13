@@ -15,8 +15,11 @@ logger = logging.getLogger(__name__)
 SchedulerMode = Literal["pressure", "preprocess", "postprocess", "maintenance"]
 
 # Light Widow work under RAM/DB pressure (no PopOS GPU enqueue on Widow).
+# content_enrichment stays first-class: omitting it left desired=[] for 10–25m while
+# ~10k+ articles pending (pressure mode + nightly context_sync block).
 PRESSURE_PRIORITY: tuple[str, ...] = (
     "pending_db_flush",
+    "content_enrichment",
     "context_sync",
     "entity_profile_sync",
     "spine_sql_tail",
@@ -641,6 +644,7 @@ def pick_next_phases_flat(
             continue
 
         desired.append(phase)
+
 
     # Residual assembly Widow fallback when remote-owned and PopOS stale.
     if (

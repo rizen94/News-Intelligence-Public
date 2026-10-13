@@ -95,6 +95,8 @@ BATCH_SIZE_PER_TASK: Dict[str, int] = {
     "event_deduplication": 100,  # EventDeduplicationService.deduplicate_recent default
     "story_continuation": 90,  # ~30 events × active schemas
     "event_coherence_review": 5,  # LLM-heavy; few events per tick
+    "research_paper_profiling": 2,  # trickle batch when pending ≫ threshold (see research_paper_profile_service)
+    "claim_evidence_appraisal": 5,  # CLAIM_EVIDENCE_APPRAISAL_BATCH default
 }
 
 # Phases where backlog = pending (orchestrator / not row-batched in this model).
@@ -152,6 +154,9 @@ RAW_PENDING_COUNT_KEYS = frozenset(
         "event_deduplication",
         "story_continuation",
         "event_coherence_review",
+        # Scientific paper pathway (LLM axes + literature appraisal)
+        "research_paper_profiling",
+        "claim_evidence_appraisal",
     }
 )
 
@@ -231,6 +236,8 @@ def _get_raw_pending_counts(*, budget_s: Optional[float] = None) -> Dict[str, in
         _put("event_deduplication", _count_event_deduplication_pending)
         _put("story_continuation", _count_story_continuation_pending)
         _put("event_coherence_review", _count_event_coherence_review_pending)
+        _put("research_paper_profiling", _count_research_paper_profiling_pending)
+        _put("claim_evidence_appraisal", _count_claim_evidence_appraisal_pending)
         if skipped:
             logger.warning(
                 "backlog_metrics _get_raw_pending_counts: budget %.1fs exhausted; skipped %s phase counts",
@@ -583,28 +590,22 @@ def _count_event_tracking_backlog() -> int:
 
 
 def _count_claim_extraction_backlog() -> int:
-    """Contexts with no extracted_claims and enough text for extraction (matches batch gate)."""
+    """Contexts claim_extraction would select — same gate as ``sql_claim_extraction_eligible``
+    (min text + pass-null + fusion gap-fill when intake fusion is on)."""
     conn = _get_conn()
     if not conn:
         return 0
-    min_text = _claim_extraction_min_text_length()
-    pass_sql = ""
-    if phase_backlog_uses_pass_marker("claim_extraction"):
-        pass_sql = f" AND ({sql_context_pass_null('claim_extraction', 'c')}) "
     try:
+        from services.claim_extraction_service import sql_claim_extraction_eligible
+
+        eligible = sql_claim_extraction_eligible("c")
         with conn.cursor() as cur:
             cur.execute("SET LOCAL statement_timeout = '8s'")
             cur.execute(
                 f"""
                 SELECT COUNT(*) FROM intelligence.contexts c
-                LEFT JOIN intelligence.extracted_claims ec ON ec.context_id = c.id
-                WHERE ec.id IS NULL
-                  AND (
-                      LENGTH(COALESCE(c.content, '')) + LENGTH(COALESCE(c.title, ''))
-                  ) >= %s
-                  {pass_sql}
-                """,
-                (min_text,),
+                WHERE {eligible}
+                """
             )
             return int(cur.fetchone()[0] or 0)
     except Exception as e:
@@ -1638,6 +1639,48 @@ def _count_event_coherence_review_pending() -> int:
             pass
 
 
+def _count_research_paper_profiling_pending() -> int:
+    """Profiles awaiting LLM axes (pending/failed extraction_status)."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '3s'")
+            cur.execute(
+                """
+                SELECT COUNT(*)::bigint
+                FROM intelligence.research_paper_profiles
+                WHERE extraction_status IN ('pending', 'failed')
+                """
+            )
+            return int(cur.fetchone()[0] or 0)
+    except Exception as e:
+        logger.debug("backlog research_paper_profiling count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_claim_evidence_appraisal_pending() -> int:
+    """Literature docs due for claim_evidence_appraisal (enabled path)."""
+    try:
+        from services.claim_evidence_appraisal_service import (
+            count_claim_evidence_appraisal_due,
+            is_enabled,
+        )
+
+        if not is_enabled():
+            return 0
+        return int(count_claim_evidence_appraisal_due() or 0)
+    except Exception as e:
+        logger.debug("backlog claim_evidence_appraisal count: %s", e)
+        return 0
+
+
 # Phases that should be skipped when backlog is 0 (avoid empty cycles)
 # document_processing omitted so it runs on interval even if backlog count is wrong (e.g. DB timeout)
 # content_refinement_queue omitted: must run on interval when idle so automation history updates;
@@ -1677,6 +1720,8 @@ SKIP_WHEN_EMPTY = frozenset({
     "event_deduplication",
     "story_continuation",
     "event_coherence_review",
+    "research_paper_profiling",
+    "claim_evidence_appraisal",
 })
 
 _missing_skip_pending = SKIP_WHEN_EMPTY - RAW_PENDING_COUNT_KEYS
