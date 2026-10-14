@@ -3,6 +3,8 @@
  * Interactive: breadcrumbs, prev/next from last feed, j/k keyboard nav.
  */
 import React, { useEffect, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Breadcrumb,
@@ -15,6 +17,31 @@ import {
   fetchReaderStoryline,
   type ReaderPackResponse,
 } from '../../services/readerApi';
+import { articlesApi } from '../../../services/api/articles';
+
+import {
+  sanitizeSnippet,
+  stripReaderMdMarkers,
+} from '../../../utils/sanitizeSnippet';
+
+function MetaSep() {
+  return (
+    <span className='v2-meta-sep' aria-hidden='true'>
+      ·
+    </span>
+  );
+}
+
+function ReaderMarkdown({ source }: { source: string }) {
+  // Expansions sometimes still carry Guardian HTML stubs; strip before markdown.
+  const text = sanitizeSnippet(source || '', '').trim();
+  if (!text) return null;
+  return (
+    <div className='v2-reader-md'>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+    </div>
+  );
+}
 
 function DossierTree({ nodes }: { nodes: Array<Record<string, unknown>> }) {
   if (!nodes?.length) return null;
@@ -44,6 +71,13 @@ export default function StorylineReaderPage() {
   const [pack, setPack] = useState<ReaderPackResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [navTick, setNavTick] = useState(0);
+  const [pullLoading, setPullLoading] = useState(false);
+  const [pullStatus, setPullStatus] = useState<string | null>(null);
+  const [pullSummary, setPullSummary] = useState<string | null>(null);
+  const [pullError, setPullError] = useState<string | null>(null);
+  const [pullArticleId, setPullArticleId] = useState<number | null>(null);
+  const [pullActors, setPullActors] = useState<string[]>([]);
+  const [pullNoteCount, setPullNoteCount] = useState(0);
 
   useEffect(() => {
     if (!domain || !id) return;
@@ -102,12 +136,130 @@ export default function StorylineReaderPage() {
           navigate(nav.prev.href);
         }
       } else if (e.key === 'Escape') {
-        navigate(withDomainQuery('/v2/news', domain || null));
+        navigate(withDomainQuery('/news', domain || null));
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [navigate, domain, id, navTick]);
+
+  useEffect(() => {
+    setPullSummary(null);
+    setPullError(null);
+    setPullStatus(null);
+    setPullArticleId(null);
+    setPullActors([]);
+    setPullNoteCount(0);
+    setPullLoading(false);
+  }, [domain, id]);
+
+  const applyReadyPull = (st: Record<string, unknown>) => {
+    if (st.summary_markdown) {
+      setPullSummary(String(st.summary_markdown));
+    }
+    setPullStatus(String(st.status || 'ready'));
+    setPullActors(
+      Array.isArray(st.vault_actors)
+        ? (st.vault_actors as unknown[]).map(String)
+        : Array.isArray((st.context_meta as { vault_actors?: unknown[] } | undefined)?.vault_actors)
+          ? ((st.context_meta as { vault_actors: unknown[] }).vault_actors).map(String)
+          : []
+    );
+    setPullNoteCount(
+      Number(
+        st.vault_note_count ||
+          (st.context_meta as { vault_note_count?: number } | undefined)?.vault_note_count ||
+          0
+      )
+    );
+    if (st.article_id) setPullArticleId(Number(st.article_id));
+    setPullLoading(false);
+  };
+
+  const pollPull = async (pullId: number | string) => {
+    for (let i = 0; i < 90; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const st = await articlesApi.getContextPull(pullId);
+      if (!st || st.ok === false) continue;
+      setPullStatus(String(st.status || ''));
+      if (st.status === 'ready' && st.summary_markdown) {
+        applyReadyPull(st as Record<string, unknown>);
+        return;
+      }
+      if (st.status === 'failed') {
+        setPullError(st.error_message || 'Pull context failed');
+        setPullLoading(false);
+        return;
+      }
+    }
+    setPullError('Timed out waiting for context brief');
+    setPullLoading(false);
+  };
+
+  /** Cache-first: if enqueue already returned ready + summary, show it; only poll pending jobs. */
+  const handlePullResponse = async (res: Record<string, unknown>) => {
+    const pullId = (res?.pull_id || res?.id) as number | string | undefined;
+    if (!pullId) {
+      setPullError(String(res?.error || 'Failed to start pull context'));
+      setPullLoading(false);
+      return;
+    }
+    if (res.article_id) setPullArticleId(Number(res.article_id));
+    const readyCached =
+      (res.cached === true || res.status === 'ready') && res.summary_markdown;
+    if (readyCached) {
+      applyReadyPull(res);
+      return;
+    }
+    if (res.status === 'ready' && !res.summary_markdown) {
+      // Deferred / empty ready — fetch once rather than polling a running job
+      const st = await articlesApi.getContextPull(pullId);
+      if (st?.status === 'ready') {
+        applyReadyPull(st as Record<string, unknown>);
+        if (!st.summary_markdown) {
+          setPullSummary(
+            '_No primed expansion yet. Check back after the morning vault prime._'
+          );
+        }
+        return;
+      }
+    }
+    setPullStatus(String(res.status || 'pending'));
+    await pollPull(pullId);
+  };
+
+  const runStorylinePull = async () => {
+    if (!domain || !id) return;
+    setPullLoading(true);
+    setPullError(null);
+    setPullStatus('pending');
+    setPullSummary(null);
+    setPullActors([]);
+    try {
+      const res = await articlesApi.pullStorylineContext(id, domain);
+      await handlePullResponse((res || {}) as Record<string, unknown>);
+    } catch (e: unknown) {
+      setPullError(e instanceof Error ? e.message : 'Failed');
+      setPullLoading(false);
+    }
+  };
+
+  const runPullContext = async (articleId: number) => {
+    if (!domain || !articleId) return;
+    setPullLoading(true);
+    setPullError(null);
+    setPullStatus('pending');
+    setPullArticleId(articleId);
+    setPullSummary(null);
+    setPullActors([]);
+    try {
+      const res = await articlesApi.pullContext(articleId, domain, id);
+      await handlePullResponse((res || {}) as Record<string, unknown>);
+    } catch (e: unknown) {
+      setPullError(e instanceof Error ? e.message : 'Failed');
+      setPullLoading(false);
+    }
+  };
 
   const nav =
     domain && id
@@ -120,13 +272,13 @@ export default function StorylineReaderPage() {
       <div>
         <Breadcrumb
           crumbs={[
-            { label: 'Home', to: withDomainQuery('/v2', domain || null) },
-            { label: 'News', to: withDomainQuery('/v2/news', domain || null) },
+            { label: 'Home', to: withDomainQuery('/', domain || null) },
+            { label: 'News', to: withDomainQuery('/news', domain || null) },
             { label: 'Error' },
           ]}
         />
         <p className='v2-empty'>{error}</p>
-        <Link to={withDomainQuery('/v2', domain || null)}>← Home</Link>
+        <Link to={withDomainQuery('/', domain || null)}>← Home</Link>
       </div>
     );
   }
@@ -137,22 +289,108 @@ export default function StorylineReaderPage() {
 
   const events = pack.timeline?.events || [];
   const citations = pack.citations || [];
+  const alsoIn = pack.also_in || [];
   const tree = (pack.dossier_rail?.tree || pack.dossier_rail?.entities || []) as Array<
     Record<string, unknown>
   >;
   const hierarchy = pack.dossier_rail?.hierarchy || {};
   const pull =
     pack.lede ||
+    (typeof pack.editorial_document?.lede === 'string'
+      ? pack.editorial_document.lede
+      : null) ||
     (typeof pack.editorial_document?.what === 'string'
       ? pack.editorial_document.what
-      : null);
+      : Array.isArray(pack.editorial_document?.what)
+        ? (pack.editorial_document.what as unknown[])
+            .map((x) => String(x || '').trim())
+            .filter(Boolean)
+            .slice(0, 2)
+            .join('; ')
+        : null);
+
+  const expansionBody = String(
+    pack.vault_expansion?.summary_md &&
+      String(pack.vault_expansion?.body_md || '').includes('Vault context')
+      ? pack.vault_expansion.summary_md
+      : pack.vault_expansion?.body_md || pack.vault_expansion?.summary_md || ''
+  ).trim();
+  // One brief surface: Pull → vault → durable package projection → pack.summary.
+  const durableBrief = String(pack.durable_brief || '').trim();
+  const briefMd = (pullSummary || expansionBody || durableBrief).trim();
+  const briefFromPull = Boolean(pullSummary);
+  const briefSource: 'pull' | 'vault_expansion' | 'durable' | 'summary' | 'none' =
+    briefFromPull
+      ? 'pull'
+      : pack.brief_source ||
+        (expansionBody
+          ? 'vault_expansion'
+          : durableBrief
+            ? 'durable'
+            : briefMd
+              ? 'summary'
+              : 'none');
+  const briefLabel =
+    briefSource === 'pull'
+      ? 'Executive brief'
+      : briefSource === 'vault_expansion'
+        ? 'Morning brief'
+        : briefSource === 'durable'
+          ? 'Durable desk brief'
+          : briefSource === 'summary'
+            ? 'Storyline summary'
+            : 'Brief';
+  const briefMeta =
+    briefSource === 'pull'
+      ? [
+          'Living context',
+          pullNoteCount ? `${pullNoteCount} notes` : null,
+          pullActors.length ? pullActors.slice(0, 8).join(', ') : null,
+        ]
+          .filter(Boolean)
+          .join(' · ')
+      : briefSource === 'vault_expansion'
+        ? [
+            'Primed vault brief (live)',
+            pack.vault_expansion?.updated_at
+              ? String(pack.vault_expansion.updated_at).slice(0, 10)
+              : null,
+          ]
+            .filter(Boolean)
+            .join(' · ')
+        : briefSource === 'durable'
+          ? 'Desk / package projection — not the living morning brief'
+          : briefSource === 'summary'
+            ? 'Fallback pack summary'
+            : '';
+  const summaryText = String(pack.summary || '').trim();
+  const cleanedSummary = stripReaderMdMarkers(summaryText);
+  const cleanedBrief = stripReaderMdMarkers(briefMd);
+  // One primary brief: hide Summary when a substantial brief is already shown,
+  // or when cleaned text largely overlaps.
+  const summaryDup = Boolean(
+    cleanedSummary &&
+      cleanedBrief &&
+      (cleanedBrief.length >= 200 ||
+        cleanedSummary === cleanedBrief ||
+        cleanedBrief.includes(
+          cleanedSummary.slice(0, Math.min(120, cleanedSummary.length))
+        ) ||
+        cleanedSummary.includes(
+          cleanedBrief.slice(0, Math.min(120, cleanedBrief.length))
+        ))
+  );
+  const situation = pack.situation_hub;
+  const timelineNarrative = stripReaderMdMarkers(
+    String(pack.timeline_narrative || '')
+  ).trim();
 
   return (
     <div>
       <Breadcrumb
         crumbs={[
-          { label: 'Home', to: withDomainQuery('/v2', domain || null) },
-          { label: 'News', to: withDomainQuery('/v2/news', domain || null) },
+          { label: 'Home', to: withDomainQuery('/', domain || null) },
+          { label: 'News', to: withDomainQuery('/news', domain || null) },
           { label: (domain || '').toUpperCase() },
           { label: pack.title.slice(0, 48) + (pack.title.length > 48 ? '…' : '') },
         ]}
@@ -185,48 +423,193 @@ export default function StorylineReaderPage() {
       <div className='v2-reader-layout'>
         <article className='v2-reader-body'>
           <p className='v2-section-label'>
-            {(domain || '').toUpperCase()} · Storyline
+            {(domain || '').toUpperCase()} · Episode
           </p>
+          {situation?.title || situation?.href ? (
+            <p className='v2-story-kicker' style={{ marginBottom: '0.35rem' }}>
+              Situation ·{' '}
+              <Link
+                to={withDomainQuery(
+                  situation.href ||
+                    `/hubs/${situation.cluster_key || situation.id}`,
+                  domain || null
+                )}
+              >
+                {situation.title || situation.cluster_key || 'Hub'}
+              </Link>
+            </p>
+          ) : null}
           <h1>{pack.title}</h1>
           <div className='v2-hero-rule' />
           <div className='v2-story-meta' style={{ marginBottom: '1.25rem' }}>
             {pack.updated_at ? (
               <span>Updated {pack.updated_at.slice(0, 10)}</span>
             ) : null}
+            {pack.updated_at && pack.article_count != null ? <MetaSep /> : null}
             {pack.article_count != null ? (
               <span>{pack.article_count} sources</span>
+            ) : null}
+            {(pack.updated_at || pack.article_count != null) && pack.status ? (
+              <MetaSep />
             ) : null}
             {pack.status ? <span>{pack.status}</span> : null}
           </div>
 
-          {pull ? <blockquote className='v2-pull-quote'>{pull}</blockquote> : null}
+          {pull && !briefMd ? (
+            <blockquote className='v2-pull-quote'>{pull}</blockquote>
+          ) : null}
 
-          <section>
-            <h2 className='v2-section-label'>Summary</h2>
-            <p style={{ whiteSpace: 'pre-wrap' }}>
-              {pack.summary || 'No summary yet.'}
+          {briefMd ? (
+            <section style={{ marginBottom: '1.25rem' }}>
+              <h2 className='v2-section-label'>{briefLabel}</h2>
+              {briefMeta ? (
+                <p
+                  style={{
+                    fontSize: '0.85rem',
+                    color: 'var(--v2-ink-muted)',
+                    marginBottom: '0.75rem',
+                  }}
+                >
+                  {briefMeta}
+                </p>
+              ) : null}
+              <ReaderMarkdown source={briefMd} />
+            </section>
+          ) : null}
+
+          <div className='v2-pull-toolbar'>
+            <button
+              type='button'
+              className='v2-reader-nav-link'
+              disabled={pullLoading || !domain || !id}
+              onClick={() => runStorylinePull()}
+              style={{
+                border: '1px solid var(--v2-rule)',
+                background: 'transparent',
+                cursor: pullLoading ? 'wait' : 'pointer',
+                padding: '0.35rem 0.75rem',
+                fontFamily: 'inherit',
+              }}
+            >
+              {pullLoading ? 'Pulling context…' : 'Pull context'}
+            </button>
+            <span className='v2-pull-hint'>
+              Cache-first living context
+              {pullArticleId ? ` · article ${pullArticleId}` : ''}
+            </span>
+          </div>
+          {pullError ? (
+            <p className='v2-empty' style={{ color: 'crimson' }}>
+              {pullError}
             </p>
-          </section>
+          ) : null}
+          {pullStatus && pullStatus !== 'ready' && !pullError ? (
+            <p className='v2-empty'>Context job: {pullStatus}</p>
+          ) : null}
+
+          {!summaryDup && cleanedSummary ? (
+            <section>
+              <h2 className='v2-section-label'>Summary</h2>
+              <p style={{ whiteSpace: 'pre-wrap' }}>{cleanedSummary}</p>
+            </section>
+          ) : null}
+          {!briefMd && !cleanedSummary ? (
+            <p className='v2-empty'>No brief or summary yet.</p>
+          ) : null}
 
           {pack.background_information ? (
             <section>
               <hr className='v2-section-rule' />
               <h2 className='v2-section-label'>Background</h2>
-              <p style={{ whiteSpace: 'pre-wrap' }}>{pack.background_information}</p>
+              <p style={{ whiteSpace: 'pre-wrap' }}>
+                {stripReaderMdMarkers(String(pack.background_information))}
+              </p>
+            </section>
+          ) : null}
+
+          {pack.vault_context_pack?.notes &&
+          pack.vault_context_pack.notes.length > 0 ? (
+            <section>
+              <hr className='v2-section-rule' />
+              <h2 className='v2-section-label'>Living context</h2>
+              <p
+                style={{
+                  fontSize: '0.85rem',
+                  color: 'var(--v2-ink-muted)',
+                  marginBottom: '0.75rem',
+                }}
+              >
+                From Obsidian vault notes linked to this arc
+                {pack.vault_context_pack.note_count
+                  ? ` · ${pack.vault_context_pack.note_count} notes`
+                  : ''}
+              </p>
+              <ul style={{ paddingLeft: '1.1rem' }}>
+                {pack.vault_context_pack.notes.map((n, i) => (
+                  <li
+                    key={String(n.vault_path || n.title || i)}
+                    style={{ marginBottom: '0.75rem' }}
+                  >
+                    <strong style={{ fontFamily: 'var(--v2-font-display)' }}>
+                      {n.title || n.vault_path || 'Note'}
+                    </strong>
+                    {n.is_seed ? (
+                      <span
+                        style={{
+                          marginLeft: '0.4rem',
+                          fontSize: '0.75rem',
+                          color: 'var(--v2-ink-muted)',
+                        }}
+                      >
+                        seed
+                      </span>
+                    ) : null}
+                    {n.significance_excerpt ? (
+                      <p
+                        style={{
+                          margin: '0.25rem 0 0',
+                          color: 'var(--v2-ink-muted)',
+                          whiteSpace: 'pre-wrap',
+                        }}
+                      >
+                        {stripReaderMdMarkers(String(n.significance_excerpt))}
+                      </p>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
             </section>
           ) : null}
 
           <section>
             <hr className='v2-section-rule' />
             <h2 className='v2-section-label'>Timeline</h2>
-            {events.length === 0 ? (
-              <p className='v2-empty'>No timeline events yet.</p>
-            ) : (
+            {timelineNarrative ? (
+              <p
+                style={{
+                  whiteSpace: 'pre-wrap',
+                  marginBottom: '1rem',
+                  lineHeight: 1.5,
+                }}
+              >
+                {timelineNarrative}
+              </p>
+            ) : null}
+            {events.length === 0 && !timelineNarrative ? (
+              <p className='v2-empty'>
+                No timeline events yet — Pull context or wait for event extraction.
+              </p>
+            ) : events.length === 0 ? null : (
               <ol className='v2-timeline'>
-                {events.map((ev, i) => (
+                {events.slice(0, 12).map((ev, i) => (
                   <li key={String(ev.id ?? i)}>
                     <div className='v2-story-kicker'>
-                      {String(ev.event_date || ev.actual_event_date || 'Undated')}
+                      {String(
+                        ev.date ||
+                          ev.event_date ||
+                          ev.actual_event_date ||
+                          'Undated'
+                      )}
                     </div>
                     <strong style={{ fontFamily: 'var(--v2-font-display)' }}>
                       {String(ev.title || 'Event')}
@@ -238,7 +621,8 @@ export default function StorylineReaderPage() {
                           color: 'var(--v2-ink-muted)',
                         }}
                       >
-                        {String(ev.description)}
+                        {String(ev.description).slice(0, 280)}
+                        {String(ev.description).length > 280 ? '…' : ''}
                       </p>
                     ) : null}
                   </li>
@@ -247,21 +631,46 @@ export default function StorylineReaderPage() {
             )}
           </section>
 
+          {alsoIn.length > 0 ? (
+            <section>
+              <hr className='v2-section-rule' />
+              <h2 className='v2-section-label'>Also in</h2>
+              <p className='v2-empty' style={{ marginBottom: '0.5rem' }}>
+                Primary home for this pack; some member articles also appear under
+                other storylines.
+              </p>
+              <ul style={{ paddingLeft: '1.1rem' }}>
+                {alsoIn.map(h => (
+                  <li key={`${h.domain}-${h.storyline_id}-${h.article_id}`} style={{ marginBottom: '0.4rem' }}>
+                    <a href={h.href || `/storylines/${h.domain}/${h.storyline_id}`}>
+                      {h.title || `Storyline ${h.storyline_id}`}
+                    </a>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--v2-ink-muted)' }}>
+                      {h.article_title
+                        ? ` · via “${String(h.article_title).slice(0, 72)}”`
+                        : ''}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
           <section>
             <hr className='v2-section-rule' />
-            <h2 className='v2-section-label'>Citations</h2>
+            <h2 className='v2-section-label'>Sources</h2>
             {citations.length === 0 ? (
-              <p className='v2-empty'>No member articles.</p>
+              <p className='v2-empty'>No member articles linked yet.</p>
             ) : (
               <ul style={{ paddingLeft: '1.1rem' }}>
                 {citations.map(c => (
-                  <li key={c.id} style={{ marginBottom: '0.65rem' }}>
+                  <li key={c.id} style={{ marginBottom: '0.75rem' }}>
                     {c.url ? (
                       <a href={c.url} target='_blank' rel='noreferrer'>
                         {c.title}
                       </a>
                     ) : (
-                      c.title
+                      <strong>{c.title}</strong>
                     )}
                     <div
                       style={{ fontSize: '0.8rem', color: 'var(--v2-ink-muted)' }}
@@ -269,7 +678,40 @@ export default function StorylineReaderPage() {
                       {[c.source_domain, c.published_at?.slice(0, 10)]
                         .filter(Boolean)
                         .join(' · ')}
+                      {domain ? (
+                        <>
+                          {' · '}
+                          <button
+                            type='button'
+                            disabled={pullLoading}
+                            onClick={() => runPullContext(Number(c.id))}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              padding: 0,
+                              color: 'var(--v2-accent, inherit)',
+                              textDecoration: 'underline',
+                              cursor: pullLoading ? 'wait' : 'pointer',
+                              font: 'inherit',
+                            }}
+                          >
+                            Pull context
+                          </button>
+                        </>
+                      ) : null}
                     </div>
+                    {c.summary ? (
+                      <p
+                        style={{
+                          margin: '0.2rem 0 0',
+                          fontSize: '0.9rem',
+                          color: 'var(--v2-ink-muted)',
+                        }}
+                      >
+                        {stripReaderMdMarkers(String(c.summary)).slice(0, 200)}
+                        {String(c.summary).length > 200 ? '…' : ''}
+                      </p>
+                    ) : null}
                   </li>
                 ))}
               </ul>
@@ -301,7 +743,7 @@ export default function StorylineReaderPage() {
                   }
                 ).children.map(ch => (
                   <li key={ch.id}>
-                    <Link to={ch.href || `/v2/storylines/${domain}/${ch.id}`}>
+                    <Link to={ch.href || `/storylines/${domain}/${ch.id}`}>
                       {ch.title}
                     </Link>
                   </li>
@@ -310,7 +752,12 @@ export default function StorylineReaderPage() {
             </div>
           ) : null}
           <DossierTree nodes={tree} />
-          {!tree.length ? <p className='v2-empty'>No entities linked yet.</p> : null}
+          {!tree.length ? (
+            <p className='v2-empty'>
+              No entities linked yet — use Pull context to enrich the living
+              dossier.
+            </p>
+          ) : null}
         </aside>
       </div>
     </div>

@@ -31,7 +31,7 @@ def _utc_aware(dt):
     return dt.astimezone(timezone.utc)
 
 
-def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=None):
+def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=None, paper_meta=None):
     """
     Insert into {schema}.articles with provenance columns when present.
     insert_vals: title, url, content, summary, published_at, created_at, source_domain,
@@ -42,7 +42,13 @@ def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=
     event_date = published_at or created_at
     ingestion_date = created_at
 
+    meta_obj: dict = {}
     if cred_meta:
+        meta_obj["source_credibility"] = cred_meta
+    if paper_meta:
+        meta_obj.update(paper_meta)
+
+    if meta_obj:
         try:
             cur.execute(
                 f"""
@@ -55,7 +61,7 @@ def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=
                 """,
                 (
                     *insert_vals,
-                    json.dumps({"source_credibility": cred_meta}),
+                    json.dumps(meta_obj),
                     event_date,
                     ingestion_date,
                 ),
@@ -70,7 +76,7 @@ def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
                 RETURNING id
                 """,
-                (*insert_vals, json.dumps({"source_credibility": cred_meta})),
+                (*insert_vals, json.dumps(meta_obj)),
             )
             return
 
@@ -431,6 +437,15 @@ def _rss_should_fetch_fulltext(body: str | None, url: str | None) -> bool:
         return False
     if os.environ.get("RSS_ALWAYS_FETCH_FULLTEXT", "").strip().lower() in ("1", "true", "yes"):
         return True
+    # arXiv abs/HTML pages ship abstracts (~1–2k chars) that would otherwise skip enrichment.
+    try:
+        from services.article_content_enrichment_service import needs_arxiv_fulltext
+
+        if needs_arxiv_fulltext(url, body):
+            return True
+    except Exception:
+        if "arxiv.org" in str(url).lower():
+            return True
     return _rss_plain_text_len(body) < _rss_fulltext_fetch_threshold()
 
 
@@ -449,6 +464,18 @@ def _rss_entry_savepoint_rollback(feed_cur, feed_conn) -> None:
     """Undo failed entry so the connection is not left in aborted state."""
     try:
         feed_cur.execute("ROLLBACK TO SAVEPOINT sp_article")
+    except Exception:
+        try:
+            feed_conn.rollback()
+        except Exception:
+            pass
+
+
+def _rss_release_before_slow_io(feed_cur, feed_conn) -> None:
+    """Commit any open savepoint/xact before HTTP so the pool is not idle-in-transaction."""
+    _rss_entry_savepoint_release(feed_cur)
+    try:
+        feed_conn.commit()
     except Exception:
         try:
             feed_conn.rollback()
@@ -1689,7 +1716,83 @@ def collect_rss_feeds() -> int:
                 except Exception:
                     pass
 
-            # Each thread gets its own database connection
+            # Parse feed BEFORE taking a DB connection (HTTP must not hold pool slots)
+            try:
+                def parse_feed():
+                    return fetch_and_parse_rss(feed_url)
+
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(parse_feed)
+                    try:
+                        feed = future.result(timeout=30)
+                    except FutureTimeoutError:
+                        raise TimeoutError("RSS parsing timeout")
+            except TimeoutError:
+                logger.error(f"⏱️ Timeout processing feed: {feed_name}")
+                feed_conn = get_db_connection()
+                if feed_conn:
+                    try:
+                        feed_cur = feed_conn.cursor()
+                        feed_cur.execute(
+                            f"""
+                            UPDATE {schema_name}.rss_feeds
+                            SET last_fetched_at = NOW(),
+                                last_error_message = %s,
+                                status = 'error'
+                            WHERE id = %s
+                            """,
+                            ("Timeout", feed_id),
+                        )
+                        feed_conn.commit()
+                    except Exception:
+                        try:
+                            feed_conn.rollback()
+                        except Exception:
+                            pass
+                    finally:
+                        feed_conn.close()
+                _rss_log("error", err="Timeout")
+                return {
+                    "articles_added": 0,
+                    "articles_updated": 0,
+                    "duplicates": 0,
+                    "excluded": 0,
+                    "error": "Timeout",
+                }
+            except Exception as e:
+                logger.error(f"❌ Error processing feed {feed_name}: {e}")
+                feed_conn = get_db_connection()
+                if feed_conn:
+                    try:
+                        feed_cur = feed_conn.cursor()
+                        feed_cur.execute(
+                            f"""
+                            UPDATE {schema_name}.rss_feeds
+                            SET last_fetched_at = NOW(),
+                                last_error_message = %s,
+                                status = 'error'
+                            WHERE id = %s
+                            """,
+                            (str(e)[:500], feed_id),
+                        )
+                        feed_conn.commit()
+                    except Exception:
+                        try:
+                            feed_conn.rollback()
+                        except Exception:
+                            pass
+                    finally:
+                        feed_conn.close()
+                _rss_log("error", err=str(e))
+                return {
+                    "articles_added": 0,
+                    "articles_updated": 0,
+                    "duplicates": 0,
+                    "excluded": 0,
+                    "error": str(e),
+                }
+
+            # Each thread gets its own database connection (DB work only after parse)
             feed_conn = get_db_connection()
             if not feed_conn:
                 logger.error(f"Failed to get DB connection for feed: {feed_name}")
@@ -1714,21 +1817,9 @@ def collect_rss_feeds() -> int:
                 filtered_impact = 0
 
                 try:
-                    # Parse RSS feed with timeout (HTTP retries + UA in fetch_and_parse_rss)
-                    def parse_feed():
-                        return fetch_and_parse_rss(feed_url)
-
-                    with ThreadPoolExecutor(max_workers=1) as executor:
-                        future = executor.submit(parse_feed)
-                        try:
-                            feed = future.result(timeout=30)
-                        except FutureTimeoutError:
-                            raise TimeoutError("RSS parsing timeout")
-
                     _cap = _rss_max_entries_per_feed()
                     for entry in feed.entries[:_cap]:
                         try:
-                            feed_cur.execute("SAVEPOINT sp_article")
                             title = entry.get("title", "")[:500]
                             url = entry.get("link", "")[:500]
                             content = _extract_rss_entry_body(entry)
@@ -1738,7 +1829,6 @@ def collect_rss_feeds() -> int:
                                 title, content, feed_name, feed_url, domain=domain_key
                             ):
                                 excluded_count += 1
-                                _rss_entry_savepoint_release(feed_cur)
                                 continue
 
                             # Filter clickbait titles (but allow press releases/official filings)
@@ -1746,7 +1836,6 @@ def collect_rss_feeds() -> int:
                                 filtered_clickbait += 1
                                 excluded_count += 1
                                 logger.debug(f"Article excluded (clickbait): {title[:60]}...")
-                                _rss_entry_savepoint_release(feed_cur)
                                 continue
 
                             # Filter advertisements (but allow press releases/official filings)
@@ -1754,8 +1843,9 @@ def collect_rss_feeds() -> int:
                                 filtered_ads += 1
                                 excluded_count += 1
                                 logger.debug(f"Article excluded (advertisement): {title[:60]}...")
-                                _rss_entry_savepoint_release(feed_cur)
                                 continue
+
+                            feed_cur.execute("SAVEPOINT sp_article")
 
                             # Calculate scores BEFORE filtering (need scores for threshold check)
                             impact_score = calculate_article_impact_score(title, content)
@@ -1846,9 +1936,12 @@ def collect_rss_feeds() -> int:
                                     or not (existing_content or "").strip()
                                 )
                                 if should_update:
+                                    # End xact before HTTP full-text fetch (avoids idle-in-transaction)
+                                    _rss_release_before_slow_io(feed_cur, feed_conn)
                                     store_content, _, _ = _maybe_inline_fetch_article_body(
                                         content, url
                                     )
+                                    feed_cur.execute("SAVEPOINT sp_article")
                                     raw_bias = calculate_domain_bias_score(
                                         domain_key, title, store_content, feed_name
                                     )
@@ -1929,16 +2022,6 @@ def collect_rss_feeds() -> int:
                                         """,
                                             (existing_id,),
                                         )
-                                        from services.context_processor_service import (
-                                            ensure_context_for_article,
-                                        )
-
-                                        if article_eligible_for_context(
-                                            store_content,
-                                            existing_enrichment,
-                                            existing_created_at,
-                                        ):
-                                            ensure_context_for_article(domain_key, existing_id)
                                         feed_cur.execute("RELEASE SAVEPOINT sp_aux")
                                     except Exception as aux_err:
                                         logger.debug(
@@ -1950,6 +2033,25 @@ def collect_rss_feeds() -> int:
                                             feed_cur.execute("ROLLBACK TO SAVEPOINT sp_aux")
                                         except Exception:
                                             pass
+                                    # Context work after commit — never hold feed_conn idle-in-tx
+                                    _rss_release_before_slow_io(feed_cur, feed_conn)
+                                    try:
+                                        from services.context_processor_service import (
+                                            ensure_context_for_article,
+                                        )
+
+                                        if article_eligible_for_context(
+                                            store_content,
+                                            existing_enrichment,
+                                            existing_created_at,
+                                        ):
+                                            ensure_context_for_article(domain_key, existing_id)
+                                    except Exception as ctx_err:
+                                        logger.debug(
+                                            "ensure_context skip (updated %s): %s",
+                                            existing_id,
+                                            ctx_err,
+                                        )
                                 else:
                                     duplicates_rejected += 1
                                 _rss_entry_savepoint_release(feed_cur)
@@ -1997,9 +2099,11 @@ def collect_rss_feeds() -> int:
 
                             # Inline full-text fetch when feed body is snippet-sized (plaintext heuristic)
                             created_at_ins = datetime.now(timezone.utc)
+                            _rss_release_before_slow_io(feed_cur, feed_conn)
                             insert_content, trafilatura_attempted, trafilatura_ok = (
                                 _maybe_inline_fetch_article_body(content or "", url)
                             )
+                            feed_cur.execute("SAVEPOINT sp_article")
                             enrichment_status, enrichment_attempts = (
                                 finalize_rss_enrichment_after_inline(
                                     insert_content,
@@ -2024,14 +2128,43 @@ def collect_rss_feeds() -> int:
                                 enrichment_status,
                                 enrichment_attempts,
                             )
+                            paper_meta = None
+                            try:
+                                from services.research_paper_classifier import paper_metadata_patch
+
+                                paper_meta = paper_metadata_patch(
+                                    url, source_domain=feed_name, title=title
+                                ) or None
+                            except Exception:
+                                paper_meta = None
                             _insert_domain_article(
-                                feed_cur, schema_name, insert_vals, cred_meta=cred_meta or None
+                                feed_cur,
+                                schema_name,
+                                insert_vals,
+                                cred_meta=cred_meta or None,
+                                paper_meta=paper_meta,
                             )
 
                             result = feed_cur.fetchone()
                             if result and feed_cur.rowcount > 0:
                                 article_id = result[0]
                                 articles_added += 1
+                                if paper_meta:
+                                    try:
+                                        from services.research_paper_profile_service import (
+                                            ensure_pending_profile,
+                                        )
+
+                                        ensure_pending_profile(
+                                            domain_key,
+                                            int(article_id),
+                                            url=url,
+                                            title=title,
+                                            source_domain=feed_name,
+                                            metadata=paper_meta,
+                                        )
+                                    except Exception:
+                                        pass
 
                                 # Nested savepoint: queue/context failures must not poison sp_article.
                                 feed_cur.execute("SAVEPOINT sp_aux")
@@ -2045,16 +2178,6 @@ def collect_rss_feeds() -> int:
                                     """,
                                         (article_id,),
                                     )
-                                    from services.context_processor_service import (
-                                        ensure_context_for_article,
-                                    )
-
-                                    if article_eligible_for_context(
-                                        insert_content,
-                                        enrichment_status,
-                                        created_at_ins,
-                                    ):
-                                        ensure_context_for_article(domain_key, article_id)
                                     feed_cur.execute("RELEASE SAVEPOINT sp_aux")
                                 except Exception as aux_err:
                                     logger.debug(
@@ -2067,6 +2190,23 @@ def collect_rss_feeds() -> int:
                                     except Exception:
                                         pass
                                 feed_conn.commit()
+                                try:
+                                    from services.context_processor_service import (
+                                        ensure_context_for_article,
+                                    )
+
+                                    if article_eligible_for_context(
+                                        insert_content,
+                                        enrichment_status,
+                                        created_at_ins,
+                                    ):
+                                        ensure_context_for_article(domain_key, article_id)
+                                except Exception as ctx_err:
+                                    logger.debug(
+                                        "ensure_context skip (new %s): %s",
+                                        article_id,
+                                        ctx_err,
+                                    )
                             else:
                                 # INSERT returned no row (unexpected); clear savepoint for next entry
                                 _rss_entry_savepoint_release(feed_cur)
@@ -2074,13 +2214,24 @@ def collect_rss_feeds() -> int:
                         except Exception as e:
                             logger.warning(f"Error processing article from {feed_name}: {e}")
                             _rss_entry_savepoint_rollback(feed_cur, feed_conn)
-                            continue
+                        finally:
+                            # Never leave the feed connection idle-in-transaction between entries
+                            try:
+                                feed_conn.commit()
+                            except Exception:
+                                try:
+                                    feed_conn.rollback()
+                                except Exception:
+                                    pass
 
-                    # Update feed timestamp
+                    # Successful HTTP+parse of feed: stamp fetch + success (schema: last_fetched_at / last_success)
                     feed_cur.execute(
                         f"""
                         UPDATE {schema_name}.rss_feeds
-                        SET last_fetched_at = NOW()
+                        SET last_fetched_at = NOW(),
+                            last_success = NOW(),
+                            last_error_message = NULL,
+                            status = 'active'
                         WHERE id = %s
                     """,
                         (feed_id,),
@@ -2129,7 +2280,24 @@ def collect_rss_feeds() -> int:
 
                 except TimeoutError:
                     logger.error(f"⏱️ Timeout processing feed: {feed_name}")
-                    feed_conn.rollback()
+                    try:
+                        feed_conn.rollback()
+                        feed_cur.execute(
+                            f"""
+                            UPDATE {schema_name}.rss_feeds
+                            SET last_fetched_at = NOW(),
+                                last_error_message = %s,
+                                status = 'error'
+                            WHERE id = %s
+                            """,
+                            ("Timeout", feed_id),
+                        )
+                        feed_conn.commit()
+                    except Exception:
+                        try:
+                            feed_conn.rollback()
+                        except Exception:
+                            pass
                     _rss_log("error", err="Timeout")
                     return {
                         "articles_added": 0,
@@ -2140,7 +2308,24 @@ def collect_rss_feeds() -> int:
                     }
                 except Exception as e:
                     logger.error(f"❌ Error processing feed {feed_name}: {e}")
-                    feed_conn.rollback()
+                    try:
+                        feed_conn.rollback()
+                        feed_cur.execute(
+                            f"""
+                            UPDATE {schema_name}.rss_feeds
+                            SET last_fetched_at = NOW(),
+                                last_error_message = %s,
+                                status = 'error'
+                            WHERE id = %s
+                            """,
+                            (str(e)[:500], feed_id),
+                        )
+                        feed_conn.commit()
+                    except Exception:
+                        try:
+                            feed_conn.rollback()
+                        except Exception:
+                            pass
                     _rss_log("error", err=str(e))
                     return {
                         "articles_added": 0,
@@ -2155,6 +2340,21 @@ def collect_rss_feeds() -> int:
             finally:
                 if feed_conn:
                     feed_conn.close()
+
+        # Release the feed-list connection before parallel work (H2: was held ~15+ min)
+        try:
+            cur.close()
+        except Exception:
+            pass
+        try:
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        conn.close()
+        conn = None
 
         # Process feeds in parallel (max 5 concurrent to avoid overwhelming DB)
         logger.info(f"🚀 Processing {len(feeds)} feeds in parallel (max 5 concurrent)...")
@@ -2207,7 +2407,11 @@ def collect_rss_feeds() -> int:
 
     except Exception as e:
         logger.error(f"Error during RSS collection: {e}")
-        conn.rollback()
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         return 0
     finally:
         if conn:
@@ -2425,12 +2629,6 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                         """,
                             (article_id,),
                         )
-                        from services.context_processor_service import ensure_context_for_article
-
-                        if article_eligible_for_context(
-                            insert_content, enrichment_status, created_at_ins
-                        ):
-                            ensure_context_for_article(domain_key, article_id)
                         cur.execute("RELEASE SAVEPOINT sp_aux")
                     except Exception as aux_err:
                         logger.debug(
@@ -2443,6 +2641,19 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                         except Exception:
                             pass
                     conn.commit()
+                    try:
+                        from services.context_processor_service import ensure_context_for_article
+
+                        if article_eligible_for_context(
+                            insert_content, enrichment_status, created_at_ins
+                        ):
+                            ensure_context_for_article(domain_key, article_id)
+                    except Exception as ctx_err:
+                        logger.debug(
+                            "ensure_context skip (single-feed %s): %s",
+                            article_id,
+                            ctx_err,
+                        )
                 else:
                     _rss_entry_savepoint_release(cur)
 

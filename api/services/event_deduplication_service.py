@@ -41,8 +41,18 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_URL = "http://localhost:11434"
+
+def _ollama_url() -> str:
+    for key in ("OLLAMA_HOST", "OLLAMA_URL", "OLLAMA_POP_OS_HOST"):
+        raw = (os.environ.get(key) or "").strip()
+        if raw:
+            return raw.rstrip("/")
+    return "http://127.0.0.1:11434"
+
+
 EMBED_MODEL = "nomic-embed-text"
+# Back-compat alias; prefer _ollama_url() at call sites (env may load after import).
+OLLAMA_URL = _ollama_url()
 
 
 def _dedup_env_float(name: str, default: float) -> float:
@@ -100,20 +110,15 @@ def _dedup_borderline_max_seconds() -> float:
 
 
 async def _get_embedding(text: str) -> list[float] | None:
-    """Get a 768-d embedding from Ollama's nomic-embed-text model."""
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        try:
-            resp = await client.post(
-                f"{OLLAMA_URL}/api/embeddings",
-                json={"model": EMBED_MODEL, "prompt": text},
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                if not isinstance(data, dict):
-                    return None
-                return data.get("embedding")
-        except Exception as e:
-            logger.error(f"Embedding request failed: {e}")
+    """Get a 768-d embedding from Ollama's nomic-embed-text model via CB hub."""
+    from shared.services.llm_service import is_ollama_pressure_error, ollama_embed_async
+
+    try:
+        return await ollama_embed_async(text, model=EMBED_MODEL)
+    except Exception as e:
+        if is_ollama_pressure_error(e):
+            raise
+        logger.error(f"Embedding request failed: {e}")
     return None
 
 
@@ -452,7 +457,12 @@ class EventDeduplicationService:
     # ------------------------------------------------------------------
 
     async def _merge(self, duplicate_id: int, canonical_id: int):
-        """Point duplicate at canonical and merge metadata."""
+        """Point duplicate at canonical and merge metadata.
+
+        EEL rows stay keyed by ``event_id`` (not rewritten). Legacy CE
+        ``storyline_id`` is promoted onto an empty canonical when the duplicate
+        was already linked.
+        """
         cursor = self.conn.cursor()
         try:
             cursor.execute(
@@ -473,6 +483,38 @@ class EventDeduplicationService:
             """,
                 (canonical_id,),
             )
+
+            # Promote storyline_id when canonical is unlinked and duplicate is linked.
+            cursor.execute(
+                """
+                SELECT
+                    (SELECT NULLIF(TRIM(COALESCE(storyline_id::text, '')), '')
+                     FROM chronological_events WHERE id = %s) AS can_sl,
+                    (SELECT NULLIF(TRIM(COALESCE(storyline_id::text, '')), '')
+                     FROM chronological_events WHERE id = %s) AS dup_sl
+                """,
+                (canonical_id, duplicate_id),
+            )
+            row = cursor.fetchone() or (None, None)
+            can_sl, dup_sl = row[0], row[1]
+            if not can_sl and dup_sl:
+                cursor.execute(
+                    """
+                    UPDATE chronological_events
+                    SET storyline_id = %s
+                    WHERE id = %s
+                    """,
+                    (dup_sl, canonical_id),
+                )
+            elif can_sl and dup_sl and str(can_sl) != str(dup_sl):
+                logger.warning(
+                    "dedup merge storyline_id conflict dup=%s can=%s "
+                    "dup_storyline=%s can_storyline=%s (keeping canonical)",
+                    duplicate_id,
+                    canonical_id,
+                    dup_sl,
+                    can_sl,
+                )
 
             # Merge key_actors from duplicate into canonical
             cursor.execute(

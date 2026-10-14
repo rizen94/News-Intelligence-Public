@@ -5,10 +5,69 @@ display_name: Finance
 is_active: true
 description: Finance and markets coverage; URL key and Postgres schema both finance (migration 219).
 display_order: 2
+data_sources:
+  rss:
+    seed_feed_urls:
+    - feed_url: https://www.sec.gov/news/pressreleases.rss
+      feed_name: SEC Press Releases
+      arc_relevance:
+      - markets_macro
+    - feed_url: https://www.federalreserve.gov/feeds/press_all.xml
+      feed_name: Federal Reserve Press Releases
+      arc_relevance:
+      - markets_macro
+    - feed_url: https://public.govdelivery.com/topics/USFDIC_26/feed.rss
+      feed_name: FDIC News Releases
+      arc_relevance:
+      - markets_macro
+    - feed_url: https://www.ecb.europa.eu/rss/press.html
+      feed_name: ECB Press Releases
+      arc_relevance:
+      - markets_macro
+    - feed_url: https://www.bankofengland.co.uk/rss/news
+      feed_name: Bank of England News
+      arc_relevance:
+      - markets_macro
+    - feed_url: https://www.snb.ch/public/en/rss/pressrel
+      feed_name: Swiss National Bank Press Releases
+      arc_relevance:
+      - markets_macro
+    - feed_url: https://feeds.bbci.co.uk/news/business/rss.xml
+      feed_name: BBC Business
+      arc_relevance:
+      - markets_macro
+    - feed_url: https://www.cnbc.com/id/10001147/device/rss/rss.html
+      feed_name: CNBC Business
+      arc_relevance:
+      - markets_macro
+    - feed_url: https://feeds.bloomberg.com/markets/news.rss
+      feed_name: Bloomberg Markets
+      arc_relevance:
+      - markets_macro
+    - feed_url: https://feeds.marketwatch.com/marketwatch/marketpulse/
+      feed_name: MarketWatch Markets
+      arc_relevance:
+      - markets_macro
+    - feed_url: https://www.ft.com/markets?format=rss
+      feed_name: FT Markets
+      arc_relevance:
+      - markets_macro
+    - feed_url: https://www.mining.com/feed/
+      feed_name: Mining.com
+      arc_relevance:
+      - commodities
+    - feed_url: https://oilprice.com/rss/main
+      feed_name: OilPrice
+      arc_relevance:
+      - commodities
+    - feed_url: https://www.investing.com/rss/news_14.rss
+      feed_name: Investing.com Commodities
+      arc_relevance:
+      - commodities
 focus_areas:
 - Commodities, markets, macro — same scope as historical finance silo
 llm_prompt_guidance: Same as production finance silo for markets and macro narrative.
 workload_assumptions:
-  expected_active_feeds: 0
-  rough_new_articles_per_day: 0
+  expected_active_feeds: 14
+  rough_new_articles_per_day: 80
   llm_heavy_phases_enabled: true

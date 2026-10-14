@@ -67,8 +67,8 @@ class LocalReadabilityAnalyzer:
     No training required - uses mathematical formulas and LLM analysis
     """
     
-    def __init__(self, ollama_url: str = "http://localhost:11434"):
-        self.ollama_url = ollama_url
+    def __init__(self, ollama_url: str | None = None):
+        self.ollama_url = (ollama_url or __import__("os").environ.get("OLLAMA_HOST") or __import__("os").environ.get("OLLAMA_URL") or "http://127.0.0.1:11434").rstrip("/")
         self.available_models = ["llama3.1:8b", "llama3.1:405b"]
         self.default_model = "llama3.1:8b"  # Fast model (405b available for higher quality)
         self.cache = {}  # Simple in-memory cache
@@ -180,8 +180,12 @@ class LocalReadabilityAnalyzer:
             return result
             
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error in content analysis: {e}")
-            # Return basic result on error
+            # Soft miss only — inventing quality scores under shed skips real work
             readability = self._calculate_readability_metrics(text)
             quality = QualityMetrics(
                 overall_quality_score=0.5,
@@ -331,6 +335,10 @@ class LocalReadabilityAnalyzer:
             )
             
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error in LLM quality analysis: {e}")
             return QualityMetrics(
                 overall_quality_score=0.5,
@@ -464,35 +472,16 @@ Guidelines:
 """
     
     def _call_ollama(self, prompt: str, model: str) -> str:
-        """Call Ollama API for quality analysis"""
+        """Call Ollama via shared CB hub."""
         try:
-            response = requests.post(
-                f"{self.ollama_url}/api/generate",
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "options": {
-                        "temperature": 0.2,  # Low temperature for consistent analysis
-                        "num_predict": 800,
-                        "top_p": 0.9
-                    }
-                },
-                timeout=30
+            from shared.services.llm_service import ollama_generate_sync
+
+            result = ollama_generate_sync(
+                prompt,
+                model=model,
+                max_tokens=800,
+                ollama_base_url=self.ollama_url,
             )
-            
-            if response.status_code != 200:
-                raise Exception(f"Ollama API error: {response.status_code}")
-            
-            # Parse streaming response
-            result = ""
-            for line in response.text.split('\n'):
-                if line.strip():
-                    try:
-                        data = json.loads(line)
-                        if 'response' in data:
-                            result += data['response']
-                    except json.JSONDecodeError:
-                        continue
             
             return result
             

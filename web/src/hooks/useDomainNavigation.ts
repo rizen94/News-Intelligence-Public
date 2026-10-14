@@ -1,63 +1,45 @@
 /**
- * Domain Navigation Hook
- * Provides utilities for navigating within and between domains
+ * Domain Navigation Hook — domain filter helpers for Finance / shared pages.
  */
 
 import { useNavigate } from 'react-router-dom';
 import { useDomain } from '../contexts/DomainContext';
-import {
-  isValidDomain,
-  DomainKey,
-  getPathAfterDomain,
-} from '../utils/domainHelper';
+import { isValidDomain, DomainKey } from '../utils/domainHelper';
+import { NEWS_HOME, FINANCE_HOME } from '../paths';
 
 export const useDomainNavigation = () => {
   const { domain } = useDomain();
   const navigate = useNavigate();
 
-  /**
-   * Navigate to a path within the current domain
-   */
-  const navigateToDomain = (path: string, targetDomain?: DomainKey) => {
-    const effectiveDomain = targetDomain || domain;
-    if (isValidDomain(effectiveDomain)) {
-      // Ensure path starts with /
-      const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-      navigate(`/${effectiveDomain}${normalizedPath}`);
+  const navigateToDomain = (path: string, _targetDomain?: DomainKey) => {
+    // Classic domain spine retired — send callers to Finance or News.
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+    if (normalizedPath.includes('finance') || normalizedPath.includes('commodity')) {
+      navigate(`${FINANCE_HOME}${normalizedPath.replace(/^\/finance/, '')}`);
+      return;
     }
+    navigate(NEWS_HOME);
   };
 
-  /**
-   * Switch to a different domain, optionally preserving the current path
-   */
-  const switchDomain = (newDomain: DomainKey, preservePath: boolean = true) => {
+  const switchDomain = (newDomain: DomainKey, _preservePath: boolean = true) => {
     if (!isValidDomain(newDomain)) {
       console.warn(`Invalid domain: ${newDomain}`);
       return;
     }
-
-    if (preservePath) {
-      // Get current path without domain
-      const currentPath = window.location.pathname;
-      const pathWithoutDomain = getPathAfterDomain(currentPath);
-      navigate(`/${newDomain}${pathWithoutDomain}`);
-    } else {
-      navigate(`/${newDomain}/dashboard`);
-    }
+    navigate(`${NEWS_HOME}?domain=${encodeURIComponent(newDomain)}`);
   };
 
-  /**
-   * Get the full domain path for a given route
-   */
-  const getDomainPath = (path: string, targetDomain?: DomainKey): string => {
-    const effectiveDomain = targetDomain || domain;
+  const getDomainPath = (path: string, _targetDomain?: DomainKey): string => {
     const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-    return `/${effectiveDomain}${normalizedPath}`;
+    return normalizedPath.startsWith('/finance')
+      ? normalizedPath
+      : `${NEWS_HOME}${normalizedPath === '/' ? '' : normalizedPath}`;
   };
 
   return {
     navigateToDomain,
     switchDomain,
     getDomainPath,
+    domain,
   };
 };

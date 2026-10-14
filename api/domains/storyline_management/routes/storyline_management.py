@@ -1452,6 +1452,43 @@ async def process_storyline_rag_analysis(
 
         storyline_context = "\n".join(context_parts)
 
+        # Living vault background for long-running arcs
+        try:
+            from domains.reader.services.vault_context_pack import (
+                build_vault_pack_for_entity_ids,
+                render_vault_context_pack_for_llm,
+            )
+            from shared.database.connection import get_db_connection_context
+
+            entity_ids: list[int] = []
+            with get_db_connection_context() as _conn:
+                with _conn.cursor() as _cur:
+                    _cur.execute(
+                        f"""
+                        SELECT DISTINCT ae.canonical_entity_id
+                        FROM {schema}.article_entities ae
+                        JOIN {schema}.storyline_articles sa ON sa.article_id = ae.article_id
+                        WHERE sa.storyline_id = %s
+                          AND ae.canonical_entity_id IS NOT NULL
+                        LIMIT 16
+                        """,
+                        (storyline_id,),
+                    )
+                    entity_ids = [int(r[0]) for r in _cur.fetchall() if r[0]]
+            if entity_ids:
+                vpack = build_vault_pack_for_entity_ids(
+                    domain, entity_ids, hops=2, max_notes=10
+                )
+                vault_block = render_vault_context_pack_for_llm(vpack, max_chars=5000)
+                if vault_block:
+                    storyline_context = (
+                        f"{storyline_context}\n\n{vault_block}\n"
+                        "(Use vault background for durable arc context; "
+                        "do not invent beyond articles + vault.)"
+                    )
+        except Exception as ve:
+            logger.debug("comprehensive_rag vault inject skipped: %s", ve)
+
         # Generate comprehensive analysis using LLM
         analysis_result = await llm_service.generate_storyline_analysis(storyline_context)
 

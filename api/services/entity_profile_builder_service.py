@@ -7,6 +7,7 @@ See docs/CONTEXT_CENTRIC_UPGRADE_PLAN.md.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from collections.abc import Awaitable, Callable
@@ -18,6 +19,13 @@ from shared.database.connection import get_db_connection
 from shared.services.llm_service import LLMService, ModelType
 
 logger = logging.getLogger(__name__)
+
+
+def _evidence_fingerprint_for_contexts(contexts: list[tuple]) -> str:
+    """Stable fingerprint of the context window that would be fed to the LLM."""
+    ids = sorted(int(c[0]) for c in contexts if c and c[0] is not None)
+    raw = ",".join(str(i) for i in ids)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 
 class ProfileBuildResult(NamedTuple):
@@ -33,6 +41,7 @@ class ProfileBuilderBatchResult:
     fast_updated: int = 0
     full_updated: int = 0
     contexts_used: int = 0
+    skipped_unchanged: int = 0
 
 
 def _env_int(name: str, default: int) -> int:
@@ -137,7 +146,8 @@ Context excerpts:
 """
         )
     prompt_parts.append(
-        "Return ONLY a valid JSON array with one element per entity in the same order as above."
+        "Return ONLY a valid JSON array with exactly one element per entity in the same order "
+        "(no markdown fences, no extra entities, no commentary)."
     )
     return "\n".join(prompt_parts)
 
@@ -174,45 +184,77 @@ def _normalize_batched_profile_item(item: Any) -> tuple[list, list] | None:
     return valid_sections, valid_relationships
 
 
+def _strip_llm_json_payload(raw_response: str) -> str:
+    """Drop prose / markdown fences so parsers see JSON."""
+    import re
+
+    s = (raw_response or "").strip()
+    if not s:
+        return s
+    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)```", s, flags=re.IGNORECASE)
+    if fenced:
+        return fenced.group(1).strip()
+    # Unclosed fence (truncated generations): take body after opening ```json
+    open_fence = re.search(r"```(?:json)?\s*", s, flags=re.IGNORECASE)
+    if open_fence:
+        return s[open_fence.end() :].strip()
+    return s
+
+
+def _extract_json_objects(text: str, limit: int) -> list[Any]:
+    """Pull up to ``limit`` complete JSON objects via brace matching (truncation-safe)."""
+    out: list[Any] = []
+    pos = 0
+    while pos < len(text) and len(out) < limit:
+        obj_start = text.find("{", pos)
+        if obj_start < 0:
+            break
+        obj_end = _find_matching_brace(text, obj_start)
+        if obj_end < 0:
+            break
+        try:
+            out.append(json.loads(text[obj_start : obj_end + 1]))
+            pos = obj_end + 1
+        except json.JSONDecodeError:
+            pos = obj_start + 1
+    return out
+
+
 def _parse_batched_response(raw_response: str, expected_count: int) -> list[tuple[list, list] | None]:
     """
     Parse the LLM's response expecting a JSON array of profile results.
 
     Returns a list of (sections, relationships) tuples, or None for failed parses.
+    Tolerates prose preambles, markdown fences, and truncated arrays.
     """
+    text = _strip_llm_json_payload(raw_response)
     try:
-        parsed: Any = json.loads(raw_response.strip())
-        if not isinstance(parsed, list):
-            start = raw_response.find("[")
-            end = raw_response.rfind("]") + 1
-            if start < 0 or end <= start:
-                parsed = None
-            else:
-                parsed = json.loads(raw_response[start:end])
+        parsed: Any = None
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            start = text.find("[")
+            end = text.rfind("]") + 1
+            if start >= 0 and end > start:
+                try:
+                    parsed = json.loads(text[start:end])
+                except json.JSONDecodeError:
+                    parsed = None
+
+        results: list[tuple[list, list] | None] = []
         if isinstance(parsed, list):
-            results: list[tuple[list, list] | None] = []
             for item in parsed[:expected_count]:
                 results.append(_normalize_batched_profile_item(item))
-            while len(results) < expected_count:
-                results.append(None)
-            return results[:expected_count]
+        elif isinstance(parsed, dict):
+            results.append(_normalize_batched_profile_item(parsed))
 
-        results = []
-        pos = 0
-        while pos < len(raw_response) and len(results) < expected_count:
-            obj_start = raw_response.find("{", pos)
-            if obj_start == -1:
-                break
-            obj_end = _find_matching_brace(raw_response, obj_start)
-            if obj_end == -1:
-                break
-            try:
-                obj_text = raw_response[obj_start : obj_end + 1]
-                data = json.loads(obj_text)
-                results.append(_normalize_batched_profile_item(data))
-                pos = obj_end + 1
-            except json.JSONDecodeError:
-                pos = obj_start + 1
+        if len(results) < expected_count or all(r is None for r in results):
+            # Truncated array / fence: recover complete objects in order.
+            objs = _extract_json_objects(text, expected_count)
+            recovered = [_normalize_batched_profile_item(o) for o in objs]
+            if any(r is not None for r in recovered):
+                results = recovered
+
         while len(results) < expected_count:
             results.append(None)
         return results[:expected_count]
@@ -281,8 +323,8 @@ def get_contexts_for_entity_profile(entity_profile_id: int, limit: int = 75) -> 
         conn.close()
 
 
-def _get_profiles_metadata_batch(profile_ids: list[int]) -> dict[int, tuple[Any, Any, Any]]:
-    """Return {id: (canonical_name, entity_type, sections_raw)} in one query."""
+def _get_profiles_metadata_batch(profile_ids: list[int]) -> dict[int, tuple[Any, Any, Any, Any]]:
+    """Return {id: (canonical_name, entity_type, sections_raw, evidence_fp)} in one query."""
     if not profile_ids:
         return {}
     conn = get_db_connection()
@@ -294,13 +336,43 @@ def _get_profiles_metadata_batch(profile_ids: list[int]) -> dict[int, tuple[Any,
             cur.execute(
                 """
                 SELECT ep.id, ep.metadata->>'canonical_name',
-                       ep.metadata->>'entity_type', ep.sections
+                       ep.metadata->>'entity_type', ep.sections,
+                       ep.metadata->>'evidence_fingerprint'
                 FROM intelligence.entity_profiles ep
                 WHERE ep.id = ANY(%s)
                 """,
                 (profile_ids,),
             )
-            return {row[0]: (row[1], row[2], row[3]) for row in cur.fetchall()}
+            return {row[0]: (row[1], row[2], row[3], row[4]) for row in cur.fetchall()}
+    finally:
+        conn.close()
+
+
+def _ack_profile_evidence_unchanged(profile_ids: list[int], fingerprint_by_id: dict[int, str]) -> None:
+    """Advance updated_at + stamp fingerprint without rewriting sections (skip LLM)."""
+    if not profile_ids:
+        return
+    conn = get_db_connection()
+    if not conn:
+        return
+    try:
+        with conn.cursor() as cur:
+            for pid in profile_ids:
+                fp = fingerprint_by_id.get(pid) or ""
+                cur.execute(
+                    """
+                    UPDATE intelligence.entity_profiles
+                    SET updated_at = NOW(),
+                        metadata = COALESCE(metadata, '{}'::jsonb)
+                            || jsonb_build_object(
+                                'evidence_fingerprint', %s,
+                                'evidence_skip_at', NOW()::text
+                            )
+                    WHERE id = %s
+                    """,
+                    (fp, pid),
+                )
+        conn.commit()
     finally:
         conn.close()
 
@@ -345,9 +417,9 @@ def get_contexts_for_entity_profiles_batch(
 
 
 def _persist_profile_sections_batch(
-    updates: list[tuple[int, list, list]],
+    updates: list[tuple[int, list, list, str | None]],
 ) -> None:
-    """Write sections/relationships for many profiles in one DB connection."""
+    """Write sections/relationships (+ evidence fingerprint) for many profiles."""
     if not updates:
         return
     conn = get_db_connection()
@@ -355,15 +427,34 @@ def _persist_profile_sections_batch(
         return
     try:
         with conn.cursor() as cur:
-            for profile_id, sections, relationships in updates:
-                cur.execute(
-                    """
-                    UPDATE intelligence.entity_profiles
-                    SET sections = %s, relationships_summary = %s, updated_at = NOW()
-                    WHERE id = %s
-                    """,
-                    (json.dumps(sections), json.dumps(relationships), profile_id),
-                )
+            for profile_id, sections, relationships, evidence_fp in updates:
+                if evidence_fp:
+                    cur.execute(
+                        """
+                        UPDATE intelligence.entity_profiles
+                        SET sections = %s,
+                            relationships_summary = %s,
+                            updated_at = NOW(),
+                            metadata = COALESCE(metadata, '{}'::jsonb)
+                                || jsonb_build_object('evidence_fingerprint', %s)
+                        WHERE id = %s
+                        """,
+                        (
+                            json.dumps(sections),
+                            json.dumps(relationships),
+                            evidence_fp,
+                            profile_id,
+                        ),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE intelligence.entity_profiles
+                        SET sections = %s, relationships_summary = %s, updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (json.dumps(sections), json.dumps(relationships), profile_id),
+                    )
         conn.commit()
     finally:
         conn.close()
@@ -374,11 +465,19 @@ def _parse_sections_response(raw: str) -> tuple:
     sections = []
     relationships = []
     try:
-        start = raw.find("{")
-        if start < 0:
+        text = _strip_llm_json_payload(raw)
+        data: Any = None
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            data = None
+        if isinstance(data, list) and data:
+            data = data[0]
+        if not isinstance(data, dict):
+            objs = _extract_json_objects(text, 1)
+            data = objs[0] if objs else None
+        if not isinstance(data, dict):
             return sections, relationships
-        end = raw.rfind("}") + 1
-        data = json.loads(raw[start:end])
         if isinstance(data.get("sections"), list):
             sections = data["sections"]
         if isinstance(data.get("relationships"), list):
@@ -616,7 +715,7 @@ def _set_profile_build_statement_timeout(cur) -> None:
 
 def get_entity_profile_ids_to_build(limit: int = 20) -> list[int]:
     """Return buildable profile IDs: pipeline-active domains with context mentions."""
-    from shared.entity_profile_eligibility import sql_entity_profile_needs_build
+    from shared.entity_profile_eligibility import sql_entity_profile_selectable_for_build
     from shared.pipeline_domain_sql import pipeline_domain_any_sql
 
     conn = get_db_connection()
@@ -630,7 +729,7 @@ def get_entity_profile_ids_to_build(limit: int = 20) -> list[int]:
     upstream_sql = ""
     if _entity_profile_upstream_gate_for_select():
         upstream_sql = f" AND {sql_entity_profile_upstream_cleared_exists()} "
-    needs_build = sql_entity_profile_needs_build("ep")
+    selectable = sql_entity_profile_selectable_for_build("ep")
     if entity_profile_build_priority_first_pass():
         order_sql = (
             "(ep.sections IS NULL OR ep.sections = '[]'::jsonb) DESC, ep.updated_at ASC NULLS FIRST"
@@ -644,11 +743,7 @@ def get_entity_profile_ids_to_build(limit: int = 20) -> list[int]:
                 f"""
                 SELECT ep.id FROM intelligence.entity_profiles ep
                 WHERE {domain_sql}
-                  AND {needs_build}
-                  AND EXISTS (
-                      SELECT 1 FROM intelligence.context_entity_mentions cem
-                      WHERE cem.entity_profile_id = ep.id
-                  )
+                  AND {selectable}
                   {upstream_sql}
                 ORDER BY {order_sql}
                 LIMIT %s
@@ -726,8 +821,11 @@ async def _run_profile_builder_batch_parallel(
     )
 
 
-def _prepare_profile_data_for_batch(ids: list[int]) -> list[dict]:
-    """Load metadata + contexts for many profiles using two batched DB queries."""
+def _prepare_profile_data_for_batch(ids: list[int]) -> tuple[list[dict], int]:
+    """Load metadata + contexts; skip LLM when evidence fingerprint unchanged.
+
+    Returns (llm_ready_profiles, skipped_unchanged_count).
+    """
     fast_limit = entity_profile_build_fast_context_limit()
     full_limit = entity_profile_build_full_context_limit()
     fetch_limit = max(fast_limit, full_limit)
@@ -736,15 +834,27 @@ def _prepare_profile_data_for_batch(ids: list[int]) -> list[dict]:
     contexts_by_id = get_contexts_for_entity_profiles_batch(ids, fetch_limit)
 
     profile_data: list[dict] = []
+    skip_ids: list[int] = []
+    skip_fps: dict[int, str] = {}
     for entity_profile_id in ids:
         meta = metadata.get(entity_profile_id)
         if not meta:
             continue
-        canonical_name, entity_type, sections_raw = meta
+        canonical_name, entity_type, sections_raw, prior_fp = meta
         is_first_pass = _sections_empty(sections_raw)
         ctx_limit = fast_limit if is_first_pass else full_limit
         contexts = (contexts_by_id.get(entity_profile_id) or [])[:ctx_limit]
         if not contexts:
+            continue
+        evidence_fp = _evidence_fingerprint_for_contexts(contexts)
+        if (
+            not is_first_pass
+            and prior_fp
+            and evidence_fp
+            and str(prior_fp) == evidence_fp
+        ):
+            skip_ids.append(entity_profile_id)
+            skip_fps[entity_profile_id] = evidence_fp
             continue
         combined = _combined_from_contexts(
             contexts,
@@ -760,9 +870,16 @@ def _prepare_profile_data_for_batch(ids: list[int]) -> list[dict]:
                 "combined": combined,
                 "is_first_pass": is_first_pass,
                 "contexts_used": len(contexts),
+                "evidence_fingerprint": evidence_fp,
             }
         )
-    return profile_data
+    if skip_ids:
+        _ack_profile_evidence_unchanged(skip_ids, skip_fps)
+        logger.info(
+            "Entity profile builder: skipped %s unchanged evidence fingerprints",
+            len(skip_ids),
+        )
+    return profile_data, len(skip_ids)
 
 
 async def _process_batched_profile_chunk(
@@ -801,12 +918,19 @@ async def _process_batched_profile_chunk(
         logger.warning("Batched profile chunk LLM failed (%s), falling back per profile", e)
         results = [None] * len(chunk)
 
-    db_updates: list[tuple[int, list, list]] = []
+    db_updates: list[tuple[int, list, list, str | None]] = []
     fallback_ids: list[int] = []
     for data, result in zip(chunk, results):
         if result is not None:
             sections, relationships = result
-            db_updates.append((data["id"], sections, relationships))
+            db_updates.append(
+                (
+                    data["id"],
+                    sections,
+                    relationships,
+                    data.get("evidence_fingerprint"),
+                )
+            )
             updated += 1
             total_contexts += data["contexts_used"]
             if data["is_first_pass"]:
@@ -860,9 +984,13 @@ async def run_profile_builder_batch_batched(
     if not ids:
         return ProfileBuilderBatchResult(updated=0, attempted=0)
 
-    profile_data = _prepare_profile_data_for_batch(ids)
+    profile_data, skipped_unchanged = _prepare_profile_data_for_batch(ids)
     if not profile_data:
-        return ProfileBuilderBatchResult(updated=0, attempted=len(ids))
+        return ProfileBuilderBatchResult(
+            updated=skipped_unchanged,
+            attempted=len(ids),
+            skipped_unchanged=skipped_unchanged,
+        )
 
     chunk_size = entity_profile_build_llm_batch_size()
     parallel = get_entity_profile_build_parallel()
@@ -913,24 +1041,26 @@ async def run_profile_builder_batch_batched(
         full_updated += result.full_updated
         total_contexts += result.contexts_used
 
-    if updated > 0:
+    if updated > 0 or skipped_unchanged > 0:
         logger.info(
             "Entity profile builder (batched): %s ids, %s LLM-ready, %s updated "
-            "(%s fast, %s full, chunk_size=%s, parallel=%s)",
+            "(%s fast, %s full, %s fingerprint-skip, chunk_size=%s, parallel=%s)",
             len(ids),
             len(profile_data),
             updated,
             fast_updated,
             full_updated,
+            skipped_unchanged,
             chunk_size,
             parallel,
         )
     return ProfileBuilderBatchResult(
-        updated=updated,
+        updated=updated + skipped_unchanged,
         attempted=len(ids),
         fast_updated=fast_updated,
         full_updated=full_updated,
         contexts_used=total_contexts,
+        skipped_unchanged=skipped_unchanged,
     )
 
 

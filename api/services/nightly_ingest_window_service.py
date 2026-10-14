@@ -146,6 +146,7 @@ def nightly_pipeline_window_info() -> dict[str, Any]:
     Assumes ``NIGHTLY_PIPELINE_START_HOUR`` < ``NIGHTLY_PIPELINE_END_HOUR`` (same calendar day).
     """
     from services.pipeline_schedule_service import (
+        local_hour_boundary,
         nightly_end_hour,
         nightly_start_hour,
         pipeline_schedule_info,
@@ -174,12 +175,14 @@ def nightly_pipeline_window_info() -> dict[str, Any]:
             str(nightly_end_hour()),
         )
     )
+    enrich_end = max(0, min(int(enrich_end), 24))
     now_local = datetime.now(zi)
     in_window = in_nightly_pipeline_window_est()
-    window_label = f"{start_h:02d}:00–{end_h:02d}:00 ({zi})"
+    end_label = "24:00" if end_h >= 24 else f"{end_h:02d}:00"
+    window_label = f"{start_h:02d}:00–{end_label} ({zi})"
 
-    start_dt = now_local.replace(hour=start_h, minute=0, second=0, microsecond=0)
-    end_dt = now_local.replace(hour=end_h, minute=0, second=0, microsecond=0)
+    start_dt = local_hour_boundary(now_local, start_h)
+    end_dt = local_hour_boundary(now_local, end_h)
 
     window_ends_local: str | None = None
     next_window_starts_local: str | None = None
@@ -189,11 +192,10 @@ def nightly_pipeline_window_info() -> dict[str, Any]:
         elif now_local < start_dt:
             next_window_starts_local = start_dt.isoformat()
         else:
-            next_window_starts_local = (
-                (now_local + timedelta(days=1))
-                .replace(hour=start_h, minute=0, second=0, microsecond=0)
-                .isoformat()
-            )
+            next_window_starts_local = local_hour_boundary(
+                now_local + timedelta(days=1), start_h
+            ).isoformat()
+
 
     schedule = pipeline_schedule_info(now_local=now_local)
     return {
@@ -242,12 +244,22 @@ def in_nightly_enrichment_context_window_est() -> bool:
         return True
     from services.pipeline_schedule_service import nightly_end_hour, nightly_start_hour, pipeline_schedule_tz
 
+    from services.pipeline_schedule_service import local_hour_boundary
+
     zi = pipeline_schedule_tz()
-    start_h = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_START_HOUR", str(nightly_start_hour())))
-    end_h = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_END_HOUR", str(nightly_end_hour())))
+    try:
+        start_h = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_START_HOUR", str(nightly_start_hour())))
+    except (TypeError, ValueError):
+        start_h = nightly_start_hour()
+    try:
+        end_h = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_END_HOUR", str(nightly_end_hour())))
+    except (TypeError, ValueError):
+        end_h = nightly_end_hour()
+    start_h = max(0, min(start_h, 23))
+    end_h = max(0, min(end_h, 24))
     now_local = datetime.now(zi)
-    start = now_local.replace(hour=start_h, minute=0, second=0, microsecond=0)
-    end = now_local.replace(hour=end_h, minute=0, second=0, microsecond=0)
+    start = local_hour_boundary(now_local, start_h)
+    end = local_hour_boundary(now_local, end_h)
     return start <= now_local < end
 
 
@@ -266,6 +278,49 @@ def _ingest_allowlist() -> frozenset[str]:
 
 def task_allowed_during_nightly_ingest_exclusive(task_name: str) -> bool:
     return task_name in _ingest_allowlist()
+
+
+_DEFAULT_NIGHTLY_PIPELINE_ALLOWED_SCHEDULED = (
+    "nightly_enrichment_context,health_check,pending_db_flush"
+)
+
+
+def nightly_pipeline_exclusive_enabled() -> bool:
+    """When true (default), only allowlisted phases run during the unified nightly window."""
+    return os.environ.get("NIGHTLY_PIPELINE_EXCLUSIVE", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def nightly_pipeline_allowed_scheduled_phases() -> frozenset[str]:
+    """Phases permitted while ``NIGHTLY_PIPELINE_EXCLUSIVE`` is active in-window."""
+    raw = os.environ.get(
+        "NIGHTLY_PIPELINE_ALLOWED_SCHEDULED_PHASES",
+        _DEFAULT_NIGHTLY_PIPELINE_ALLOWED_SCHEDULED,
+    )
+    return frozenset(x.strip() for x in str(raw).split(",") if x.strip())
+
+
+def task_allowed_during_nightly_pipeline_exclusive(task_name: str) -> bool:
+    return task_name in nightly_pipeline_allowed_scheduled_phases()
+
+
+def should_block_phase_for_nightly_pipeline_exclusive(task_name: str) -> bool:
+    """
+    True when unified-window exclusive mode is active and ``task_name`` is outside the allowlist.
+
+    Used at schedule eligibility *and* execute/dispatch so already-queued phases
+    (chains, stale controller plans) cannot occupy workers during ALL_DAY catch-up.
+    """
+    if not nightly_unified_pipeline_enabled():
+        return False
+    if not nightly_pipeline_exclusive_enabled():
+        return False
+    if not in_nightly_pipeline_window_est():
+        return False
+    return not task_allowed_during_nightly_pipeline_exclusive(task_name)
 
 
 def _phase_loop_cap(phase_name: str, default_max_loops: int) -> int:

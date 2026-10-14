@@ -28,8 +28,8 @@ export default function FinanceHomePage() {
       </div>
       <p className='finance-page-lede' style={{ marginTop: '1.75rem' }}>
         Future rails (equities, VIX, full FX, yield curve) stay here under Finance — not under
-        News <code>/v2</code>. Classic <code>/finance/commodity/…</code> routes remain available
-        for side-by-side review.
+        News. Public site:{' '}
+        <code>https://news-intelligence-ag.duckdns.org/finance</code>.
       </p>
     </div>
   );

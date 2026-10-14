@@ -109,6 +109,8 @@ OLLAMA_MODEL_SECONDARY=llama3.1:8b
 OLLAMA_MODEL_EXTRACTION=qwen2.5:7b
 ```
 
+**Backpressure:** generate/embed only via `llm_service`. If health shows Ollama CB open after the host recovers, `POST /api/system_monitoring/circuit_breakers/reset` — do not restart the API just to clear breakers. Terms (defer / shed / overload / trickle): [`MONITOR_REPORTING_AND_METRICS.md`](MONITOR_REPORTING_AND_METRICS.md).
+
 ---
 
 ## AutomationManager phases (complete list)
@@ -220,7 +222,7 @@ ollama list
 
 | Issue | Evidence | Fix applied |
 |-------|----------|-------------|
-| **DB pool exhausted** | 648k+ errors in `/tmp/uvicorn_start.log` | Restart API; `DB_POOL_UI/WORKER_MAX=24`; `AUTOMATION_MAX_CONCURRENT_TASKS=6` |
+| **DB pool exhausted** | Checkout timeouts / Monitor DB pressure chips / PopOS `skipped: db_pressure` | Prefer wait/retry + gate (already default). Fix long-held queries/leaks; raise `DB_POOL_WORKER_MAX` only with PgBouncer headroom; keep `AUTOMATION_MAX_CONCURRENT_TASKS` ≤ worker pool max. See [PGBOUNCER_AND_CONNECTION_BUDGET.md](PGBOUNCER_AND_CONNECTION_BUDGET.md). |
 | **Missing automation env** | No `AUTOMATION_SKIP_RSS` / `DISABLED_SCHEDULES` | Added Widow-unified settings to `.env` |
 | **Ollama partial** | Only `llama3.1:8b` pulled | Pull `qwen2.5:7b`, `nomic-embed-text` in progress |
 | **API not systemd** | Manual nohup since Jun 5 | **Fixed Jun 6:** `setup_widow_boot_stack.sh` + `news-intelligence-api-public` enabled |

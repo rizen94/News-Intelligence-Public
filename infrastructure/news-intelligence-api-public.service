@@ -27,10 +27,11 @@ EnvironmentFile=-/opt/news-intelligence/.env.public_demo
 ExecStartPre=/bin/mkdir -p /opt/news-intelligence/api/logs /opt/news-intelligence/logs
 ExecStartPre=/opt/news-intelligence/.venv/bin/python /opt/news-intelligence/scripts/systemd_db_probe.py
 ExecStart=/opt/news-intelligence/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000
-ExecStartPost=/opt/news-intelligence/scripts/systemd_wait_readiness.sh
+# Non-fatal + short: see service.d/nonblocking-readiness.conf (drop-in overrides these).
+ExecStartPost=-/opt/news-intelligence/scripts/systemd_wait_readiness.sh
 Restart=on-failure
 RestartSec=10
-TimeoutStartSec=600
+TimeoutStartSec=120
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=news-intelligence-api

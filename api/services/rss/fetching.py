@@ -423,7 +423,14 @@ class RSSFetchingModule:
             insert_content = article.content or ""
             enrichment_status = "enriched"
             enrichment_attempts = 0
-            if len(insert_content) < 500 and article.url and article.url.strip():
+            # Always expand arXiv abs abstracts; otherwise enrich when body is short.
+            from services.article_content_enrichment_service import needs_arxiv_fulltext
+
+            should_enrich = bool(article.url and article.url.strip()) and (
+                needs_arxiv_fulltext(article.url, insert_content)
+                or len(insert_content) < 500
+            )
+            if should_enrich:
                 try:
                     from services.article_content_enrichment_service import enrich_article_content
 
@@ -491,13 +498,14 @@ class RSSFetchingModule:
             db = next(db_gen)
             try:
                 # Update feed table
+                # Column names match domain rss_feeds schema (not legacy last_fetched/last_error).
                 if success:
                     db.execute(
                         text("""
                         UPDATE rss_feeds
-                        SET last_fetched = CURRENT_TIMESTAMP,
+                        SET last_fetched_at = CURRENT_TIMESTAMP,
                             last_success = CURRENT_TIMESTAMP,
-                            last_error = NULL,
+                            last_error_message = NULL,
                             status = 'active'
                         WHERE id = :feed_id
                     """),
@@ -507,8 +515,8 @@ class RSSFetchingModule:
                     db.execute(
                         text("""
                         UPDATE rss_feeds
-                        SET last_fetched = CURRENT_TIMESTAMP,
-                            last_error = :error_message,
+                        SET last_fetched_at = CURRENT_TIMESTAMP,
+                            last_error_message = :error_message,
                             status = 'error'
                         WHERE id = :feed_id
                     """),

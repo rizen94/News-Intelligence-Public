@@ -6,6 +6,12 @@ Claims spine / phase work from Widow Postgres (PgBouncer) and runs drains locall
 against PopOS Ollama. Widow API must set REMOTE_PHASE_WORKER_OWNED_PHASES (or
 REMOTE_PHASE_WORKER_ENABLED=true) so AutomationManager does not also drain those phases.
 
+DB backpressure: before each drain, reads ``public.db_pool_pressure_advisory`` (published
+by the API from the same ``shared.database`` module). When ``defer_new_work`` is set,
+skips the phase (`skipped: db_pressure`) unless exempt. Disable with
+``POPOS_DB_PRESSURE_DEFER_ENABLED=false``. Same codebase as Widow
+(``~/ni-popos-worker`` → workspace).
+
 Deploy on PopOS only (not Widow):
   WORKER_EXECUTION_HOST=popos
   WORKER_PHASES=unified_intake_extraction
@@ -188,6 +194,33 @@ async def _run_one_cycle(
             }
             rem = idle_backoff.remaining_seconds(phase)
             min_rem = rem if min_rem is None else min(min_rem, rem)
+            continue
+
+        # Shared Widow DB-pressure advisory — do not pile drains while API pool is waiting.
+        try:
+            from shared.database.pool_pressure_advisory import remote_should_defer_phase
+
+            defer_db, adv = remote_should_defer_phase(phase)
+        except Exception as exc:
+            defer_db, adv = False, {"error": str(exc)[:120]}
+        if defer_db:
+            logger.info(
+                "skip %s: db pool pressure advisory (pressure=%s waiters=%s age=%ss)",
+                phase,
+                adv.get("worker_pressure"),
+                adv.get("worker_waiters"),
+                adv.get("age_sec"),
+            )
+            summary["phases"][phase] = {
+                "skipped": "db_pressure",
+                "advisory": {
+                    "worker_pressure": adv.get("worker_pressure"),
+                    "worker_waiters": adv.get("worker_waiters"),
+                    "worker_in_use": adv.get("worker_in_use"),
+                    "worker_max": adv.get("worker_max"),
+                    "age_sec": adv.get("age_sec"),
+                },
+            }
             continue
 
         # Start heartbeat so Monitor Current activity can show in-flight PopOS work.

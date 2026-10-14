@@ -2145,18 +2145,28 @@ async def get_usd_purchasing_power_tracker(
     """Get USD Purchasing Power Tracker data (CPI / DXY / gold / PDOLLAR)."""
     _check_domain(domain)
     try:
+        import asyncio
+
         from services.usd_purchasing_power_tracker_service import (
             USDPurchasingPowerTrackerService,
         )
 
         tracker_service = USDPurchasingPowerTrackerService()
-        data = tracker_service.load_data()
+        data = await asyncio.to_thread(tracker_service.load_data)
         series = data.get("series") or {}
         if refresh or not series:
             try:
-                tracker_service.update_tracker()
-                data = tracker_service.load_data()
+                # Bound FRED I/O so a slow upstream cannot pin the API worker.
+                await asyncio.wait_for(
+                    asyncio.to_thread(tracker_service.update_tracker),
+                    timeout=20.0,
+                )
+                data = await asyncio.to_thread(tracker_service.load_data)
                 series = data.get("series") or {}
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "USD tracker refresh timed out after 20s; returning cached series"
+                )
             except Exception as refresh_err:
                 logger.warning("USD tracker refresh failed: %s", refresh_err)
 

@@ -313,14 +313,34 @@ def run_story_state_triggers(
 
 @router.post("/context_centric/run_enhancement_cycle", response_model=dict)
 async def run_enhancement_cycle(
-    fact_batch: int = Query(100, ge=1, le=200, description="Fact change log batch (production: 100)"),
-    queue_batch: int = Query(10, ge=1, le=100, description="Story update queue batch; max 10 stories/run (production)"),
-    enrich_limit: int = Query(10, ge=1, le=50),
-    build_limit: int = Query(10, ge=1, le=30),
+    fact_batch: int = Query(
+        100,
+        ge=1,
+        le=2000,
+        description="Fact change log batch (shared clamp max 2000; automation default 100 or 1000 facts-only)",
+    ),
+    queue_batch: int = Query(
+        10,
+        ge=1,
+        le=500,
+        description="Story update queue batch (automation default 10 or 200 facts-only)",
+    ),
+    enrich_limit: int = Query(
+        10,
+        ge=0,
+        le=50,
+        description="Entity enrichment limit; 0 = facts-only (skip enrich)",
+    ),
+    build_limit: int = Query(
+        10,
+        ge=0,
+        le=50,
+        description="Profile build limit; 0 = facts-only (skip build)",
+    ),
 ) -> dict:
     """
-    Phase 3 RAG: Run one full enhancement cycle (story state triggers + entity enrichment + profile build).
-    See docs/RAG_ENHANCEMENT_ROADMAP.md.
+    Phase 3 RAG: Run one enhancement cycle (story state triggers + optional entity enrichment/profile build).
+    Pass enrich_limit=0 and build_limit=0 for facts-only drain. See docs/RAG_ENHANCEMENT_ROADMAP.md.
     """
     try:
         from services.enhancement_orchestrator_service import run_enhancement_cycle as run_cycle

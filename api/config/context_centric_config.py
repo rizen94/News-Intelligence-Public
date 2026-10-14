@@ -59,6 +59,13 @@ def get_context_centric_config() -> dict[str, Any]:
 
 
 def is_context_centric_task_enabled(task_name: str) -> bool:
-    """Return True if the given context-centric task is enabled (default True if config missing)."""
+    """Return True if the given context-centric task is enabled."""
+    try:
+        from config.feature_registry import get_feature, is_feature_enabled
+
+        if get_feature(task_name) is not None:
+            return is_feature_enabled(task_name, default=True)
+    except Exception:
+        pass
     cfg = get_context_centric_config()
     return cfg.get("tasks", {}).get(task_name, True)

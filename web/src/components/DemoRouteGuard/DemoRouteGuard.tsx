@@ -2,21 +2,18 @@
  * Redirects away from routes that are admin/ops-only when public demo read-only is on.
  */
 import React from 'react';
-import { Navigate, useParams } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 import { usePublicDemoMode } from '../../contexts/PublicDemoContext';
-import { getDefaultDomainKey } from '../../utils/domainHelper';
+import { NEWS_HOME } from '../../paths';
 
 type Props = { children: React.ReactNode };
 
 export const DemoRouteGuard: React.FC<Props> = ({ children }) => {
-  const { domain } = useParams<{ domain: string }>();
   const { readonly, loading } = usePublicDemoMode();
 
   if (loading) return null;
   if (readonly) {
-    return (
-      <Navigate to={`/${domain ?? getDefaultDomainKey()}/dashboard`} replace />
-    );
+    return <Navigate to={NEWS_HOME} replace />;
   }
   return <>{children}</>;
 };

@@ -228,11 +228,14 @@ def collect_enhanced_rss() -> int:
                         logger.warning(f"Error processing article from {feed_name}: {e}")
                         continue
 
-                # Update last fetched timestamp
+                # Successful feed parse: stamp fetch + success
                 cur.execute(
                     """
                     UPDATE rss_feeds
-                    SET last_fetched = NOW()
+                    SET last_fetched_at = NOW(),
+                        last_success = NOW(),
+                        last_error_message = NULL,
+                        status = 'active'
                     WHERE id = %s
                 """,
                     (feed_id,),

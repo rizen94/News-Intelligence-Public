@@ -38,6 +38,7 @@ from psycopg2.extras import RealDictCursor
 from typing import Optional, Dict, Any, Generator
 import threading
 from contextlib import contextmanager
+from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,33 @@ _pool_lock = threading.Lock()
 _pool_initialized = False
 _ui_pool_initialized = False
 _health_pool_initialized = False
+# In-flight worker getconn attempts (for pressure/waiter diagnostics).
+_pool_waiters = {"worker": 0, "ui": 0, "health": 0}
+_pool_waiters_lock = threading.Lock()
+# Shared executor for getconn timeouts — never create a ThreadPoolExecutor per checkout
+# (that stampedes threads and fails with "cannot schedule new futures after interpreter shutdown").
+_getconn_executor_lock = threading.Lock()
+_getconn_executor = None
+
+
+def _getconn_executor_ref():
+    global _getconn_executor
+    with _getconn_executor_lock:
+        if _getconn_executor is None:
+            import concurrent.futures
+
+            _getconn_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=max(4, int(env_str("DB_GETCONN_EXECUTOR_WORKERS", "8"))),
+                thread_name_prefix="db_getconn",
+            )
+        return _getconn_executor
+
+
+def _pool_waiter_delta(pool_kind: str, delta: int) -> int:
+    with _pool_waiters_lock:
+        cur = int(_pool_waiters.get(pool_kind, 0) or 0) + int(delta)
+        _pool_waiters[pool_kind] = max(0, cur)
+        return int(_pool_waiters[pool_kind])
 
 
 class PooledConnection:
@@ -133,10 +161,10 @@ def get_db_config() -> Dict[str, Any]:
     **Backup / rollback only:** NAS Postgres reached via SSH tunnel to ``localhost:5433``
     (``DB_HOST=localhost``, ``DB_PORT=5433``). Use for rare restore scenarios — not for daily API use.
     """
-    db_host = os.getenv("DB_HOST", "192.168.93.101")
-    db_port_str = os.getenv("DB_PORT", "5432")
+    db_host = env_str("DB_HOST", "192.168.93.101")
+    db_port_str = env_str("DB_PORT", "5432")
     db_port = int(db_port_str)
-    db_name = os.getenv("DB_NAME", "news_intel")
+    db_name = env_str("DB_NAME", "news_intel")
     
     # NAS tunnel mode: localhost:5433 requires tunnel to be running
     if db_host in ["localhost", "127.0.0.1", "::1"] and db_port == 5433:
@@ -154,18 +182,18 @@ def get_db_config() -> Dict[str, Any]:
     else:
         logger.info("Using direct connection to database: %s:%s", db_host, db_port)
     
-    connect_timeout = int(os.getenv("DB_CONNECT_TIMEOUT", "5"))
+    connect_timeout = int(env_str("DB_CONNECT_TIMEOUT", "5"))
     # Statement timeout: applied to every pool connection. Planned long work (migrations, backfills)
     # must run with a separate connection and SET statement_timeout = 0 at session start.
     # Default 2 min so automation phases and batch jobs don't get killed early; use
     # DB_STATEMENT_TIMEOUT_MS=300000 (5 min) or 0 (disable) in .env if needed.
-    statement_timeout_ms = int(os.getenv("DB_STATEMENT_TIMEOUT_MS", "120000"))
+    statement_timeout_ms = int(env_str("DB_STATEMENT_TIMEOUT_MS", "120000"))
     return {
         "host": db_host,
         "port": str(db_port),
         "database": db_name,
-        "user": os.getenv("DB_USER", "newsapp"),
-        "password": os.getenv("DB_PASSWORD", ""),
+        "user": env_str("DB_USER", "newsapp"),
+        "password": env_str("DB_PASSWORD", ""),
         "connect_timeout": connect_timeout,
         "statement_timeout_ms": statement_timeout_ms,
     }
@@ -192,21 +220,21 @@ def get_db_connect_kwargs() -> Dict[str, Any]:
 def _pool_sizes(pool_kind: str) -> tuple[int, int]:
     """Return (minconn, maxconn) for worker, ui, or health pool."""
     # Backward-compatible: DB_POOL_MIN/DB_POOL_MAX when DB_POOL_WORKER_* unset
-    legacy_min = int(os.getenv("DB_POOL_MIN", "2"))
-    legacy_max = int(os.getenv("DB_POOL_MAX", "20"))
+    legacy_min = int(env_str("DB_POOL_MIN", "2"))
+    legacy_max = int(env_str("DB_POOL_MAX", "20"))
     if pool_kind == "ui":
-        minconn = int(os.getenv("DB_POOL_UI_MIN", "2"))
-        maxconn = int(os.getenv("DB_POOL_UI_MAX", "16"))
+        minconn = int(env_str("DB_POOL_UI_MIN", "2"))
+        maxconn = int(env_str("DB_POOL_UI_MAX", "16"))
     elif pool_kind == "health":
-        minconn = max(1, int(os.getenv("DB_POOL_HEALTH_MIN", "1")))
-        maxconn = int(os.getenv("DB_POOL_HEALTH_MAX", "2"))
+        minconn = max(1, int(env_str("DB_POOL_HEALTH_MIN", "1")))
+        maxconn = int(env_str("DB_POOL_HEALTH_MAX", "4"))
     else:
-        minconn = int(os.getenv("DB_POOL_WORKER_MIN", str(max(legacy_min, 2))))
-        if os.getenv("DB_POOL_WORKER_MAX") is not None:
-            maxconn = int(os.getenv("DB_POOL_WORKER_MAX", "28"))
+        minconn = int(env_str("DB_POOL_WORKER_MIN", str(max(legacy_min, 2))))
+        if env_str("DB_POOL_WORKER_MAX") is not None:
+            maxconn = int(env_str("DB_POOL_WORKER_MAX", "28"))
         else:
             # Default worker max when DB_POOL_WORKER_MAX unset: higher for parallel automation (tune vs Postgres max_connections).
-            maxconn = int(os.getenv("DB_POOL_MAX", "28"))
+            maxconn = int(env_str("DB_POOL_MAX", "28"))
     maxconn = max(minconn, min(maxconn, 100))
     return minconn, maxconn
 
@@ -231,7 +259,7 @@ def _init_pool(pool_kind: str = "worker") -> pool.ThreadedConnectionPool:
         minconn, maxconn = _pool_sizes(pool_kind)
         if pool_kind == "health":
             try:
-                health_ms = int(os.getenv("DB_HEALTH_STATEMENT_TIMEOUT_MS", "5000"))
+                health_ms = int(env_str("DB_HEALTH_STATEMENT_TIMEOUT_MS", "5000"))
             except ValueError:
                 health_ms = 5000
             options = f"-c statement_timeout={health_ms}"
@@ -289,7 +317,7 @@ def _validate_connection(conn) -> bool:
 
 def _direct_fallback_allowed() -> bool:
     """When false, pool exhaustion fails fast instead of opening unaccounted direct sessions."""
-    raw = os.getenv("DB_ALLOW_DIRECT_FALLBACK", "true").strip().lower()
+    raw = env_str("DB_ALLOW_DIRECT_FALLBACK", "true").strip().lower()
     return raw not in ("0", "false", "no", "off")
 
 
@@ -332,7 +360,7 @@ def get_db_connection(use_reserved: bool = False):
         else "DB_WORKER_GETCONN_TIMEOUT_SECONDS"
     )
     default_timeout = "3" if pool_kind == "ui" else "30"
-    timeout_raw = os.getenv(timeout_env, os.getenv("DB_GETCONN_TIMEOUT_SECONDS", default_timeout))
+    timeout_raw = env_str(timeout_env, env_str("DB_GETCONN_TIMEOUT_SECONDS", default_timeout))
     try:
         timeout_sec = int(timeout_raw)
     except ValueError:
@@ -342,34 +370,67 @@ def get_db_connection(use_reserved: bool = False):
         timeout_sec = int(default_timeout)
 
     import concurrent.futures
+
     pool_ref = _init_pool(pool_kind=pool_kind)
+    _pool_waiter_delta(pool_kind, 1)
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            fut = ex.submit(_getconn_from_pool, pool_ref)
+        ex = _getconn_executor_ref()
+        fut = ex.submit(_getconn_from_pool, pool_ref)
+        try:
+            conn = fut.result(timeout=timeout_sec)
+        except concurrent.futures.TimeoutError:
             try:
-                conn = fut.result(timeout=timeout_sec)
-            except concurrent.futures.TimeoutError:
-                # Log detailed pool information for debugging
+                pool_stats = get_db_pool_snapshot()
+                logger.error(
+                    f"Database {pool_kind} pool timeout after {timeout_sec}s. Pool stats: {pool_stats}"
+                )
+                # #region agent log
                 try:
-                    pool_stats = get_db_pool_snapshot()
-                    logger.error(
-                        f"Database {pool_kind} pool timeout after {timeout_sec}s. Pool stats: {pool_stats}"
+                    from shared.debug_session_log import agent_dbg
+
+                    agent_dbg(
+                        "B",
+                        "connection.py:pool_timeout",
+                        "db_pool_checkout_timeout",
+                        {
+                            "pool_kind": pool_kind,
+                            "timeout_sec": timeout_sec,
+                            "pool_stats": pool_stats,
+                        },
                     )
                 except Exception:
                     pass
-                raise ConnectionError(
-                    f"Database {pool_kind} pool timeout after {timeout_sec}s (pool likely exhausted). "
-                    "Check for connection leaks: use get_db_connection_context() or conn.close() in finally."
-                ) from None
+                # #endregion
+            except Exception:
+                pass
+            raise ConnectionError(
+                f"Database {pool_kind} pool timeout after {timeout_sec}s (pool likely exhausted). "
+                "Check for connection leaks: use get_db_connection_context() or conn.close() in finally."
+            ) from None
         if conn is not None:
             return conn
-        logger.warning("%s pool returned stale connections; trying direct connect", pool_kind)
+        logger.warning("%s pool returned stale connections (not using direct fallback)", pool_kind)
+        raise ConnectionError(
+            f"Database {pool_kind} pool returned stale connections."
+        )
     except Exception as e:
         logger.error(f"Error getting connection from {pool_kind} pool: {e}")
-        if not _direct_fallback_allowed():
+        err_l = str(e).lower()
+        pool_saturated = (
+            (("pool" in err_l) and ("exhaust" in err_l or "timeout" in err_l or "full" in err_l))
+            or "interpreter shutdown" in err_l
+            or "cannot schedule new futures" in err_l
+        )
+        # Direct fallback under saturation opens unaccounted sessions and makes exhaustion worse.
+        if pool_saturated or not _direct_fallback_allowed():
             raise ConnectionError(
-                f"Database {pool_kind} pool exhausted and DB_ALLOW_DIRECT_FALLBACK=false. "
-                "Check for connection leaks: use get_db_connection_context() or conn.close() in finally."
+                f"Database {pool_kind} pool exhausted"
+                + (
+                    " (direct fallback disabled under saturation)."
+                    if pool_saturated
+                    else " and DB_ALLOW_DIRECT_FALLBACK=false. "
+                    "Check for connection leaks: use get_db_connection_context() or conn.close() in finally."
+                )
             ) from e
         # Try to recover with direct connection (bypasses pool accounting)
         try:
@@ -391,6 +452,8 @@ def get_db_connection(use_reserved: bool = False):
             "Database connection failed (pool and direct). "
             "Check DB_HOST, DB_PORT, DB_PASSWORD in .env and that the database is running."
         ) from e
+    finally:
+        _pool_waiter_delta(pool_kind, -1)
 
     if not _direct_fallback_allowed():
         raise ConnectionError(
@@ -426,7 +489,7 @@ def get_health_db_connection():
     Default checkout timeout 2 s (``DB_HEALTH_GETCONN_TIMEOUT_SECONDS``).
     """
     pool_kind = "health"
-    timeout_raw = os.getenv("DB_HEALTH_GETCONN_TIMEOUT_SECONDS", "2")
+    timeout_raw = env_str("DB_HEALTH_GETCONN_TIMEOUT_SECONDS", "2")
     try:
         timeout_sec = int(timeout_raw)
     except ValueError:
@@ -437,38 +500,18 @@ def get_health_db_connection():
     import concurrent.futures
 
     pool_ref = _init_pool(pool_kind=pool_kind)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-        fut = ex.submit(_getconn_from_pool, pool_ref)
-        try:
-            conn = fut.result(timeout=timeout_sec)
-        except concurrent.futures.TimeoutError:
-            raise ConnectionError(
-                f"Database {pool_kind} pool timeout after {timeout_sec}s (health pool exhausted). "
-                "Raise DB_POOL_HEALTH_MAX if appropriate."
-            ) from None
+    fut = _getconn_executor_ref().submit(_getconn_from_pool, pool_ref)
+    try:
+        conn = fut.result(timeout=timeout_sec)
+    except concurrent.futures.TimeoutError:
+        raise ConnectionError(
+            f"Database {pool_kind} pool timeout after {timeout_sec}s (health pool exhausted). "
+            "Raise DB_POOL_HEALTH_MAX if appropriate."
+        ) from None
     if conn is not None:
         return conn
-    logger.warning("%s pool returned stale connections; trying direct connect", pool_kind)
-    try:
-        kwargs = get_db_connect_kwargs()
-        try:
-            health_ms = int(os.getenv("DB_HEALTH_STATEMENT_TIMEOUT_MS", "5000"))
-        except ValueError:
-            health_ms = 5000
-        kwargs["options"] = f"-c statement_timeout={health_ms}"
-        raw = psycopg2.connect(**kwargs)
-        if _validate_connection(raw):
-            return PooledConnection(raw, None)
-        try:
-            raw.close()
-        except Exception:
-            pass
-    except Exception as e2:
-        logger.error(f"Direct connect (health fallback) failed: {e2}")
-    raise ConnectionError(
-        "Database health pool connection failed (pool and direct). "
-        "Check DB_HOST, DB_PORT, DB_PASSWORD in .env and that the database is running."
-    )
+    logger.warning("%s pool returned stale connections; not using direct fallback", pool_kind)
+    raise ConnectionError(f"Database {pool_kind} pool returned stale connections.")
 
 
 def get_db_pool_snapshot() -> Dict[str, Any]:
@@ -492,12 +535,22 @@ def get_db_pool_snapshot() -> Dict[str, Any]:
             }
         try:
             used = len(getattr(pool_ref, "_used", {}) or {})
+            pooled = len(getattr(pool_ref, "_pool", {}) or {})
             util = round((float(used) / float(maxconn)) if maxconn > 0 else 0.0, 3)
+            with _pool_waiters_lock:
+                waiters = int(_pool_waiters.get(pool_kind, 0) or 0)
+            pressure = round(
+                (float(used) + float(waiters)) / float(maxconn) if maxconn > 0 else 0.0,
+                3,
+            )
             return {
                 "initialized": True,
                 "in_use": used,
+                "pooled_idle": pooled,
                 "max": maxconn,
                 "utilization": util,
+                "waiters": waiters,
+                "pressure": pressure,
             }
         except Exception:
             return {
@@ -505,6 +558,8 @@ def get_db_pool_snapshot() -> Dict[str, Any]:
                 "in_use": 0,
                 "max": maxconn,
                 "utilization": 0.0,
+                "waiters": 0,
+                "pressure": 0.0,
             }
 
     return {
@@ -512,6 +567,53 @@ def get_db_pool_snapshot() -> Dict[str, Any]:
         "ui": _pool_stats(_ui_connection_pool, "ui"),
         "health": _pool_stats(_health_connection_pool, "health"),
     }
+
+
+def _automation_db_pool_pressure_gate_enabled() -> bool:
+    """When True, defer new scheduled work if worker psycopg2 pool utilization is above threshold."""
+    return env_str("AUTOMATION_DB_POOL_PRESSURE_GATE_ENABLED", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def _db_pool_gate_exempt_phases() -> frozenset[str]:
+    """Phases that may still schedule when the worker pool is hot (liveness + spill replay)."""
+    base = frozenset({"health_check", "pending_db_flush"})
+    raw = env_str("AUTOMATION_DB_POOL_GATE_EXEMPT_PHASES", "").strip()
+    if not raw:
+        return base
+    return base | frozenset(x.strip() for x in raw.split(",") if x.strip())
+
+
+def automation_db_pool_should_defer_phase(phase_name: str) -> bool:
+    """
+    True when this phase should not be newly scheduled while the worker DB pool is under pressure.
+
+    Defers when utilization OR pressure (in_use+waiters)/max is at threshold, or any checkout
+    waiter is already blocked. Waiters alone matter: util can sit at 0.75 with several threads
+    blocked on getconn while new work keeps being scheduled.
+
+    Does not apply to tasks already queued. Exempt phases (health_check, pending_db_flush) always pass.
+    """
+    if phase_name in _db_pool_gate_exempt_phases():
+        return False
+    if not _automation_db_pool_pressure_gate_enabled():
+        return False
+    try:
+        snap = get_db_pool_snapshot()
+        worker = snap.get("worker") or {}
+        utilization = float(worker.get("utilization") or 0.0)
+        pressure = float(worker.get("pressure") or utilization)
+        waiters = int(worker.get("waiters") or 0)
+    except Exception:
+        return False
+    try:
+        threshold = float(env_str("AUTOMATION_DB_WORKER_UTILIZATION_SKIP_THRESHOLD", "0.82"))
+    except ValueError:
+        threshold = 0.82
+    return waiters > 0 or pressure >= threshold or utilization >= threshold
 
 
 def close_pool() -> None:
@@ -559,7 +661,7 @@ def probe_database_server_reachable(connect_timeout: Optional[int] = None) -> bo
             kwargs["connect_timeout"] = int(connect_timeout)
         else:
             try:
-                probe_sec = int(os.getenv("DB_AUTOMATION_PROBE_CONNECT_TIMEOUT", "4"))
+                probe_sec = int(env_str("DB_AUTOMATION_PROBE_CONNECT_TIMEOUT", "4"))
             except ValueError:
                 probe_sec = 4
             kwargs["connect_timeout"] = min(probe_sec, int(kwargs.get("connect_timeout", 5) or 5))
@@ -621,8 +723,8 @@ def _init_sqlalchemy():
         )
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
-        sa_pool_size = int(os.getenv("DB_POOL_SA_SIZE", "3"))
-        sa_max_overflow = int(os.getenv("DB_POOL_SA_OVERFLOW", "8"))
+        sa_pool_size = int(env_str("DB_POOL_SA_SIZE", "3"))
+        sa_max_overflow = int(env_str("DB_POOL_SA_OVERFLOW", "8"))
         sa_pool_size = min(sa_pool_size, 10)
         sa_max_overflow = min(sa_max_overflow, 20)
         _sqlalchemy_engine = create_engine(

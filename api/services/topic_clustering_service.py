@@ -54,21 +54,16 @@ class TopicClusteringService:
 
             JSON Response:"""
 
-            response = requests.post(
-                f"{self.base_url}/api/generate",
-                json={
-                    "model": self.model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"temperature": 0.2, "top_p": 0.9, "max_tokens": 500},
-                },
-                timeout=30,
-            )
+            from shared.services.llm_service import ollama_generate_sync
 
-            if response.status_code == 200:
-                result = response.json()
-                response_text = result.get("response", "").strip()
+            response_text = ollama_generate_sync(
+                prompt,
+                model=self.model,
+                max_tokens=500,
+                ollama_base_url=self.base_url,
+            ).strip()
 
+            if response_text:
                 # Try to extract JSON from response
                 try:
                     json_start = response_text.find("{")
@@ -92,11 +87,14 @@ class TopicClusteringService:
                     logger.warning(f"Failed to parse JSON from Ollama response: {e}")
                     return self._extract_fallback_topics(title, content)
 
-            else:
-                logger.error(f"Ollama API error: {response.status_code}")
-                return self._extract_fallback_topics(title, content)
+            logger.warning("Ollama returned empty topic response")
+            return self._extract_fallback_topics(title, content)
 
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error extracting topics: {e}")
             return self._extract_fallback_topics(title, content)
 
@@ -221,21 +219,16 @@ class TopicClusteringService:
 
             JSON Response:"""
 
-            response = requests.post(
-                f"{self.base_url}/api/generate",
-                json={
-                    "model": self.model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"temperature": 0.3, "top_p": 0.9, "max_tokens": 800},
-                },
-                timeout=45,
-            )
+            from shared.services.llm_service import ollama_generate_sync
 
-            if response.status_code == 200:
-                result = response.json()
-                response_text = result.get("response", "").strip()
+            response_text = ollama_generate_sync(
+                prompt,
+                model=self.model,
+                max_tokens=800,
+                ollama_base_url=self.base_url,
+            ).strip()
 
+            if response_text:
                 try:
                     json_start = response_text.find("{")
                     json_end = response_text.rfind("}") + 1
@@ -255,11 +248,14 @@ class TopicClusteringService:
                     logger.warning(f"Failed to parse clustering JSON: {e}")
                     return self._fallback_clustering(articles)
 
-            else:
-                logger.error(f"Ollama clustering API error: {response.status_code}")
-                return self._fallback_clustering(articles)
+            logger.warning("Ollama returned empty clustering response")
+            return self._fallback_clustering(articles)
 
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                raise
             logger.error(f"Error clustering articles: {e}")
             return self._fallback_clustering(articles)
 

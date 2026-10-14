@@ -242,6 +242,27 @@
   background: rgba(109, 76, 65, 0.05);
 }
 
+.finance-level-chip.is-crisis {
+  border-color: #a1887f;
+  color: #4e342e;
+  background: rgba(93, 64, 55, 0.06);
+  font-weight: 600;
+}
+
+.finance-level-refs__row--crisis {
+  padding-top: 0.15rem;
+  border-top: 1px dashed var(--fin-border);
+}
+
+.finance-level-refs__crisis-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--fin-muted);
+  margin-right: 0.15rem;
+}
+
 .finance-level-chip__delta {
   font-weight: 600;
 }

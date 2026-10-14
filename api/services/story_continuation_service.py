@@ -35,9 +35,36 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from config.runtime import env_int
 from shared.services.llm_service import LLMService, ModelType
 
 logger = logging.getLogger(__name__)
+
+
+def _recheck_base_hours() -> float:
+    """First recheck delay for an event that found no storyline; doubles per attempt."""
+    return max(0.0, float(env_int("CONTINUATION_RECHECK_BASE_HOURS", 2)))
+
+
+def _recheck_max_doublings() -> int:
+    """Caps the backoff: base * 2**doublings (default 2h * 2**6 = ~5.3 days)."""
+    return max(0, min(12, env_int("CONTINUATION_RECHECK_MAX_DOUBLINGS", 6)))
+
+
+def continuation_recheck_due_sql(alias: str = "ce") -> tuple[str, tuple[float, int]]:
+    """
+    SQL predicate (plus params) selecting events due for another continuation attempt.
+
+    Shared with the idle probe so "has work" and "will process" agree.
+    """
+    sql = f"""(
+        {alias}.continuation_checked_at IS NULL
+        OR {alias}.continuation_checked_at < NOW() - (
+            INTERVAL '1 hour' * %s::double precision
+            * POWER(2, LEAST(GREATEST({alias}.continuation_attempts, 1) - 1, %s::int))
+        )
+    )"""
+    return sql, (_recheck_base_hours(), _recheck_max_doublings())
 
 EVENT_TYPE_COMPATIBILITY = {
     "legal_action": {"court_ruling", "arrest", "investigation", "legal_action", "legislation"},
@@ -133,19 +160,22 @@ class StoryContinuationService:
         return None
 
     async def process_recent_events(self, limit: int = 30) -> dict[str, int]:
-        """Batch-match unlinked events to storylines. Uses story_entity_index and storylines in current search_path."""
+        """Batch-match unlinked events due for recheck (backoff), not the same hot 150 forever."""
+        due_sql, backoff_params = continuation_recheck_due_sql("ce")
         cursor = self.conn.cursor()
         try:
             if self.schema:
                 cursor.execute("SET search_path TO %s, public", (self.schema,))
             cursor.execute(
-                """
-                SELECT id FROM chronological_events
-                WHERE storyline_id = '' OR storyline_id IS NULL
-                ORDER BY extraction_timestamp DESC
+                f"""
+                SELECT ce.id FROM chronological_events ce
+                WHERE (ce.storyline_id = '' OR ce.storyline_id IS NULL)
+                  AND {due_sql}
+                ORDER BY ce.continuation_checked_at ASC NULLS FIRST,
+                         ce.extraction_timestamp DESC
                 LIMIT %s
-            """,
-                (limit,),
+                """,
+                (*backoff_params, limit),
             )
             rows = cursor.fetchall()
         except Exception as e:
@@ -154,11 +184,12 @@ class StoryContinuationService:
                 e,
             )
             cursor.close()
-            return {"checked": 0, "linked": 0, "flagged": 0}
+            return {"checked": 0, "linked": 0, "flagged": 0, "backed_off": 0}
         finally:
             cursor.close()
 
-        stats = {"checked": 0, "linked": 0, "flagged": 0}
+        stats = {"checked": 0, "linked": 0, "flagged": 0, "backed_off": 0}
+        unmatched: list[int] = []
         for (eid,) in rows:
             stats["checked"] += 1
             result = await self.match_event_to_storyline(eid)
@@ -167,7 +198,36 @@ class StoryContinuationService:
                     stats["linked"] += 1
                 else:
                     stats["flagged"] += 1
+            else:
+                unmatched.append(int(eid))
+        self._record_continuation_attempts(unmatched)
+        stats["backed_off"] = len(unmatched)
         return stats
+
+    def _record_continuation_attempts(self, event_ids: list[int]) -> None:
+        """Stamp unmatched events so exponential recheck backoff can skip them."""
+        if not event_ids or not self.conn:
+            return
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(
+                """
+                UPDATE chronological_events
+                SET continuation_attempts = COALESCE(continuation_attempts, 0) + 1,
+                    continuation_checked_at = NOW()
+                WHERE id = ANY(%s)
+                """,
+                (event_ids,),
+            )
+            self.conn.commit()
+        except Exception as e:
+            logger.warning("continuation attempt stamp failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+        finally:
+            cursor.close()
 
     def update_entity_index(self, storyline_id: int):
         """
@@ -409,8 +469,28 @@ class StoryContinuationService:
                 event_description=event.get("description") or "",
             )
 
+            # Never hold a pool connection across Ollama (idle-in-transaction / pool exhaustion).
+            held = self.conn
+            self.conn = None
+            if held is not None:
+                try:
+                    held.close()
+                except Exception:
+                    pass
             try:
                 raw = await self.llm._call_ollama(ModelType.LLAMA_8B, prompt)
+            finally:
+                from shared.database.connection import get_db_connection
+
+                self.conn = get_db_connection()
+                if self.conn and self.schema:
+                    try:
+                        with self.conn.cursor() as _c:
+                            _c.execute("SET search_path TO %s, public", (self.schema,))
+                    except Exception:
+                        pass
+
+            try:
                 verdict = self._parse_verdict(raw)
                 if not verdict:
                     continue
@@ -435,14 +515,91 @@ class StoryContinuationService:
         cursor = self.conn.cursor()
         schema = self.schema or "public"
         try:
-            storyline_id = match["storyline_id"]
+            storyline_id = int(match["storyline_id"])
+            event_id = int(event["id"])
+            article_id = event.get("source_article_id") or event.get("article_id")
+            domain_key = getattr(self, "domain_key", None) or ""
+            if not domain_key:
+                try:
+                    from shared.domain_registry import schema_to_primary_domain_key
+
+                    domain_key = schema_to_primary_domain_key(schema)
+                except Exception:
+                    domain_key = schema.replace("_", "-") if schema and schema != "public" else "politics"
+
+            # Prefer episode attach gate + EEL when assembly is on.
+            gated = False
+            try:
+                from shared.episode_attach_gate import (
+                    allow_event_episode_attach,
+                    episode_container_assembly_enabled,
+                    insert_event_episode_link,
+                    lock_episode_signature,
+                )
+
+                if episode_container_assembly_enabled():
+                    ok, reason, details = allow_event_episode_attach(
+                        self.conn,
+                        domain_key=domain_key,
+                        schema=schema,
+                        episode_id=storyline_id,
+                        event_id=event_id,
+                        article_id=int(article_id) if article_id else None,
+                        blend_rank=float(match.get("confidence") or 0.0) or None,
+                    )
+                    if not ok:
+                        logger.info(
+                            "Continuation gate rejected event %s -> episode %s (%s)",
+                            event_id,
+                            storyline_id,
+                            reason,
+                        )
+                        self.conn.rollback()
+                        return
+                    link_type = details.get("link_type") or "continuation"
+                    if link_type == "founding" and details.get("seed_signature"):
+                        lock_episode_signature(
+                            cursor, schema, storyline_id, details["seed_signature"]
+                        )
+                    insert_event_episode_link(
+                        cursor,
+                        event_id=event_id,
+                        domain_key=domain_key,
+                        episode_id=storyline_id,
+                        link_type=link_type,
+                        matched_anchors=list(details.get("matched_anchors") or []),
+                        inference_stage="established"
+                        if match.get("auto_linked")
+                        else "candidate",
+                        blend_rank=float(match.get("confidence") or 0.0) or None,
+                        added_by="story_continuation",
+                        metadata={
+                            "confidence": match.get("confidence"),
+                            "reasoning": (match.get("reasoning") or "")[:500],
+                        },
+                    )
+                    gated = True
+            except Exception as gate_e:
+                logger.warning(
+                    "Continuation gate path failed event=%s episode=%s: %s",
+                    event_id,
+                    storyline_id,
+                    gate_e,
+                )
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
+                cursor = self.conn.cursor()
+
+            # Always stamp CE for legacy readers; EEL is SSOT when gated.
             cursor.execute(
                 """
                 UPDATE chronological_events
                 SET storyline_id = %s::text
                 WHERE id = %s
             """,
-                (storyline_id, event["id"]),
+                (storyline_id, event_id),
             )
 
             # Reactivate dormant storylines
@@ -470,11 +627,61 @@ class StoryContinuationService:
                 (storyline_id,),
             )
 
+            # Derived bag dual-write (same path as attach_article_events_to_episode).
+            if article_id:
+                try:
+                    from shared.assembly_link_funnel import storyline_articles_dual_write_enabled
+                    from shared.membership_store import insert_derived_bag_row
+
+                    if storyline_articles_dual_write_enabled():
+                        insert_derived_bag_row(
+                            cursor,
+                            schema=schema,
+                            storyline_id=storyline_id,
+                            article_id=int(article_id),
+                            relevance_score=float(match.get("confidence") or 0.0),
+                            added_by="story_continuation",
+                            metadata={
+                                "derived_from": "event_episode_link",
+                                "event_id": event_id,
+                            },
+                        )
+                except Exception as bag_e:
+                    logger.debug(
+                        "continuation derived bag skip event=%s storyline=%s: %s",
+                        event_id,
+                        storyline_id,
+                        bag_e,
+                    )
+
             self.conn.commit()
             self.update_entity_index(storyline_id)
+
+            # Materiality-gated narrative finisher (not full membership_store.admit).
+            try:
+                from services.content_refinement_queue_service import (
+                    maybe_enqueue_narrative_finisher_on_membership,
+                )
+
+                maybe_enqueue_narrative_finisher_on_membership(
+                    domain_key,
+                    storyline_id,
+                    source="story_continuation",
+                    article_id=int(article_id) if article_id else None,
+                    intent="continuation",
+                )
+            except Exception as enq_e:
+                logger.warning(
+                    "continuation finisher enqueue failed event=%s storyline=%s: %s",
+                    event_id,
+                    storyline_id,
+                    enq_e,
+                )
+
             logger.info(
-                f"Linked event {event['id']} to storyline {storyline_id} "
-                f"(confidence={match.get('confidence', 0):.2f}, auto={match.get('auto_linked')})"
+                f"Linked event {event_id} to storyline {storyline_id} "
+                f"(confidence={match.get('confidence', 0):.2f}, auto={match.get('auto_linked')}, "
+                f"gated={gated})"
             )
         except Exception as e:
             logger.error(f"Event linking failed: {e}")

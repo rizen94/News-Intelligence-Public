@@ -30,6 +30,44 @@ class TopicFilter:
     include_categories: list[str] = field(default_factory=list)
 
 
+# Story kinds that behave as chemistry proteins (tight entity/matter bags).
+_CHEMISTRY_STORY_KINDS = frozenset(
+    {"evidence_thread", "research_topic", "matter_docket"}
+)
+
+
+@dataclass
+class LinkScoreProfile:
+    """Weights for article↔storyline membership and graph link ranking."""
+
+    relevance_weight: float = 0.40
+    semantic_weight: float = 0.15
+    keyword_weight: float = 0.10
+    quality_weight: float = 0.10
+    temporal_weight: float = 0.10
+    canonical_entity_weight: float = 0.15
+    temporal_half_life_days: float = 14.0
+    auto_approve_combined: float = 0.80
+    # Discovery seed floor (near auto-approve for tight bags).
+    discovery_seed_floor: float = 0.75
+    aggressive_membership: bool = False
+    allow_storyline_merge: bool = True
+    max_member_articles: int | None = 32
+    # Soft cap: article may join at most this many active arcs (HITL exempt).
+    max_storylines_per_article: int = 3
+    membership_min_shared_non_hub: int = 2
+    # Semantic floor when canonical overlap is empty (hard reject below).
+    semantic_alone_floor: float = 0.62
+    vault_boost_cap: float = 0.03
+
+
+@dataclass
+class HubFacet:
+    key: str
+    role: str = "who"
+    names: list[str] = field(default_factory=list)
+
+
 @dataclass
 class StorylineDiscoveryConfig:
     clustering_similarity_threshold: float = 0.70
@@ -53,6 +91,9 @@ class StorylineConsolidationConfig:
     merge_similarity_threshold: float = 0.65
     parent_similarity_threshold: float = 0.50
     min_articles_for_mega: int = 10
+    # When >0, pairwise merges also require this semantic (embedding) floor —
+    # blocks entity-title-only matches that glue unrelated papers together.
+    min_semantic_similarity_for_merge: float = 0.0
 
 
 @dataclass
@@ -95,6 +136,9 @@ class DomainSynthesisConfig:
     storyline_development: StorylineDevelopmentConfig = field(
         default_factory=StorylineDevelopmentConfig
     )
+    story_kind: str = "event_narrative"
+    link_score_profile: LinkScoreProfile = field(default_factory=LinkScoreProfile)
+    hub_facets: list[HubFacet] = field(default_factory=list)
 
     max_articles_per_synthesis: int = 50
     max_entities_per_synthesis: int = 30
@@ -117,6 +161,13 @@ class DomainSynthesisConfig:
 
     def prioritised_event_types(self) -> list[str]:
         return list(self.event_type_priorities)
+
+    def is_chemistry_kind(self) -> bool:
+        """True for evidence/research/docket proteins (tight bags, not geopolitics megas)."""
+        return (self.story_kind or "").strip().lower() in _CHEMISTRY_STORY_KINDS
+
+    def membership_min_shared_non_hub(self) -> int:
+        return max(1, int(self.link_score_profile.membership_min_shared_non_hub))
 
     def narrative_prompt_context(self) -> str:
         """Bundle domain LLM context with storyline patterns for title/summary generation."""
@@ -173,6 +224,87 @@ def _int(val: Any, default: int) -> int:
         return int(val)
     except (TypeError, ValueError):
         return default
+
+
+def _bool(val: Any, default: bool) -> bool:
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        return val
+    return str(val).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _merge_link_score_profile(
+    defaults: dict[str, Any],
+    domain_raw: dict[str, Any],
+) -> LinkScoreProfile:
+    def_p = defaults.get("link_score_profile") or {}
+    dom_p = domain_raw.get("link_score_profile") or {}
+
+    def _pick(key: str, default: float) -> float:
+        return _float(dom_p.get(key), _float(def_p.get(key), default))
+
+    max_members = dom_p.get("max_member_articles")
+    if max_members is None:
+        max_members = def_p.get("max_member_articles")
+    max_member_articles: int | None
+    if max_members is None:
+        max_member_articles = 32
+    else:
+        max_member_articles = max(8, _int(max_members, 32))
+
+    return LinkScoreProfile(
+        relevance_weight=_pick("relevance_weight", 0.40),
+        semantic_weight=_pick("semantic_weight", 0.15),
+        keyword_weight=_pick("keyword_weight", 0.10),
+        quality_weight=_pick("quality_weight", 0.10),
+        temporal_weight=_pick("temporal_weight", 0.10),
+        canonical_entity_weight=_pick("canonical_entity_weight", 0.15),
+        temporal_half_life_days=_pick("temporal_half_life_days", 14.0),
+        auto_approve_combined=_pick("auto_approve_combined", 0.80),
+        discovery_seed_floor=_pick("discovery_seed_floor", 0.75),
+        aggressive_membership=_bool(
+            dom_p.get("aggressive_membership"),
+            _bool(def_p.get("aggressive_membership"), False),
+        ),
+        allow_storyline_merge=_bool(
+            dom_p.get("allow_storyline_merge"),
+            _bool(def_p.get("allow_storyline_merge"), True),
+        ),
+        max_member_articles=max_member_articles,
+        max_storylines_per_article=max(
+            1,
+            _int(
+                dom_p.get("max_storylines_per_article"),
+                _int(def_p.get("max_storylines_per_article"), 3),
+            ),
+        ),
+        membership_min_shared_non_hub=_int(
+            dom_p.get("membership_min_shared_non_hub"),
+            _int(def_p.get("membership_min_shared_non_hub"), 2),
+        ),
+        semantic_alone_floor=_pick("semantic_alone_floor", 0.62),
+        vault_boost_cap=_pick("vault_boost_cap", 0.03),
+    )
+
+
+def _merge_hub_facets(domain_raw: dict[str, Any]) -> list[HubFacet]:
+    out: list[HubFacet] = []
+    for raw in domain_raw.get("hub_facets") or []:
+        if not isinstance(raw, dict):
+            continue
+        key = str(raw.get("key") or "").strip().lower()
+        if not key:
+            continue
+        names = [str(n).strip() for n in (raw.get("names") or []) if str(n).strip()]
+        out.append(
+            HubFacet(
+                key=key,
+                role=str(raw.get("role") or "who").strip().lower() or "who",
+                names=names,
+            )
+        )
+    return out
 
 
 def _merge_storyline_development(
@@ -249,6 +381,10 @@ def _merge_storyline_development(
             con_dom.get("min_articles_for_mega"),
             _int(con_def.get("min_articles_for_mega"), 10),
         ),
+        min_semantic_similarity_for_merge=_float(
+            con_dom.get("min_semantic_similarity_for_merge"),
+            _float(con_def.get("min_semantic_similarity_for_merge"), 0.0),
+        ),
     )
     outbreak_kw = nar_dom.get("outbreak_keywords") or nar_def.get("outbreak_keywords") or []
     credible = nar_dom.get("credible_source_domains") or nar_def.get("credible_source_domains") or []
@@ -311,6 +447,12 @@ def get_domain_synthesis_config(domain_key: str) -> DomainSynthesisConfig:
     )
 
     storyline_development = _merge_storyline_development(defaults, domain_raw)
+    link_score_profile = _merge_link_score_profile(defaults, domain_raw)
+    story_kind = str(
+        domain_raw.get("story_kind")
+        or defaults.get("story_kind")
+        or "event_narrative"
+    ).strip()
 
     return DomainSynthesisConfig(
         domain_key=norm_key,
@@ -323,6 +465,9 @@ def get_domain_synthesis_config(domain_key: str) -> DomainSynthesisConfig:
         topic_filter=topic_filter,
         llm_context=(domain_raw.get("llm_context") or "").strip(),
         storyline_development=storyline_development,
+        story_kind=story_kind or "event_narrative",
+        link_score_profile=link_score_profile,
+        hub_facets=_merge_hub_facets(domain_raw),
         max_articles_per_synthesis=_int(
             domain_raw.get("max_articles_per_synthesis"),
             _int(defaults.get("max_articles_per_synthesis"), 50),
@@ -336,6 +481,10 @@ def get_domain_synthesis_config(domain_key: str) -> DomainSynthesisConfig:
             _float(defaults.get("min_article_confidence"), 0.3),
         ),
     )
+
+
+def get_domain_hub_facets(domain_key: str) -> list[HubFacet]:
+    return list(get_domain_synthesis_config(domain_key).hub_facets)
 
 
 def get_storyline_development_config(domain_key: str) -> StorylineDevelopmentConfig:

@@ -7,7 +7,7 @@ export default function ReportingIndexPage() {
       <h1 className='finance-page-title'>Financial reporting</h1>
       <p className='finance-page-lede'>
         Analysis results, evidence, and task traces live here — not on the News{' '}
-        <code>/v2</code> broadsheet home. Expand later without mixing into News IA.
+        <code>/</code> broadsheet home. Expand later without mixing into News IA.
       </p>
       <div className='finance-card-grid'>
         <Link className='finance-link-card' to='/finance/reporting/analysis'>

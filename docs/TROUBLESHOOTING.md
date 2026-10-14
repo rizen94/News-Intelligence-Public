@@ -138,7 +138,7 @@ For many clients or a low PostgreSQL `max_connections`, use **PgBouncer** in fro
 | Cause | Fix |
 |-------|-----|
 | **Connection leaks** | Every `get_db_connection()` must be closed (returns to pool). Use `with get_db_connection_context() as conn:` or `try: ... finally: conn.close()`. Never leave a connection open on exception paths. |
-| **Pool exhausted** | Set `DB_GETCONN_TIMEOUT_SECONDS=30` in `.env` so the process fails fast instead of blocking forever when the pool is exhausted. Fix leaks and/or increase `DB_POOL_MAX` (default 20) if you have many concurrent workers. |
+| **Pool exhausted** | Checkout **waits/retries** until `DB_*_GETCONN_TIMEOUT_SECONDS`, then raises (no unaccounted direct sessions unless `DB_ALLOW_DIRECT_FALLBACK=true`). AutomationManager defers *new* schedules when worker `pressure` is high or waiters > 0. PopOS phase workers skip drains when `public.db_pool_pressure_advisory.defer_new_work` is set. Monitor: Status chips `DB worker` / `DB UI`. Fix long-held connections / leaks; raise `DB_POOL_WORKER_MAX` only with PgBouncer/Postgres headroom. |
 | **Aborted transaction** | If one query fails, the connection stays in "aborted transaction" and all further commands fail until rollback. The shared module now does `rollback()` before returning a connection to the pool so the next user gets a clean connection. Ensure code that holds a connection long-lived uses `conn.rollback()` or `conn.commit()` before reusing the same conn for another operation. |
 | **Blocking the event loop** | Async code must not call `get_db_connection()` directly; it blocks the event loop. AutomationManager uses `run_in_executor` for `_get_db_connection()`. Other async callers should do the same or use a sync wrapper in a thread. |
 
@@ -149,7 +149,7 @@ For many clients or a low PostgreSQL `max_connections`, use **PgBouncer** in fro
 - **`get_db_cursor()`** — Context manager that yields a RealDictCursor and closes both cursor and connection on exit.
 - **`get_db_config()`** / **`get_db_connect_kwargs()`** — For scripts or one-off connections with the same timeouts.
 
-**Recommended:** Prefer `get_db_connection_context()` or `get_db_cursor()` for new code so connections are never leaked. Set `DB_GETCONN_TIMEOUT_SECONDS=30` in production so pool exhaustion fails fast instead of hanging the process.
+**Recommended:** Prefer `get_db_connection_context()` or `get_db_cursor()` for new code so connections are never leaked. Checkout waits up to the pool timeout under saturation; keep `DB_ALLOW_DIRECT_FALLBACK` false in production so exhaustion cannot open extra backends. Same module on Widow and PopOS — see [PGBOUNCER_AND_CONNECTION_BUDGET.md](PGBOUNCER_AND_CONNECTION_BUDGET.md) (Widow vs PopOS table).
 
 ---
 
@@ -294,18 +294,21 @@ If `ping` or `pg_isready` fails, fix network or PostgreSQL. If `psql` fails with
 
 **How it works**: The API `GET /api/system_monitoring/health` sets status to **degraded** when:
 1. **Database check fails** — e.g. connection timeout (2s), no password, or connection error. The health check runs a quick `SELECT 1` via `get_db_connection()` in a thread with a 2s timeout.
-2. **Circuit breakers open** — e.g. Ollama (or another service) was unreachable and the circuit opened; until it resets, the API reports degraded.
+2. **Circuit breakers open** — Ollama host unreachable tripped a hard shed (`OLLAMA_CB_KEYS`: `ollama`, `ollama_gpu`, `ollama_cpu`, `ollama_pop_os`). Health reports degraded while any of those are open/half-open. **Timeout / 5xx overload does not trip** the breaker (trickle drain continues).
 
 **What to do**:
-1. **See the reason** — The health response now includes `degraded_reasons` (e.g. `["database: unhealthy: connection timeout"]` or `["circuit_breakers: 1 open (e.g. ollama)"]`). The Monitoring page shows these under the status chip when status is degraded.
-2. **If database** — Same as "Database not accessible" above: ensure `DB_PASSWORD` in project-root `.env`, start API with that env (e.g. `./start_system.sh`), and restart after changing `.env`. Check Widow reachability and `pg_isready` / `psql` as in the quick checks above.
-3. **If circuit breakers** — If Ollama (or another checked service) was down, the circuit may be open. Restart the API to reset circuits, or wait for the circuit’s reset window; once the service is reachable again, the next successful call will close the circuit.
+1. **See the reason** — Health includes `degraded_reasons` plus `circuit_breakers.ollama_keys` / `ollama_shedding` / per-key `breakers`. Monitor shows degraded reasons under the status chip.
+2. **If database** — Same as "Database not accessible" above: ensure `DB_PASSWORD` in project-root `.env`, start API with that env, and restart after changing `.env`. Check Widow reachability and `pg_isready` / `psql` as in the quick checks above.
+3. **If Ollama circuit breakers** — Confirm Ollama is up (`curl -sS "$OLLAMA_HOST/api/tags"`). Prefer Monitor **Actions → Reset Ollama CB** or **`POST /api/system_monitoring/circuit_breakers/reset`** (optional body `{"name":"ollama_gpu"}`) over restarting the API. Or wait for the recovery window (~300s): one successful probe closes the breaker (`success_threshold=1`). See [`MONITOR_REPORTING_AND_METRICS.md`](MONITOR_REPORTING_AND_METRICS.md) (defer / shed / overload).
 
 **Quick check**:
 ```bash
-curl -s http://localhost:8000/api/system_monitoring/health | jq '.status, .degraded_reasons, .services.database'
+curl -s http://localhost:8000/api/system_monitoring/health \
+  | jq '{status, degraded_reasons, ollama: .services.ollama, cb: .circuit_breakers}'
+# After host is healthy again:
+curl -sS -X POST http://localhost:8000/api/system_monitoring/circuit_breakers/reset \
+  -H 'Content-Type: application/json' -d '{}'
 ```
-Interpret `status`, `degraded_reasons`, and `services.database` to see why it’s degraded.
 
 ### **Financial Analysis: "Network Error" or no result**
 **Symptoms**: Submit works then result page shows "Network Error", or submit fails with "Cannot reach API".
@@ -337,8 +340,8 @@ Interpret `status`, `degraded_reasons`, and `services.database` to see why it’
    - **Mitigation**: Increase `DB_STATEMENT_TIMEOUT_MS` as above. Longer term, consider an index or a junction table (e.g. `context_id` → `event_id`) so "context linked to event" does not require a full scan of `event_chronicles`.
 
 3. **Ollama / LLM congestion**  
-   Phases that call Ollama share a semaphore (`MAX_CONCURRENT_OLLAMA_TASKS` in `api/services/automation_manager.py`, `OLLAMA_CONCURRENCY` in `api/shared/services/llm_service.py`). If Ollama is slow or busy, tasks wait; the HTTP client has a 180s timeout.
-   - **Fix**: Ensure Ollama is running; reduce concurrency if the GPU is saturated, or run `uv run python scripts/full_system_status_check.py` to assess headroom and tune (see scripts/SCRIPTS_INDEX.md).
+   All generate/embed calls go through `llm_service` (CB hub). Phases share `MAX_CONCURRENT_OLLAMA_TASKS` / `get_shared_ollama_semaphore()`. Under **overload** (timeouts), AM **defers** and drains **trickle**; under hard **shed** (`is_open`), intake pauses and workers requeue — do not expect skip-and-burn of pending work.
+   - **Fix**: Ensure Ollama is running; if breakers are open, reset via Monitor endpoint (above) after the host recovers; reduce concurrency if the GPU is saturated; or run `uv run python scripts/full_system_status_check.py` (see scripts/SCRIPTS_INDEX.md).
    - **Burst (48h catch-up)**: Settings may be raised temporarily (e.g. concurrency 6, content_enrichment interval 300s, batch 60, `RATE_LIMIT_SLEEP` 0.4). Revert to normal (5, 600, 40, 0.6) after catch-up.
 
 4. **Retries and backoff**  

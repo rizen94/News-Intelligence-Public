@@ -22,6 +22,19 @@ def _schema_for_domain(domain_key: str) -> str:
     return resolve_domain_schema(domain_key)
 
 
+def _rollback_to_savepoint(conn, sp_name: str) -> None:
+    """Undo work since savepoint without aborting the whole connection."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+            cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+
 def process_fact_change_log(batch_size: int = 100) -> int:
     """
     Process unprocessed fact_change_log rows: resolve entity_profile to domain + canonical name,
@@ -100,12 +113,19 @@ def process_fact_change_log(batch_size: int = 100) -> int:
                     )
                 row_conn.commit()
                 processed += 1
-            except Exception:
+            except Exception as mark_err:
+                logger.warning(
+                    "fact_change_log row %s mark-processed failed after %s: %s",
+                    log_id,
+                    row_err,
+                    mark_err,
+                )
                 try:
                     row_conn.rollback()
                 except Exception:
                     pass
-            logger.warning("fact_change_log row %s skipped after error: %s", log_id, row_err)
+            else:
+                logger.warning("fact_change_log row %s skipped after error: %s", log_id, row_err)
         finally:
             row_conn.close()
 
@@ -135,17 +155,24 @@ def _process_one_fact_change(
     if not domain_key:
         return 0
     schema = _schema_for_domain(domain_key)
-    # Prefer canonical name from metadata; else fetch from entity_canonical
+    # Prefer canonical name from metadata; else fetch from entity_canonical.
+    # Use savepoints so a missing table/row path cannot abort the connection.
     if not (canonical_name or "").strip() and canonical_entity_id is not None:
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    f"SELECT canonical_name FROM {schema}.entity_canonical WHERE id = %s",
-                    (canonical_entity_id,),
-                )
-                r = cur.fetchone()
-                if r:
-                    canonical_name = r[0]
+                cur.execute("SAVEPOINT sp_entity_canonical")
+                try:
+                    cur.execute(
+                        f"SELECT canonical_name FROM {schema}.entity_canonical WHERE id = %s",
+                        (canonical_entity_id,),
+                    )
+                    r = cur.fetchone()
+                    if r:
+                        canonical_name = r[0]
+                    cur.execute("RELEASE SAVEPOINT sp_entity_canonical")
+                except Exception as e:
+                    _rollback_to_savepoint(conn, "sp_entity_canonical")
+                    logger.debug("entity_canonical lookup %s: %s", schema, e)
         except Exception as e:
             logger.debug("entity_canonical lookup %s: %s", schema, e)
     name = (canonical_name or "").strip()
@@ -156,15 +183,23 @@ def _process_one_fact_change(
     for try_schema in (schema, "public"):
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    SELECT storyline_id FROM {try_schema}.story_entity_index
-                    WHERE LOWER(entity_name) = LOWER(%s)
-                    """,
-                    (name[:255],),
-                )
-                for (sid,) in cur.fetchall():
-                    storyline_ids.add(sid)
+                cur.execute(f"SAVEPOINT sp_sei_{try_schema.replace('-', '_')}")
+                sp = f"sp_sei_{try_schema.replace('-', '_')}"
+                try:
+                    cur.execute(
+                        f"""
+                        SELECT storyline_id FROM {try_schema}.story_entity_index
+                        WHERE LOWER(entity_name) = LOWER(%s)
+                        """,
+                        (name[:255],),
+                    )
+                    for (sid,) in cur.fetchall():
+                        storyline_ids.add(sid)
+                    cur.execute(f"RELEASE SAVEPOINT {sp}")
+                except Exception as e:
+                    _rollback_to_savepoint(conn, sp)
+                    if "does not exist" not in str(e).lower():
+                        logger.debug("story_entity_index %s: %s", try_schema, e)
         except Exception as e:
             if "does not exist" not in str(e).lower():
                 logger.debug("story_entity_index %s: %s", try_schema, e)
@@ -177,15 +212,21 @@ def _process_one_fact_change(
     with conn.cursor() as cur:
         for sid in storyline_ids:
             try:
-                cur.execute(
-                    """
-                    INSERT INTO intelligence.story_update_queue
-                    (domain_key, storyline_id, trigger_type, trigger_id, priority)
-                    VALUES (%s, %s, %s, %s, %s)
-                    """,
-                    (domain_key, sid, change_type, trigger_id, priority),
-                )
-                enqueued += cur.rowcount
+                cur.execute("SAVEPOINT sp_queue_insert")
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO intelligence.story_update_queue
+                        (domain_key, storyline_id, trigger_type, trigger_id, priority)
+                        VALUES (%s, %s, %s, %s, %s)
+                        """,
+                        (domain_key, sid, change_type, trigger_id, priority),
+                    )
+                    enqueued += cur.rowcount
+                    cur.execute("RELEASE SAVEPOINT sp_queue_insert")
+                except Exception as e:
+                    _rollback_to_savepoint(conn, "sp_queue_insert")
+                    logger.debug("story_update_queue insert skip: %s", e)
             except Exception as e:
                 logger.debug("story_update_queue insert skip: %s", e)
     return enqueued
