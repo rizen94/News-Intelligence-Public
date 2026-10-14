@@ -619,24 +619,45 @@ def _count_claim_extraction_backlog() -> int:
 
 
 def _count_entity_profile_build_backlog() -> int:
-    """Profiles matching ``get_entity_profile_ids_to_build`` that also have at least one
-    context mention (``build_profile_sections`` no-ops without mentions)."""
+    """Profiles selectable for build — aligned with ``get_entity_profile_ids_to_build``.
+
+    Uses needs_build + CEM exists + upstream-cleared gate when that gate is enabled.
+    Fact-only profiles without CEM are inventory, not actionable builder work.
+    """
     conn = _get_conn()
     if not conn:
         return 0
     try:
+        from services.entity_profile_builder_service import (
+            _entity_profile_upstream_gate_for_select,
+            sql_entity_profile_upstream_cleared_exists,
+        )
+        from shared.entity_profile_eligibility import sql_entity_profile_selectable_for_build
+        from shared.pipeline_domain_sql import pipeline_domain_any_sql
+
+        selectable = sql_entity_profile_selectable_for_build("ep")
+        domain_sql, domain_keys = pipeline_domain_any_sql(
+            "ep.domain_key", phase="entity_profile_build"
+        )
+        if not domain_keys:
+            return 0
+        upstream_sql = ""
+        try:
+            if _entity_profile_upstream_gate_for_select():
+                upstream_sql = f" AND ({sql_entity_profile_upstream_cleared_exists()}) "
+        except Exception:
+            upstream_sql = ""
         with conn.cursor() as cur:
-            cur.execute("SET LOCAL statement_timeout = '8s'")
+            # Mention-gate EXISTS can exceed 8s on large cem; keep Monitor honest.
+            cur.execute("SET LOCAL statement_timeout = '20s'")
             cur.execute(
-                """
+                f"""
                 SELECT COUNT(*) FROM intelligence.entity_profiles ep
-                WHERE (ep.sections = '[]'::jsonb OR ep.sections IS NULL
-                       OR ep.updated_at < NOW() - INTERVAL '7 days')
-                  AND EXISTS (
-                      SELECT 1 FROM intelligence.context_entity_mentions cem
-                      WHERE cem.entity_profile_id = ep.id
-                  )
-                """
+                WHERE {domain_sql}
+                  AND {selectable}
+                  {upstream_sql}
+                """,
+                (domain_keys,),
             )
             return int(cur.fetchone()[0] or 0)
     except Exception as e:
@@ -677,16 +698,20 @@ def _count_investigation_report_backlog() -> int:
 
 
 def _count_content_refinement_queue_pending() -> int:
-    """Rows in intelligence.content_refinement_queue waiting for workers (migration 181)."""
+    """Pending refinement jobs — same predicate as queue claim (status='pending')."""
+    from shared.content_refinement_queue_eligibility import (
+        sql_content_refinement_queue_pending,
+    )
+
     conn = _get_conn()
     if not conn:
         return 0
     try:
         with conn.cursor() as cur:
             cur.execute(
-                """
-                SELECT COUNT(*) FROM intelligence.content_refinement_queue
-                WHERE status = 'pending'
+                f"""
+                SELECT COUNT(*) FROM intelligence.content_refinement_queue q
+                WHERE {sql_content_refinement_queue_pending("q")}
                 """
             )
             return int(cur.fetchone()[0] or 0)
@@ -800,7 +825,10 @@ def _count_entity_extraction_pending() -> int:
     if phase_backlog_uses_pass_marker("entity_extraction"):
         pass_sql = f" AND ({sql_article_pass_null('entity_extraction', 'a')}) "
     try:
+        from shared.article_signal_gate import sql_article_signal_full_lane_and
+
         for schema in get_pipeline_schema_names_active():
+            sig = sql_article_signal_full_lane_and("a", schema)
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -819,6 +847,7 @@ def _count_entity_extraction_pending() -> int:
                           )
                       )
                       {pass_sql}
+                      {sig}
                     """
                 )
                 total += int(cur.fetchone()[0] or 0)
@@ -1028,7 +1057,7 @@ def _count_timeline_generation_pending() -> int:
 
 
 def _count_storyline_discovery_pending() -> int:
-    """Newest-N articles per schema (same cap as discovery fetch) that are not on any storyline — linkage backlog."""
+    """Newest-N full-lane articles per schema not on any storyline — matches discovery fetch + signal."""
     try:
         from services.ai_storyline_discovery import STORYLINE_DISCOVERY_ARTICLE_LIMIT as cap
     except Exception:
@@ -1042,14 +1071,19 @@ def _count_storyline_discovery_pending() -> int:
         pass_sql = f" AND ({sql_article_pass_null('storyline_discovery', 'a')}) "
     _ord = sql_order_created_at()
     try:
+        from shared.article_signal_gate import sql_article_signal_full_lane_and
+
         for schema in get_pipeline_schema_names_active():
+            sig = sql_article_signal_full_lane_and("a", schema)
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '5s'")
                 cur.execute(
                     f"""
                     WITH cand AS (
-                        SELECT id FROM {schema}.articles
-                        ORDER BY created_at {_ord}
+                        SELECT a.id FROM {schema}.articles a
+                        WHERE COALESCE(a.metadata->>'content_kind', '') <> 'research_paper'
+                          {sig}
+                        ORDER BY a.created_at {_ord}
                         LIMIT %s
                     )
                     SELECT COUNT(*) FROM {schema}.articles a
@@ -1075,7 +1109,7 @@ def _count_storyline_discovery_pending() -> int:
 
 
 def _count_storyline_assembly_pending() -> int:
-    """Unlinked recent articles across pipeline domains — assembly ties detection + discovery + automation."""
+    """Unlinked recent full-lane articles — assembly ties detection + discovery + automation."""
     try:
         from services.storyline_assembly_service import count_unlinked_articles
         from shared.domain_registry import get_pipeline_active_domain_keys
@@ -1087,13 +1121,16 @@ def _count_storyline_assembly_pending() -> int:
 
 
 def _count_proactive_detection_pending() -> int:
-    """Recent articles (72h) with no storyline_articles row — matches proactive_detection candidate query."""
+    """Recent full-lane unlinked articles (72h) — matches proactive_detection candidate query."""
     conn = _get_conn()
     if not conn:
         return 0
     total = 0
     try:
+        from shared.article_signal_gate import sql_article_signal_full_lane_and
+
         for schema in get_pipeline_schema_names_active():
+            sig = sql_article_signal_full_lane_and("a", schema)
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '5s'")
                 cur.execute(
@@ -1102,6 +1139,8 @@ def _count_proactive_detection_pending() -> int:
                     LEFT JOIN {schema}.storyline_articles sa ON sa.article_id = a.id
                     WHERE COALESCE(a.published_at, a.created_at) >= NOW() - INTERVAL '72 hours'
                       AND sa.article_id IS NULL
+                      AND COALESCE(a.metadata->>'content_kind', '') <> 'research_paper'
+                      {sig}
                     """
                 )
                 total += int(cur.fetchone()[0] or 0)
@@ -1318,7 +1357,10 @@ def _count_event_extraction_pending() -> int:
     if phase_backlog_uses_pass_marker("event_extraction"):
         pass_sql = f" AND ({sql_article_pass_null('event_extraction', 'a')}) "
     try:
+        from shared.article_signal_gate import sql_article_signal_full_lane_and
+
         for schema in get_pipeline_schema_names_active():
+            sig = sql_article_signal_full_lane_and("a", schema)
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -1333,6 +1375,7 @@ def _count_event_extraction_pending() -> int:
                           OR a.enrichment_status IN ('completed', 'enriched')
                       )
                       {pass_sql}
+                      {sig}
                     """
                 )
                 total += int(cur.fetchone()[0] or 0)
@@ -1566,35 +1609,30 @@ def _count_event_deduplication_pending() -> int:
 
 
 def _count_story_continuation_pending() -> int:
-    """Events with empty/null storyline_id (same grain as StoryContinuationService)."""
+    """Unlinked CE due for recheck — same due predicate as process_recent_events.
+
+    Uses ``continuation_recheck_due_sql`` so Monitor pending matches selection
+    (not raw unlinked-only, which includes backoff-held rows).
+    """
+    from services.story_continuation_service import continuation_recheck_due_sql
+
     conn = _get_conn()
     if not conn:
         return 0
-    total = 0
     try:
-        schemas: list[str] = ["public"]
-        try:
-            schemas.extend(get_pipeline_schema_names_active())
-        except Exception:
-            pass
-        seen: set[str] = set()
-        for schema in schemas:
-            if schema in seen:
-                continue
-            seen.add(schema)
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("SET LOCAL statement_timeout = '3s'")
-                    cur.execute(
-                        f"""
-                        SELECT COUNT(*) FROM {schema}.chronological_events
-                        WHERE storyline_id IS NULL OR TRIM(COALESCE(storyline_id::text, '')) = ''
-                        """
-                    )
-                    total += int(cur.fetchone()[0] or 0)
-            except Exception:
-                continue
-        return total
+        due_sql, due_params = continuation_recheck_due_sql("ce")
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '3s'")
+            cur.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM public.chronological_events ce
+                WHERE (ce.storyline_id IS NULL OR TRIM(COALESCE(ce.storyline_id::text, '')) = '')
+                  AND {due_sql}
+                """,
+                due_params,
+            )
+            return int(cur.fetchone()[0] or 0)
     except Exception as e:
         logger.debug("backlog story_continuation count: %s", e)
         return 0

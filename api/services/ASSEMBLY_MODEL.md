@@ -199,7 +199,9 @@ Park expanding chemistry-named phases as product work. Mode C proposals only.
 | `unified_intake_extraction` | `chronological_events_catchup` when needed; `event_deduplication` |
 | `chronological_events_catchup` | `event_deduplication` |
 | `event_deduplication` | `story_continuation` |
-| `story_continuation` | `editorial_research_pass` (+ package ensure on link) |
+| `story_continuation` | `editorial_research_pass` (handoff) + materiality-gated CRQ finisher enqueue on link (not full `membership_store.admit`) |
+
+**Dedup vs linked membership:** `event_deduplication` merge keeps EEL rows keyed by `event_id`. If a linked duplicate merges into an unlinked canonical, CE `storyline_id` is copied onto the canonical for legacy readers; conflicting non-empty stamps keep the canonical and log a warning.
 
 ---
 

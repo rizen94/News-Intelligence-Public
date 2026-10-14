@@ -109,7 +109,9 @@ async def drain_phase(
 
     if name == "entity_profile_build":
         from services.entity_profile_builder_service import (
+            drain_entity_profile_build,
             entity_profile_build_batch_limit,
+            entity_profile_build_drain_enabled,
             run_profile_builder_batch,
         )
 
@@ -117,6 +119,13 @@ async def drain_phase(
             lim = articles_per_domain if articles_per_domain is not None else entity_profile_build_batch_limit()
         except Exception:
             lim = per
+        # PopOS refine / phase workers honor ENTITY_PROFILE_BUILD_DRAIN (default true):
+        # loop batches for the full worker budget instead of one batch per cycle.
+        if entity_profile_build_drain_enabled():
+            return await drain_entity_profile_build(
+                budget_seconds=budget_seconds,
+                batch_limit=lim,
+            )
         batch_result = await run_profile_builder_batch(limit=lim)
         return {"profiles_updated": batch_result.updated}
 
@@ -283,6 +292,9 @@ async def drain_phase(
             conn = get_db_connection()
             if not conn:
                 continue
+            # StoryContinuationService closes+reacquires self.conn across Ollama calls.
+            # Always return the *current* handle (and the original if it differs).
+            svc = None
             try:
                 svc = StoryContinuationService(conn, llm=llm_service, schema=schema)
                 stats = await svc.process_recent_events(limit=cont_limit)
@@ -295,11 +307,23 @@ async def drain_phase(
             except Exception as e:
                 logger.warning("story_continuation drain schema=%s: %s", schema, e)
             finally:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
+                current = getattr(svc, "conn", None) if svc is not None else None
+                for handle in (current, conn):
+                    if handle is None:
+                        continue
+                    try:
+                        handle.close()
+                    except Exception:
+                        pass
+                if svc is not None:
+                    svc.conn = None
         total["processed"] = total["linked"] + total["flagged"] + total["inherited"]
+        try:
+            from shared.pipeline_handoffs import after_story_continuation
+
+            after_story_continuation(None, linked=int(total.get("linked") or 0))
+        except Exception as handoff_e:
+            logger.debug("after_story_continuation handoff: %s", handoff_e)
         return total
 
     if name == "content_refinement_queue":

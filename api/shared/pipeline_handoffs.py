@@ -50,8 +50,12 @@ def _safe_request(automation: Any, phase: str) -> None:
 
 
 def _safe_request_editorial(automation: Any, phase: str, *, reason: str = "pipeline_handoff") -> None:
-    """Route editorial drains to PopOS when Widow schedule is remote-owned."""
-    if automation is None or not phase:
+    """Route editorial drains to PopOS when Widow schedule is remote-owned.
+
+    Remote wake does not require an AutomationManager instance (PopOS phase drain
+    calls ``after_story_continuation(None, linked=N)``).
+    """
+    if not phase:
         return
     try:
         from shared.remote_phase_worker import phase_owned_by_remote_worker
@@ -64,6 +68,8 @@ def _safe_request_editorial(automation: Any, phase: str, *, reason: str = "pipel
             return
     except Exception as e:
         logger.debug("editorial remote handoff %s: %s", phase, e)
+    if automation is None:
+        return
     _safe_request(automation, phase)
 
 
