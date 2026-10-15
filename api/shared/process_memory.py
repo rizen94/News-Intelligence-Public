@@ -4,6 +4,8 @@ from __future__ import annotations
 
 # Phases that may still start when the API process is over AUTOMATION_RSS_PAUSE_MB.
 # Keep this list to light DB/ops work — never LLM / torch / PDF heaps.
+# content_enrichment: hot RSS after a batch was returning admit rss_pause and opening
+# 10–25m idle gaps while thousands of articles still pending.
 AUTOMATION_RSS_PAUSE_EXEMPT_PHASES: frozenset[str] = frozenset(
     {
         "health_check",
@@ -17,6 +19,7 @@ AUTOMATION_RSS_PAUSE_EXEMPT_PHASES: frozenset[str] = frozenset(
         "spine_sql_tail",
         "entity_profile_sync",
         "context_sync",
+        "content_enrichment",
     }
 )
 

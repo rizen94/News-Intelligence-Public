@@ -292,6 +292,8 @@ class LLMService:
         self.ollama_gpu_host = (
             env_str("OLLAMA_GPU_HOST", self.ollama_base_url).rstrip("/")
         )
+        # Dedicated embeddings appliance (e.g. Dockside); empty → fall back to dual/cpu/base.
+        self.ollama_embeddings_host = env_str("OLLAMA_EMBEDDINGS_HOST", "").strip().rstrip("/")
         # popOS host for 70B model - heavy summarization work on RTX5090
         self.ollama_pop_os_host = OLLAMA_POP_OS_HOST.rstrip("/")
         self.dual_host_enabled = env_str(
@@ -1001,13 +1003,34 @@ Storyline context:
             raise Exception(f"{cb_key} API error: {str(e)}")
 
     def _embedding_target(self, execution_lane: str | None = None) -> tuple[str, str]:
-        """Embeddings prefer CPU host when dual-host is on (same as OllamaModelCaller)."""
+        """Route embeddings to OLLAMA_EMBEDDINGS_HOST when set; else dual-host CPU/base.
+
+        Embeddings CB key ``ollama_embeddings`` is intentionally not in OLLAMA_CB_KEYS
+        shedding — Dockside down must not shed PopOS generate/intake.
+        """
+        if self.ollama_embeddings_host:
+            return self.ollama_embeddings_host, "ollama_embeddings"
         lane = (execution_lane or "cpu").strip().lower()
         if not self.dual_host_enabled:
             return self.ollama_base_url.rstrip("/"), "ollama"
         if lane == "gpu":
             return self.ollama_gpu_host.rstrip("/"), "ollama_gpu"
         return self.ollama_cpu_host.rstrip("/"), "ollama_cpu"
+
+    @staticmethod
+    def _note_embeddings_host_outcome(*, cb_key: str, ok: bool, err: BaseException | str | None = None) -> None:
+        if cb_key != "ollama_embeddings":
+            return
+        try:
+            from services.embeddings_host_health_service import get_embeddings_host_health
+
+            health = get_embeddings_host_health()
+            if ok:
+                health.record_embed_success()
+            else:
+                health.record_embed_failure(err)
+        except Exception:
+            pass
 
     def embed_text_sync(
         self,
@@ -1022,6 +1045,9 @@ Storyline context:
         base_url, cb_key = self._embedding_target(execution_lane)
         cb = get_circuit_breaker_service().get_circuit_breaker(cb_key)
         if cb.is_open():
+            self._note_embeddings_host_outcome(
+                cb_key=cb_key, ok=False, err="circuit_breaker_open"
+            )
             raise Exception(
                 f"{cb_key} circuit breaker is OPEN — skipping call to avoid cascading timeouts"
             )
@@ -1040,15 +1066,24 @@ Storyline context:
                     emb = data.get("embedding") if isinstance(data, dict) else None
                     if not isinstance(emb, list):
                         raise Exception(f"{cb_key} embeddings response missing embedding array")
+                    self._note_embeddings_host_outcome(cb_key=cb_key, ok=True)
                     return emb
                 if response.status_code in (502, 503, 504):
+                    self._note_embeddings_host_outcome(
+                        cb_key=cb_key, ok=False, err=f"http_{response.status_code}"
+                    )
                     raise Exception(f"{cb_key} overloaded (HTTP {response.status_code})")
                 cb.record_failure_sync()
+                self._note_embeddings_host_outcome(
+                    cb_key=cb_key, ok=False, err=f"http_{response.status_code}"
+                )
                 raise Exception(f"{cb_key} embeddings error: {response.status_code}")
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as e:
+            self._note_embeddings_host_outcome(cb_key=cb_key, ok=False, err=e)
             raise Exception(f"{cb_key} overloaded (request timed out)") from None
         except httpx.ConnectError as e:
             cb.record_failure_sync(force_open=True)
+            self._note_embeddings_host_outcome(cb_key=cb_key, ok=False, err=e)
             raise Exception(f"Cannot connect to {cb_key} service") from e
 
     async def embed_text(
@@ -1065,6 +1100,9 @@ Storyline context:
         base_url, cb_key = self._embedding_target(execution_lane)
         cb = get_circuit_breaker_service().get_circuit_breaker(cb_key)
         if cb.is_open():
+            self._note_embeddings_host_outcome(
+                cb_key=cb_key, ok=False, err="circuit_breaker_open"
+            )
             raise Exception(
                 f"{cb_key} circuit breaker is OPEN — skipping call to avoid cascading timeouts"
             )
@@ -1085,15 +1123,24 @@ Storyline context:
                 emb = data.get("embedding") if isinstance(data, dict) else None
                 if not isinstance(emb, list):
                     raise Exception(f"{cb_key} embeddings response missing embedding array")
+                self._note_embeddings_host_outcome(cb_key=cb_key, ok=True)
                 return emb
             if response.status_code in (502, 503, 504):
+                self._note_embeddings_host_outcome(
+                    cb_key=cb_key, ok=False, err=f"http_{response.status_code}"
+                )
                 raise Exception(f"{cb_key} overloaded (HTTP {response.status_code})")
             await cb._record_failure()
+            self._note_embeddings_host_outcome(
+                cb_key=cb_key, ok=False, err=f"http_{response.status_code}"
+            )
             raise Exception(f"{cb_key} embeddings error: {response.status_code}")
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as e:
+            self._note_embeddings_host_outcome(cb_key=cb_key, ok=False, err=e)
             raise Exception(f"{cb_key} overloaded (request timed out)")
-        except httpx.ConnectError:
+        except httpx.ConnectError as e:
             await cb.trip_open(f"ConnectError to {base_url}")
+            self._note_embeddings_host_outcome(cb_key=cb_key, ok=False, err=e)
             raise Exception(f"Cannot connect to {cb_key} service")
 
     async def get_model_status(self, timeout_seconds: float | None = None) -> dict[str, Any]:

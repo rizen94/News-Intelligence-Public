@@ -8,6 +8,25 @@ Committed JSON for Homelab Grafana (PopOS), scraped from Widow:
 |------|-----|---------|
 | `ni-ops-dashboard.json` | `ni-ops` | Queue depths, backlog, DB size, SLA, automation runs, content, RSS summary |
 | `rss-ingestion-dashboard.json` | `ni-rss-ingestion` | RSS feeds + article create rate + collection-phase runs (`ni_*` only) |
+| `alerts-embeddings-host.yaml` | — | Prometheus rules: Dockside embeddings down / paused / no progress |
+
+## Dockside embeddings (`ni_embeddings_*`)
+
+When `OLLAMA_EMBEDDINGS_HOST` points at Dockside (via Widow tunnel `:11435`):
+
+| Metric | Meaning |
+|--------|---------|
+| `ni_embeddings_host_configured` | 1 if dedicated embed host is set |
+| `ni_embeddings_host_up` | 1 if last probe/embed succeeded |
+| `ni_embeddings_host_paused` | 1 when `embeddings_worker` yields (do not burn cycles) |
+| `ni_embeddings_host_consecutive_failures` | Fail streak before / during pause |
+| `ni_embeddings_embed_success_total` / `_fail_total` | Process-lifetime embed outcomes |
+| `ni_embeddings_probe_ok_total` / `_fail_total` | Health probe outcomes |
+| `ni_embeddings_worker_yield_total` | Batches skipped due to pause |
+| `ni_embeddings_host_probe_latency_ms` | Last probe RTT |
+| `ni_embedding_chunks_ingested{window=…}` | DB rows by `15m` / `1h` / `all` |
+
+**Alerts:** copy `alerts-embeddings-host.yaml` into Homelab Prometheus `rule_files` (or recreate as Grafana-managed alerts). `NIEmbeddingsHostDown` / `NIEmbeddingsHostPaused` fire when Dockside drops; the worker pauses automatically so AutomationManager does not spam the tunnel.
 
 ## Apply on PopOS (Homelab)
 

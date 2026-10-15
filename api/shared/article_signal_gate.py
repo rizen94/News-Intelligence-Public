@@ -120,6 +120,48 @@ def sql_article_signal_full_lane_filter(
     )"""
 
 
+def sql_article_signal_full_lane_and(
+    alias: str = "a",
+    schema: str | None = None,
+) -> str:
+    """`` AND (<full lane>) `` or empty when signal-first is off."""
+    filt = sql_article_signal_full_lane_filter(alias, schema)
+    if not filt:
+        return ""
+    return f" AND ({filt}) "
+
+
+def sql_context_has_full_lane_article(alias: str = "c") -> str:
+    """
+    Context is linked to at least one full-lane article in an active pipeline schema.
+    Returns ``TRUE`` when signal-first is disabled (no extra predicate).
+    """
+    if not article_signal_enabled():
+        return "TRUE"
+    try:
+        from shared.domain_registry import pipeline_url_schema_pairs
+    except Exception:
+        return "TRUE"
+
+    parts: list[str] = []
+    for _domain_key, schema_name in pipeline_url_schema_pairs():
+        filt = sql_article_signal_full_lane_filter("a", schema_name)
+        if not filt:
+            continue
+        parts.append(
+            f"""EXISTS (
+                SELECT 1
+                FROM intelligence.article_to_context atc
+                JOIN {schema_name}.articles a ON a.id = atc.article_id
+                WHERE atc.context_id = {alias}.id
+                  AND ({filt})
+            )"""
+        )
+    if not parts:
+        return "TRUE"
+    return "(" + " OR ".join(parts) + ")"
+
+
 def sql_article_signal_light_lane_filter(
     alias: str = "a",
     schema: str | None = None,
@@ -354,3 +396,63 @@ def defer_signal_light_phase_batch(
                 counts[schema_name] = len(ids)
 
     return counts
+
+
+def defer_signal_light_claim_contexts_batch(*, limit: int = 400) -> int:
+    """
+    Mark light-lane-only contexts as signal_deferred for claim_extraction so they
+    leave the backlog once full-lane filtering is enforced.
+    """
+    if not article_signal_enabled():
+        return 0
+
+    from shared.database.connection import get_db_connection_context
+    from shared.pipeline_pass_marker import (
+        TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
+        phase_backlog_uses_pass_marker,
+        record_context_phase_pass,
+        sql_context_pass_null,
+    )
+
+    if not phase_backlog_uses_pass_marker("claim_extraction"):
+        return 0
+
+    full = sql_context_has_full_lane_article("c")
+    if full == "TRUE":
+        return 0
+    pass_sql = sql_context_pass_null("claim_extraction", "c")
+    marked = 0
+    try:
+        with get_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT c.id
+                    FROM intelligence.contexts c
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM intelligence.extracted_claims ec
+                        WHERE ec.context_id = c.id
+                    )
+                      AND ({pass_sql})
+                      AND NOT ({full})
+                      AND EXISTS (
+                          SELECT 1 FROM intelligence.article_to_context atc
+                          WHERE atc.context_id = c.id AND atc.article_id IS NOT NULL
+                      )
+                    ORDER BY c.created_at ASC
+                    LIMIT %s
+                    """,
+                    (max(1, int(limit)),),
+                )
+                ids = [int(r[0]) for r in cur.fetchall()]
+        for cid in ids:
+            record_context_phase_pass(
+                cid,
+                "claim_extraction",
+                "signal_deferred",
+                TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
+            )
+            marked += 1
+    except Exception as exc:
+        logger.warning("defer_signal_light claim_contexts: %s", exc)
+    return marked

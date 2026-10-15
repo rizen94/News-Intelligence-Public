@@ -22,6 +22,7 @@ VAULT_NOTES_WRITER_PHASE = "vault_notes_writer"
 VAULT_CLUSTER_HUB_REFRESH_PHASE = "vault_cluster_hub_refresh"
 VAULT_MORNING_PRIME_PHASE = "vault_morning_prime"
 STORYLINE_HYGIENE_PHASE = "storyline_hygiene"
+RSS_FEED_HEALTH_PHASE = "rss_feed_health"
 
 
 async def execute_mention_resolution(task: Any) -> None:
@@ -100,6 +101,18 @@ async def execute_storyline_hygiene(task: Any) -> None:
         logger.warning("%s failed: %s", STORYLINE_HYGIENE_PHASE, e)
 
 
+async def execute_rss_feed_health(task: Any) -> None:
+    """Weekly quality cull (or legacy warn/silence) for active RSS feeds."""
+    from services.rss_feed_health_service import run_feed_health_cycle
+
+    loop = asyncio.get_event_loop()
+    try:
+        stats = await loop.run_in_executor(None, run_feed_health_cycle)
+        logger.info("%s: %s", RSS_FEED_HEALTH_PHASE, stats)
+    except Exception as e:
+        logger.warning("%s failed: %s", RSS_FEED_HEALTH_PHASE, e)
+
+
 PHASE_EXECUTORS: dict[str, PhaseExecutor] = {
     MENTION_RESOLUTION_PHASE: execute_mention_resolution,
     VAULT_TAG_LINK_SYNC_PHASE: execute_vault_tag_link_sync,
@@ -107,6 +120,7 @@ PHASE_EXECUTORS: dict[str, PhaseExecutor] = {
     VAULT_CLUSTER_HUB_REFRESH_PHASE: execute_vault_cluster_hub_refresh,
     VAULT_MORNING_PRIME_PHASE: execute_vault_morning_prime,
     STORYLINE_HYGIENE_PHASE: execute_storyline_hygiene,
+    RSS_FEED_HEALTH_PHASE: execute_rss_feed_health,
 }
 
 

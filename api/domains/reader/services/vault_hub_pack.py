@@ -56,9 +56,30 @@ def build_vault_hub_pack(
         "brief_refreshed": False,
     }
     try:
-        from services.vault_hub_brief_service import ensure_hub_brief_for_pack
+        from services.vault_hub_brief_service import (
+            ensure_hub_brief_for_pack,
+            refresh_hub_brief,
+        )
 
+        # Never block the reader pack on LLM. Serve cached brief; kick async refresh
+        # when seed fingerprint / empty brief would otherwise stay stuck forever.
+        _stored_fp = str(hub.get("brief_fingerprint") or "")
+        _needs_bg = (not (hub.get("current_brief") or "").strip()) or _stored_fp.startswith(
+            "seed_"
+        )
         brief_fields = ensure_hub_brief_for_pack(hub, allow_llm=False)
+        if _needs_bg:
+            try:
+                import threading
+
+                _hub_snap = dict(hub)
+                threading.Thread(
+                    target=lambda: refresh_hub_brief(_hub_snap, force=False),
+                    name=f"hub-brief-{hub.get('cluster_key') or hub.get('id')}",
+                    daemon=True,
+                ).start()
+            except Exception as _bg_exc:
+                logger.debug("hub brief background kick: %s", _bg_exc)
     except Exception as brief_exc:
         logger.debug("hub brief on-read skip: %s", brief_exc)
     # ensure_hub_brief_for_pack returns stored markdown; strip markers for plain-text UI

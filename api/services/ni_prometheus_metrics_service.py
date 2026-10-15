@@ -360,6 +360,124 @@ def _collect_rss_metrics() -> list[str]:
     return lines
 
 
+def _collect_embeddings_host_metrics() -> list[str]:
+    """Dockside / dedicated embeddings appliance health for Grafana alerts."""
+    lines: list[str] = []
+    try:
+        from services.embeddings_host_health_service import get_embeddings_host_health
+
+        samples = get_embeddings_host_health().prometheus_samples()
+        host = str(samples.get("host") or "")
+        labels = {"host": host} if host else {}
+        lines.extend(
+            _gauge(
+                "ni_embeddings_host_configured",
+                "1 if OLLAMA_EMBEDDINGS_HOST is set (Dockside appliance).",
+                [(labels, float(samples.get("configured") or 0.0))],
+            )
+        )
+        lines.extend(
+            _gauge(
+                "ni_embeddings_host_up",
+                "1 if dedicated embeddings Ollama host last probe/embed succeeded.",
+                [(labels, float(samples.get("up") or 0.0))],
+            )
+        )
+        lines.extend(
+            _gauge(
+                "ni_embeddings_host_paused",
+                "1 when embeddings worker should yield (host unreachable / errors).",
+                [(labels, float(samples.get("paused") or 0.0))],
+            )
+        )
+        lines.extend(
+            _gauge(
+                "ni_embeddings_host_consecutive_failures",
+                "Consecutive embeddings-host probe/embed failures.",
+                [(labels, float(samples.get("consecutive_failures") or 0.0))],
+            )
+        )
+        lines.extend(
+            _gauge(
+                "ni_embeddings_embed_success_total",
+                "Successful embed calls to dedicated embeddings host (process lifetime).",
+                [(labels, float(samples.get("success_total") or 0.0))],
+            )
+        )
+        lines.extend(
+            _gauge(
+                "ni_embeddings_embed_fail_total",
+                "Failed embed calls to dedicated embeddings host (process lifetime).",
+                [(labels, float(samples.get("fail_total") or 0.0))],
+            )
+        )
+        lines.extend(
+            _gauge(
+                "ni_embeddings_probe_ok_total",
+                "Successful embeddings-host health probes (process lifetime).",
+                [(labels, float(samples.get("probe_ok_total") or 0.0))],
+            )
+        )
+        lines.extend(
+            _gauge(
+                "ni_embeddings_probe_fail_total",
+                "Failed embeddings-host health probes (process lifetime).",
+                [(labels, float(samples.get("probe_fail_total") or 0.0))],
+            )
+        )
+        lines.extend(
+            _gauge(
+                "ni_embeddings_worker_yield_total",
+                "embeddings_worker batches yielded due to host pause (process lifetime).",
+                [(labels, float(samples.get("yield_total") or 0.0))],
+            )
+        )
+        lat = samples.get("probe_latency_ms")
+        if lat is not None:
+            lines.extend(
+                _gauge(
+                    "ni_embeddings_host_probe_latency_ms",
+                    "Last embeddings-host probe latency in milliseconds.",
+                    [(labels, float(lat))],
+                )
+            )
+        # Recent chunk ingestion (DB) — work-done signal for Grafana (cheap windows only).
+        try:
+            from shared.database.connection import get_db_connection_context
+
+            with get_db_connection_context() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT
+                          COUNT(*) FILTER (
+                            WHERE ingestion_date > NOW() - INTERVAL '1 hour'
+                          ),
+                          COUNT(*) FILTER (
+                            WHERE ingestion_date > NOW() - INTERVAL '15 minutes'
+                          )
+                        FROM intelligence.embedding_chunks
+                        WHERE ingestion_date > NOW() - INTERVAL '1 hour'
+                        """
+                    )
+                    row = cur.fetchone() or (0, 0)
+            lines.extend(
+                _gauge(
+                    "ni_embedding_chunks_ingested",
+                    "embedding_chunks rows by recent window.",
+                    [
+                        ({"window": "1h"}, float(row[0] or 0)),
+                        ({"window": "15m"}, float(row[1] or 0)),
+                    ],
+                )
+            )
+        except Exception as e:
+            logger.debug("ni prom embedding chunks: %s", e)
+    except Exception as e:
+        logger.warning("ni prom embeddings host: %s", e)
+    return lines
+
+
 def _collect_content_and_run_metrics() -> list[str]:
     lines: list[str] = []
     try:
@@ -569,6 +687,7 @@ def _rebuild_prometheus_body() -> str | None:
         "inventory": 5.0,
         "rss": 4.0,
         "content_runs": 5.0,
+        "embeddings_host": 8.0,
     }
 
     deadline = time.monotonic() + overall_budget_s
@@ -576,7 +695,9 @@ def _rebuild_prometheus_body() -> str | None:
         "# News Intelligence Monitor-parity metrics",
         f"# generated_at_unix {int(time.time())}",
     ]
+    # embeddings_host early: cheap gauges + alert surface; must not lose budget to queue.
     for name, fn in (
+        ("embeddings_host", _collect_embeddings_host_metrics),
         ("queue", _collect_queue_metrics),
         ("latency", _collect_latency_metrics),
         ("inventory", _collect_inventory_metrics),

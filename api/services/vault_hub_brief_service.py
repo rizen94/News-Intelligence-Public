@@ -607,6 +607,17 @@ def refresh_stale_hub_briefs(
 
     cap = BRIEF_MAX_PER_CYCLE if limit is None else max(1, int(limit))
     hubs = list_cluster_hubs(domain_key=domain_key, limit=80)
+
+    def _refresh_priority(h: dict[str, Any]) -> tuple:
+        """Seed / empty / oldest first so cap=4 does not starve priority situations."""
+        fp = str(h.get("brief_fingerprint") or "")
+        brief = (h.get("current_brief") or "").strip()
+        seed_rank = 0 if fp.startswith("seed_") else 1
+        empty_rank = 0 if not brief else 1
+        updated = str(h.get("brief_updated_at") or "")
+        return (seed_rank, empty_rank, updated)
+
+    hubs = sorted(hubs, key=_refresh_priority)
     stats: dict[str, Any] = {
         "ok": True,
         "checked": len(hubs),
@@ -652,12 +663,12 @@ def ensure_hub_brief_for_pack(
         member_storyline_ids=members, domain_key=domain_key
     )
     refreshed = False
-    if allow_llm and _brief_is_stale(flat, fp):
+    stale = _brief_is_stale(flat, fp)
+    fp_mismatch = str(flat.get("brief_fingerprint") or "") != fp
+    if allow_llm and stale:
         # On-read: only regenerate when fingerprint changed (not mere age),
         # unless there is no brief at all.
-        needs = not (flat.get("current_brief") or "").strip() or (
-            str(flat.get("brief_fingerprint") or "") != fp
-        )
+        needs = not (flat.get("current_brief") or "").strip() or fp_mismatch
         if needs:
             r = refresh_hub_brief(hub, force=False)
             refreshed = bool(r.get("ok") and not r.get("skipped"))

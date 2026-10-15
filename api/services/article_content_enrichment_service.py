@@ -47,8 +47,30 @@ MIN_CONTENT_TO_ENRICH = 500
 # ArXiv RSS abstracts are typically 1–2k chars — above MIN_CONTENT_TO_ENRICH — so they
 # never enter the normal enrichment backlog. Treat abs URLs / abstract-shaped bodies specially.
 ARXIV_ABSTRACT_CONTENT_MAX = 3500
-# Burst (48h catch-up): 0.4s between fetches; revert to 0.6 after catch-up
-RATE_LIMIT_SLEEP = 0.4
+def _enrichment_rate_limit_sleep() -> float:
+    """Seconds between sequential fetches (parallel path uses host limiter instead)."""
+    try:
+        return max(0.0, float(os.environ.get("CONTENT_ENRICHMENT_RATE_LIMIT_SLEEP", "0.4") or "0.4"))
+    except (TypeError, ValueError):
+        return 0.4
+
+
+def _enrichment_fetch_parallel() -> int:
+    try:
+        return max(1, int(os.environ.get("CONTENT_ENRICHMENT_FETCH_PARALLEL", "1") or "1"))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _enrichment_per_host_limit() -> int:
+    try:
+        return max(1, int(os.environ.get("CONTENT_ENRICHMENT_PER_HOST_LIMIT", "2") or "2"))
+    except (TypeError, ValueError):
+        return 2
+
+
+# Burst default; override with CONTENT_ENRICHMENT_RATE_LIMIT_SLEEP.
+RATE_LIMIT_SLEEP = _enrichment_rate_limit_sleep()
 
 
 def arxiv_id_from_url(url: str) -> str | None:
@@ -626,6 +648,326 @@ def demote_false_enriched_batch(*, limit_per_schema: int = 40) -> int:
     return demoted
 
 
+def _fetch_urls_parallel(
+    jobs: list[tuple[str, str, int, str]],
+    *,
+    parallel: int,
+    per_host: int,
+) -> dict[tuple[str, int], str | None]:
+    """
+    Fetch article bodies without holding a DB connection.
+    jobs: (domain_key, schema_name, article_id, url)
+    Returns {(schema, article_id): text_or_None}.
+    """
+    from collections import defaultdict
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from threading import Semaphore
+    from urllib.parse import urlparse
+
+    if not jobs:
+        return {}
+    host_sems: dict[str, Semaphore] = defaultdict(lambda: Semaphore(max(1, per_host)))
+    out: dict[tuple[str, int], str | None] = {}
+
+    def _one(job: tuple[str, str, int, str]) -> tuple[str, int, str | None]:
+        _dk, schema, article_id, url = job
+        host = (urlparse(url).hostname or "").lower() or "_"
+        sem = host_sems[host]
+        sem.acquire()
+        try:
+            text = _fetch_full_text(url)
+            if text:
+                text = text[:MAX_CONTENT_CHARS]
+            return schema, article_id, text
+        finally:
+            sem.release()
+
+    workers = max(1, min(int(parallel), len(jobs)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = [pool.submit(_one, j) for j in jobs]
+        for fut in as_completed(futs):
+            try:
+                schema, article_id, text = fut.result()
+                out[(schema, article_id)] = text
+            except Exception as e:
+                logger.debug("parallel enrichment fetch failed: %s", e)
+    return out
+
+
+def _enrich_articles_batch_parallel(*, batch_size: int, parallel: int) -> int:
+    """
+    Parallel fetch drain: claim/attempt bump under a short DB checkout, fetch without
+    holding the pool, then write results. Avoids the sequential DB-across-HTTP hold.
+    """
+    try:
+        demote_false_enriched_batch(limit_per_schema=max(10, int(batch_size)))
+    except Exception as e:
+        logger.debug("demote_false_enriched_batch: %s", e)
+    try:
+        import trafilatura  # noqa: F401
+    except ImportError:
+        logger.warning("trafilatura not installed; skipping content enrichment")
+        return 0
+
+    from shared.database.connection import get_db_config, get_db_connection
+    from shared.domain_registry import pipeline_url_schema_pairs
+    from shared.article_processing_gates import (
+        strict_enrichment_applies,
+        strict_enrichment_cutoff_utc,
+    )
+    from shared.pipeline_article_selection import sql_order_created_at
+    from services.context_processor_service import (
+        ensure_context_for_article,
+        update_context_content_for_article,
+    )
+
+    pairs = list(pipeline_url_schema_pairs())
+    if not pairs:
+        return 0
+    n_domains = len(pairs)
+    share = max(1, (batch_size + n_domains - 1) // n_domains)
+    _ca_ord = sql_order_created_at()
+    per_host = _enrichment_per_host_limit()
+
+    # Phase 1: select + fast-path + bump attempts (short DB hold)
+    fetch_jobs: list[tuple[str, str, int, str]] = []
+    enriched = 0
+    remaining = batch_size
+    conn = get_db_connection()
+    if not conn:
+        logger.warning("Content enrichment: no DB connection")
+        return 0
+    default_timeout_ms = get_db_config().get("statement_timeout_ms", 120000)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET statement_timeout = '300s'")
+        for domain_key, schema_name in pairs:
+            if remaining <= 0:
+                break
+            fetch_limit = min(share, remaining)
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT id, url, content, created_at, enrichment_status
+                    FROM {schema_name}.articles
+                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
+                      AND COALESCE(enrichment_attempts, 0) < 3
+                      AND url IS NOT NULL AND url != ''
+                    ORDER BY COALESCE(enrichment_attempts, 0) ASC, created_at {_ca_ord}
+                    LIMIT %s
+                    """,
+                    (fetch_limit,),
+                )
+                rows = cur.fetchall()
+            for article_id, url, existing_content, created_at, row_status in rows:
+                if remaining <= 0:
+                    break
+                if not url or not str(url).strip():
+                    continue
+                if (
+                    strict_enrichment_cutoff_utc() is not None
+                    and strict_enrichment_applies(created_at)
+                    and existing_content
+                    and len((existing_content or "").strip()) >= MIN_CONTENT_TO_ENRICH
+                    and (row_status is None or (row_status or "").strip() == "pending")
+                    and not needs_arxiv_fulltext(url, existing_content)
+                ):
+                    if is_false_enriched_body(existing_content):
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                f"""
+                                UPDATE {schema_name}.articles
+                                SET enrichment_status = 'failed', updated_at = NOW()
+                                WHERE id = %s
+                                  AND (enrichment_status IS NULL OR enrichment_status = 'pending')
+                                """,
+                                (article_id,),
+                            )
+                        conn.commit()
+                        remaining -= 1
+                        continue
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            f"""
+                            UPDATE {schema_name}.articles
+                            SET enrichment_status = 'enriched', updated_at = NOW()
+                            WHERE id = %s
+                              AND (enrichment_status IS NULL OR enrichment_status = 'pending')
+                            """,
+                            (article_id,),
+                        )
+                        fast_rows = cur.rowcount or 0
+                    if fast_rows:
+                        conn.commit()
+                        enriched += 1
+                        remaining -= 1
+                        try:
+                            ensure_context_for_article(domain_key, article_id)
+                        except Exception as ctx_e:
+                            logger.debug(
+                                "enrichment fast-path context %s/%s: %s",
+                                domain_key,
+                                article_id,
+                                ctx_e,
+                            )
+                    continue
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"""UPDATE {schema_name}.articles
+                           SET enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1,
+                               updated_at = NOW()
+                           WHERE id = %s""",
+                        (article_id,),
+                    )
+                fetch_jobs.append((domain_key, schema_name, int(article_id), str(url).strip()))
+                remaining -= 1
+        conn.commit()
+    except Exception as e:
+        logger.warning("Content enrichment claim phase failed: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return enriched
+    finally:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SET statement_timeout = '{default_timeout_ms}'")
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    # Phase 2: HTTP fetch with no DB checkout held
+    fetched = _fetch_urls_parallel(fetch_jobs, parallel=parallel, per_host=per_host)
+
+    # Phase 3: write results
+    conn = get_db_connection()
+    if not conn:
+        logger.warning("Content enrichment: no DB connection for writeback")
+        return enriched
+    default_timeout_ms = get_db_config().get("statement_timeout_ms", 120000)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET statement_timeout = '300s'")
+        for domain_key, schema_name, article_id, _url in fetch_jobs:
+            text = fetched.get((schema_name, article_id))
+            with conn.cursor() as cur:
+                if text and is_false_enriched_body(text):
+                    cur.execute(
+                        f"""UPDATE {schema_name}.articles
+                           SET content = %s, enrichment_status = 'failed', updated_at = NOW()
+                           WHERE id = %s""",
+                        (text[:2000], article_id),
+                    )
+                    conn.commit()
+                    continue
+                if text:
+                    cur.execute(
+                        f"""UPDATE {schema_name}.articles
+                           SET content = %s, enrichment_status = 'enriched', updated_at = NOW()
+                           WHERE id = %s""",
+                        (text, article_id),
+                    )
+                    cur.execute(
+                        f"""UPDATE {schema_name}.articles SET entities = NULL WHERE id = %s""",
+                        (article_id,),
+                    )
+                    # Commit content before optional queue insert so a missing
+                    # topic_extraction_queue cannot roll back enrichment or abort the batch.
+                    conn.commit()
+                    enriched += 1
+                    try:
+                        with conn.cursor() as qcur:
+                            qcur.execute(
+                                f"""
+                                INSERT INTO {schema_name}.topic_extraction_queue
+                                    (article_id, status, priority, created_at)
+                                VALUES (%s, 'pending', 3, NOW())
+                                ON CONFLICT (article_id) DO UPDATE
+                                  SET status = 'pending', priority = 3, created_at = NOW()
+                                """,
+                                (article_id,),
+                            )
+                        conn.commit()
+                    except Exception as q_e:
+                        logger.debug(
+                            "enrichment topic queue %s/%s: %s",
+                            schema_name,
+                            article_id,
+                            q_e,
+                        )
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass
+                    try:
+                        update_context_content_for_article(domain_key, article_id)
+                    except Exception as ctx_e:
+                        logger.debug(
+                            "enrichment context update %s/%s: %s",
+                            domain_key,
+                            article_id,
+                            ctx_e,
+                        )
+                    try:
+                        from services.research_paper_profile_service import (
+                            ensure_pending_profile,
+                            stamp_article_research_metadata,
+                        )
+
+                        patch = stamp_article_research_metadata(
+                            schema_name, article_id, _url, title=None
+                        )
+                        if patch:
+                            ensure_pending_profile(
+                                domain_key, article_id, url=_url, metadata=patch
+                            )
+                    except Exception as paper_e:
+                        logger.debug(
+                            "enrichment research stamp %s/%s: %s",
+                            domain_key,
+                            article_id,
+                            paper_e,
+                        )
+                else:
+                    _remove_article(conn, schema_name, article_id)
+                    conn.commit()
+        for _dk, sch in pairs:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""UPDATE {sch}.articles SET enrichment_status = 'inaccessible'
+                       WHERE enrichment_status = 'failed' AND enrichment_attempts >= 3"""
+                )
+            conn.commit()
+        if enriched > 0:
+            logger.info(
+                "Content enrichment (parallel=%s): %s articles enriched",
+                parallel,
+                enriched,
+            )
+        return enriched
+    except Exception as e:
+        logger.warning("Content enrichment writeback failed: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return enriched
+    finally:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SET statement_timeout = '{default_timeout_ms}'")
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def enrich_articles_batch(batch_size: int = 20) -> int:
     """
     Drain enrichment backlog: select by enrichment_status/attempts, fetch with trafilatura (10s timeout),
@@ -634,7 +976,13 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
 
     Fair share: each active domain may fetch up to ceil(batch_size / n_domains) candidates per call
     (capped by remaining success budget), so high display_order silos are not starved by earlier domains.
+
+    Set CONTENT_ENRICHMENT_FETCH_PARALLEL>1 for parallel HTTP (DB not held across fetch).
     """
+    parallel = _enrichment_fetch_parallel()
+    if parallel > 1:
+        return _enrich_articles_batch_parallel(batch_size=batch_size, parallel=parallel)
+
     try:
         demote_false_enriched_batch(limit_per_schema=max(10, int(batch_size)))
     except Exception as e:

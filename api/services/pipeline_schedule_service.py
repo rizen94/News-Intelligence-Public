@@ -18,6 +18,9 @@ Env:
   PIPELINE_DAYTIME_START_HOUR / PIPELINE_DAYTIME_END_HOUR (default 7 / 16)
   PIPELINE_QUIET_ALLOWED_PHASES (default health_check,pending_db_flush,vault_morning_prime)
   PIPELINE_QUIET_HOURS_DISABLED (true) — allow PopOS GPU at all hours (operator override)
+  REFINEMENT_DESK_START_HOUR / REFINEMENT_DESK_END_HOUR (default 2 / 9) — ~70b
+    content_refinement_queue desk window (aliases CONTENT_REFINEMENT_DESK_*)
+  REFINEMENT_DESK_ANYTIME / PIPELINE_REFINEMENT_ANYTIME — operator override for desk window
   POPOS_GPU_COTENANT_DEFER (default true) — defer when non-NI CUDA processes hold VRAM
   POPOS_GPU_COTENANT_NEEDLES — comma substrings matched against nvidia-smi process names
   POPOS_GPU_GAME_DEFER (default true) — defer while local games are running (BG3, etc.)
@@ -100,6 +103,47 @@ def daytime_start_hour() -> int:
 
 def daytime_end_hour() -> int:
     return _hour_env("PIPELINE_DAYTIME_END_HOUR", "", 16, max_hour=24)
+
+
+def refinement_desk_start_hour() -> int:
+    """Local start for ~70b content_refinement_queue desk window (default 02:00)."""
+    return _hour_env("REFINEMENT_DESK_START_HOUR", "CONTENT_REFINEMENT_DESK_START_HOUR", 2)
+
+
+def refinement_desk_end_hour() -> int:
+    """Local end (exclusive) for refinement desk window (default 09:00)."""
+    return _hour_env(
+        "REFINEMENT_DESK_END_HOUR", "CONTENT_REFINEMENT_DESK_END_HOUR", 9, max_hour=24
+    )
+
+
+def in_refinement_desk_window(now_local: datetime | None = None) -> bool:
+    """
+    Overnight/early-morning window for durable ~70b refinement queue drain.
+
+    Default **02:00–09:00** local (``REFINEMENT_DESK_*_HOUR``). Independent of the
+    general quiet/nightly labels so refinement does not compete with daytime intake.
+    """
+    if now_local is None:
+        now_local = datetime.now(pipeline_schedule_tz())
+    return _in_hour_window(
+        now_local, refinement_desk_start_hour(), refinement_desk_end_hour()
+    )
+
+
+def refinement_desk_anytime() -> bool:
+    return (os.environ.get("REFINEMENT_DESK_ANYTIME") or os.environ.get("PIPELINE_REFINEMENT_ANYTIME") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def content_refinement_schedule_allowed(*, now_local: datetime | None = None) -> bool:
+    """Whether content_refinement_queue may run under the desk window policy."""
+    if refinement_desk_anytime():
+        return True
+    return in_refinement_desk_window(now_local)
 
 
 def _in_hour_window(now_local: datetime, start_h: int, end_h: int) -> bool:
@@ -475,11 +519,33 @@ def automation_phase_allowed(
     name = (phase_name or "").strip()
     if not name:
         return False
+    # ~70b refinement: desk window only (default 02:00–09:00). Not bypassed by
+    # PIPELINE_QUIET_HOURS_DISABLED — use REFINEMENT_DESK_ANYTIME for daytime drain.
+    if name == "content_refinement_queue":
+        return content_refinement_schedule_allowed(now_local=now_local)
     # Operator override (overnight catch-up): do not pause automation in quiet hours.
     if quiet_hours_disabled():
         return True
     if name in _quiet_allowed_phases():
         return True
+    # Targeted entity_profile_build burns set ENTITY_PROFILE_BUILD_ANYTIME=true.
+    if name == "entity_profile_build":
+        try:
+            from config.runtime import env_str
+
+            if env_str("ENTITY_PROFILE_BUILD_ANYTIME", "").lower() in ("1", "true", "yes"):
+                return True
+        except Exception:
+            pass
+    # Targeted story_continuation burns set STORY_CONTINUATION_ANYTIME=true.
+    if name == "story_continuation":
+        try:
+            from config.runtime import env_str
+
+            if env_str("STORY_CONTINUATION_ANYTIME", "").lower() in ("1", "true", "yes"):
+                return True
+        except Exception:
+            pass
     window = active_pipeline_window(now_local)
     if window == "quiet":
         # Catch-up exception: do not leave multi-day enhancement piles idle 16:00–00:00.
@@ -544,15 +610,22 @@ def pipeline_schedule_info(*, now_local: datetime | None = None) -> dict[str, An
             next_window = "weekday_daytime"
         next_transition = next_at.isoformat()
 
+    start_r = refinement_desk_start_hour()
+    end_r = refinement_desk_end_hour()
     return {
         "timezone": str(zi),
         "active_window": active,
         "in_nightly_heavy": in_nightly_heavy_window(now_local),
         "in_weekday_daytime": in_weekday_daytime_window(now_local),
         "in_quiet": in_pipeline_quiet_window(now_local),
+        "in_refinement_desk": in_refinement_desk_window(now_local),
+        "content_refinement_schedule_allowed": content_refinement_schedule_allowed(
+            now_local=now_local
+        ),
         "nightly_window_local": f"{start_n:02d}:00–{end_n:02d}:00",
         "daytime_window_local": f"Mon–Fri {start_d:02d}:00–{end_d:02d}:00",
         "quiet_window_local": f"Daily {end_d:02d}:00–{start_n:02d}:00; Sat–Sun {start_d:02d}:00–{end_d:02d}:00",
+        "refinement_desk_window_local": f"{start_r:02d}:00–{end_r:02d}:00",
         "rss_collection_allowed": rss_collection_allowed(now_local=now_local),
         "automation_allowed_except_essentials": active != "quiet",
         "quiet_allowed_phases": sorted(_quiet_allowed_phases()),

@@ -89,17 +89,42 @@ function activityRunEstimateSecondary(a: Record<string, unknown>): string | null
   return `typical ~${typMin}m`;
 }
 
+type PendingValueTiers = {
+  hot?: number;
+  actionable?: number;
+  long_tail?: number;
+  deferred?: number;
+  inventory?: number;
+};
+
 type ProcessingPulsePhase = {
   phase_name?: string;
   pending_records?: number;
   batches_to_drain?: number | null;
   estimated_batch_per_run?: number;
+  pending_value_tiers?: PendingValueTiers | null;
   runs_1h?: number;
   runs_24h?: number;
   successes_24h?: number;
   failures_24h?: number;
   pass_rate_24h?: number | null;
   avg_duration_sec_24h?: number | null;
+};
+
+type CapacityLedger = {
+  budget_gpu_hours_per_day?: number;
+  backlog_drain_hours?: number;
+  backlog_vs_budget_ratio?: number | null;
+  intake_articles_24h?: number;
+  intake_demand_hours_per_day?: number;
+  intake_vs_budget_ratio?: number | null;
+  underwater?: boolean;
+  by_phase_backlog?: Array<{
+    phase?: string;
+    pending?: number;
+    drain_hours?: number;
+  }>;
+  error?: string;
 };
 
 type ProcessingPulseState = {
@@ -110,6 +135,10 @@ type ProcessingPulseState = {
     pending_metrics_as_of_utc?: string;
     phase_dashboard?: ProcessingPulsePhase[];
     phases?: ProcessingPulsePhase[];
+    backlog_measurement?: {
+      capacity_ledger?: CapacityLedger | null;
+      contracts_ok?: boolean;
+    } | null;
   };
   error?: string;
 };
@@ -122,6 +151,57 @@ function formatPulseCount(n: number | null | undefined): string {
     return Number.isInteger(k) ? `${k}k` : `${k.toFixed(1)}k`;
   }
   return `${n}`;
+}
+
+/** Compact value-tier line: H/A/L/D(/I) when API sent pending_value_tiers. */
+function formatValueTiers(t: PendingValueTiers | null | undefined): string | null {
+  if (!t || typeof t !== 'object') return null;
+  const parts: string[] = [];
+  if ((t.hot ?? 0) > 0) parts.push(`H${formatPulseCount(t.hot)}`);
+  if ((t.actionable ?? 0) > 0) parts.push(`A${formatPulseCount(t.actionable)}`);
+  if ((t.long_tail ?? 0) > 0) parts.push(`L${formatPulseCount(t.long_tail)}`);
+  if ((t.deferred ?? 0) > 0) parts.push(`D${formatPulseCount(t.deferred)}`);
+  if ((t.inventory ?? 0) > 0) parts.push(`I${formatPulseCount(t.inventory)}`);
+  return parts.length ? parts.join(' · ') : null;
+}
+
+function formatHoursShort(n: number | null | undefined): string {
+  if (n == null || Number.isNaN(n)) return '—';
+  if (n >= 100) return `${Math.round(n)}h`;
+  if (n >= 10) return `${n.toFixed(0)}h`;
+  return `${n.toFixed(1)}h`;
+}
+
+/** Compact capacity ledger line for Pulse (not only in API JSON). */
+function formatCapacityLedgerChip(ledger: CapacityLedger | null | undefined): {
+  label: string;
+  underwater: boolean;
+  title: string;
+} | null {
+  if (!ledger || typeof ledger !== 'object' || ledger.error) return null;
+  const drain = ledger.backlog_drain_hours;
+  const intake = ledger.intake_demand_hours_per_day;
+  const budget = ledger.budget_gpu_hours_per_day;
+  if (drain == null && intake == null) return null;
+  const top = (ledger.by_phase_backlog || [])
+    .slice(0, 3)
+    .map(r => `${r.phase}:${formatHoursShort(r.drain_hours)}`)
+    .join(' · ');
+  const label = [
+    `drain ${formatHoursShort(drain)}`,
+    `intake/d ${formatHoursShort(intake)}`,
+    budget != null ? `budget ${formatHoursShort(budget)}` : null,
+    ledger.underwater ? 'underwater' : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return {
+    label,
+    underwater: ledger.underwater === true,
+    title: top
+      ? `Top backlog drain: ${top}. Order-of-magnitude desk GPU hours.`
+      : 'Order-of-magnitude desk GPU hours vs CAPACITY_GPU_HOURS_PER_DAY.',
+  };
 }
 
 /** Keep backlog_metrics columns when a fast-path poll refreshes throughput/run counts. */
@@ -152,6 +232,7 @@ function mergeProcessingPulseWithCachedPending(
       pending_records: c.pending_records,
       estimated_batch_per_run: c.estimated_batch_per_run,
       batches_to_drain: c.batches_to_drain,
+      pending_value_tiers: c.pending_value_tiers ?? p.pending_value_tiers,
     };
   });
 
@@ -161,6 +242,8 @@ function mergeProcessingPulseWithCachedPending(
       ...fast.data,
       phase_dashboard: mergedPhases,
       phases: mergedPhases,
+      backlog_measurement:
+        cached.data.backlog_measurement ?? fast.data.backlog_measurement,
       pending_metrics_included: true,
       pending_metrics_as_of_utc:
         cached.data.pending_metrics_as_of_utc ?? cached.data.generated_at_utc,
@@ -560,6 +643,9 @@ export default function MonitorPage() {
     processingPulse?.data?.phase_dashboard ??
     processingPulse?.data?.phases ??
     [];
+  const capacityChip = formatCapacityLedgerChip(
+    processingPulse?.data?.backlog_measurement?.capacity_ledger
+  );
 
   return (
     <Box>
@@ -956,11 +1042,32 @@ export default function MonitorPage() {
                   )}
                 </Typography>
               )}
+              {capacityChip && (
+                <Stack
+                  direction='row'
+                  spacing={1}
+                  alignItems='center'
+                  flexWrap='wrap'
+                  sx={{ mb: 1.5 }}
+                >
+                  <Typography variant='caption' color='text.secondary'>
+                    Capacity
+                  </Typography>
+                  <Chip
+                    size='small'
+                    label={capacityChip.label}
+                    color={capacityChip.underwater ? 'warning' : 'default'}
+                    variant={capacityChip.underwater ? 'filled' : 'outlined'}
+                    title={capacityChip.title}
+                  />
+                </Stack>
+              )}
               <Table size='small' sx={{ '& td': { py: 0.5 } }}>
                 <TableHead>
                   <TableRow>
                     <TableCell>Phase</TableCell>
                     <TableCell align='right'>Pending</TableCell>
+                    <TableCell align='right'>Value tiers</TableCell>
                     <TableCell align='right'>Runs to clear</TableCell>
                     <TableCell align='right'>Fail 24h</TableCell>
                     <TableCell align='right'>Runs 24h</TableCell>
@@ -972,6 +1079,7 @@ export default function MonitorPage() {
                     const stuck =
                       (p.failures_24h ?? 0) > 0 ||
                       (p.batches_to_drain != null && p.batches_to_drain > 1);
+                    const tierLine = formatValueTiers(p.pending_value_tiers);
                     return (
                       <TableRow
                         key={p.phase_name}
@@ -984,6 +1092,20 @@ export default function MonitorPage() {
                         <TableCell>{p.phase_name}</TableCell>
                         <TableCell align='right'>
                           {formatPulseCount(p.pending_records ?? 0)}
+                        </TableCell>
+                        <TableCell align='right'>
+                          {tierLine ? (
+                            <Typography
+                              component='span'
+                              variant='caption'
+                              color='text.secondary'
+                              title='H=hot A=actionable L=long-tail D=deferred I=inventory'
+                            >
+                              {tierLine}
+                            </Typography>
+                          ) : (
+                            '—'
+                          )}
                         </TableCell>
                         <TableCell align='right'>
                           {p.batches_to_drain == null ? (

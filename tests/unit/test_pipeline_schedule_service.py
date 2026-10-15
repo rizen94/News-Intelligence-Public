@@ -10,9 +10,11 @@ import pytest
 from services.pipeline_schedule_service import (
     active_pipeline_window,
     automation_phase_allowed,
+    content_refinement_schedule_allowed,
     db_adjacent_sync_allowed,
     in_nightly_heavy_window,
     in_pipeline_quiet_window,
+    in_refinement_desk_window,
     in_weekday_daytime_window,
     pipeline_schedule_info,
     popos_gpu_work_allowed,
@@ -131,3 +133,63 @@ class TestPipelineWindows:
         detail = popos_gpu_work_allowed_detail(now_local=daytime)
         assert detail["allowed"] is False
         assert detail["reason"] == "game_running"
+
+
+class TestRefinementDeskWindow:
+    """~70b content_refinement_queue: default 02:00–09:00 local only."""
+
+    def test_default_window_2_to_9(self, monkeypatch):
+        monkeypatch.delenv("REFINEMENT_DESK_ANYTIME", raising=False)
+        monkeypatch.delenv("PIPELINE_REFINEMENT_ANYTIME", raising=False)
+        monkeypatch.delenv("REFINEMENT_DESK_START_HOUR", raising=False)
+        monkeypatch.delenv("REFINEMENT_DESK_END_HOUR", raising=False)
+        monkeypatch.delenv("PIPELINE_QUIET_HOURS_DISABLED", raising=False)
+        assert in_refinement_desk_window(_et(2026, 5, 18, 2))
+        assert in_refinement_desk_window(_et(2026, 5, 18, 8, 59))
+        assert not in_refinement_desk_window(_et(2026, 5, 18, 9))
+        assert not in_refinement_desk_window(_et(2026, 5, 18, 1, 59))
+        assert not in_refinement_desk_window(_et(2026, 5, 18, 14))
+
+    def test_automation_blocks_refinement_outside_desk(self, monkeypatch):
+        monkeypatch.delenv("REFINEMENT_DESK_ANYTIME", raising=False)
+        monkeypatch.delenv("PIPELINE_REFINEMENT_ANYTIME", raising=False)
+        monkeypatch.delenv("PIPELINE_QUIET_HOURS_DISABLED", raising=False)
+        midday = _et(2026, 5, 18, 11)
+        assert automation_phase_allowed("claim_extraction", now_local=midday)
+        assert not automation_phase_allowed(
+            "content_refinement_queue", now_local=midday
+        )
+        assert not content_refinement_schedule_allowed(now_local=midday)
+        overnight = _et(2026, 5, 18, 3)
+        assert automation_phase_allowed(
+            "content_refinement_queue", now_local=overnight
+        )
+        assert content_refinement_schedule_allowed(now_local=overnight)
+
+    def test_refinement_anytime_override(self, monkeypatch):
+        monkeypatch.setenv("REFINEMENT_DESK_ANYTIME", "true")
+        midday = _et(2026, 5, 18, 14)
+        assert content_refinement_schedule_allowed(now_local=midday)
+        assert automation_phase_allowed(
+            "content_refinement_queue", now_local=midday
+        )
+
+    def test_quiet_hours_disabled_does_not_bypass_desk(self, monkeypatch):
+        monkeypatch.setenv("PIPELINE_QUIET_HOURS_DISABLED", "true")
+        monkeypatch.delenv("REFINEMENT_DESK_ANYTIME", raising=False)
+        monkeypatch.delenv("PIPELINE_REFINEMENT_ANYTIME", raising=False)
+        midday = _et(2026, 5, 18, 14)
+        assert automation_phase_allowed("claim_extraction", now_local=midday)
+        assert not automation_phase_allowed(
+            "content_refinement_queue", now_local=midday
+        )
+
+    def test_schedule_info_includes_refinement_desk(self, monkeypatch):
+        monkeypatch.delenv("REFINEMENT_DESK_ANYTIME", raising=False)
+        info = pipeline_schedule_info(now_local=_et(2026, 5, 18, 3))
+        assert info["in_refinement_desk"] is True
+        assert info["content_refinement_schedule_allowed"] is True
+        assert info["refinement_desk_window_local"] == "02:00–09:00"
+        info_day = pipeline_schedule_info(now_local=_et(2026, 5, 18, 12))
+        assert info_day["in_refinement_desk"] is False
+        assert info_day["content_refinement_schedule_allowed"] is False

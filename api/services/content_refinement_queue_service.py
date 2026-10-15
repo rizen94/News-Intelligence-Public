@@ -1065,7 +1065,22 @@ async def process_content_refinement_queue_batch(
     Caps ~70B jobs (narrative_finisher + headline_refiner) per cycle for GPU friendliness.
     Prefers: high priority, then first-time ~70B master narrative (empty canonical_narrative),
     then refresh finisher, headline refiner, then other job types.
+
+    Desk window: default 02:00–09:00 local (see pipeline_schedule_service).
     """
+    try:
+        from services.pipeline_schedule_service import content_refinement_schedule_allowed
+
+        if not content_refinement_schedule_allowed():
+            return {
+                "processed": 0,
+                "skipped": True,
+                "reason": "outside_refinement_desk_window",
+            }
+    except Exception as e:
+        logger.debug("refinement desk window check failed open→deny: %s", e)
+        return {"processed": 0, "skipped": True, "reason": "refinement_window_check_failed"}
+
     cap_fin = (
         max_finisher_per_cycle
         if max_finisher_per_cycle is not None

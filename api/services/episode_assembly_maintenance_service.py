@@ -20,6 +20,8 @@ from shared.domain_registry import get_pipeline_active_domain_keys, resolve_doma
 from shared.episode_attach_gate import insert_event_episode_link, parse_anchor_signature, signature_match
 from shared.episode_title_match import episode_title_similarity
 from services.episode_merge_service import resolve_existing_episode
+# TODO: StoryContinuationService closes+reacquires self.conn across Ollama; dual-close
+# current+original before wiring into live drains (see phase_drain_dispatch / AM v5).
 from services.story_continuation_service import (
     StoryContinuationService,
     continuation_recheck_due_sql,

@@ -118,9 +118,15 @@ async def run_unified_intake_extraction_batch_drain(
 
     if article_signal_enabled():
         defer_signal_light_unified_intake_batch(per_domain_limit=per_domain * 2)
-        from shared.article_signal_gate import defer_signal_light_phase_batch
+        from shared.article_signal_gate import (
+            defer_signal_light_claim_contexts_batch,
+            defer_signal_light_phase_batch,
+        )
 
         defer_signal_light_phase_batch("topic_clustering", per_domain_limit=per_domain * 2)
+        defer_signal_light_phase_batch("entity_extraction", per_domain_limit=per_domain * 2)
+        defer_signal_light_phase_batch("event_extraction", per_domain_limit=per_domain * 2)
+        defer_signal_light_claim_contexts_batch(limit=max(100, per_domain * 4))
     value_priority = unified_intake_value_priority_order_enabled()
     order = (
         sql_order_unified_intake_value_priority("a")

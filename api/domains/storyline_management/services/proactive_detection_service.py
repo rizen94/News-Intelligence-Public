@@ -72,6 +72,12 @@ class ProactiveDetectionService(DomainAwareService):
             try:
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
                     cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+                    try:
+                        from shared.article_signal_gate import sql_article_signal_full_lane_and
+
+                        _sig = sql_article_signal_full_lane_and("a", self.schema)
+                    except Exception:
+                        _sig = ""
                     cur.execute(
                         f"""
                         SELECT a.id, a.title, a.content, a.summary, a.published_at,
@@ -81,6 +87,7 @@ class ProactiveDetectionService(DomainAwareService):
                         WHERE COALESCE(a.published_at, a.created_at) >= %s
                           AND sa.article_id IS NULL
                           AND COALESCE(a.metadata->>'content_kind', '') <> 'research_paper'
+                          {_sig}
                         ORDER BY a.published_at DESC
                         LIMIT 1000
                         """,
@@ -114,6 +121,41 @@ class ProactiveDetectionService(DomainAwareService):
                 stored_count, promoted_count = await self._store_emerging_storylines(
                     conn, emerging_storylines
                 )
+                # #region agent log
+                try:
+                    import json as _json
+
+                    with open(
+                        "/home/pete/Documents/projects/News Intelligence/.cursor/debug-b4785d.log",
+                        "a",
+                    ) as _df:
+                        _df.write(
+                            _json.dumps(
+                                {
+                                    "sessionId": "b4785d",
+                                    "runId": "post-fix",
+                                    "hypothesisId": "H2",
+                                    "location": "proactive_detection_service.py:detect_emerging_storylines",
+                                    "message": "proactive detect success",
+                                    "data": {
+                                        "domain": self.domain,
+                                        "articles_analyzed": len(articles),
+                                        "clusters_found": len(clusters),
+                                        "valid_clusters": len(valid_clusters),
+                                        "emerging": len(emerging_storylines),
+                                        "stored_count": stored_count,
+                                        "promoted_count": promoted_count,
+                                    },
+                                    "timestamp": int(
+                                        datetime.now(timezone.utc).timestamp() * 1000
+                                    ),
+                                }
+                            )
+                            + "\n"
+                        )
+                except Exception:
+                    pass
+                # #endregion
 
                 return {
                     "success": True,
@@ -141,6 +183,37 @@ class ProactiveDetectionService(DomainAwareService):
 
         except Exception as e:
             logger.error(f"Error detecting emerging storylines: {e}")
+            # #region agent log
+            try:
+                import json as _json
+
+                with open(
+                    "/home/pete/Documents/projects/News Intelligence/.cursor/debug-b4785d.log",
+                    "a",
+                ) as _df:
+                    _df.write(
+                        _json.dumps(
+                            {
+                                "sessionId": "b4785d",
+                                "runId": "post-fix",
+                                "hypothesisId": "H2",
+                                "location": "proactive_detection_service.py:detect_emerging_storylines",
+                                "message": "proactive detect exception",
+                                "data": {
+                                    "domain": self.domain,
+                                    "error_type": type(e).__name__,
+                                    "error": str(e)[:300],
+                                },
+                                "timestamp": int(
+                                    datetime.now(timezone.utc).timestamp() * 1000
+                                ),
+                            }
+                        )
+                        + "\n"
+                    )
+            except Exception:
+                pass
+            # #endregion
             return {"success": False, "error": str(e)}
 
     async def _cluster_articles_by_similarity(self, articles: list[dict]) -> list[dict[str, Any]]:
@@ -322,9 +395,41 @@ class ProactiveDetectionService(DomainAwareService):
         articles = cluster.get("articles") or []
         if not articles:
             return False
-        title = " ".join(
-            (cluster.get("keywords") or [])[:3]
-        ).title() or "Emerging Story"
+        # keywords from _extract_keywords is a set; coerce before slicing
+        raw_kw = cluster.get("keywords") or []
+        kw_list = list(raw_kw) if not isinstance(raw_kw, list) else raw_kw
+        title = " ".join(kw_list[:3]).title() or "Emerging Story"
+        # #region agent log
+        try:
+            import json as _json
+
+            with open(
+                "/home/pete/Documents/projects/News Intelligence/.cursor/debug-b4785d.log",
+                "a",
+            ) as _df:
+                _df.write(
+                    _json.dumps(
+                        {
+                            "sessionId": "b4785d",
+                            "runId": "post-fix",
+                            "hypothesisId": "H2",
+                            "location": "proactive_detection_service.py:_cluster_passes_coherence_gate",
+                            "message": "coherence gate keywords coerce",
+                            "data": {
+                                "raw_kw_type": type(raw_kw).__name__,
+                                "kw_list_len": len(kw_list),
+                                "title_prefix": title[:80],
+                                "n_articles": len(articles),
+                                "domain": self.domain,
+                            },
+                            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+                        }
+                    )
+                    + "\n"
+                )
+        except Exception:
+            pass
+        # #endregion
         coherent, reason = assess_cluster_coherence(self.domain, title, articles)
         if not coherent:
             logger.debug(
@@ -503,7 +608,14 @@ class ProactiveDetectionService(DomainAwareService):
         if len(article_ids) < min_linked:
             return False
 
-        # Re-check unlinked (avoid duplicate storylines if another process linked articles)
+        # Re-check unlinked (avoid duplicate storylines if another process linked articles).
+        # Signal-first: only full-lane articles count toward promotion.
+        try:
+            from shared.article_signal_gate import sql_article_signal_full_lane_and
+
+            _sig = sql_article_signal_full_lane_and("a", self.schema)
+        except Exception:
+            _sig = ""
         cur.execute(
             f"""
             SELECT a.id FROM {self.schema}.articles a
@@ -511,6 +623,7 @@ class ProactiveDetectionService(DomainAwareService):
               AND NOT EXISTS (
                   SELECT 1 FROM {self.schema}.storyline_articles sa WHERE sa.article_id = a.id
               )
+              {_sig}
             """,
             (article_ids,),
         )

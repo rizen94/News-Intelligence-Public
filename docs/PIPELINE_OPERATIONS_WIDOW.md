@@ -99,14 +99,44 @@ NARRATIVE_FINISHER_MAX_INFLIGHT=1
 DB_HOST=127.0.0.1
 DB_PORT=6432
 
-# Ollama — Widow is primary (CPU + GPU lanes on local :11434); PopOS 5090 only for heavy models (70B finisher)
-OLLAMA_HOST=http://localhost:11434
+# Ollama — generate/extract/finish on PopOS; embeddings on Dockside (via Widow tunnel :11435 or LAN :11434)
+OLLAMA_HOST=http://192.168.93.99:11434
+OLLAMA_URL=http://192.168.93.99:11434
 OLLAMA_POP_OS_HOST=http://192.168.93.99:11434
-# Leave dual-host OFF unless you intentionally split lanes across two Ollama servers (not the default NI policy).
+OLLAMA_CPU_HOST=http://192.168.93.99:11434
+OLLAMA_GPU_HOST=http://192.168.93.99:11434
+# Dedicated embeddings appliance (Dockside). Prefer LAN http://192.168.93.95:11434 once Ollama is bound to 0.0.0.0;
+# until then Widow uses the user tunnel: http://127.0.0.1:11435 (dockside-ollama-tunnel.service).
+OLLAMA_EMBEDDINGS_HOST=http://127.0.0.1:11435
+OLLAMA_MODEL_EMBEDDING=nomic-embed-text
+# Pause embeddings_worker after N consecutive Dockside probe/embed failures (default 1).
+# EMBEDDINGS_HOST_FAIL_THRESHOLD=1
+# EMBEDDINGS_HOST_PROBE_INTERVAL_SEC=30
+# Leave dual-host OFF unless you intentionally split generate lanes across two Ollama servers.
 OLLAMA_DUAL_HOST_ROUTING_ENABLED=false
 OLLAMA_MODEL_PRIMARY=llama3.1:8b
 OLLAMA_MODEL_SECONDARY=llama3.1:8b
 OLLAMA_MODEL_EXTRACTION=qwen2.5:7b
+```
+
+**Dockside embeddings health:** `embeddings_host_health_service` probes the dedicated host and sets `ni_embeddings_host_paused=1` after consecutive failures. `embeddings_worker` yields immediately (no per-chunk CB spam). Grafana: `ni_embeddings_*` from `/api/system_monitoring/prometheus`; alert rules in `api/monitoring/grafana/alerts-embeddings-host.yaml`. After Dockside/tunnel recovers, reset `ollama_embeddings` if still open:
+
+**Catch-up burn (chunk-only):** `scripts/embeddings_dockside_burn.sh` on Widow (article-first, mid-commit). Log `/tmp/embeddings_dockside_burn.log`. Stop: `kill $(cat /tmp/embeddings_dockside_burn.pid)`.
+
+**Multi-day catch-up lanes (split by model):**
+
+| Lane | Host | Script | Work |
+|------|------|--------|------|
+| Embed | Dockside via Widow `:11435` | `scripts/dockside_embed_queue.sh` | `chunks` → `article_vectors` → `topic_embeddings` (nomic) |
+| Generate / extract | PopOS 5090 | `scripts/popos_generate_queue.sh` | UIE → claim → topic_clustering → profiles → continuation → assembly → CRQ |
+| DB-only | Widow | `scripts/widow_db_queue.sh` | `event_dedup` (no generate) |
+
+Service helpers: `api/services/dockside_embed_queue_service.py`. Defaults: 4 days each. Logs/pids under `/tmp/*_queue.{log,pid,state}`. Stop: `kill $(cat /tmp/<name>.pid)`. PopOS queue pauses `news-intelligence-popos-workers.target` while running (restores on exit). Do not run chunk-only burn alongside the Dockside queue. Regular AM trickle: `EMBEDDINGS_WORKER_INTERVAL_SEC=300`, batch 150.
+
+
+```bash
+curl -sS -X POST http://127.0.0.1:8000/api/system_monitoring/circuit_breakers/reset \
+  -H 'Content-Type: application/json' -d '{"name":"ollama_embeddings"}'
 ```
 
 **Backpressure:** generate/embed only via `llm_service`. If health shows Ollama CB open after the host recovers, `POST /api/system_monitoring/circuit_breakers/reset` — do not restart the API just to clear breakers. Terms (defer / shed / overload / trickle): [`MONITOR_REPORTING_AND_METRICS.md`](MONITOR_REPORTING_AND_METRICS.md).

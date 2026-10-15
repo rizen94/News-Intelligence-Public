@@ -1,8 +1,8 @@
 """
-RSS feed health evaluation and warn-then-auto silencing.
+RSS feed health: weekly quality cull (primary) or warn-then-auto silence (legacy).
 
-Nightly automation calls evaluate_feeds + apply_verdicts. Operators can dry-run via
-RSS_FEED_SILENCE_DRY_RUN=true or api/scripts/rss_feed_yield_report.py first.
+Automation runs ``run_feed_health_cycle`` via ``rss_feed_health`` phase.
+Operators can dry-run via ``rss_feed_health.dry_run`` / ``RSS_FEED_SILENCE_DRY_RUN``.
 """
 
 from __future__ import annotations
@@ -23,10 +23,22 @@ class FeedHealthVerdict:
     schema: str
     feed_id: int
     feed_name: str
-    reason: str  # fetch_failure | zero_yield | low_signal_yield | recovered
+    reason: str  # fetch_failure | zero_yield | low_signal_yield | recovered | weekly_cull
     action: str  # warn | silence | clear_warning
     review_count: int = 0
     details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class FeedQualityScore:
+    """Scored feed row for weekly cull selection (pure / testable)."""
+
+    domain_key: str
+    schema: str
+    feed_id: int
+    feed_name: str
+    article_count: int
+    avg_quality: float
 
 
 def _cfg() -> dict[str, Any]:
@@ -51,6 +63,15 @@ def rss_feed_silence_dry_run() -> bool:
     if "dry_run" in c:
         return bool(c.get("dry_run"))
     return env_bool("RSS_FEED_SILENCE_DRY_RUN", True)
+
+
+def rss_feed_health_policy() -> str:
+    """``weekly_cull`` (default) or legacy ``warn_silence``."""
+    c = _cfg()
+    raw = str(c.get("policy") or env_str("RSS_FEED_HEALTH_POLICY", "weekly_cull")).strip().lower()
+    if raw in ("warn_silence", "warn-silence"):
+        return "warn_silence"
+    return "weekly_cull"
 
 
 def _min_quality() -> float:
@@ -90,9 +111,148 @@ def _fetch_failure_consecutive() -> int:
     return int(c.get("fetch_failure_consecutive") or env_int("RSS_FEED_SILENCE_FETCH_FAIL_CONSECUTIVE", 5))
 
 
+def _target_avg_quality() -> float:
+    c = _cfg()
+    if c.get("target_avg_quality") is not None:
+        return max(0.0, min(1.0, float(c["target_avg_quality"])))
+    return max(0.0, min(1.0, env_float("RSS_FEED_TARGET_AVG_QUALITY", 0.65)))
+
+
+def _drops_per_review() -> int:
+    c = _cfg()
+    if c.get("drops_per_review") is not None:
+        return max(0, min(50, int(c["drops_per_review"])))
+    return max(0, min(50, env_int("RSS_FEED_DROPS_PER_REVIEW", 2)))
+
+
+def _review_window_days() -> int:
+    c = _cfg()
+    if c.get("review_window_days") is not None:
+        return max(1, min(90, int(c["review_window_days"])))
+    return max(1, min(90, env_int("RSS_FEED_REVIEW_WINDOW_DAYS", 7)))
+
+
+def _min_articles_for_score() -> int:
+    c = _cfg()
+    if c.get("min_articles_for_score") is not None:
+        return max(1, min(500, int(c["min_articles_for_score"])))
+    return max(1, min(500, env_int("RSS_FEED_MIN_ARTICLES_FOR_SCORE", 5)))
+
+
 def _health_json(filters: dict | None) -> dict:
     fh = (filters or {}).get("feed_health") if isinstance(filters, dict) else None
     return dict(fh) if isinstance(fh, dict) else {}
+
+
+def select_weekly_cull_drops(
+    scores: list[FeedQualityScore],
+    *,
+    target_avg_quality: float,
+    drops_per_review: int,
+    min_articles_for_score: int,
+) -> list[FeedQualityScore]:
+    """
+    Pure selection: if any scored feed is below the quality bar, return up to
+    ``drops_per_review`` lowest-avg feeds that are below the bar.
+    """
+    if drops_per_review <= 0:
+        return []
+    scored = [s for s in scores if s.article_count >= min_articles_for_score]
+    if not scored:
+        return []
+    if all(s.avg_quality >= target_avg_quality for s in scored):
+        return []
+    below = [s for s in scored if s.avg_quality < target_avg_quality]
+    below.sort(key=lambda s: (s.avg_quality, s.feed_id))
+    return below[:drops_per_review]
+
+
+def evaluate_weekly_cull(domain_key: str | None = None) -> list[FeedHealthVerdict]:
+    """Score active feeds and return silence verdicts for weekly quality cull."""
+    if not rss_feed_silence_enabled():
+        return []
+
+    from shared.database.connection import get_db_connection_context
+    from shared.domain_registry import pipeline_url_schema_pairs
+
+    pairs = pipeline_url_schema_pairs()
+    if domain_key:
+        pairs = [(dk, sch) for dk, sch in pairs if dk == domain_key]
+
+    window = _review_window_days()
+    min_n = _min_articles_for_score()
+    target = _target_avg_quality()
+    drops = _drops_per_review()
+    all_scores: list[FeedQualityScore] = []
+
+    with get_db_connection_context() as conn:
+        with conn.cursor() as cur:
+            for dk, schema in pairs:
+                try:
+                    cur.execute(
+                        f"""
+                        SELECT
+                            rf.id,
+                            rf.feed_name,
+                            COUNT(a.id)::bigint,
+                            COALESCE(AVG(a.quality_score), 0)::float
+                        FROM {schema}.rss_feeds rf
+                        LEFT JOIN {schema}.articles a ON (
+                            a.rss_feed_id = rf.id
+                            OR (a.rss_feed_id IS NULL AND a.source_domain = rf.feed_name)
+                        )
+                          AND a.created_at >= NOW() - (%s || ' days')::interval
+                        WHERE rf.is_active = true
+                        GROUP BY rf.id, rf.feed_name
+                        """,
+                        (window,),
+                    )
+                    for row in cur.fetchall():
+                        all_scores.append(
+                            FeedQualityScore(
+                                domain_key=dk,
+                                schema=schema,
+                                feed_id=int(row[0]),
+                                feed_name=str(row[1] or ""),
+                                article_count=int(row[2] or 0),
+                                avg_quality=float(row[3] or 0.0),
+                            )
+                        )
+                except Exception as exc:
+                    logger.warning("evaluate_weekly_cull query %s: %s", schema, exc)
+                    continue
+
+    # Cull independently per schema so one domain's sludge does not steal the drop budget.
+    by_schema: dict[str, list[FeedQualityScore]] = {}
+    for s in all_scores:
+        by_schema.setdefault(s.schema, []).append(s)
+
+    verdicts: list[FeedHealthVerdict] = []
+    for schema, scores in by_schema.items():
+        for drop in select_weekly_cull_drops(
+            scores,
+            target_avg_quality=target,
+            drops_per_review=drops,
+            min_articles_for_score=min_n,
+        ):
+            verdicts.append(
+                FeedHealthVerdict(
+                    domain_key=drop.domain_key,
+                    schema=drop.schema,
+                    feed_id=drop.feed_id,
+                    feed_name=drop.feed_name,
+                    reason="weekly_cull",
+                    action="silence",
+                    review_count=0,
+                    details={
+                        "avg_quality": round(drop.avg_quality, 4),
+                        "article_count": drop.article_count,
+                        "target_avg_quality": target,
+                        "review_window_days": window,
+                    },
+                )
+            )
+    return verdicts
 
 
 def evaluate_feeds(domain_key: str | None = None) -> list[FeedHealthVerdict]:
@@ -256,12 +416,13 @@ def apply_verdicts(
                 if dry_run:
                     counts["skipped"] += 1
                     logger.info(
-                        "DRY RUN feed health %s/%s id=%s action=%s reason=%s",
+                        "DRY RUN feed health %s/%s id=%s action=%s reason=%s details=%s",
                         v.schema,
                         v.feed_name,
                         v.feed_id,
                         v.action,
                         v.reason,
+                        v.details,
                     )
                     continue
 
@@ -333,12 +494,19 @@ def apply_verdicts(
 
 
 def run_feed_health_cycle(*, dry_run: bool | None = None) -> dict[str, Any]:
-    verdicts = evaluate_feeds()
+    policy = rss_feed_health_policy()
+    if policy == "weekly_cull":
+        verdicts = evaluate_weekly_cull()
+    else:
+        verdicts = evaluate_feeds()
     applied = apply_verdicts(verdicts, dry_run=dry_run)
     return {
+        "policy": policy,
         "evaluated": len(verdicts),
         "verdicts_by_action": applied,
         "dry_run": dry_run if dry_run is not None else rss_feed_silence_dry_run(),
+        "target_avg_quality": _target_avg_quality() if policy == "weekly_cull" else None,
+        "drops_per_review": _drops_per_review() if policy == "weekly_cull" else None,
     }
 
 

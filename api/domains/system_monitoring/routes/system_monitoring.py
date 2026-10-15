@@ -1140,6 +1140,9 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
                 "active_tasks_by_lane": status.get("active_tasks_by_lane") or {},
                 "runs_last_60m_by_lane": status.get("runs_last_60m_by_lane") or {},
                 "pipeline_article_selection": _pipe_sel,
+                "pipeline_controller": status.get("pipeline_controller")
+                if status.get("pipeline_controller") is not None
+                else {"active": False},
             },
         }
     except asyncio.TimeoutError:

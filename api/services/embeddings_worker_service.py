@@ -61,8 +61,22 @@ def _format_vector(vec: list[float]) -> str:
     return "[" + ",".join(f"{x:.8f}" for x in vec) + "]"
 
 
-def _embeddings_should_yield() -> bool:
-    """Skip embedding when claim extraction backlog is high (pipeline priority)."""
+def _embeddings_should_yield() -> tuple[bool, str]:
+    """Skip embedding when Dockside host is down or claim backlog is high."""
+    try:
+        from services.embeddings_host_health_service import get_embeddings_host_health
+
+        # Force probe each batch so we pause immediately on tunnel/host loss
+        # instead of waiting out EMBEDDINGS_HOST_PROBE_INTERVAL_SEC.
+        paused, reason = get_embeddings_host_health().should_pause_embeddings(
+            force_probe=True
+        )
+        if paused:
+            get_embeddings_host_health().note_worker_yielded(reason)
+            return True, reason or "embeddings_host_paused"
+    except Exception as e:
+        logger.debug("embeddings host gate skipped: %s", e)
+
     threshold = int(os.environ.get("EMBEDDINGS_YIELD_CLAIM_BACKLOG", "5000"))
     try:
         from services.claim_extraction_service import get_context_claim_backlog_stats
@@ -70,20 +84,23 @@ def _embeddings_should_yield() -> bool:
         stats = get_context_claim_backlog_stats()
         backlog = int(stats.get("actionable_no_claims") or 0)
         if backlog > threshold:
+            reason = f"claim_backlog:{backlog}>{threshold}"
             logger.info(
                 "embeddings worker yielding: claim backlog %s > %s",
                 backlog,
                 threshold,
             )
-            return True
+            return True, reason
     except Exception as e:
         logger.debug("embeddings yield check skipped: %s", e)
-    return False
+    return False, ""
 
 
-def _embed_reference_events(cur, *, limit: int) -> tuple[int, int]:
+def _embed_reference_events(cur, *, limit: int, conn=None) -> tuple[int, int]:
     embedded = 0
     skipped = 0
+    if limit <= 0:
+        return 0, 0
     cur.execute(
         """
         SELECT re.id, re.title, re.summary, re.event_date
@@ -134,6 +151,8 @@ def _embed_reference_events(cur, *, limit: int) -> tuple[int, int]:
             any_ok = True
         if any_ok:
             embedded += 1
+            if conn is not None:
+                conn.commit()
         else:
             skipped += 1
     return embedded, skipped
@@ -166,9 +185,12 @@ def _fetch_wikipedia_summary(title: str) -> dict[str, Any] | None:
         return None
 
 
-def _embed_wikipedia_topics(cur, *, limit: int) -> tuple[int, int]:
+def _embed_wikipedia_topics(cur, *, limit: int, conn=None) -> tuple[int, int]:
     """Embed Wikipedia summaries for reference-event titles not yet chunked."""
     import os
+
+    if limit <= 0:
+        return 0, 0
 
     vintage_raw = (os.environ.get("KIWIX_ZIM_VINTAGE_DATE") or "").strip()
     vintage_date = None
@@ -237,15 +259,19 @@ def _embed_wikipedia_topics(cur, *, limit: int) -> tuple[int, int]:
             any_ok = True
         if any_ok:
             embedded += 1
+            if conn is not None:
+                conn.commit()
         else:
             skipped += 1
     return embedded, skipped
 
 
-def _embed_contexts(cur, *, limit: int) -> tuple[int, int]:
+def _embed_contexts(cur, *, limit: int, conn=None) -> tuple[int, int]:
     """Chunk intelligence.contexts rows into embedding_chunks (source_type=context)."""
     embedded = 0
     skipped = 0
+    if limit <= 0:
+        return 0, 0
     cur.execute(
         """
         SELECT c.id, c.title, c.content, c.domain_key, c.event_date, c.metadata,
@@ -328,6 +354,8 @@ def _embed_contexts(cur, *, limit: int) -> tuple[int, int]:
             any_ok = True
         if any_ok:
             embedded += 1
+            if conn is not None:
+                conn.commit()
         else:
             skipped += 1
     return embedded, skipped
@@ -339,10 +367,12 @@ def run_embeddings_worker_batch(
     domain_keys: list[str] | None = None,
 ) -> dict[str, Any]:
     """Embed unchunked articles and reference events across pipeline domains."""
-    if _embeddings_should_yield():
+    yield_now, yield_reason = _embeddings_should_yield()
+    if yield_now:
         return {
             "success": True,
             "yielded": True,
+            "yield_reason": yield_reason,
             "embedded_articles": 0,
             "embedded_reference_events": 0,
             "embedded_wikipedia": 0,
@@ -361,15 +391,26 @@ def run_embeddings_worker_batch(
     ctx_embedded = 0
     skipped = 0
 
+    # Commit cadence: avoid multi-minute idle-in-transaction while calling Dockside.
+    commit_every = max(1, int(os.environ.get("EMBEDDINGS_COMMIT_EVERY_ARTICLES", "5") or 5))
+
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
-            ref_embedded, ref_skipped = _embed_reference_events(cur, limit=ref_limit)
+            ref_embedded, ref_skipped = _embed_reference_events(
+                cur, limit=ref_limit, conn=conn
+            )
             skipped += ref_skipped
-            wiki_embedded, wiki_skipped = _embed_wikipedia_topics(cur, limit=wiki_limit)
+            wiki_embedded, wiki_skipped = _embed_wikipedia_topics(
+                cur, limit=wiki_limit, conn=conn
+            )
             skipped += wiki_skipped
-            ctx_embedded, ctx_skipped = _embed_contexts(cur, limit=ctx_limit)
+            ctx_embedded, ctx_skipped = _embed_contexts(
+                cur, limit=ctx_limit, conn=conn
+            )
             skipped += ctx_skipped
+            conn.commit()
 
+        since_commit = 0
         for dk in domains:
             schema = resolve_domain_schema(dk)
             with conn.cursor() as cur:
@@ -435,9 +476,16 @@ def run_embeddings_worker_batch(
                         any_ok = True
                     if any_ok:
                         embedded += 1
+                        since_commit += 1
+                        if since_commit >= commit_every:
+                            conn.commit()
+                            since_commit = 0
                     else:
                         skipped += 1
-        conn.commit()
+        if since_commit:
+            conn.commit()
+        else:
+            conn.commit()
 
     return {
         "success": True,

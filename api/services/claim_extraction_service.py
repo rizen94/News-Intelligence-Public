@@ -257,7 +257,8 @@ def claim_extraction_gap_fill_sql(alias: str = "c") -> str:
 
 
 def sql_claim_extraction_eligible(alias: str = "c") -> str:
-    """Contexts claim_extraction automation would select (min text + pass-null + gap-fill)."""
+    """Contexts claim_extraction automation would select (min text + pass-null + gap-fill + signal)."""
+    from shared.article_signal_gate import sql_context_has_full_lane_article
     from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_context_pass_null
 
     min_len = claim_extraction_min_text_len()
@@ -265,6 +266,7 @@ def sql_claim_extraction_eligible(alias: str = "c") -> str:
     if phase_backlog_uses_pass_marker("claim_extraction"):
         pass_sql = f" AND ({sql_context_pass_null('claim_extraction', alias)}) "
     gap_sql = claim_extraction_gap_fill_sql(alias)
+    signal_sql = f" AND ({sql_context_has_full_lane_article(alias)}) "
     return f"""
         NOT EXISTS (
             SELECT 1 FROM intelligence.extracted_claims ec
@@ -275,6 +277,7 @@ def sql_claim_extraction_eligible(alias: str = "c") -> str:
         ) >= {min_len}
         {pass_sql}
         {gap_sql}
+        {signal_sql}
     """
 
 
@@ -1334,6 +1337,17 @@ async def drain_claim_extraction_for_automation_task(
 
     Returns (total_claims_inserted, batch_count).
     """
+    try:
+        from shared.article_signal_gate import (
+            article_signal_enabled,
+            defer_signal_light_claim_contexts_batch,
+        )
+
+        if article_signal_enabled():
+            await asyncio.to_thread(defer_signal_light_claim_contexts_batch, limit=400)
+    except Exception as _sig_err:
+        logger.debug("claim_extraction signal defer skipped: %s", _sig_err)
+
     lim = int(nightly_limit) if nightly_limit is not None else None
     auto_lim = _automation_claim_batch_limit()
     if lim is None and auto_lim is not None:

@@ -119,7 +119,10 @@ class OllamaModelCaller:
         return GenerationResult(text=out, model=model_tag, kind=kind)
 
     def _embedding_base_url(self) -> str:
-        """Match batch LLM routing: CPU host when dual-host is enabled."""
+        """Prefer OLLAMA_EMBEDDINGS_HOST; else dual-host CPU / primary base."""
+        emb = (getattr(self._llm, "ollama_embeddings_host", None) or "").strip().rstrip("/")
+        if emb:
+            return emb
         if self._llm.dual_host_enabled:
             return self._llm.ollama_cpu_host.rstrip("/")
         return self._ollama_base_url

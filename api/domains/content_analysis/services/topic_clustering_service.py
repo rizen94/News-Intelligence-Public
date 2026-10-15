@@ -3,10 +3,12 @@ Topic Clustering and Auto-Tagging Service with Iterative Learning
 Uses LLM to intelligently cluster articles by topic and learn from feedback
 """
 
+import asyncio
 import json
 import logging
 import os
 import re
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -335,6 +337,85 @@ JSON Response:"""
         toks = re.findall(r"[a-z0-9']+", topic_name.lower())
         return not (len(toks) == 1 and len(toks[0]) <= 4)
 
+    @staticmethod
+    def select_pending_article_ids(
+        cur,
+        schema: str,
+        *,
+        batch_size: int = 20,
+        use_pass_marker: bool = True,
+        iterative: bool = False,
+        confidence_threshold: float = 0.88,
+        low_confidence_threshold: float = 0.7,
+        signal_full_only: bool = True,
+    ) -> list[int]:
+        """Bounded backlog selection — LIMIT in SQL, no full-table fetch."""
+        from shared.pipeline_article_selection import sql_order_created_at
+
+        signal_sql = ""
+        if signal_full_only:
+            try:
+                from shared.article_signal_gate import (
+                    article_signal_enabled,
+                    sql_article_signal_full_lane_filter,
+                )
+
+                if article_signal_enabled():
+                    filt = sql_article_signal_full_lane_filter("a", schema)
+                    if filt:
+                        signal_sql = f" AND ({filt}) "
+            except Exception:
+                pass
+
+        age_order = sql_order_created_at()
+        if use_pass_marker and not iterative:
+            cur.execute(
+                f"""
+                SELECT a.id
+                FROM {schema}.articles a
+                WHERE a.content IS NOT NULL
+                  AND LENGTH(a.content) > 100
+                  AND (
+                    a.metadata->'pipeline'->'topic_clustering'->>'last_pass_at' IS NULL
+                    OR TRIM(COALESCE(a.metadata->'pipeline'->'topic_clustering'->>'last_pass_at', '')) = ''
+                  )
+                  {signal_sql}
+                ORDER BY a.created_at {age_order}
+                LIMIT %s
+                """,
+                (batch_size,),
+            )
+            ids = [int(r[0]) for r in cur.fetchall()]
+        else:
+            cur.execute(
+                f"""
+                WITH article_confidence AS (
+                    SELECT
+                        a.id,
+                        COALESCE(AVG(atc.confidence_score), 0.0) AS avg_confidence,
+                        (a.metadata->'pipeline'->'topic_clustering'->>'last_pass_at') AS pass_at
+                    FROM {schema}.articles a
+                    LEFT JOIN {schema}.article_topic_clusters atc ON a.id = atc.article_id
+                    WHERE a.content IS NOT NULL AND LENGTH(a.content) > 100
+                      {signal_sql}
+                    GROUP BY a.id, pass_at
+                )
+                SELECT id
+                FROM article_confidence
+                WHERE avg_confidence < %s
+                  AND (
+                    pass_at IS NULL
+                    OR TRIM(COALESCE(pass_at, '')) = ''
+                    OR avg_confidence < %s
+                  )
+                ORDER BY avg_confidence ASC, id ASC
+                LIMIT %s
+                """,
+                (confidence_threshold, low_confidence_threshold, batch_size),
+            )
+            ids = [int(r[0]) for r in cur.fetchall()]
+        return ids
+
     def _ensure_table_id_sequence(self, cur, table: str) -> None:
         """Template silos often lack SERIAL on topics / article_topic_assignments."""
         qualified = f"{self.schema}.{table}"
@@ -598,19 +679,16 @@ JSON Response:"""
 
     async def process_article(self, article_id: int) -> dict[str, Any]:
         """
-        Process a single article: extract topics and assign them
+        Process a single article: extract topics and assign them.
 
-        Args:
-            article_id: ID of the article to process
-
-        Returns:
-            Dictionary with processing results
+        Connection is released before the LLM call (never hold pool slots across Ollama).
         """
+        conn = None
+        cur = None
         try:
             conn = self._get_db_connection()
             cur = conn.cursor(cursor_factory=RealDictCursor)
 
-            # Get article from this service's domain schema
             cur.execute(
                 f"""
                 SELECT id, title, content, excerpt, topics,
@@ -626,8 +704,11 @@ JSON Response:"""
                 return {"success": False, "error": "Article not found"}
 
             article_dict = dict(article)
+            cur.close()
+            cur = None
+            conn.close()
+            conn = None
 
-            # Extract topics using LLM
             logger.info(
                 f"🔍 Extracting topics for article {article_id}: {article_dict.get('title', '')[:50]}"
             )
@@ -641,9 +722,9 @@ JSON Response:"""
                     "article_id": article_id,
                     "assigned_topics": [],
                     "message": "No topics extracted",
+                    "fast_lane": False,
                 }
 
-            # Assign topics
             assignment_result = await self.assign_topics_to_article(article_id, extracted_topics)
 
             logger.info(
@@ -653,10 +734,9 @@ JSON Response:"""
             if assignment_result.get("success"):
                 self.record_topic_clustering_pass(article_id, "topics_assigned")
             else:
-                # Without a pass marker, backlog + automation keep selecting this article forever
-                # (topics were extracted but assign_topics_to_article did not commit).
                 self.record_topic_clustering_pass(article_id, "assignment_failed")
 
+            assignment_result["fast_lane"] = False
             return assignment_result
 
         except Exception as e:
@@ -667,9 +747,16 @@ JSON Response:"""
             logger.error(f"Error processing article {article_id} for topic clustering: {e}")
             return {"success": False, "error": str(e)}
         finally:
-            if conn:
-                cur.close()
-                conn.close()
+            if cur is not None:
+                try:
+                    cur.close()
+                except Exception:
+                    pass
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def record_feedback(
         self,
@@ -790,3 +877,51 @@ JSON Response:"""
             if conn:
                 cur.close()
                 conn.close()
+
+
+@dataclass
+class TopicClusterBatchResult:
+    processed: int = 0
+    failed: int = 0
+    fast_lane_hits: int = 0
+    llm_extractions: int = 0
+    topics_created: int = 0
+    topics_assigned: int = 0
+    errors: list[str] = field(default_factory=list)
+
+
+async def process_articles_batch(
+    service: TopicClusteringService,
+    article_ids: list[int],
+    *,
+    concurrency: int = 5,
+) -> TopicClusterBatchResult:
+    """Process articles in parallel with bounded concurrency."""
+    result = TopicClusterBatchResult()
+    if not article_ids:
+        return result
+
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def _one(aid: int) -> None:
+        async with sem:
+            try:
+                out = await service.process_article(aid)
+                if out.get("success"):
+                    result.processed += 1
+                    if out.get("fast_lane"):
+                        result.fast_lane_hits += 1
+                    else:
+                        result.llm_extractions += 1
+                    result.topics_created += len(out.get("created_topics", []))
+                    result.topics_assigned += int(out.get("total_assigned", 0) or 0)
+                else:
+                    result.failed += 1
+                    err = out.get("error") or "unknown"
+                    result.errors.append(f"{aid}: {err}")
+            except Exception as e:
+                result.failed += 1
+                result.errors.append(f"{aid}: {e}")
+
+    await asyncio.gather(*[_one(aid) for aid in article_ids])
+    return result

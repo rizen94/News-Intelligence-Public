@@ -15,12 +15,16 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # All Ollama host breakers — keep automation, health, and LLMService in sync.
+# Intake shed uses OLLAMA_CB_KEYS only (not embeddings appliance).
 OLLAMA_CB_KEYS: tuple[str, ...] = (
     "ollama",
     "ollama_gpu",
     "ollama_cpu",
     "ollama_pop_os",
 )
+# Resettable embeddings appliance breaker (Dockside) — does not shed intake.
+OLLAMA_EMBEDDINGS_CB_KEYS: tuple[str, ...] = ("ollama_embeddings",)
+OLLAMA_RESET_CB_KEYS: tuple[str, ...] = OLLAMA_CB_KEYS + OLLAMA_EMBEDDINGS_CB_KEYS
 
 _OLLAMA_CB_CONFIG = dict(
     failure_threshold=2,
@@ -353,6 +357,8 @@ class CircuitBreakerService:
             "ollama": CircuitBreakerConfig(**_OLLAMA_CB_CONFIG),
             "ollama_gpu": CircuitBreakerConfig(**_OLLAMA_CB_CONFIG),
             "ollama_cpu": CircuitBreakerConfig(**_OLLAMA_CB_CONFIG),
+            # Embeddings appliance (Dockside) — not in OLLAMA_CB_KEYS (no intake shed).
+            "ollama_embeddings": CircuitBreakerConfig(**_OLLAMA_CB_CONFIG),
             # Remote PopOS host: fail-closed quickly on "no route" / connect storms.
             "ollama_pop_os": CircuitBreakerConfig(
                 failure_threshold=1,
@@ -419,15 +425,15 @@ class CircuitBreakerService:
         logger.info("All circuit breakers reset")
 
     def reset_ollama_circuits(self, name: str | None = None) -> list[str]:
-        """Reset one or all Ollama host breakers. Returns names reset."""
+        """Reset one or all Ollama (+ embeddings appliance) breakers. Returns names reset."""
         if name:
             key = name.strip()
-            if key not in OLLAMA_CB_KEYS:
+            if key not in OLLAMA_RESET_CB_KEYS:
                 raise ValueError(f"unknown ollama breaker: {key}")
             self.get_circuit_breaker(key).reset()
             return [key]
         reset_names: list[str] = []
-        for key in OLLAMA_CB_KEYS:
+        for key in OLLAMA_RESET_CB_KEYS:
             self.get_circuit_breaker(key).reset()
             reset_names.append(key)
         logger.info("Ollama circuit breakers reset: %s", ",".join(reset_names))

@@ -453,18 +453,25 @@ class AIStorylineDiscovery:
         from shared.pipeline_article_selection import sql_order_created_at
 
         _ord = sql_order_created_at()
+        try:
+            from shared.article_signal_gate import sql_article_signal_full_lane_and
+
+            sig = sql_article_signal_full_lane_and("a", schema)
+        except Exception:
+            sig = ""
         conn = self.get_db_connection()
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 if hours is not None and hours > 0:
                     cur.execute(
                         f"""
-                        SELECT id, title, COALESCE(content, '') as content, created_at,
-                               embedding_vector, embedding_model, extracted_entities, metadata
-                        FROM {schema}.articles
-                        WHERE created_at > NOW() - (%s * INTERVAL '1 hour')
-                          AND COALESCE(metadata->>'content_kind', '') <> 'research_paper'
-                        ORDER BY created_at {_ord}
+                        SELECT a.id, a.title, COALESCE(a.content, '') as content, a.created_at,
+                               a.embedding_vector, a.embedding_model, a.extracted_entities, a.metadata
+                        FROM {schema}.articles a
+                        WHERE a.created_at > NOW() - (%s * INTERVAL '1 hour')
+                          AND COALESCE(a.metadata->>'content_kind', '') <> 'research_paper'
+                          {sig}
+                        ORDER BY a.created_at {_ord}
                         LIMIT %s
                         """,
                         (hours, limit),
@@ -472,11 +479,12 @@ class AIStorylineDiscovery:
                 else:
                     cur.execute(
                         f"""
-                        SELECT id, title, COALESCE(content, '') as content, created_at,
-                               embedding_vector, embedding_model, extracted_entities, metadata
-                        FROM {schema}.articles
-                        WHERE COALESCE(metadata->>'content_kind', '') <> 'research_paper'
-                        ORDER BY created_at {_ord}
+                        SELECT a.id, a.title, COALESCE(a.content, '') as content, a.created_at,
+                               a.embedding_vector, a.embedding_model, a.extracted_entities, a.metadata
+                        FROM {schema}.articles a
+                        WHERE COALESCE(a.metadata->>'content_kind', '') <> 'research_paper'
+                          {sig}
+                        ORDER BY a.created_at {_ord}
                         LIMIT %s
                         """,
                         (limit,),

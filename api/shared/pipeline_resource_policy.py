@@ -864,23 +864,25 @@ def refinement_phase_allowed(
     pending: dict[str, int] | None = None,
 ) -> bool:
     """
-    Refinement filler runs in nightly heavy window, when bulk intake is clear,
-    and only when structure catchup is not hot (EPB / assembly / automation backlog).
-    Override: PIPELINE_REFINEMENT_ANYTIME=true
+    Refinement filler: structure/bulk gates plus desk window for ~70b queue.
 
-    Durable ``content_refinement_queue`` jobs (UI / CONTENT_REFINEMENT_AUTO_ENQUEUE)
-    are allowed whenever that queue has pending work — do not leave them blocked
-    behind structure-band catchup forever.
+    ``content_refinement_queue`` runs only in the refinement desk window
+    (default **02:00–09:00** local; ``REFINEMENT_DESK_*_HOUR`` /
+    ``REFINEMENT_DESK_ANYTIME`` / ``PIPELINE_REFINEMENT_ANYTIME``).
+    Other refinement-band phases keep nightly/daytime + bulk-clear rules.
     """
     if not is_refinement_phase(phase_name):
         return True
-    if env_str("PIPELINE_REFINEMENT_ANYTIME", "").lower() in ("1", "true", "yes"):
-        return True
     name = (phase_name or "").strip()
     if name == "content_refinement_queue":
-        p = pending or {}
-        if int(p.get("content_refinement_queue", 0) or 0) > 0:
-            return True
+        try:
+            from services.pipeline_schedule_service import content_refinement_schedule_allowed
+
+            return content_refinement_schedule_allowed()
+        except Exception:
+            return False
+    if env_str("PIPELINE_REFINEMENT_ANYTIME", "").lower() in ("1", "true", "yes"):
+        return True
     if phase_name == "entity_profile_build":
         try:
             from shared.spine_phase_order import spine_pipeline_ordered_active

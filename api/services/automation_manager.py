@@ -1271,12 +1271,14 @@ class AutomationManager:
             },
             # Longitudinal intelligence (Phases 1–4): nightly-heavy; yields to ingest
             "embeddings_worker": {
-                "interval": 3600,
+                # Dockside appliance: keep a steady trickle; burn script handles catch-up.
+                "interval": int(os.environ.get("EMBEDDINGS_WORKER_INTERVAL_SEC", "300") or 300),
                 "last_run": None,
                 "enabled": True,
-                "priority": TaskPriority.LOW,
+                "priority": TaskPriority.NORMAL,
                 "phase": 2,
-                "depends_on": ["content_enrichment"],
+                # No hard dep — enrichment lag used to starve scheduling entirely.
+                "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["embeddings_worker"],
             },
             "macro_series_refresh": {
@@ -6986,7 +6988,17 @@ class AutomationManager:
             articles_per_domain = 20
         articles_per_domain = max(5, min(120, articles_per_domain))
 
+        from shared.article_signal_gate import (
+            article_signal_enabled,
+            defer_signal_light_phase_batch,
+            sql_article_signal_full_lane_and,
+        )
         from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
+
+        if article_signal_enabled():
+            defer_signal_light_phase_batch(
+                "entity_extraction", per_domain_limit=articles_per_domain * 2
+            )
 
         pass_clause = ""
         if phase_backlog_uses_pass_marker("entity_extraction"):
@@ -6999,6 +7011,7 @@ class AutomationManager:
             domain_articles = {}
             for domain_key, schema_name in domains:
                 try:
+                    sig = sql_article_signal_full_lane_and("a", schema_name)
                     cursor.execute(f"""
                         SELECT a.id, a.title, a.content
                         FROM {schema_name}.articles a
@@ -7015,6 +7028,7 @@ class AutomationManager:
                             )
                           )
                           {pass_clause}
+                          {sig}
                         ORDER BY a.created_at {_ord}
                         LIMIT {articles_per_domain}
                     """)
@@ -7201,11 +7215,20 @@ class AutomationManager:
                         domain_for_events = schema_to_primary_domain_key(schema)
                     except KeyError:
                         domain_for_events = schema.replace("_", "-")
+                    from shared.article_signal_gate import (
+                        article_signal_enabled,
+                        defer_signal_light_phase_batch,
+                        sql_article_signal_full_lane_and,
+                    )
                     from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
+
+                    if article_signal_enabled():
+                        defer_signal_light_phase_batch("event_extraction", per_domain_limit=80)
 
                     ev_pass = ""
                     if phase_backlog_uses_pass_marker("event_extraction"):
                         ev_pass = f" AND ({sql_article_pass_null('event_extraction', 'a')}) "
+                    ev_sig = sql_article_signal_full_lane_and("a", schema)
                     _ev_ord = sql_order_coalesce_pub_created("a")
 
                     conn = await self._get_db_connection()
@@ -7231,6 +7254,7 @@ class AutomationManager:
                                   OR a.enrichment_status IN ('completed', 'enriched')
                               )
                               {ev_pass}
+                              {ev_sig}
                             ORDER BY {_ev_ord}
                             LIMIT 30
                         """)
@@ -7321,36 +7345,53 @@ class AutomationManager:
         """v5.0 -- Match events to existing storylines and manage lifecycle states. Runs per domain (storylines/story_entity_index are per-schema)."""
         from services.story_continuation_service import StoryContinuationService
 
-        conn = await self._get_db_connection()
-        if not conn:
-            logger.warning("Story continuation: no DB connection")
-            return
+        total = {"checked": 0, "linked": 0, "flagged": 0}
+        for schema in get_pipeline_schema_names_active():
+            # Fresh conn per schema. StoryContinuationService closes+reacquires
+            # self.conn across Ollama — always dual-close current + original.
+            conn = await self._get_db_connection()
+            if not conn:
+                logger.warning("Story continuation: no DB connection for schema %s", schema)
+                continue
+            svc = None
+            try:
+                svc = StoryContinuationService(conn, schema=schema)
+                stats = await svc.process_recent_events(limit=30)
+                svc.update_lifecycle_states()
+                total["checked"] += stats["checked"]
+                total["linked"] += stats["linked"]
+                total["flagged"] += stats["flagged"]
+                if stats["checked"] or stats["linked"] or stats["flagged"]:
+                    logger.debug(
+                        "Story continuation [%s]: checked=%s linked=%s flagged=%s",
+                        schema,
+                        stats["checked"],
+                        stats["linked"],
+                        stats["flagged"],
+                    )
+            except Exception as e:
+                logger.warning("Story continuation failed for schema %s: %s", schema, e)
+            finally:
+                current = getattr(svc, "conn", None) if svc is not None else None
+                for handle in (current, conn):
+                    if handle is None:
+                        continue
+                    try:
+                        handle.close()
+                    except Exception:
+                        pass
+                if svc is not None:
+                    svc.conn = None
+        logger.info(
+            f"v5 story continuation completed: "
+            f"checked={total['checked']}, linked={total['linked']}, flagged={total['flagged']}"
+        )
         try:
-            total = {"checked": 0, "linked": 0, "flagged": 0}
-            for schema in get_pipeline_schema_names_active():
-                try:
-                    svc = StoryContinuationService(conn, schema=schema)
-                    stats = await svc.process_recent_events(limit=30)
-                    svc.update_lifecycle_states()
-                    total["checked"] += stats["checked"]
-                    total["linked"] += stats["linked"]
-                    total["flagged"] += stats["flagged"]
-                    if stats["checked"] or stats["linked"] or stats["flagged"]:
-                        logger.debug(
-                            "Story continuation [%s]: checked=%s linked=%s flagged=%s",
-                            schema,
-                            stats["checked"],
-                            stats["linked"],
-                            stats["flagged"],
-                        )
-                except Exception as e:
-                    logger.warning("Story continuation failed for schema %s: %s", schema, e)
-            logger.info(
-                f"v5 story continuation completed: "
-                f"checked={total['checked']}, linked={total['linked']}, flagged={total['flagged']}"
-            )
-        finally:
-            conn.close()
+            from shared.pipeline_handoffs import after_story_continuation
+
+            after_story_continuation(self, linked=int(total.get("linked") or 0))
+        except Exception as handoff_e:
+            logger.debug("after_story_continuation handoff: %s", handoff_e)
 
     async def _execute_watchlist_alerts_v5(self, task: Task):
         """v5.0 -- Generate alerts for watched storylines."""
