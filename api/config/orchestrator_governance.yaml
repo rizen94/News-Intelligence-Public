@@ -33,6 +33,8 @@ quality_thresholds:
   min_importance_for_processing: 0.55
 
 # Signal-first article lanes — see docs/SIGNAL_FIRST_OPS.md and shared/article_signal_gate.py
+# Full LLM fan-out (UIE, topic, entity/event extraction, claims, assembly unlinked) uses
+# sql_article_signal_full_lane_* / sql_context_has_full_lane_article. Light lane = enrich+index.
 signal_first:
   article_signal_enabled: true
   article_signal_full_min_quality: 0.55
@@ -44,12 +46,13 @@ signal_first:
 rss_feed_health:
   enabled: true
   policy: weekly_cull
-  dry_run: false
-  # Drop the lowest avg-quality feed each week until every scored feed clears this bar
-  target_avg_quality: 0.60
+  # Dry-run until first weekly cycle is reviewed on Monitor / logs; then set false.
+  dry_run: true
+  # Drop lowest avg-quality feeds until every scored feed clears this bar (intake shrink)
+  target_avg_quality: 0.65
   review_window_days: 7
   min_articles_for_score: 5
-  drops_per_review: 1
+  drops_per_review: 2
   interval_seconds: 604800  # weekly
   # Legacy / blocked_yield helpers (warn_silence policy only)
   min_quality: 0.55
@@ -63,7 +66,7 @@ rss_feed_health:
   fetch_failure_consecutive: 5
   review_cycles: 3
   grace_days: 21
-  note: "weekly_cull: one lowest-quality drop per week until all scored feeds avg >= 0.60"
+  note: "weekly_cull: up to drops_per_review lowest below-bar feeds per schema/week; executor in automation/executor.py"
 # Phase E: per-phase retry + auto-silence — see services/phase_retry_silence_service.py
 phase_retry_policy:
   enabled: true
@@ -265,6 +268,7 @@ resources:
   storage_warning_threshold: 0.8
 
 # v10.1: Processing enqueue is owned by PipelineController (see pipeline_controller below).
+# Kill-switch: PIPELINE_CONTROLLER_ENABLED=false restores AutomationManager._scheduler.
 # Collection throttled via COLLECTION_THROTTLE_PENDING_THRESHOLD in automation_manager.
 
 pipeline_conductor:
@@ -327,7 +331,8 @@ post_spine_assembly:
     connections: "25_Connections/"
     investigations: "20_Investigations/"
 
-# Unified pipeline controller (v10.1+) — replaces scheduler tick + spine/assembly conductor loops.
+# Unified pipeline controller (v10.1+) — live enqueue SSOT when PIPELINE_CONTROLLER_ENABLED
+# (default true). Replaces scheduler tick + spine/assembly conductor loops.
 pipeline_controller:
   catchup_clear_threshold: 50
   # When enrichment+UIE+document_processing pending sum exceeds this, catchup desired =

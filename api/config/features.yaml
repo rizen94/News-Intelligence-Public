@@ -106,7 +106,7 @@ rss_feed_silencing:
   flags:
     env: RSS_FEED_SILENCE_ENABLED
     yaml: rss_feed_health.enabled
-  notes: Weekly cull (policy=weekly_cull) drops lowest avg-quality feed until >= target_avg_quality; dry_run via rss_feed_health.dry_run
+  notes: Weekly cull (policy=weekly_cull) silences up to drops_per_review lowest below-bar feeds per schema; executor automation/executor.py; dry_run via rss_feed_health.dry_run
 
 claim_resolvability_gate:
   lifecycle: incorporated

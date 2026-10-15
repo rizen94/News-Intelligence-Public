@@ -69,7 +69,7 @@ schedulers:
     owner: automation_manager
     interval_seconds: 604800
     enabled: true
-    note: Weekly quality cull — drop lowest avg-quality feed until all scored feeds >= 0.60
+    note: Weekly quality cull — up to drops_per_review lowest below-bar feeds per schema (target_avg_quality 0.65; dry_run in orchestrator_governance)
 
   rolling_arc_refresh:
     owner: automation_manager
