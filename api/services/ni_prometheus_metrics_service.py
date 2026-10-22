@@ -320,7 +320,7 @@ def _collect_rss_metrics() -> list[str]:
                             ({"domain": dk, "status": "active"}, float(active or 0))
                         )
                     except Exception as e:
-                        logger.debug("ni prom rss feeds %s: %s", dk, e)
+                        logger.warning("ni prom rss feeds %s: %s", dk, e)
                         try:
                             conn.rollback()
                         except Exception:
@@ -336,7 +336,7 @@ def _collect_rss_metrics() -> list[str]:
                             ({"domain": dk, "window": "24h"}, float(cur.fetchone()[0] or 0))
                         )
                     except Exception as e:
-                        logger.debug("ni prom rss articles %s: %s", dk, e)
+                        logger.warning("ni prom rss articles %s: %s", dk, e)
                         try:
                             conn.rollback()
                         except Exception:
@@ -503,7 +503,7 @@ def _collect_content_and_run_metrics() -> list[str]:
                             ({"kind": kind}, float(cur.fetchone()[0] or 0))
                         )
                     except Exception as e:
-                        logger.debug("ni prom content %s: %s", kind, e)
+                        logger.warning("ni prom content %s: %s", kind, e)
                         try:
                             conn.rollback()
                         except Exception:
@@ -525,7 +525,7 @@ def _collect_content_and_run_metrics() -> list[str]:
                             ({"kind": kind, "window": "24h"}, float(cur.fetchone()[0] or 0))
                         )
                     except Exception as e:
-                        logger.debug("ni prom content 24h %s: %s", kind, e)
+                        logger.warning("ni prom content 24h %s: %s", kind, e)
                         try:
                             conn.rollback()
                         except Exception:
@@ -569,7 +569,7 @@ def _collect_content_and_run_metrics() -> list[str]:
                             )
                         )
                 except Exception as e:
-                    logger.debug("ni prom runs: %s", e)
+                    logger.warning("ni prom runs: %s", e)
                     try:
                         conn.rollback()
                     except Exception:

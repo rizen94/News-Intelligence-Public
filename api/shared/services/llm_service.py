@@ -1052,7 +1052,7 @@ Storyline context:
                 f"{cb_key} circuit breaker is OPEN — skipping call to avoid cascading timeouts"
             )
         cb.begin_probe_if_due_sync()
-        emb_model = (model or env_str("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")).strip()
+        emb_model = (model or env_str("OLLAMA_MODEL_EMBEDDING", "nomic-embed-text")).strip()
         try:
             with httpx.Client(timeout=_httpx_ollama_timeout(execution_lane)) as sync_client:
                 response = sync_client.post(
@@ -1107,7 +1107,7 @@ Storyline context:
                 f"{cb_key} circuit breaker is OPEN — skipping call to avoid cascading timeouts"
             )
         await cb.begin_probe_if_due()
-        emb_model = (model or env_str("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")).strip()
+        emb_model = (model or env_str("OLLAMA_MODEL_EMBEDDING", "nomic-embed-text")).strip()
         _, client, _ = self._resolve_execution_target(
             model=None, execution_lane=execution_lane or "cpu"
         )
