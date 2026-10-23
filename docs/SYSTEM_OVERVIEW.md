@@ -384,22 +384,22 @@ All routes are mounted from `api/main.py`. Each domain router defines its own pr
 
 ## 4. Web Interface Structure
 
-### 4.0 Dual SPA paths (side-by-side)
+### 4.0 Product roots (News on primary domain)
 
 Three product roots share a top-level switcher (`web/src/shell/ProductRootSwitcher.tsx`):
 
 | Tree | Prefix | Code | Notes |
 |------|--------|------|-------|
-| News | `/v2/…` | `web/src/v2/` | Broadsheet reader; domain is `?domain=` filter |
+| News (**default**) | `/`, `/news`, `/current`, `/research`, `/one-offs`, `/storylines/…` | `web/src/v2/` | Broadsheet on primary domain; domain is `?domain=` filter; Living context + Pull context. Legacy `/v2/*` redirects here. |
 | Finance | `/finance/…` | `web/src/finance/` | Trackers / Markets / Reporting |
-| Admin | `/v2/admin/…`, `/admin/…` | `web/src/v2/pages/admin/` | Ops only — Monitor, Work, SQL, Audit, Grafana; no user-content nav |
-| Classic (legacy) | `/:domain/…` | `web/src/layout/MainLayout.tsx` | Kept via "Classic app"; Operations still at `/:domain/monitor` |
+| Admin | `/admin/…` | `web/src/v2/pages/admin/` | Ops only — Monitor, Work, SQL, Audit, Grafana; no user-content nav. Legacy `/v2/admin/*` → `/admin/*`. |
+| Classic (retired) | — | `archive/classic_web_ui/` | Cold storage only — not mounted. Bare `/:domain` and `/classic` → News home. |
 
-Cross-links: classic AppNav "Try new app" → `/v2`; product chrome root toggle swaps News / Finance / Admin. Classic `/finance/commodity/...` and `/finance/analysis` remain under `/:domain`.
+Cross-links: product chrome root toggle swaps News / Finance / Admin (Classic link hidden by default).
 
-### 4.1 Route Map (legacy + finance product)
+### 4.1 Route Map (classic archive + finance product)
 
-All **classic** routes are under `/:domain/` where domain is `politics`, `finance`, or `science-tech`. Default redirect: `/` → `/politics/dashboard`.
+**Default:** `/` is News home on **https://news-intelligence-ag.duckdns.org**. Unknown paths → `/`. Legacy `/v2/*` strips the `/v2` prefix. Bare `/:domain` → `/?domain=…`. Classic UI is not served.
 
 **Finance product** (product-root chrome): `/finance`, `/finance/trackers/*`, `/finance/markets/*`, `/finance/reporting/*`. See `web/src/finance/`.
 
@@ -411,45 +411,28 @@ All **classic** routes are under `/:domain/` where domain is `politics`, `financ
 | `/finance/markets/commodity/:commodity` | `CommodityMarketsPage` | Commodity series under Finance product |
 | `/finance/markets/macro` | `MacroMarketsPage` | Core FRED macro series |
 | `/finance/reporting/*` | reporting shell | Analysis / evidence / traces |
-| `/:domain/dashboard` | `Dashboard` | Intelligence dashboard: What's New, Active Investigations, System Intelligence |
-| `/:domain/discover` | `DiscoverPage` | Latest contexts, entity browser, event timeline |
-| `/:domain/discover/contexts/:id` | `ContextDetailPage` | Context detail |
-| `/:domain/storylines` | `Storylines` | Storyline list |
-| `/:domain/storylines/:id` | `StorylineDetail` | Storyline detail, timeline, articles |
-| `/:domain/briefings` | `Briefings` | Daily briefings with AI summary generation |
-| `/:domain/report` | `ReportPage` | Today's Report — editorial display (lead, secondary, digest) |
-| `/:domain/investigate` | `InvestigatePage` | Tracked events, entity profiles, context search |
-| `/:domain/investigate/events/:id` | `EventDetailPage` | Event detail with chronicles |
-| `/:domain/investigate/entities` | `EntitiesListPage` | Entity list |
-| `/:domain/investigate/entities/:id` | `EntityDetailPage` | Entity detail |
-| `/:domain/investigate/search` | `SearchPage` | Context-centric search |
-| `/:domain/investigate/documents` | `ProcessedDocumentsPage` | Processed documents |
-| `/:domain/investigate/narrative-threads` | `NarrativeThreadsPage` | Narrative threads |
-| `/:domain/monitor` | `MonitorPage` | Live ops: status / now / pulse / actions; Grafana for history |
-| `/:domain/analyze` | `AnalyzePage` | Analysis |
-| `/:domain/analysis` | `FinancialAnalysis` | Financial analysis form (classic) |
-| `/:domain/analysis/:taskId` | `FinancialAnalysisResult` | Financial analysis result |
-| `/:domain/commodity/:commodity` | `CommodityDashboard` | Commodity dashboard (classic; gold, silver, platinum, oil, gas) |
+Classic domain routes (`/classic/…`, bare `/:domain/…`) are **not mounted**. They redirect to News home (`/?domain=…`). Source lives in `archive/classic_web_ui/`.
 
-### 4.1b Route Map (v2)
+### 4.1b Route Map (News / Admin)
 
 | Path | Component | Description |
 |------|-----------|-------------|
-| `/v2` | `v2/pages/Home/HomePage` | Hero + News cascade; Current / One-offs rails |
-| `/v2/news` | `NewsPage` | 48h material News |
-| `/v2/current` | `CurrentPage` | Long-running arcs |
-| `/v2/one-offs` | `OneOffsPage` | List + expected/announced calendar |
-| `/v2/storylines/:domain/:id` | `StorylineReaderPage` | Longform reader pack |
-| `/v2/entities/:id` | `EntityDossierPage` | Light dossier |
-| `/v2/admin` | `AdminOverviewPage` | Ops hub |
-| `/v2/admin/monitor` | `AdminMonitorPage` | Parallel Monitor |
-| `/v2/admin/work` | `AdminWorkPage` | process_run_summary / backlog / failures |
-| `/v2/admin/sql` | `AdminSqlPage` | SQL explorer |
-| `/v2/admin/audit` | `AdminAuditPage` | Side-by-side audit checklist |
+| `/` | `v2/pages/Home/HomePage` | Hero + News cascade; Current / One-offs rails |
+| `/news` | `NewsPage` | 48h material News |
+| `/current` | `CurrentPage` | Long-running arcs |
+| `/one-offs` | `OneOffsPage` | List + expected/announced calendar |
+| `/research` | `ResearchPage` | Profiled research papers |
+| `/storylines/:domain/:id` | `StorylineReaderPage` | Longform reader pack |
+| `/entities/:id` | `EntityDossierPage` | Light dossier |
+| `/admin` | `AdminOverviewPage` | Ops hub |
+| `/admin/monitor` | `AdminMonitorPage` | Parallel Monitor |
+| `/admin/work` | `AdminWorkPage` | process_run_summary / backlog / failures |
+| `/admin/sql` | `AdminSqlPage` | SQL explorer |
+| `/admin/audit` | `AdminAuditPage` | Side-by-side audit checklist |
 
 ### 4.2 Navigation (Sidebar)
 
-Located in `web/src/layout/AppNav.tsx` — persistent sidebar (220px desktop, drawer on mobile). Includes a **Try new app** link to `/v2`.
+Located in `web/src/layout/AppNav.tsx` — classic sidebar (ops deep links). Includes **News → `/`**, **Finance → `/finance`**, **Admin → `/admin`**.
 
 | Label | Path | Icon | Visibility |
 |-------|------|------|------------|
@@ -563,15 +546,15 @@ Content must be preserved and enriched at every step of the pipeline. If content
 | Claim Extraction | `contexts.content` | Subject-predicate-object facts | `intelligence.extracted_claims` | No fact verification |
 | Event Tracking | Grouped contexts | Developments, analysis | `tracked_events` + `event_chronicles` | No event briefings |
 | Entity Profiles | Contexts by entity | Sections, relationships | `entity_profiles.sections` | No entity dossiers |
-| Storylines | Articles + entities | Editorial narrative | `storylines.editorial_document` (JSONB) | Metrics-only briefings |
-| Editorial Output | Editorial documents | Narrative briefing | API response `content` field | Falls back to counts |
+| Storylines | Articles + entities | Editorial narrative | `storylines.editorial_document` (JSONB) | Package projection + desk; thin auto_seed fallback |
+| Editorial Output | Editorial documents | Narrative briefing | API response `content` field | Falls back to counts when empty |
 
 **Key JSONB intelligence fields** (the primary products of the system):
 
 | Table | Field | Purpose | Status |
 |-------|-------|---------|--------|
-| `{domain}.storylines` | `editorial_document` | Storyline narrative (lede, developments, analysis, outlook) | Schema exists (migration 158); not yet populated by pipeline |
-| `intelligence.tracked_events` | `editorial_briefing` / `editorial_briefing_json` | Event briefing (headline, chronology, impact) | Schema exists (migration 158); not yet populated by pipeline |
+| `{domain}.storylines` | `editorial_document` | Storyline narrative (lede, developments, analysis, outlook) | Populated (package projection / desk / seeds); quality path is package publish → `editorial_projection_service` |
+| `intelligence.tracked_events` | `editorial_briefing` / `editorial_briefing_json` | Event briefing (headline, chronology, impact) | Partially populated; package projection + narrative stack + desk writeback |
 | `intelligence.entity_profiles` | `sections` / `relationships_summary` | Entity dossier | Schema exists (migration 143); populated by entity_profile_builder |
 | `{domain}.articles` | `ml_data` | ML outputs (summary, key_points, sentiment) | Populated by ML pipeline |
 
@@ -583,8 +566,8 @@ See `docs/_archive/retired_root_docs_2026_03/CORE_ARCHITECTURE_PRINCIPLES.md` fo
 
 | Service | File | Purpose |
 |---------|------|---------|
-| LLM Service | `api/shared/services/llm_service.py` | Ollama interface (Llama 3.1 8B primary, Mistral 7B secondary) |
-| Automation Manager | `api/services/automation_manager.py` | Scheduled pipeline phases (RSS collection, ML processing, storyline evolution, quality assessment) |
+| LLM Service | `api/shared/services/llm_service.py` | **CB hub** for all Ollama generate/embed; role routing via `ollama_model_caller` + `ollama_model_policy` (throughput on Widow; quality finish on PopOS when dual-host) |
+| Automation Manager | `api/services/automation_manager.py` | Scheduled pipeline phases; Ollama defer/shed/trickle admission with intake pause under CB open |
 | Daily Briefing | `api/modules/ml/daily_briefing_service.py` | Generates daily briefing sections from DB (key developments, metrics, storyline analysis) |
 | Storyline Tracker | `api/modules/ml/storyline_tracker.py` | Topic cloud, breaking topics, daily summary |
 | ML Pipeline | `api/modules/ml/ml_pipeline.py` | Article ML processing pipeline |
@@ -592,7 +575,7 @@ See `docs/_archive/retired_root_docs_2026_03/CORE_ARCHITECTURE_PRINCIPLES.md` fo
 | Entity Profile Builder | `api/services/entity_profile_builder_service.py` | Entity profile construction from articles |
 | Route Supervisor | `api/shared/services/route_supervisor.py` | API route health monitoring |
 | RSS Collector | `api/collectors/rss_collector.py` | RSS feed fetching and article ingestion |
-| Circuit Breaker | `api/services/circuit_breaker_service.py` | Ollama/external service circuit breaker |
+| Circuit Breaker | `api/services/circuit_breaker_service.py` | `OLLAMA_CB_KEYS` (`ollama` / `_gpu` / `_cpu` / `_pop_os`); overload does not trip; Monitor reset at `POST /api/system_monitoring/circuit_breakers/reset` |
 
 ---
 
@@ -651,10 +634,11 @@ api/
 └── database/migrations/          # SQL migrations
 
 web/src/
-├── App.tsx                       # Route definitions, providers (legacy + /v2)
-├── layout/AppNav.tsx             # Sidebar navigation (+ Try new app → /v2)
+├── App.tsx                       # Routes: News on /; classic under /classic; /v2 redirects
+├── paths.ts                      # Canonical News / Admin / Classic URL helpers
+├── layout/AppNav.tsx             # Classic sidebar (News/Finance/Admin cross-links)
 ├── pages/                        # Legacy page components (see 4.3)
-├── v2/                           # Parallel broadsheet User + Admin UI
+├── v2/                           # Broadsheet User + Admin UI (URLs no longer /v2-prefixed)
 │   ├── layouts/                  # UserLayout, AdminLayout
 │   ├── pages/                    # Home, News, Current, OneOffs, reader, admin
 │   ├── components/StoryUnit.tsx

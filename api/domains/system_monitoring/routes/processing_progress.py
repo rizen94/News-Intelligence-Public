@@ -550,6 +550,8 @@ def compute_processing_progress_response(
             row["batches_to_drain"] = int(math.ceil(pend / bsize))
         else:
             row["batches_to_drain"] = None
+        # Filled below when include_pending_metrics (value tiers / contracts).
+        row["pending_value_tiers"] = None
         phase_dashboard.append(row)
 
     reporting_definitions: dict[str, str] = {
@@ -593,9 +595,20 @@ def compute_processing_progress_response(
             "Pending rows in public.storyline_article_suggestions awaiting operator approve/reject. "
             "Separate from storyline_automation pool depth (scheduler eligibility for suggest_only storylines)."
         ),
+        "pending_value_tiers": (
+            "Value-weighted breakdown of work: hot (SLO/high-signal subset), actionable "
+            "(matches automation selection = pending_records), long_tail (held by admission "
+            "gates), deferred (signal_deferred), inventory (raw completeness pile). "
+            "Only contracted phases populate this object."
+        ),
+        "backlog_contracts": (
+            "Static registry asserting Monitor pending counters share selection predicates "
+            "with phase runners (see shared.backlog_selection_contracts)."
+        ),
     }
 
     operator_metrics: dict[str, Any] = {}
+    backlog_measurement: dict[str, Any] | None = None
     if include_pending_metrics:
         try:
             from services.backlog_metrics import (
@@ -611,6 +624,26 @@ def compute_processing_progress_response(
             }
         except Exception as e:
             logger.debug("processing_progress operator_metrics: %s", e)
+        try:
+            from services.backlog_value_tiers import get_backlog_measurement_bundle
+            from services.capacity_ledger_service import compute_capacity_ledger
+
+            backlog_measurement = get_backlog_measurement_bundle()
+            tiers_by = backlog_measurement.get("tiers_by_phase") or {}
+            for row in phase_dashboard:
+                pname = row.get("phase_name")
+                if pname and pname in tiers_by:
+                    row["pending_value_tiers"] = tiers_by[pname]
+            try:
+                backlog_measurement["capacity_ledger"] = compute_capacity_ledger(
+                    pending=pending_m if pending_m else None
+                )
+            except Exception as le:
+                logger.debug("processing_progress capacity_ledger: %s", le)
+                backlog_measurement["capacity_ledger"] = {"error": str(le)[:200]}
+        except Exception as e:
+            logger.warning("processing_progress backlog_measurement: %s", e)
+            backlog_measurement = {"contracts_ok": False, "contract_failures": [str(e)[:200]]}
 
     try:
         from shared.gpu_metrics import maybe_record_gpu_metric_sample
@@ -627,6 +660,7 @@ def compute_processing_progress_response(
             "pending_metrics_included": include_pending_metrics,
             "pending_metrics_merge_error": pending_metrics_merge_error,
             "operator_metrics": operator_metrics,
+            "backlog_measurement": backlog_measurement,
             "reporting_definitions": reporting_definitions,
             "dimensions": dimensions,
             "phase_dashboard": phase_dashboard,

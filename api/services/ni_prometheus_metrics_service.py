@@ -106,9 +106,31 @@ def _gauge(name: str, help_text: str, samples: list[tuple[dict[str, str], float]
 def _collect_queue_metrics() -> list[str]:
     lines: list[str] = []
     try:
-        from services.backlog_metrics import get_all_backlog_counts, get_all_pending_counts
+        from services.backlog_metrics import (
+            get_all_backlog_counts,
+            get_all_pending_counts,
+            kick_backlog_cache_refresh,
+        )
 
-        depths = get_all_pending_counts() or {}
+        # Never block the scrape on sequential COUNT(*) — prefer cache; if cold,
+        # kick a background refresh and emit nothing this tick (Grafana keeps last).
+        try:
+            max_stale_s = float(os.environ.get("NI_PROMETHEUS_QUEUE_MAX_STALE_S", "600") or 600)
+        except (TypeError, ValueError):
+            max_stale_s = 600.0
+
+        depths = (
+            get_all_pending_counts(
+                prefer_stale=True,
+                max_stale_s=max_stale_s,
+                skip_refresh_if_empty=True,
+            )
+            or {}
+        )
+        if not depths:
+            kick_backlog_cache_refresh(budget_s=45.0)
+            return lines
+
         lines.extend(
             _gauge(
                 "ni_queue_depth",
@@ -116,7 +138,14 @@ def _collect_queue_metrics() -> list[str]:
                 [({"phase": str(p)}, float(v or 0)) for p, v in depths.items()],
             )
         )
-        backlog = get_all_backlog_counts() or {}
+        backlog = (
+            get_all_backlog_counts(
+                prefer_stale=True,
+                max_stale_s=max_stale_s,
+                skip_refresh_if_empty=True,
+            )
+            or {}
+        )
         lines.extend(
             _gauge(
                 "ni_scheduling_backlog",
@@ -291,7 +320,7 @@ def _collect_rss_metrics() -> list[str]:
                             ({"domain": dk, "status": "active"}, float(active or 0))
                         )
                     except Exception as e:
-                        logger.debug("ni prom rss feeds %s: %s", dk, e)
+                        logger.warning("ni prom rss feeds %s: %s", dk, e)
                         try:
                             conn.rollback()
                         except Exception:
@@ -307,7 +336,7 @@ def _collect_rss_metrics() -> list[str]:
                             ({"domain": dk, "window": "24h"}, float(cur.fetchone()[0] or 0))
                         )
                     except Exception as e:
-                        logger.debug("ni prom rss articles %s: %s", dk, e)
+                        logger.warning("ni prom rss articles %s: %s", dk, e)
                         try:
                             conn.rollback()
                         except Exception:
@@ -328,6 +357,124 @@ def _collect_rss_metrics() -> list[str]:
         )
     except Exception as e:
         logger.warning("ni prom rss: %s", e)
+    return lines
+
+
+def _collect_embeddings_host_metrics() -> list[str]:
+    """Dockside / dedicated embeddings appliance health for Grafana alerts."""
+    lines: list[str] = []
+    try:
+        from services.embeddings_host_health_service import get_embeddings_host_health
+
+        samples = get_embeddings_host_health().prometheus_samples()
+        host = str(samples.get("host") or "")
+        labels = {"host": host} if host else {}
+        lines.extend(
+            _gauge(
+                "ni_embeddings_host_configured",
+                "1 if OLLAMA_EMBEDDINGS_HOST is set (Dockside appliance).",
+                [(labels, float(samples.get("configured") or 0.0))],
+            )
+        )
+        lines.extend(
+            _gauge(
+                "ni_embeddings_host_up",
+                "1 if dedicated embeddings Ollama host last probe/embed succeeded.",
+                [(labels, float(samples.get("up") or 0.0))],
+            )
+        )
+        lines.extend(
+            _gauge(
+                "ni_embeddings_host_paused",
+                "1 when embeddings worker should yield (host unreachable / errors).",
+                [(labels, float(samples.get("paused") or 0.0))],
+            )
+        )
+        lines.extend(
+            _gauge(
+                "ni_embeddings_host_consecutive_failures",
+                "Consecutive embeddings-host probe/embed failures.",
+                [(labels, float(samples.get("consecutive_failures") or 0.0))],
+            )
+        )
+        lines.extend(
+            _gauge(
+                "ni_embeddings_embed_success_total",
+                "Successful embed calls to dedicated embeddings host (process lifetime).",
+                [(labels, float(samples.get("success_total") or 0.0))],
+            )
+        )
+        lines.extend(
+            _gauge(
+                "ni_embeddings_embed_fail_total",
+                "Failed embed calls to dedicated embeddings host (process lifetime).",
+                [(labels, float(samples.get("fail_total") or 0.0))],
+            )
+        )
+        lines.extend(
+            _gauge(
+                "ni_embeddings_probe_ok_total",
+                "Successful embeddings-host health probes (process lifetime).",
+                [(labels, float(samples.get("probe_ok_total") or 0.0))],
+            )
+        )
+        lines.extend(
+            _gauge(
+                "ni_embeddings_probe_fail_total",
+                "Failed embeddings-host health probes (process lifetime).",
+                [(labels, float(samples.get("probe_fail_total") or 0.0))],
+            )
+        )
+        lines.extend(
+            _gauge(
+                "ni_embeddings_worker_yield_total",
+                "embeddings_worker batches yielded due to host pause (process lifetime).",
+                [(labels, float(samples.get("yield_total") or 0.0))],
+            )
+        )
+        lat = samples.get("probe_latency_ms")
+        if lat is not None:
+            lines.extend(
+                _gauge(
+                    "ni_embeddings_host_probe_latency_ms",
+                    "Last embeddings-host probe latency in milliseconds.",
+                    [(labels, float(lat))],
+                )
+            )
+        # Recent chunk ingestion (DB) — work-done signal for Grafana (cheap windows only).
+        try:
+            from shared.database.connection import get_db_connection_context
+
+            with get_db_connection_context() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT
+                          COUNT(*) FILTER (
+                            WHERE ingestion_date > NOW() - INTERVAL '1 hour'
+                          ),
+                          COUNT(*) FILTER (
+                            WHERE ingestion_date > NOW() - INTERVAL '15 minutes'
+                          )
+                        FROM intelligence.embedding_chunks
+                        WHERE ingestion_date > NOW() - INTERVAL '1 hour'
+                        """
+                    )
+                    row = cur.fetchone() or (0, 0)
+            lines.extend(
+                _gauge(
+                    "ni_embedding_chunks_ingested",
+                    "embedding_chunks rows by recent window.",
+                    [
+                        ({"window": "1h"}, float(row[0] or 0)),
+                        ({"window": "15m"}, float(row[1] or 0)),
+                    ],
+                )
+            )
+        except Exception as e:
+            logger.debug("ni prom embedding chunks: %s", e)
+    except Exception as e:
+        logger.warning("ni prom embeddings host: %s", e)
     return lines
 
 
@@ -356,7 +503,7 @@ def _collect_content_and_run_metrics() -> list[str]:
                             ({"kind": kind}, float(cur.fetchone()[0] or 0))
                         )
                     except Exception as e:
-                        logger.debug("ni prom content %s: %s", kind, e)
+                        logger.warning("ni prom content %s: %s", kind, e)
                         try:
                             conn.rollback()
                         except Exception:
@@ -378,7 +525,7 @@ def _collect_content_and_run_metrics() -> list[str]:
                             ({"kind": kind, "window": "24h"}, float(cur.fetchone()[0] or 0))
                         )
                     except Exception as e:
-                        logger.debug("ni prom content 24h %s: %s", kind, e)
+                        logger.warning("ni prom content 24h %s: %s", kind, e)
                         try:
                             conn.rollback()
                         except Exception:
@@ -422,7 +569,7 @@ def _collect_content_and_run_metrics() -> list[str]:
                             )
                         )
                 except Exception as e:
-                    logger.debug("ni prom runs: %s", e)
+                    logger.warning("ni prom runs: %s", e)
                     try:
                         conn.rollback()
                     except Exception:
@@ -448,32 +595,148 @@ def _collect_content_and_run_metrics() -> list[str]:
 
 
 def build_prometheus_metrics(*, force: bool = False) -> str:
-    """Return Prometheus text exposition (cached)."""
+    """Return Prometheus text exposition (cached).
+
+    Scrapes must stay under Homelab ``scrape_timeout`` (~30s). Under DB pool pressure a
+    full rebuild can hang for minutes — serve stale cache and refresh in a background
+    thread instead of blocking the scrape request.
+    """
     global _CACHE_BODY, _CACHE_AT
     if not is_enabled():
         return "# NI Prometheus metrics disabled (NI_PROMETHEUS_METRICS_ENABLED=false)\n"
 
     now = time.monotonic()
-    with _CACHE_LOCK:
-        if (
-            not force
-            and _CACHE_BODY is not None
-            and (now - _CACHE_AT) < cache_ttl_seconds()
-        ):
-            return _CACHE_BODY
+    ttl = cache_ttl_seconds()
+    try:
+        max_stale_s = float(os.environ.get("NI_PROMETHEUS_MAX_STALE_S", "900") or 900)
+    except (TypeError, ValueError):
+        max_stale_s = 900.0
+    max_stale_s = max(ttl, min(max_stale_s, 3600.0))
 
+    with _CACHE_LOCK:
+        cached = _CACHE_BODY
+        cached_at = _CACHE_AT
+        age = (now - cached_at) if cached is not None else None
+        fresh = cached is not None and age is not None and age < ttl
+        has_queue = bool(cached and "ni_queue_depth{" in cached)
+        usable_stale = (
+            cached is not None
+            and has_queue
+            and age is not None
+            and age < max_stale_s
+            and not force
+        )
+
+    if fresh and not force:
+        return cached or ""
+
+    if usable_stale:
+        _kick_background_refresh()
+        return cached or ""
+
+    # Cold / forced rebuild — hard wall budget so scrapes never 504.
+    body = _rebuild_prometheus_body()
+    if body is None and cached is not None:
+        return cached
+    # Incomplete cold build (no queue lines yet) — keep TTL short so next scrape
+    # picks up backlog cache once background refresh finishes.
+    if body and "ni_queue_depth{" not in body:
+        with _CACHE_LOCK:
+            # Force next scrape to rebuild once backlog background refresh fills.
+            # Do NOT kick _kick_background_refresh here — it would rewrite a fresh
+            # incomplete body and undo this aging (queue depths stay missing).
+            _CACHE_AT = time.monotonic() - cache_ttl_seconds() - 1.0
+    return body or "# ni prometheus rebuild empty\n"
+
+
+_REFRESH_LOCK = threading.Lock()
+_REFRESH_RUNNING = False
+
+
+def _kick_background_refresh() -> None:
+    """Non-blocking cache refresh for stale-but-usable scrape responses."""
+    global _REFRESH_RUNNING
+    with _REFRESH_LOCK:
+        if _REFRESH_RUNNING:
+            return
+        _REFRESH_RUNNING = True
+
+    def _run() -> None:
+        global _REFRESH_RUNNING
+        try:
+            _rebuild_prometheus_body()
+        finally:
+            with _REFRESH_LOCK:
+                _REFRESH_RUNNING = False
+
+    threading.Thread(target=_run, name="ni-prom-refresh", daemon=True).start()
+
+
+def _rebuild_prometheus_body() -> str | None:
+    """Run collectors with per-collector timeouts; always returns something if possible."""
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+
+    try:
+        overall_budget_s = float(os.environ.get("NI_PROMETHEUS_BUILD_BUDGET_S", "20") or 20)
+    except (TypeError, ValueError):
+        overall_budget_s = 20.0
+    overall_budget_s = max(5.0, min(overall_budget_s, 28.0))
+    collector_timeouts = {
+        "queue": float(os.environ.get("NI_PROMETHEUS_QUEUE_COLLECTOR_TIMEOUT_S", "10") or 10),
+        "latency": 5.0,
+        "inventory": 5.0,
+        "rss": 4.0,
+        "content_runs": 5.0,
+        "embeddings_host": 8.0,
+    }
+
+    deadline = time.monotonic() + overall_budget_s
     chunks: list[str] = [
         "# News Intelligence Monitor-parity metrics",
         f"# generated_at_unix {int(time.time())}",
     ]
-    chunks.extend(_collect_queue_metrics())
-    chunks.extend(_collect_latency_metrics())
-    chunks.extend(_collect_inventory_metrics())
-    chunks.extend(_collect_rss_metrics())
-    chunks.extend(_collect_content_and_run_metrics())
+    # embeddings_host early: cheap gauges + alert surface; must not lose budget to queue.
+    for name, fn in (
+        ("embeddings_host", _collect_embeddings_host_metrics),
+        ("queue", _collect_queue_metrics),
+        ("latency", _collect_latency_metrics),
+        ("inventory", _collect_inventory_metrics),
+        ("rss", _collect_rss_metrics),
+        ("content_runs", _collect_content_and_run_metrics),
+    ):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.5:
+            continue
+        timeout = min(float(collector_timeouts.get(name, 5.0)), remaining)
+        pool = ThreadPoolExecutor(max_workers=1)
+        try:
+            fut = pool.submit(fn)
+            part = fut.result(timeout=timeout)
+            chunks.extend(part)
+        except FuturesTimeout:
+            logger.warning("ni prom collector %s timed out after %.1fs", name, timeout)
+            # #region agent log
+            try:
+                from shared.debug_session_log import agent_dbg
+
+                agent_dbg(
+                    "C",
+                    "ni_prometheus_metrics_service.py:collector_timeout",
+                    "prom_collector_timeout",
+                    {"collector": name, "timeout_s": timeout},
+                )
+            except Exception:
+                pass
+            # #endregion
+        except Exception as e:
+            logger.warning("ni prom collector %s failed: %s", name, e)
+        finally:
+            # Do not wait — a hung COUNT must not block the scrape past timeout.
+            pool.shutdown(wait=False, cancel_futures=True)
     chunks.append("")
     body = "\n".join(chunks)
 
+    global _CACHE_BODY, _CACHE_AT
     with _CACHE_LOCK:
         _CACHE_BODY = body
         _CACHE_AT = time.monotonic()

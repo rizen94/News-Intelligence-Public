@@ -31,7 +31,13 @@ export default function NewsPage() {
       <div className='v2-cascade'>
         {items.map((item, i) => (
           <StoryUnit
-            key={`${item.domain}-${item.storyline_id}`}
+            key={
+              item.surface_kind === 'daily_briefing'
+                ? `briefing-${item.briefing_day || item.vault_path || item.href}`
+                : item.surface_kind === 'vault_hub'
+                  ? `hub-${item.hub_id || item.cluster_key || item.href}`
+                  : `${item.domain}-${item.storyline_id}`
+            }
             item={item}
             variant={i === 0 ? 'hero' : i < 3 ? 'lead' : 'secondary'}
           />

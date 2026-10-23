@@ -23,6 +23,7 @@ _get_raw_pending_counts and BATCH_SIZE_PER_TASK makes more of the pipeline workl
 
 import logging
 import os
+import threading
 import time
 from typing import Dict, Optional
 
@@ -90,6 +91,12 @@ BATCH_SIZE_PER_TASK: Dict[str, int] = {
     "storyline_synthesis": 16,  # ~4 storylines × active domains per _execute_storyline_synthesis tick
     "graph_connection_distillation": 12,  # GRAPH_CONNECTION_DISTILLATION_BATCH proposals per run
     "pending_db_flush": 200,  # rough lines replayed per successful flush (order-of-magnitude)
+    "extracted_claims_dedupe": 500,  # dedupe batch size order-of-magnitude
+    "event_deduplication": 100,  # EventDeduplicationService.deduplicate_recent default
+    "story_continuation": 90,  # ~30 events × active schemas
+    "event_coherence_review": 5,  # LLM-heavy; few events per tick
+    "research_paper_profiling": 2,  # trickle batch when pending ≫ threshold (see research_paper_profile_service)
+    "claim_evidence_appraisal": 5,  # CLAIM_EVIDENCE_APPRAISAL_BATCH default
 }
 
 # Phases where backlog = pending (orchestrator / not row-batched in this model).
@@ -142,57 +149,105 @@ RAW_PENDING_COUNT_KEYS = frozenset(
         "storyline_synthesis",
         "graph_connection_distillation",
         "nightly_enrichment_context",
+        # Interval-noise phases now pending-driven (ops capacity cascade)
+        "extracted_claims_dedupe",
+        "event_deduplication",
+        "story_continuation",
+        "event_coherence_review",
+        # Scientific paper pathway (LLM axes + literature appraisal)
+        "research_paper_profiling",
+        "claim_evidence_appraisal",
     }
 )
 
 
-def _get_raw_pending_counts() -> Dict[str, int]:
-    """Query all raw pending-work counts (not cached — called by the cached wrapper)."""
-    raw: Dict[str, int] = {}
-    try:
-        raw["content_enrichment"] = _count_content_enrichment_backlog()
-        raw["context_sync"] = _count_context_sync_backlog()
-        raw["event_tracking"] = _count_event_tracking_backlog()
-        raw["claim_extraction"] = _count_claim_extraction_backlog()
-        raw["entity_profile_build"] = _count_entity_profile_build_backlog()
-        raw["investigation_report_refresh"] = _count_investigation_report_backlog()
-        raw["document_processing"] = _count_document_processing_backlog()
-        try:
-            from shared.database.pending_db_writes import pending_line_count
+def _get_raw_pending_counts(*, budget_s: Optional[float] = None) -> Dict[str, int]:
+    """Query all raw pending-work counts (not cached — called by the cached wrapper).
 
-            raw["pending_db_flush"] = pending_line_count()
-        except Exception:
+    ``budget_s``: when set (e.g. Prometheus scrape path), stop issuing new COUNT queries
+    after the wall-clock budget and fill remaining keys with 0 so callers return promptly.
+    """
+    raw: Dict[str, int] = {}
+    deadline = (time.monotonic() + float(budget_s)) if budget_s is not None else None
+    skipped = 0
+
+    def _over_budget() -> bool:
+        return deadline is not None and time.monotonic() >= deadline
+
+    def _put(key: str, fn) -> None:
+        nonlocal skipped
+        if _over_budget():
+            raw[key] = 0
+            skipped += 1
+            return
+        try:
+            raw[key] = int(fn() or 0)
+        except Exception as e:
+            logger.debug("backlog_metrics count %s failed: %s", key, e)
+            raw[key] = 0
+
+    try:
+        _put("content_enrichment", _count_content_enrichment_backlog)
+        _put("context_sync", _count_context_sync_backlog)
+        _put("event_tracking", _count_event_tracking_backlog)
+        _put("claim_extraction", _count_claim_extraction_backlog)
+        _put("entity_profile_build", _count_entity_profile_build_backlog)
+        _put("investigation_report_refresh", _count_investigation_report_backlog)
+        _put("document_processing", _count_document_processing_backlog)
+        if _over_budget():
             raw["pending_db_flush"] = 0
-        raw["content_refinement_queue"] = _count_content_refinement_queue_pending()
-        raw["metadata_enrichment"] = _count_metadata_enrichment_pending()
-        raw["ml_processing"] = _count_ml_processing_pending()
-        raw["entity_extraction"] = _count_entity_extraction_pending()
-        raw["sentiment_analysis"] = _count_sentiment_analysis_pending()
-        raw["quality_scoring"] = _count_quality_scoring_pending()
-        raw["storyline_processing"] = _count_storyline_processing_pending()
-        raw["topic_clustering"] = _count_topic_clustering_pending()
-        raw["timeline_generation"] = _count_timeline_generation_pending()
-        raw["storyline_discovery"] = _count_storyline_discovery_pending()
-        raw["rag_enhancement"] = _count_rag_enhancement_pending()
-        raw["event_extraction"] = _count_event_extraction_pending()
-        raw["proactive_detection"] = _count_proactive_detection_pending()
-        raw["storyline_assembly"] = _count_storyline_assembly_pending()
-        raw["storyline_automation"] = _count_storyline_automation_pending()
-        raw["claims_to_facts"] = _count_claims_to_facts_pending()
-        raw["legislative_references"] = _count_legislative_references_backlog()
-        raw["entity_profile_sync"] = _count_entity_profile_sync_pending()
-        raw["entity_enrichment"] = _count_entity_enrichment_pending()
-        raw["entity_dossier_compile"] = _count_entity_dossier_compile_pending()
-        raw["story_enhancement"] = _count_story_enhancement_pending()
-        raw["storyline_synthesis"] = _count_storyline_synthesis_pending()
-        raw["graph_connection_distillation"] = _count_graph_connection_distillation_pending()
+            skipped += 1
+        else:
+            try:
+                from shared.database.pending_db_writes import pending_line_count
+
+                raw["pending_db_flush"] = int(pending_line_count() or 0)
+            except Exception:
+                raw["pending_db_flush"] = 0
+        _put("content_refinement_queue", _count_content_refinement_queue_pending)
+        _put("metadata_enrichment", _count_metadata_enrichment_pending)
+        _put("ml_processing", _count_ml_processing_pending)
+        _put("entity_extraction", _count_entity_extraction_pending)
+        _put("sentiment_analysis", _count_sentiment_analysis_pending)
+        _put("quality_scoring", _count_quality_scoring_pending)
+        _put("storyline_processing", _count_storyline_processing_pending)
+        _put("topic_clustering", _count_topic_clustering_pending)
+        _put("timeline_generation", _count_timeline_generation_pending)
+        _put("storyline_discovery", _count_storyline_discovery_pending)
+        _put("rag_enhancement", _count_rag_enhancement_pending)
+        _put("event_extraction", _count_event_extraction_pending)
+        _put("proactive_detection", _count_proactive_detection_pending)
+        _put("storyline_assembly", _count_storyline_assembly_pending)
+        _put("storyline_automation", _count_storyline_automation_pending)
+        _put("claims_to_facts", _count_claims_to_facts_pending)
+        _put("legislative_references", _count_legislative_references_backlog)
+        _put("entity_profile_sync", _count_entity_profile_sync_pending)
+        _put("entity_enrichment", _count_entity_enrichment_pending)
+        _put("entity_dossier_compile", _count_entity_dossier_compile_pending)
+        _put("story_enhancement", _count_story_enhancement_pending)
+        _put("storyline_synthesis", _count_storyline_synthesis_pending)
+        _put("graph_connection_distillation", _count_graph_connection_distillation_pending)
         raw["nightly_enrichment_context"] = (
             int(raw.get("content_enrichment", 0) or 0)
             + int(raw.get("context_sync", 0) or 0)
             + int(raw.get("content_refinement_queue", 0) or 0)
         )
+        _put("extracted_claims_dedupe", _count_extracted_claims_dedupe_pending)
+        _put("event_deduplication", _count_event_deduplication_pending)
+        _put("story_continuation", _count_story_continuation_pending)
+        _put("event_coherence_review", _count_event_coherence_review_pending)
+        _put("research_paper_profiling", _count_research_paper_profiling_pending)
+        _put("claim_evidence_appraisal", _count_claim_evidence_appraisal_pending)
+        if skipped:
+            logger.warning(
+                "backlog_metrics _get_raw_pending_counts: budget %.1fs exhausted; skipped %s phase counts",
+                float(budget_s or 0),
+                skipped,
+            )
     except Exception as e:
         logger.warning("backlog_metrics _get_raw_pending_counts: %s", e)
+        for k in RAW_PENDING_COUNT_KEYS:
+            raw.setdefault(k, 0)
         return raw
     built = frozenset(raw.keys())
     if built != RAW_PENDING_COUNT_KEYS:
@@ -257,13 +312,15 @@ def _per_run_batch_size(task: str) -> int:
             pass
     if task == "story_enhancement":
         try:
-            import os
+            from shared.pipeline_resource_policy import story_enhancement_run_limits
 
-            fact = max(10, min(500, int(os.environ.get("STORY_ENHANCEMENT_FACT_BATCH", "100"))))
-            queue = max(1, min(50, int(os.environ.get("STORY_ENHANCEMENT_QUEUE_BATCH", "10"))))
-            enrich = max(1, min(50, int(os.environ.get("STORY_ENHANCEMENT_ENRICH_LIMIT", "10"))))
-            build = max(1, min(50, int(os.environ.get("STORY_ENHANCEMENT_BUILD_LIMIT", "10"))))
-            return fact + queue + enrich + build
+            limits = story_enhancement_run_limits()
+            return (
+                int(limits["fact_batch"])
+                + int(limits["queue_batch"])
+                + int(limits["enrich_limit"])
+                + int(limits["build_limit"])
+            )
         except Exception:
             return int(BATCH_SIZE_PER_TASK["story_enhancement"])
     if task in BATCH_SIZE_PER_TASK:
@@ -276,14 +333,14 @@ def get_per_run_batch_size_for_phase(phase_name: str) -> int:
     return _per_run_batch_size(phase_name)
 
 
-def _refresh_cache() -> None:
+def _refresh_cache(*, budget_s: Optional[float] = None) -> None:
     """Refresh both pending and backlog caches."""
     global _backlog_cache, _backlog_cache_time, _pending_cache, _pending_cache_time
     now = time.monotonic()
     if now - _backlog_cache_time <= BACKLOG_CACHE_TTL and _backlog_cache:
         return
 
-    raw = _get_raw_pending_counts()
+    raw = _get_raw_pending_counts(budget_s=budget_s)
     _pending_cache = raw.copy()
     _pending_cache_time = now
 
@@ -295,24 +352,81 @@ def _refresh_cache() -> None:
     _backlog_cache_time = now
 
 
-def get_all_backlog_counts() -> Dict[str, int]:
+def get_all_backlog_counts(
+    *,
+    prefer_stale: bool = False,
+    max_stale_s: float = 600.0,
+    refresh_budget_s: Optional[float] = None,
+    skip_refresh_if_empty: bool = False,
+) -> Dict[str, int]:
     """
     Return current **backlog** count per phase — pending work *exceeding* one batch.
     Cached for BACKLOG_CACHE_TTL.  Values > 0 mean genuine backlog (more work than
     one run can handle); 0 means the task is keeping up or idle.
     Used for priority boosting and interval shortening.
+
+    ``prefer_stale``: for scrape/Monitor paths — return cache up to ``max_stale_s`` without
+    blocking on a full COUNT refresh. When cache is empty/too old, refresh with optional
+    ``refresh_budget_s`` wall-clock cap.
+    ``skip_refresh_if_empty``: with prefer_stale, return {} instead of blocking when cold.
     """
-    _refresh_cache()
+    now = time.monotonic()
+    if prefer_stale and _backlog_cache and (now - _backlog_cache_time) <= float(max_stale_s):
+        return _backlog_cache.copy()
+    if prefer_stale and skip_refresh_if_empty and not _backlog_cache:
+        return {}
+    _refresh_cache(budget_s=refresh_budget_s)
     return _backlog_cache.copy()
 
 
-def get_all_pending_counts() -> Dict[str, int]:
+def get_all_pending_counts(
+    *,
+    prefer_stale: bool = False,
+    max_stale_s: float = 600.0,
+    refresh_budget_s: Optional[float] = None,
+    skip_refresh_if_empty: bool = False,
+) -> Dict[str, int]:
     """
     Return raw pending-work counts per phase (items waiting, regardless of batch size).
     Used by SKIP_WHEN_EMPTY — a task with *any* pending work (even 1 item) should still run.
+
+    See ``get_all_backlog_counts`` for ``prefer_stale`` / ``refresh_budget_s`` (Prometheus).
     """
-    _refresh_cache()
+    now = time.monotonic()
+    if prefer_stale and _pending_cache and (now - _pending_cache_time) <= float(max_stale_s):
+        return _pending_cache.copy()
+    if prefer_stale and skip_refresh_if_empty and not _pending_cache:
+        return {}
+    _refresh_cache(budget_s=refresh_budget_s)
     return _pending_cache.copy()
+
+
+def kick_backlog_cache_refresh(*, budget_s: Optional[float] = 45.0) -> None:
+    """Daemon refresh so Prometheus can prefer_stale without blocking scrapes."""
+    global _BACKLOG_BG_REFRESHING
+    with _BACKLOG_BG_LOCK:
+        if _BACKLOG_BG_REFRESHING:
+            return
+        _BACKLOG_BG_REFRESHING = True
+
+    def _run() -> None:
+        global _BACKLOG_BG_REFRESHING
+        try:
+            # Force re-query even if TTL says fresh (cold path uses empty cache).
+            global _backlog_cache_time
+            _backlog_cache_time = 0.0
+            _refresh_cache(budget_s=budget_s)
+        except Exception as e:
+            logger.warning("backlog_metrics background refresh failed: %s", e)
+        finally:
+            with _BACKLOG_BG_LOCK:
+                _BACKLOG_BG_REFRESHING = False
+
+    threading.Thread(target=_run, name="ni-backlog-refresh", daemon=True).start()
+
+
+_BACKLOG_BG_LOCK = threading.Lock()
+_BACKLOG_BG_REFRESHING = False
 
 
 def get_backlog_count(task_name: str) -> Optional[int]:
@@ -379,6 +493,7 @@ def _count_content_enrichment_backlog() -> int:
     try:
         for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
                     f"""
                     SELECT COUNT(*) FROM {schema}.articles
@@ -409,6 +524,7 @@ def _count_context_sync_backlog() -> int:
     try:
         for domain_key, schema in pipeline_url_schema_pairs():
             with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
                     f"""
                     SELECT COUNT(*) FROM {schema}.articles a
@@ -445,7 +561,9 @@ def _count_event_tracking_backlog() -> int:
         pass_sql = f" AND ({sql_context_pass_null('event_tracking', 'c')}) "
     try:
         with conn.cursor() as cur:
-            cur.execute("SET LOCAL statement_timeout = '30s'")
+            # Cap hard: jsonb chronicle scan is expensive under load; scrape/Monitor
+            # must not wait 30s+ per phase (was blowing Homelab scrape_timeout).
+            cur.execute("SET LOCAL statement_timeout = '8s'")
             cur.execute(
                 f"""
                 SELECT COUNT(*) FROM intelligence.contexts c
@@ -472,28 +590,22 @@ def _count_event_tracking_backlog() -> int:
 
 
 def _count_claim_extraction_backlog() -> int:
-    """Contexts with no extracted_claims and enough text for extraction (matches batch gate)."""
+    """Contexts claim_extraction would select — same gate as ``sql_claim_extraction_eligible``
+    (min text + pass-null + fusion gap-fill when intake fusion is on)."""
     conn = _get_conn()
     if not conn:
         return 0
-    min_text = _claim_extraction_min_text_length()
-    pass_sql = ""
-    if phase_backlog_uses_pass_marker("claim_extraction"):
-        pass_sql = f" AND ({sql_context_pass_null('claim_extraction', 'c')}) "
     try:
+        from services.claim_extraction_service import sql_claim_extraction_eligible
+
+        eligible = sql_claim_extraction_eligible("c")
         with conn.cursor() as cur:
             cur.execute("SET LOCAL statement_timeout = '8s'")
             cur.execute(
                 f"""
                 SELECT COUNT(*) FROM intelligence.contexts c
-                LEFT JOIN intelligence.extracted_claims ec ON ec.context_id = c.id
-                WHERE ec.id IS NULL
-                  AND (
-                      LENGTH(COALESCE(c.content, '')) + LENGTH(COALESCE(c.title, ''))
-                  ) >= %s
-                  {pass_sql}
-                """,
-                (min_text,),
+                WHERE {eligible}
+                """
             )
             return int(cur.fetchone()[0] or 0)
     except Exception as e:
@@ -507,24 +619,45 @@ def _count_claim_extraction_backlog() -> int:
 
 
 def _count_entity_profile_build_backlog() -> int:
-    """Profiles matching ``get_entity_profile_ids_to_build`` that also have at least one
-    context mention (``build_profile_sections`` no-ops without mentions)."""
+    """Profiles selectable for build — aligned with ``get_entity_profile_ids_to_build``.
+
+    Uses needs_build + CEM exists + upstream-cleared gate when that gate is enabled.
+    Fact-only profiles without CEM are inventory, not actionable builder work.
+    """
     conn = _get_conn()
     if not conn:
         return 0
     try:
+        from services.entity_profile_builder_service import (
+            _entity_profile_upstream_gate_for_select,
+            sql_entity_profile_upstream_cleared_exists,
+        )
+        from shared.entity_profile_eligibility import sql_entity_profile_selectable_for_build
+        from shared.pipeline_domain_sql import pipeline_domain_any_sql
+
+        selectable = sql_entity_profile_selectable_for_build("ep")
+        domain_sql, domain_keys = pipeline_domain_any_sql(
+            "ep.domain_key", phase="entity_profile_build"
+        )
+        if not domain_keys:
+            return 0
+        upstream_sql = ""
+        try:
+            if _entity_profile_upstream_gate_for_select():
+                upstream_sql = f" AND ({sql_entity_profile_upstream_cleared_exists()}) "
+        except Exception:
+            upstream_sql = ""
         with conn.cursor() as cur:
-            cur.execute("SET LOCAL statement_timeout = '8s'")
+            # Mention-gate EXISTS can exceed 8s on large cem; keep Monitor honest.
+            cur.execute("SET LOCAL statement_timeout = '20s'")
             cur.execute(
-                """
+                f"""
                 SELECT COUNT(*) FROM intelligence.entity_profiles ep
-                WHERE (ep.sections = '[]'::jsonb OR ep.sections IS NULL
-                       OR ep.updated_at < NOW() - INTERVAL '7 days')
-                  AND EXISTS (
-                      SELECT 1 FROM intelligence.context_entity_mentions cem
-                      WHERE cem.entity_profile_id = ep.id
-                  )
-                """
+                WHERE {domain_sql}
+                  AND {selectable}
+                  {upstream_sql}
+                """,
+                (domain_keys,),
             )
             return int(cur.fetchone()[0] or 0)
     except Exception as e:
@@ -565,16 +698,20 @@ def _count_investigation_report_backlog() -> int:
 
 
 def _count_content_refinement_queue_pending() -> int:
-    """Rows in intelligence.content_refinement_queue waiting for workers (migration 181)."""
+    """Pending refinement jobs — same predicate as queue claim (status='pending')."""
+    from shared.content_refinement_queue_eligibility import (
+        sql_content_refinement_queue_pending,
+    )
+
     conn = _get_conn()
     if not conn:
         return 0
     try:
         with conn.cursor() as cur:
             cur.execute(
-                """
-                SELECT COUNT(*) FROM intelligence.content_refinement_queue
-                WHERE status = 'pending'
+                f"""
+                SELECT COUNT(*) FROM intelligence.content_refinement_queue q
+                WHERE {sql_content_refinement_queue_pending("q")}
                 """
             )
             return int(cur.fetchone()[0] or 0)
@@ -688,7 +825,10 @@ def _count_entity_extraction_pending() -> int:
     if phase_backlog_uses_pass_marker("entity_extraction"):
         pass_sql = f" AND ({sql_article_pass_null('entity_extraction', 'a')}) "
     try:
+        from shared.article_signal_gate import sql_article_signal_full_lane_and
+
         for schema in get_pipeline_schema_names_active():
+            sig = sql_article_signal_full_lane_and("a", schema)
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -707,6 +847,7 @@ def _count_entity_extraction_pending() -> int:
                           )
                       )
                       {pass_sql}
+                      {sig}
                     """
                 )
                 total += int(cur.fetchone()[0] or 0)
@@ -916,7 +1057,7 @@ def _count_timeline_generation_pending() -> int:
 
 
 def _count_storyline_discovery_pending() -> int:
-    """Newest-N articles per schema (same cap as discovery fetch) that are not on any storyline — linkage backlog."""
+    """Newest-N full-lane articles per schema not on any storyline — matches discovery fetch + signal."""
     try:
         from services.ai_storyline_discovery import STORYLINE_DISCOVERY_ARTICLE_LIMIT as cap
     except Exception:
@@ -930,14 +1071,19 @@ def _count_storyline_discovery_pending() -> int:
         pass_sql = f" AND ({sql_article_pass_null('storyline_discovery', 'a')}) "
     _ord = sql_order_created_at()
     try:
+        from shared.article_signal_gate import sql_article_signal_full_lane_and
+
         for schema in get_pipeline_schema_names_active():
+            sig = sql_article_signal_full_lane_and("a", schema)
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '5s'")
                 cur.execute(
                     f"""
                     WITH cand AS (
-                        SELECT id FROM {schema}.articles
-                        ORDER BY created_at {_ord}
+                        SELECT a.id FROM {schema}.articles a
+                        WHERE COALESCE(a.metadata->>'content_kind', '') <> 'research_paper'
+                          {sig}
+                        ORDER BY a.created_at {_ord}
                         LIMIT %s
                     )
                     SELECT COUNT(*) FROM {schema}.articles a
@@ -963,7 +1109,7 @@ def _count_storyline_discovery_pending() -> int:
 
 
 def _count_storyline_assembly_pending() -> int:
-    """Unlinked recent articles across pipeline domains — assembly ties detection + discovery + automation."""
+    """Unlinked recent full-lane articles — assembly ties detection + discovery + automation."""
     try:
         from services.storyline_assembly_service import count_unlinked_articles
         from shared.domain_registry import get_pipeline_active_domain_keys
@@ -975,13 +1121,16 @@ def _count_storyline_assembly_pending() -> int:
 
 
 def _count_proactive_detection_pending() -> int:
-    """Recent articles (72h) with no storyline_articles row — matches proactive_detection candidate query."""
+    """Recent full-lane unlinked articles (72h) — matches proactive_detection candidate query."""
     conn = _get_conn()
     if not conn:
         return 0
     total = 0
     try:
+        from shared.article_signal_gate import sql_article_signal_full_lane_and
+
         for schema in get_pipeline_schema_names_active():
+            sig = sql_article_signal_full_lane_and("a", schema)
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '5s'")
                 cur.execute(
@@ -990,6 +1139,8 @@ def _count_proactive_detection_pending() -> int:
                     LEFT JOIN {schema}.storyline_articles sa ON sa.article_id = a.id
                     WHERE COALESCE(a.published_at, a.created_at) >= NOW() - INTERVAL '72 hours'
                       AND sa.article_id IS NULL
+                      AND COALESCE(a.metadata->>'content_kind', '') <> 'research_paper'
+                      {sig}
                     """
                 )
                 total += int(cur.fetchone()[0] or 0)
@@ -1206,7 +1357,10 @@ def _count_event_extraction_pending() -> int:
     if phase_backlog_uses_pass_marker("event_extraction"):
         pass_sql = f" AND ({sql_article_pass_null('event_extraction', 'a')}) "
     try:
+        from shared.article_signal_gate import sql_article_signal_full_lane_and
+
         for schema in get_pipeline_schema_names_active():
+            sig = sql_article_signal_full_lane_and("a", schema)
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -1221,6 +1375,7 @@ def _count_event_extraction_pending() -> int:
                           OR a.enrichment_status IN ('completed', 'enriched')
                       )
                       {pass_sql}
+                      {sig}
                     """
                 )
                 total += int(cur.fetchone()[0] or 0)
@@ -1402,6 +1557,168 @@ def _count_graph_connection_distillation_pending() -> int:
         return 0
 
 
+def _count_extracted_claims_dedupe_pending() -> int:
+    """Duplicate extracted_claims rows that would be deleted this cycle."""
+    try:
+        from services.extracted_claims_dedupe_service import count_duplicate_extracted_claim_rows
+
+        return int(count_duplicate_extracted_claim_rows() or 0)
+    except Exception as e:
+        logger.debug("backlog extracted_claims_dedupe count: %s", e)
+        return 0
+
+
+def _count_event_deduplication_pending() -> int:
+    """chronological_events not yet assigned a canonical_event_id (public or per-schema)."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    total = 0
+    try:
+        schemas: list[str] = ["public"]
+        try:
+            schemas.extend(get_pipeline_schema_names_active())
+        except Exception:
+            pass
+        seen: set[str] = set()
+        for schema in schemas:
+            if schema in seen:
+                continue
+            seen.add(schema)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SET LOCAL statement_timeout = '3s'")
+                    cur.execute(
+                        f"""
+                        SELECT COUNT(*) FROM {schema}.chronological_events
+                        WHERE canonical_event_id IS NULL
+                        """
+                    )
+                    total += int(cur.fetchone()[0] or 0)
+            except Exception:
+                continue
+        return total
+    except Exception as e:
+        logger.debug("backlog event_deduplication count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_story_continuation_pending() -> int:
+    """Unlinked CE due for recheck — same due predicate as process_recent_events.
+
+    Uses ``continuation_recheck_due_sql`` so Monitor pending matches selection
+    (not raw unlinked-only, which includes backoff-held rows).
+    """
+    from services.story_continuation_service import continuation_recheck_due_sql
+
+    conn = _get_conn()
+    if not conn:
+        return 0
+    try:
+        due_sql, due_params = continuation_recheck_due_sql("ce")
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '3s'")
+            cur.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM public.chronological_events ce
+                WHERE (ce.storyline_id IS NULL OR TRIM(COALESCE(ce.storyline_id::text, '')) = '')
+                  AND {due_sql}
+                """,
+                due_params,
+            )
+            return int(cur.fetchone()[0] or 0)
+    except Exception as e:
+        logger.debug("backlog story_continuation count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_event_coherence_review_pending() -> int:
+    """Open tracked_events never reviewed or last review older than 7 days."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '3s'")
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM intelligence.tracked_events
+                WHERE end_date IS NULL
+                  AND (
+                    analysis->>'last_coherence_review' IS NULL
+                    OR BTRIM(analysis->>'last_coherence_review') = ''
+                    OR (
+                      (analysis->>'last_coherence_review') ~ '^[0-9]{4}-'
+                      AND (analysis->>'last_coherence_review')::timestamptz
+                          < NOW() - INTERVAL '7 days'
+                    )
+                  )
+                """
+            )
+            return int(cur.fetchone()[0] or 0)
+    except Exception as e:
+        logger.debug("backlog event_coherence_review count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_research_paper_profiling_pending() -> int:
+    """Profiles awaiting LLM axes (pending/failed extraction_status)."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '3s'")
+            cur.execute(
+                """
+                SELECT COUNT(*)::bigint
+                FROM intelligence.research_paper_profiles
+                WHERE extraction_status IN ('pending', 'failed')
+                """
+            )
+            return int(cur.fetchone()[0] or 0)
+    except Exception as e:
+        logger.debug("backlog research_paper_profiling count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_claim_evidence_appraisal_pending() -> int:
+    """Literature docs due for claim_evidence_appraisal (enabled path)."""
+    try:
+        from services.claim_evidence_appraisal_service import (
+            count_claim_evidence_appraisal_due,
+            is_enabled,
+        )
+
+        if not is_enabled():
+            return 0
+        return int(count_claim_evidence_appraisal_due() or 0)
+    except Exception as e:
+        logger.debug("backlog claim_evidence_appraisal count: %s", e)
+        return 0
+
+
 # Phases that should be skipped when backlog is 0 (avoid empty cycles)
 # document_processing omitted so it runs on interval even if backlog count is wrong (e.g. DB timeout)
 # content_refinement_queue omitted: must run on interval when idle so automation history updates;
@@ -1437,6 +1754,12 @@ SKIP_WHEN_EMPTY = frozenset({
     "story_enhancement",
     "storyline_synthesis",
     "graph_connection_distillation",
+    "extracted_claims_dedupe",
+    "event_deduplication",
+    "story_continuation",
+    "event_coherence_review",
+    "research_paper_profiling",
+    "claim_evidence_appraisal",
 })
 
 _missing_skip_pending = SKIP_WHEN_EMPTY - RAW_PENDING_COUNT_KEYS

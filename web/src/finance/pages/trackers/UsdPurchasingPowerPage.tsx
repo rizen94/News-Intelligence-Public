@@ -53,7 +53,8 @@ export default function UsdPurchasingPowerPage() {
   };
 
   useEffect(() => {
-    void load(true);
+    // Serve cached JSON first — refresh=true hits FRED and can exceed client timeout.
+    void load(false);
   }, []);
 
   if (loading) {

@@ -13,7 +13,8 @@ tasks:
   event_coherence_review: true
   investigation_report_refresh: true
   entity_profile_build: true
-  pattern_recognition: true
+  # Disabled until pattern_discoveries has baseline data and Monitor confirms throughput.
+  pattern_recognition: false
   entity_dossier_compile: true
   entity_position_tracker: true
 

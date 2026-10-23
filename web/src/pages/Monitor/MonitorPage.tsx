@@ -89,17 +89,42 @@ function activityRunEstimateSecondary(a: Record<string, unknown>): string | null
   return `typical ~${typMin}m`;
 }
 
+type PendingValueTiers = {
+  hot?: number;
+  actionable?: number;
+  long_tail?: number;
+  deferred?: number;
+  inventory?: number;
+};
+
 type ProcessingPulsePhase = {
   phase_name?: string;
   pending_records?: number;
   batches_to_drain?: number | null;
   estimated_batch_per_run?: number;
+  pending_value_tiers?: PendingValueTiers | null;
   runs_1h?: number;
   runs_24h?: number;
   successes_24h?: number;
   failures_24h?: number;
   pass_rate_24h?: number | null;
   avg_duration_sec_24h?: number | null;
+};
+
+type CapacityLedger = {
+  budget_gpu_hours_per_day?: number;
+  backlog_drain_hours?: number;
+  backlog_vs_budget_ratio?: number | null;
+  intake_articles_24h?: number;
+  intake_demand_hours_per_day?: number;
+  intake_vs_budget_ratio?: number | null;
+  underwater?: boolean;
+  by_phase_backlog?: Array<{
+    phase?: string;
+    pending?: number;
+    drain_hours?: number;
+  }>;
+  error?: string;
 };
 
 type ProcessingPulseState = {
@@ -110,6 +135,10 @@ type ProcessingPulseState = {
     pending_metrics_as_of_utc?: string;
     phase_dashboard?: ProcessingPulsePhase[];
     phases?: ProcessingPulsePhase[];
+    backlog_measurement?: {
+      capacity_ledger?: CapacityLedger | null;
+      contracts_ok?: boolean;
+    } | null;
   };
   error?: string;
 };
@@ -122,6 +151,57 @@ function formatPulseCount(n: number | null | undefined): string {
     return Number.isInteger(k) ? `${k}k` : `${k.toFixed(1)}k`;
   }
   return `${n}`;
+}
+
+/** Compact value-tier line: H/A/L/D(/I) when API sent pending_value_tiers. */
+function formatValueTiers(t: PendingValueTiers | null | undefined): string | null {
+  if (!t || typeof t !== 'object') return null;
+  const parts: string[] = [];
+  if ((t.hot ?? 0) > 0) parts.push(`H${formatPulseCount(t.hot)}`);
+  if ((t.actionable ?? 0) > 0) parts.push(`A${formatPulseCount(t.actionable)}`);
+  if ((t.long_tail ?? 0) > 0) parts.push(`L${formatPulseCount(t.long_tail)}`);
+  if ((t.deferred ?? 0) > 0) parts.push(`D${formatPulseCount(t.deferred)}`);
+  if ((t.inventory ?? 0) > 0) parts.push(`I${formatPulseCount(t.inventory)}`);
+  return parts.length ? parts.join(' · ') : null;
+}
+
+function formatHoursShort(n: number | null | undefined): string {
+  if (n == null || Number.isNaN(n)) return '—';
+  if (n >= 100) return `${Math.round(n)}h`;
+  if (n >= 10) return `${n.toFixed(0)}h`;
+  return `${n.toFixed(1)}h`;
+}
+
+/** Compact capacity ledger line for Pulse (not only in API JSON). */
+function formatCapacityLedgerChip(ledger: CapacityLedger | null | undefined): {
+  label: string;
+  underwater: boolean;
+  title: string;
+} | null {
+  if (!ledger || typeof ledger !== 'object' || ledger.error) return null;
+  const drain = ledger.backlog_drain_hours;
+  const intake = ledger.intake_demand_hours_per_day;
+  const budget = ledger.budget_gpu_hours_per_day;
+  if (drain == null && intake == null) return null;
+  const top = (ledger.by_phase_backlog || [])
+    .slice(0, 3)
+    .map(r => `${r.phase}:${formatHoursShort(r.drain_hours)}`)
+    .join(' · ');
+  const label = [
+    `drain ${formatHoursShort(drain)}`,
+    `intake/d ${formatHoursShort(intake)}`,
+    budget != null ? `budget ${formatHoursShort(budget)}` : null,
+    ledger.underwater ? 'underwater' : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return {
+    label,
+    underwater: ledger.underwater === true,
+    title: top
+      ? `Top backlog drain: ${top}. Order-of-magnitude desk GPU hours.`
+      : 'Order-of-magnitude desk GPU hours vs CAPACITY_GPU_HOURS_PER_DAY.',
+  };
 }
 
 /** Keep backlog_metrics columns when a fast-path poll refreshes throughput/run counts. */
@@ -152,6 +232,7 @@ function mergeProcessingPulseWithCachedPending(
       pending_records: c.pending_records,
       estimated_batch_per_run: c.estimated_batch_per_run,
       batches_to_drain: c.batches_to_drain,
+      pending_value_tiers: c.pending_value_tiers ?? p.pending_value_tiers,
     };
   });
 
@@ -161,6 +242,8 @@ function mergeProcessingPulseWithCachedPending(
       ...fast.data,
       phase_dashboard: mergedPhases,
       phases: mergedPhases,
+      backlog_measurement:
+        cached.data.backlog_measurement ?? fast.data.backlog_measurement,
       pending_metrics_included: true,
       pending_metrics_as_of_utc:
         cached.data.pending_metrics_as_of_utc ?? cached.data.generated_at_utc,
@@ -197,6 +280,8 @@ export default function MonitorPage() {
     message: string;
     warning?: string;
   } | null>(null);
+  const [ollamaShedding, setOllamaShedding] = useState<string[]>([]);
+  const [resettingCb, setResettingCb] = useState(false);
   const { ctxStatus: ccStatus } = useShellStatus();
   const [pipelineArticleSelection, setPipelineArticleSelection] = useState<{
     mode?: string;
@@ -207,6 +292,23 @@ export default function MonitorPage() {
   const [automationRunning, setAutomationRunning] = useState<boolean | null>(
     null
   );
+  const [dbPressure, setDbPressure] = useState<{
+    defer_new_work?: boolean;
+    worker_waiters?: number;
+    worker_pressure?: number;
+    worker_in_use?: number;
+    worker_max?: number;
+    ui_waiters?: number;
+    ui_pressure?: number;
+    ui_in_use?: number;
+    ui_max?: number;
+  } | null>(null);
+  const [apiYield, setApiYield] = useState<{
+    yielding?: boolean;
+    inflight_user_requests?: number;
+    seconds_since_last_user_request?: number | null;
+    yield_window_seconds?: number;
+  } | null>(null);
   const [pendingMetricsLoading, setPendingMetricsLoading] = useState(false);
 
   const refreshOverview = useCallback(async () => {
@@ -220,6 +322,7 @@ export default function MonitorPage() {
       apiService.getPipelineStatus(),
       apiService.getProcessingProgress({ includePendingMetrics: false }),
       apiService.getAutomationStatus().catch(() => null),
+      apiService.getHealth().catch(() => null),
     ]);
     const settledErr = (r: PromiseSettledResult<unknown>, label: string) =>
       r.status === 'rejected'
@@ -250,6 +353,25 @@ export default function MonitorPage() {
         data?: {
           running?: boolean;
           is_running?: boolean;
+          resource_router?: {
+            db_pressure?: {
+              defer_new_work?: boolean;
+              worker_waiters?: number;
+              worker_pressure?: number;
+              worker_in_use?: number;
+              worker_max?: number;
+              ui_waiters?: number;
+              ui_pressure?: number;
+              ui_in_use?: number;
+              ui_max?: number;
+            };
+            api_yield?: {
+              yielding?: boolean;
+              inflight_user_requests?: number;
+              seconds_since_last_user_request?: number | null;
+              yield_window_seconds?: number;
+            };
+          };
           pipeline_article_selection?: {
             mode?: string;
             label?: string;
@@ -260,6 +382,8 @@ export default function MonitorPage() {
       } | null
     )?.data;
     setPipelineArticleSelection(autoData?.pipeline_article_selection ?? null);
+    setDbPressure(autoData?.resource_router?.db_pressure ?? null);
+    setApiYield(autoData?.resource_router?.api_yield ?? null);
     if (autoData) {
       if (typeof autoData.running === 'boolean') {
         setAutomationRunning(autoData.running);
@@ -269,6 +393,14 @@ export default function MonitorPage() {
         setAutomationRunning(true);
       }
     }
+    const healthEnvelope =
+      results[3]?.status === 'fulfilled' ? results[3].value : null;
+    const shedding = (
+      healthEnvelope as {
+        circuit_breakers?: { ollama_shedding?: string[] };
+      } | null
+    )?.circuit_breakers?.ollama_shedding;
+    setOllamaShedding(Array.isArray(shedding) ? shedding : []);
   }, []);
 
   const fetchPendingMetrics = useCallback(async () => {
@@ -386,6 +518,40 @@ export default function MonitorPage() {
     }
   };
 
+  const handleResetCircuitBreakers = async () => {
+    if (!apiService.resetCircuitBreakers) return;
+    setResettingCb(true);
+    setTriggerResult(null);
+    try {
+      const result = (await apiService.resetCircuitBreakers()) as {
+        success?: boolean;
+        reset?: string[];
+        error?: string;
+      };
+      if (result?.success !== false) {
+        const keys = Array.isArray(result?.reset)
+          ? result.reset.join(', ')
+          : 'ollama keys';
+        setTriggerResult({
+          success: true,
+          message: `Circuit breakers reset: ${keys}`,
+        });
+        void refreshHeavyPanels();
+      } else {
+        setTriggerResult({
+          success: false,
+          message: (result?.error as string) || 'CB reset failed.',
+        });
+      }
+      setTimeout(() => setTriggerResult(null), 6000);
+    } catch (e) {
+      setTriggerResult({ success: false, message: (e as Error).message });
+      setTimeout(() => setTriggerResult(null), 6000);
+    } finally {
+      setResettingCb(false);
+    }
+  };
+
   const connections = (overview?.connections ?? {}) as Record<string, unknown>;
   const apiStatus = connections?.api as string | undefined;
   const dbStatus = connections?.database as string | undefined;
@@ -477,6 +643,9 @@ export default function MonitorPage() {
     processingPulse?.data?.phase_dashboard ??
     processingPulse?.data?.phases ??
     [];
+  const capacityChip = formatCapacityLedgerChip(
+    processingPulse?.data?.backlog_measurement?.capacity_ledger
+  );
 
   return (
     <Box>
@@ -567,6 +736,53 @@ export default function MonitorPage() {
                       : 'Automation …'
                 }
               />
+              {dbPressure && (
+                <>
+                  <Chip
+                    size='small'
+                    variant='outlined'
+                    color={
+                      dbPressure.defer_new_work
+                        ? 'warning'
+                        : (dbPressure.worker_pressure ?? 0) >= 0.5
+                          ? 'info'
+                          : 'default'
+                    }
+                    title='Worker pool pressure = (in_use + waiters) / max. Gate defers new schedules when hot.'
+                    label={`DB worker ${dbPressure.worker_in_use ?? '?'}/${dbPressure.worker_max ?? '?'} p=${(
+                      dbPressure.worker_pressure ?? 0
+                    ).toFixed(2)}${(dbPressure.worker_waiters ?? 0) > 0 ? ` w=${dbPressure.worker_waiters}` : ''}${
+                      dbPressure.defer_new_work ? ' defer' : ''
+                    }`}
+                  />
+                  <Chip
+                    size='small'
+                    variant='outlined'
+                    color={
+                      (dbPressure.ui_waiters ?? 0) > 0
+                        ? 'warning'
+                        : (dbPressure.ui_pressure ?? 0) >= 0.75
+                          ? 'info'
+                          : 'default'
+                    }
+                    title='UI/Monitor pool — waiters do not pause automation.'
+                    label={`DB UI ${dbPressure.ui_in_use ?? '?'}/${dbPressure.ui_max ?? '?'}${(dbPressure.ui_waiters ?? 0) > 0 ? ` w=${dbPressure.ui_waiters}` : ''}`}
+                  />
+                </>
+              )}
+              {apiYield && (
+                <Chip
+                  size='small'
+                  variant='outlined'
+                  color={apiYield.yielding ? 'warning' : 'default'}
+                  title='Coarse UI-yield proxy (inflight non-polling + recency window). Not accept-queue depth.'
+                  label={
+                    apiYield.yielding
+                      ? `UI yield inflight=${apiYield.inflight_user_requests ?? 0}`
+                      : 'UI yield idle'
+                  }
+                />
+              )}
               {pipelineStatus && (
                 <Chip
                   size='small'
@@ -583,6 +799,21 @@ export default function MonitorPage() {
                   label={`Pipeline: ${pipelineStatus}`}
                 />
               )}
+              <Chip
+                size='small'
+                variant='outlined'
+                color={ollamaShedding.length > 0 ? 'error' : 'success'}
+                title={
+                  ollamaShedding.length > 0
+                    ? `Open/half-open: ${ollamaShedding.join(', ')}. Prefer Reset Ollama CB after host recovers.`
+                    : 'All OLLAMA_CB_KEYS closed'
+                }
+                label={
+                  ollamaShedding.length > 0
+                    ? `Ollama CB: ${ollamaShedding.join(',')}`
+                    : 'Ollama CB closed'
+                }
+              />
               {pipelineArticleSelection?.mode && (
                 <Chip
                   size='small'
@@ -811,11 +1042,32 @@ export default function MonitorPage() {
                   )}
                 </Typography>
               )}
+              {capacityChip && (
+                <Stack
+                  direction='row'
+                  spacing={1}
+                  alignItems='center'
+                  flexWrap='wrap'
+                  sx={{ mb: 1.5 }}
+                >
+                  <Typography variant='caption' color='text.secondary'>
+                    Capacity
+                  </Typography>
+                  <Chip
+                    size='small'
+                    label={capacityChip.label}
+                    color={capacityChip.underwater ? 'warning' : 'default'}
+                    variant={capacityChip.underwater ? 'filled' : 'outlined'}
+                    title={capacityChip.title}
+                  />
+                </Stack>
+              )}
               <Table size='small' sx={{ '& td': { py: 0.5 } }}>
                 <TableHead>
                   <TableRow>
                     <TableCell>Phase</TableCell>
                     <TableCell align='right'>Pending</TableCell>
+                    <TableCell align='right'>Value tiers</TableCell>
                     <TableCell align='right'>Runs to clear</TableCell>
                     <TableCell align='right'>Fail 24h</TableCell>
                     <TableCell align='right'>Runs 24h</TableCell>
@@ -827,6 +1079,7 @@ export default function MonitorPage() {
                     const stuck =
                       (p.failures_24h ?? 0) > 0 ||
                       (p.batches_to_drain != null && p.batches_to_drain > 1);
+                    const tierLine = formatValueTiers(p.pending_value_tiers);
                     return (
                       <TableRow
                         key={p.phase_name}
@@ -839,6 +1092,20 @@ export default function MonitorPage() {
                         <TableCell>{p.phase_name}</TableCell>
                         <TableCell align='right'>
                           {formatPulseCount(p.pending_records ?? 0)}
+                        </TableCell>
+                        <TableCell align='right'>
+                          {tierLine ? (
+                            <Typography
+                              component='span'
+                              variant='caption'
+                              color='text.secondary'
+                              title='H=hot A=actionable L=long-tail D=deferred I=inventory'
+                            >
+                              {tierLine}
+                            </Typography>
+                          ) : (
+                            '—'
+                          )}
                         </TableCell>
                         <TableCell align='right'>
                           {p.batches_to_drain == null ? (
@@ -943,6 +1210,22 @@ export default function MonitorPage() {
                   {triggering ? 'Requesting…' : 'Run phase now'}
                 </Button>
               </>
+            )}
+            {apiService.resetCircuitBreakers && (
+              <Button
+                size='small'
+                variant={ollamaShedding.length > 0 ? 'contained' : 'outlined'}
+                color={ollamaShedding.length > 0 ? 'warning' : 'inherit'}
+                onClick={handleResetCircuitBreakers}
+                disabled={resettingCb}
+                title='After Ollama is reachable again — closes hard shed without restarting the API'
+              >
+                {resettingCb
+                  ? 'Resetting CB…'
+                  : ollamaShedding.length > 0
+                    ? 'Reset Ollama CB'
+                    : 'Reset Ollama CB'}
+              </Button>
             )}
             {grafanaUrl ? (
               <Button

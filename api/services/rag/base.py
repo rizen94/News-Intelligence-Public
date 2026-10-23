@@ -459,8 +459,8 @@ class BaseRAGService:
                             await cache_service.set("gdelt", term, cache_data)
                             logger.debug(f"Cached GDELT data for: {term}")
 
-                    # Rate limiting
-                    await asyncio.sleep(1)
+                    # GDELT free tier: keep ≥5s between queries (429 otherwise).
+                    await asyncio.sleep(5.5)
 
                 except Exception as e:
                     logger.warning(f"Error fetching GDELT context for {term}: {e}")

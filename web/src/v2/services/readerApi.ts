@@ -20,6 +20,15 @@ export type StoryUnit = {
   date_precision?: string | null;
   surface_kind: string;
   href: string;
+  cluster_key?: string;
+  hub_id?: number;
+  folded_under_hub?: boolean;
+  briefing_day?: string;
+  briefing_lane?: string;
+  vault_path?: string;
+  body_md?: string;
+  summary_md?: string;
+  current_brief?: string | null;
 };
 
 export type PaginationMeta = {
@@ -44,6 +53,7 @@ export type ReaderHomeResponse = {
   news?: StoryUnit[];
   current_events?: StoryUnit[];
   one_offs?: StoryUnit[];
+  research?: StoryUnit[];
   section?: string;
   pagination?:
     | PaginationMeta
@@ -51,6 +61,7 @@ export type ReaderHomeResponse = {
         news: PaginationMeta;
         current_events: PaginationMeta;
         one_offs: PaginationMeta;
+        research?: PaginationMeta;
       };
   nav_ids?: NavId[];
 };
@@ -62,6 +73,9 @@ export type ReaderPackResponse = {
   status?: string;
   summary: string;
   lede?: string;
+  durable_brief?: string | null;
+  brief_source?: 'pull' | 'vault_expansion' | 'durable' | 'summary' | 'none';
+  document_status?: string | null;
   editorial_document?: Record<string, unknown>;
   background_information?: string | null;
   timeline_narrative?: string | null;
@@ -80,11 +94,50 @@ export type ReaderPackResponse = {
     published_at?: string | null;
     summary?: string | null;
   }>;
+  also_in?: Array<{
+    article_id: number;
+    article_title?: string | null;
+    domain: string;
+    storyline_id: number;
+    title?: string | null;
+    article_count?: number;
+    href?: string;
+  }>;
   dossier_rail?: {
     entities?: Array<Record<string, unknown>>;
     tree?: Array<Record<string, unknown>>;
     hierarchy?: Record<string, unknown>;
   };
+  vault_context_pack?: {
+    ok?: boolean;
+    note_count?: number;
+    actors?: string[];
+    tags?: string[];
+    notes?: Array<{
+      title?: string;
+      vault_path?: string;
+      significance_excerpt?: string | null;
+      tags?: string[];
+      is_seed?: boolean;
+      note_status?: string;
+      lifecycle?: string;
+    }>;
+    message?: string;
+  } | null;
+  vault_expansion?: {
+    title?: string | null;
+    vault_path?: string | null;
+    body_md?: string | null;
+    summary_md?: string | null;
+    updated_at?: string | null;
+    source_article_id?: number | null;
+  } | null;
+  situation_hub?: {
+    id?: number;
+    cluster_key?: string;
+    title?: string;
+    href?: string;
+  } | null;
 };
 
 export async function fetchReaderHome(
@@ -109,6 +162,82 @@ export async function fetchReaderStoryline(
   const { data } = await api.get<ReaderPackResponse>(
     `/api/reader/storylines/${storylineId}`,
     { params: { domain } }
+  );
+  return data;
+}
+
+export type VaultHubPackResponse = {
+  ok: boolean;
+  hub: {
+    id: number;
+    cluster_key?: string;
+    title?: string;
+    domain_key: string;
+    vault_path?: string;
+    member_storyline_ids?: number[];
+    seed_entity_ids?: number[];
+    href?: string;
+    tags?: string[];
+    updated_at?: string | null;
+    current_brief?: string | null;
+    brief_updated_at?: string | null;
+    brief_fingerprint?: string | null;
+    brief_refreshed?: boolean;
+    surface_kind?: string;
+  };
+  current_brief?: string | null;
+  brief_updated_at?: string | null;
+  note?: Record<string, unknown>;
+  vault_context_pack?: ReaderPackResponse['vault_context_pack'];
+  members?: Array<{
+    storyline_id: number;
+    domain: string;
+    headline: string;
+    dek?: string;
+    article_count?: number;
+    updated_at?: string | null;
+    href?: string;
+    surface_kind?: string;
+  }>;
+  timeline?: Array<{
+    published_at?: string | null;
+    title: string;
+    article_id: number;
+    storyline_id: number;
+    url?: string | null;
+  }>;
+  sibling_hubs?: Array<{
+    id: number;
+    cluster_key?: string;
+    title?: string;
+    href?: string;
+    member_count?: number;
+    current_brief?: string | null;
+  }>;
+};
+
+export async function fetchVaultHubs(domain?: string | null): Promise<{
+  ok: boolean;
+  hubs: Array<Record<string, unknown>>;
+  count: number;
+}> {
+  const api = getApi();
+  const params: Record<string, string> = {};
+  if (domain) params.domain = domain;
+  const { data } = await api.get('/api/reader/vault-hubs', { params });
+  return data;
+}
+
+export async function fetchVaultHub(
+  idOrSlug: string,
+  domain?: string | null
+): Promise<VaultHubPackResponse> {
+  const api = getApi();
+  const params: Record<string, string> = {};
+  if (domain) params.domain = domain;
+  const { data } = await api.get<VaultHubPackResponse>(
+    `/api/reader/vault-hubs/${encodeURIComponent(idOrSlug)}`,
+    { params }
   );
   return data;
 }

@@ -28,6 +28,17 @@ if [ -f "$_REPO_ROOT/.env" ]; then
   set +a
 fi
 
+# Prevent concurrent dumps (USB/NAS thrash + partial .tmp races)
+mkdir -p /opt/news-intelligence/logs
+exec 9>/opt/news-intelligence/logs/db_backup_single.lock
+if ! flock -n 9; then
+  echo "[$(date -Iseconds)] SKIP: another db_backup_single_latest.sh holds the lock"
+  exit 0
+fi
+
+# Survive caller hangup (SSH / systemd-run waiters)
+trap '' HUP
+
 # Default NAS path: smb://192.168.93.100/public/Data Lake Storage/... → /mnt/nas/Data Lake Storage/...
 # configs/env.example: NAS_BACKUP_PATH
 _DEFAULT_DL="/mnt/nas/Data Lake Storage/news-intelligence/database-backup"
@@ -50,12 +61,79 @@ fi
 
 FINAL="${BACKUP_BASE}/news_intel_latest.pgdump"
 TMP="${FINAL}.tmp.$$"
+PRESSURE_JSON="${DISK_IO_PRESSURE_JSON:-/run/news-intelligence/disk_io_pressure.json}"
+MAX_DEFER="${BACKUP_MAX_DEFER:-6}"
+# Must be writable by cron user (pete) — do not use /run/news-intelligence (root-owned)
+DEFER_COUNT_FILE="${BACKUP_DEFER_COUNT_FILE:-/opt/news-intelligence/logs/db_backup_defer_count}"
+
+# USB root: skip+reschedule when governor says defer_heavy_writes (same class as apt).
+_should_defer_heavy() {
+  if [ "${NEWS_INTEL_BACKUP_FORCE:-}" = "1" ]; then
+    return 1
+  fi
+  if [ ! -f "$PRESSURE_JSON" ]; then
+    return 1
+  fi
+  python3 - "$PRESSURE_JSON" <<'PY'
+import json, sys, time
+path = sys.argv[1]
+try:
+    d = json.load(open(path))
+except Exception:
+    sys.exit(1)  # treat unreadable as defer-open (do not block)
+updated = d.get("updated_at") or d.get("written_at") or ""
+# Stale samples fail-open (do not defer forever if governor died)
+try:
+    from datetime import datetime, timezone
+    ts = datetime.fromisoformat(updated.replace("Z", "+00:00")).timestamp()
+    if time.time() - ts > 120:
+        sys.exit(1)
+except Exception:
+    pass
+sys.exit(0 if d.get("defer_heavy_writes") else 1)
+PY
+}
+
+_bump_defer_count() {
+  local today count
+  today="$(date +%F)"
+  mkdir -p "$(dirname "$DEFER_COUNT_FILE")"
+  if [ -f "$DEFER_COUNT_FILE" ] && [ "$(awk '{print $1}' "$DEFER_COUNT_FILE")" = "$today" ]; then
+    count="$(awk '{print $2}' "$DEFER_COUNT_FILE")"
+  else
+    count=0
+  fi
+  count=$((count + 1))
+  echo "$today $count" >"$DEFER_COUNT_FILE"
+  echo "$count"
+}
+
+_reschedule() {
+  local count
+  count="$(_bump_defer_count)"
+  if [ "$count" -gt "$MAX_DEFER" ]; then
+    echo "[$(date -Iseconds)] ABORT: disk still hot after $MAX_DEFER backup defers today"
+    exit 1
+  fi
+  echo "[$(date -Iseconds)] DEFER: USB disk IO heavy (defer #$count/$MAX_DEFER); sleep 30min then retry"
+  # pete cron cannot create systemd transient timers without polkit; use background sleep.
+  nohup bash -c \
+    "sleep 1800; exec /opt/news-intelligence/scripts/db_backup_single_latest.sh" \
+    >>/opt/news-intelligence/logs/backup.log 2>&1 &
+  disown || true
+  exit 0
+}
+
+if _should_defer_heavy; then
+  _reschedule
+fi
 
 mkdir -p "${BACKUP_BASE}"
+mkdir -p /opt/news-intelligence/logs
 
 echo "[$(date -Iseconds)] Starting single-file backup → ${FINAL} (host=${PGHOST} db=${PGDATABASE})"
 
-pg_dump -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
+nice -n 19 ionice -c3 pg_dump -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
   -F custom -Z 5 \
   -f "$TMP"
 

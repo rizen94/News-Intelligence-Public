@@ -29,3 +29,15 @@ mcpServers:
       - python3
       - -u
       - /opt/obsidian-vault-mcp/src/server.py
+
+  - name: obsidian-news-vault
+    command: docker
+    args:
+      - exec
+      - -i
+      - -e
+      - OBSIDIAN_VAULT_PATH=/vault-news
+      - ai-lab-mcp-gateway
+      - python3
+      - -u
+      - /opt/obsidian-vault-mcp/src/server.py

@@ -38,6 +38,7 @@ import apiService from '../services/apiService';
 import Logger from '../utils/logger';
 import { api } from '../services/apiService';
 import { storylinesApi } from '../services/api/storylines';
+import { articlesApi } from '../services/api/articles';
 import { getCurrentDomain } from '../utils/domainHelper';
 
 import StorylineConfirmationDialog from './StorylineConfirmationDialog';
@@ -69,14 +70,77 @@ const ArticleReader = ({
     message: '',
     severity: 'success',
   });
+  const [pullLoading, setPullLoading] = useState(false);
+  const [pullStatus, setPullStatus] = useState(null);
+  const [pullSummary, setPullSummary] = useState(null);
+  const [pullError, setPullError] = useState(null);
 
   useEffect(() => {
     if (open && article) {
       loadFullContent();
       loadStorylines();
       checkBookmarkStatus();
+      setPullSummary(null);
+      setPullStatus(null);
+      setPullError(null);
+      if (article.id) {
+        articlesApi.latestContextPull(article.id, domain).then(res => {
+          if (res?.status === 'ready' && res.summary_markdown) {
+            setPullSummary(res.summary_markdown);
+            setPullStatus('ready');
+          }
+        });
+      }
     }
   }, [open, article, domain]);
+
+  const pollContextPull = async pullId => {
+    const maxAttempts = 90;
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const res = await articlesApi.getContextPull(pullId);
+      if (!res || res.ok === false) continue;
+      setPullStatus(res.status);
+      if (res.status === 'ready' && res.summary_markdown) {
+        setPullSummary(res.summary_markdown);
+        setPullLoading(false);
+        setSnackbar({
+          open: true,
+          message: 'Context brief ready',
+          severity: 'success',
+        });
+        return;
+      }
+      if (res.status === 'failed') {
+        setPullError(res.error_message || 'Pull context failed');
+        setPullLoading(false);
+        return;
+      }
+    }
+    setPullError('Timed out waiting for context brief');
+    setPullLoading(false);
+  };
+
+  const handlePullContext = async () => {
+    if (!article?.id) return;
+    setPullLoading(true);
+    setPullError(null);
+    setPullStatus('pending');
+    try {
+      const res = await articlesApi.pullContext(article.id, domain);
+      if (!res?.ok && !res?.pull_id) {
+        setPullError(res?.error || 'Failed to start');
+        setPullLoading(false);
+        return;
+      }
+      const pullId = res.pull_id || res.id;
+      setPullStatus(res.status || 'pending');
+      pollContextPull(pullId);
+    } catch (e) {
+      setPullError(e?.message || 'Failed to start');
+      setPullLoading(false);
+    }
+  };
 
   const loadFullContent = async () => {
     if (!article) return;
@@ -548,15 +612,49 @@ const ArticleReader = ({
               Add to Storyline
             </Button>
             <Button
-              variant='outlined'
-              startIcon={<PsychologyIcon />}
-              onClick={() => {
-                /* TODO: Add AI analysis */
-              }}
+              variant='contained'
+              color='secondary'
+              startIcon={
+                pullLoading ? (
+                  <CircularProgress size={16} color='inherit' />
+                ) : (
+                  <PsychologyIcon />
+                )
+              }
+              onClick={handlePullContext}
+              disabled={pullLoading || !article?.id}
             >
-              AI Analysis
+              {pullLoading ? 'Pulling context…' : 'Pull context'}
             </Button>
           </Box>
+
+          {pullError ? (
+            <Alert severity='error' sx={{ mt: 2 }}>
+              {pullError}
+            </Alert>
+          ) : null}
+          {pullStatus && pullStatus !== 'ready' && !pullError ? (
+            <Alert severity='info' sx={{ mt: 2 }}>
+              Context job: {pullStatus}
+            </Alert>
+          ) : null}
+          {pullSummary ? (
+            <Paper
+              variant='outlined'
+              sx={{ mt: 2, p: 2, bgcolor: 'action.hover' }}
+            >
+              <Typography variant='subtitle1' gutterBottom>
+                Executive brief
+              </Typography>
+              <Typography
+                component='div'
+                variant='body2'
+                sx={{ whiteSpace: 'pre-wrap' }}
+              >
+                {pullSummary}
+              </Typography>
+            </Paper>
+          ) : null}
         </DialogContent>
 
         <DialogActions>

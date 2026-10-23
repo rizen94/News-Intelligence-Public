@@ -6,7 +6,7 @@ Shared by verify_domain_provision.py, generate_domain_artifacts.py, and operator
 
 from __future__ import annotations
 
-# Tables created via create_domain_table(..., 'science_tech') in order.
+# Tables created via create_domain_table(..., template schema) in order.
 SILO_CORE_TABLES: tuple[str, ...] = (
     "articles",
     "topics",
@@ -42,4 +42,4 @@ SILO_EXTENDED_TABLES: frozenset[str] = frozenset(
     }
 )
 
-DEFAULT_CLONE_FROM_SCHEMA = "science_tech"
+DEFAULT_CLONE_FROM_SCHEMA = "politics"

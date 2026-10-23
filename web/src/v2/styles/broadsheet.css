@@ -210,15 +210,17 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.35rem 0.5rem;
+  gap: 0.35rem 0.65rem;
   font-size: 0.78rem;
   color: var(--v2-ink-muted);
   margin-top: 0.25rem;
 }
 
 .v2-meta-sep {
+  display: inline-block;
+  padding: 0 0.2rem;
   color: var(--v2-ink-muted);
-  opacity: 0.55;
+  opacity: 0.65;
   user-select: none;
 }
 
@@ -279,6 +281,74 @@
   padding: 0.25rem 0 0.25rem 1rem;
   margin: 1.5rem 0;
   color: var(--v2-ink);
+}
+
+.v2-pull-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem 1rem;
+  margin: 1rem 0 1.25rem;
+}
+
+.v2-pull-hint {
+  font-size: 0.8rem;
+  color: var(--v2-ink-muted);
+  padding-left: 0.15rem;
+}
+
+.v2-reader-md {
+  font-size: 1.02rem;
+  line-height: 1.65;
+  color: var(--v2-ink);
+}
+
+.v2-reader-md > *:first-child {
+  margin-top: 0;
+}
+
+.v2-reader-md h1,
+.v2-reader-md h2,
+.v2-reader-md h3 {
+  font-family: var(--v2-font-display);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  margin: 1.1rem 0 0.55rem;
+}
+
+.v2-reader-md h1 {
+  font-size: 1.35rem;
+}
+
+.v2-reader-md h2 {
+  font-size: 1.2rem;
+}
+
+.v2-reader-md h3 {
+  font-size: 1.05rem;
+}
+
+.v2-reader-md p {
+  margin: 0.65rem 0;
+}
+
+.v2-reader-md ul,
+.v2-reader-md ol {
+  margin: 0.5rem 0 0.75rem;
+  padding-left: 1.25rem;
+}
+
+.v2-reader-md li {
+  margin-bottom: 0.35rem;
+}
+
+.v2-reader-md strong {
+  font-weight: 600;
+}
+
+.v2-reader-md em {
+  font-style: italic;
 }
 
 .v2-timeline {

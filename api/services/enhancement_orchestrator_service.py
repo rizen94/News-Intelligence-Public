@@ -48,20 +48,28 @@ async def run_enhancement_cycle(
     except Exception as e:
         logger.warning("Enhancement cycle (triggers): %s", e)
         result["errors"].append(f"triggers: {e!s}")
-    try:
-        from services.entity_enrichment_service import run_enrichment_batch
+    if enrich_limit > 0:
+        try:
+            from services.entity_enrichment_service import run_enrichment_batch
 
-        result["entity_profiles_enriched"] = await loop.run_in_executor(
-            None, lambda: run_enrichment_batch(limit=enrich_limit)
-        )
-    except Exception as e:
-        logger.warning("Enhancement cycle (enrichment): %s", e)
-        result["errors"].append(f"enrichment: {e!s}")
-    try:
-        from services.entity_profile_builder_service import run_profile_builder_batch
+            result["entity_profiles_enriched"] = int(
+                await loop.run_in_executor(
+                    None, lambda: run_enrichment_batch(limit=enrich_limit)
+                )
+                or 0
+            )
+        except Exception as e:
+            logger.warning("Enhancement cycle (enrichment): %s", e)
+            result["errors"].append(f"enrichment: {e!s}")
+    if build_limit > 0:
+        try:
+            from services.entity_profile_builder_service import run_profile_builder_batch
 
-        result["entity_profiles_built"] = await run_profile_builder_batch(limit=build_limit)
-    except Exception as e:
-        logger.warning("Enhancement cycle (profile build): %s", e)
-        result["errors"].append(f"profile_build: {e!s}")
+            built = await run_profile_builder_batch(limit=build_limit)
+            result["entity_profiles_built"] = int(
+                getattr(built, "updated", built) if built is not None else 0
+            )
+        except Exception as e:
+            logger.warning("Enhancement cycle (profile build): %s", e)
+            result["errors"].append(f"profile_build: {e!s}")
     return result

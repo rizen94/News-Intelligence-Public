@@ -553,17 +553,28 @@ class StorylineConsolidationService:
         return result
 
     def find_merge_candidates(
-        self, storylines: list[StorylineInfo], threshold: float = MERGE_SIMILARITY_THRESHOLD
+        self,
+        storylines: list[StorylineInfo],
+        threshold: float = MERGE_SIMILARITY_THRESHOLD,
+        *,
+        min_semantic: float = 0.0,
     ) -> list[tuple[StorylineInfo, StorylineInfo, dict]]:
         """
         Find pairs of storylines that should be merged.
 
         Works with or without embeddings, using entity/title similarity as fallback.
+        When ``min_semantic`` > 0, also require embedding similarity (skips pairs that
+        only match on shared entities/titles — common for unrelated arXiv papers).
         """
         candidates = []
         n = len(storylines)
 
-        logger.debug(f"Comparing {n} storylines for merge candidates (threshold: {threshold:.0%})")
+        logger.debug(
+            "Comparing %s storylines for merge (threshold=%.3f, min_semantic=%.3f)",
+            n,
+            threshold,
+            min_semantic,
+        )
 
         for i in range(n):
             for j in range(i + 1, n):
@@ -585,12 +596,20 @@ class StorylineConsolidationService:
 
                 similarity = self.calculate_storyline_similarity(s1, s2)
 
-                if similarity["overall"] >= threshold:
-                    candidates.append((s1, s2, similarity))
-                    logger.debug(
-                        f"Merge candidate: '{s1.title[:30]}' + '{s2.title[:30]}' "
-                        f"(sim: {similarity['overall']:.0%})"
-                    )
+                if similarity["overall"] < threshold:
+                    continue
+                if min_semantic > 0:
+                    # No embedding → cannot satisfy semantic floor; refuse merge.
+                    if s1.centroid is None or s2.centroid is None:
+                        continue
+                    if float(similarity.get("semantic") or 0.0) < min_semantic:
+                        continue
+
+                candidates.append((s1, s2, similarity))
+                logger.debug(
+                    f"Merge candidate: '{s1.title[:30]}' + '{s2.title[:30]}' "
+                    f"(sim: {similarity['overall']:.0%}, sem: {similarity.get('semantic', 0):.0%})"
+                )
 
         # Sort by similarity descending
         candidates.sort(key=lambda x: x[2]["overall"], reverse=True)
@@ -1072,6 +1091,7 @@ class StorylineConsolidationService:
         merge_threshold = cons_cfg.merge_similarity_threshold
         parent_threshold = cons_cfg.parent_similarity_threshold
         min_mega = cons_cfg.min_articles_for_mega
+        min_semantic = cons_cfg.min_semantic_similarity_for_merge
 
         result = {
             "domain": domain,
@@ -1085,6 +1105,7 @@ class StorylineConsolidationService:
                     "merge_similarity_threshold": merge_threshold,
                     "parent_similarity_threshold": parent_threshold,
                     "min_articles_for_mega": min_mega,
+                    "min_semantic_similarity_for_merge": min_semantic,
                 },
             },
         }
@@ -1137,7 +1158,11 @@ class StorylineConsolidationService:
 
             # Step 3: Find merge candidates
             logger.info(f"[{domain}] Finding merge candidates from {len(storylines)} storylines...")
-            merge_candidates = self.find_merge_candidates(storylines, threshold=merge_threshold)
+            merge_candidates = self.find_merge_candidates(
+                storylines,
+                threshold=merge_threshold,
+                min_semantic=min_semantic,
+            )
             result["merge_candidates_found"] = len(merge_candidates)
 
             # Step 4: Perform merges

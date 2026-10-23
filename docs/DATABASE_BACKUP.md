@@ -4,7 +4,8 @@
 
 | Tier | Cadence | Retention | Location |
 |------|---------|-----------|----------|
-| **Hot rolling** | Daily (03:00) | Single latest file replaced each run | NAS `news_intel_latest.pgdump` |
+| **Hot rolling** | Daily (03:45) | Single latest file replaced each run | NAS `news_intel_latest.pgdump` |
+| **Age alert** | Daily (12:00) | Warn if dump older than **36h** | `scripts/db_backup_age_alert.sh` → `logs/backup_age_alert.log` |
 | **Weekly local** | Sunday | Keep **4** weekly files on separate disk | `BACKUP_WEEKLY_DIR` (default: `/opt/news-intelligence/backups/weekly`) |
 | **Monthly cold** | 1st of month | **12** months then prune | NAS `database-backup/monthly/` or off-site copy |
 
@@ -59,7 +60,10 @@ Override with `BACKUP_BASE` if your mount differs.
 
 ## Scheduling
 
-- **Template:** `infrastructure/newsplatform-backup.cron` — single daily job (03:00) calling `db_backup_single_latest.sh`.
+- **Template:** `infrastructure/newsplatform-backup.cron` — daily **03:45** dump + **12:00** age alert (`db_backup_age_alert.sh`).
+- **cron.d trailing newline:** required. Without a final `\n`, cron logs `Missing newline before EOF, this crontab file will be ignored` and **never runs** the job (this caused the June–Oct 2026 NAS dump stall).
+- Installers (`setup_widow_boot_stack.sh` / `setup_widow_app.sh`) append a newline after `tee`.
+- **USB defer:** `db_backup_single_latest.sh` skips when `defer_heavy_writes` is set and retries after 30 minutes (force with `NEWS_INTEL_BACKUP_FORCE=1`).
 - **Older scripts** `db_backup.sh` / `db_backup_weekly.sh` kept for reference; they retain **multiple** files—do **not** run alongside this policy if you want only one NAS copy.
 
 ## Restore (outline)

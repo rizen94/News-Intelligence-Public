@@ -11,8 +11,8 @@ This doc aligns with the project priority: **frontend and monitoring stay respon
 | Layer | Role |
 |-------|------|
 | **PgBouncer** | Caps how many sessions hit Postgres; queues or rejects at the pooler when the server budget is exhausted. Prefer **transaction pooling** for stateless request/transaction patterns (typical API + short automation steps). |
-| **App UI pool** (`get_ui_db_connection*`, `DomainAwareService.get_read_db_connection`) | Reserved for page loads, monitoring, and hot read paths (e.g. article listings); **3 s** checkout so the browser does not hang when the worker pool is busy with automation. |
-| **App worker pool** (`get_db_connection*`) | Automation, RSS, enrichment, batch paths; **30 s** checkout timeout. |
+| **App UI pool** (`get_ui_db_connection*`, `DomainAwareService.get_read_db_connection`) | Reserved for page loads, monitoring, and hot read paths (e.g. article listings); **12 s** checkout wait/retry when the UI pool is exhausted (no direct-fallback stampede). |
+| **App worker pool** (`get_db_connection*`) | Automation, RSS, enrichment, batch paths; **30 s** checkout wait/retry. |
 | **SQLAlchemy pool** | ORM services only; separate budget. |
 | **Ephemeral connections** | Infrequent jobs (briefing, digest, narrative finisher) open a short-lived session and **fully disconnect**—they still count against PgBouncer/Postgres **while active**. |
 
@@ -113,8 +113,22 @@ Defaults in `shared.database.connection` are **conservative** for small Postgres
 | `DB_POOL_UI_MIN` / `DB_POOL_UI_MAX` | UI/monitoring psycopg2 pool. |
 | `DB_POOL_WORKER_MIN` / `DB_POOL_WORKER_MAX` | Worker psycopg2 pool. |
 | `DB_POOL_SA_SIZE` / `DB_POOL_SA_OVERFLOW` | SQLAlchemy. |
-| `DB_UI_GETCONN_TIMEOUT_SECONDS` | Default **3** — fail fast for UI. |
+| `DB_UI_GETCONN_TIMEOUT_SECONDS` | Default **12** — wait/retry while UI pool is exhausted (ThreadedConnectionPool does not queue). |
+| `DB_ALLOW_DIRECT_FALLBACK` | Default **false** — do not open unaccounted direct sessions when the pool is saturated. |
 | `DB_WORKER_GETCONN_TIMEOUT_SECONDS` | Default **30** — automation can wait slightly longer. |
+| `DB_POOL_RETRY_INTERVAL_SECONDS` | Backoff between checkout retries while exhausted (default 0.05). |
+
+**Automation pressure gate:** `get_db_pool_snapshot()` reports `waiters` and `pressure=(in_use+waiters)/max`. While worker `pressure` ≥ `AUTOMATION_DB_WORKER_UTILIZATION_SKIP_THRESHOLD` (default 0.82) **or** `waiters > 0`, AutomationManager defers *new* scheduled enqueues (exempt: health_check, pending_db_flush). Waiter counts are **per process**. Cross-process: the API publishes `public.db_pool_pressure_advisory`; PopOS phase workers (`scripts/run_popos_phase_worker.py`) skip drains when `defer_new_work` is set (`POPOS_DB_PRESSURE_DEFER_ENABLED`, default true; stale after `DB_POOL_PRESSURE_ADVISORY_STALE_SEC`, default 120s → fail-open). Monitor shows worker/UI pressure chips from `GET /api/system_monitoring/automation/status` → `resource_router.db_pressure`.
+
+### Widow vs PopOS (one codebase)
+
+| Host role | AutomationManager | Pool wait/retry | Advisory |
+|-----------|-------------------|-----------------|----------|
+| **Widow** production API | **On** (publishes advisory on headroom/status/waiter) | Same `connection.py` | Writer |
+| **PopOS** UI/API (`news-intel-api`) | **Off** (`AUTOMATION_MANAGER_ENABLED=false`) — avoid a second manager | Same module | Still publishes on status/waiter so chips + workers stay fresh |
+| **PopOS** phase workers | N/A (drain only) | Same module (own process pools) | Reader — skip drain when hot |
+
+`~/ni-popos-worker` must remain a symlink (or deploy) of this repo — do not maintain a divergent `connection.py` on PopOS.
 
 Legacy **`DB_POOL_MIN` / `DB_POOL_MAX`** still map to worker min/max when the worker-specific vars are unset (see `connection.py`).
 

@@ -8,6 +8,8 @@
 
 | Concern | Location |
 |---------|----------|
+| **Scheduled enqueue SSOT** | `api/services/pipeline_controller.py` → `PipelineController.run` / `_replan` → `pick_next_phases` (flat mode default) → `AutomationManager.reconcile_and_enqueue` |
+| Admission / mode machine | `api/shared/pipeline_admission.py` + `orchestrator_governance.yaml` → `pipeline_controller.modes` |
 | Task names, `depends_on`, phase numbers, default intervals | `api/services/automation_manager.py` → `self.schedules` |
 | Per-task implementation | Same file → `async def _execute_<task_name>` (grep `_execute_`) |
 | Pending / backlog counts (what "has work" means) | `api/services/backlog_metrics.py` → `_count_*` helpers, `BATCH_SIZE_PER_TASK`, `SKIP_WHEN_EMPTY` |
@@ -15,7 +17,8 @@
 | Domain silos — **processing / backlog** | `shared.domain_registry` → `pipeline_url_schema_pairs()`, `get_pipeline_schema_names_active()`, `get_pipeline_active_domain_keys()` (`PIPELINE_INCLUDE` / `PIPELINE_EXCLUDE`) |
 | Domain silos — **RSS** (default full registry) | `collect_rss_feeds` → `url_schema_pairs()` unless `RSS_INGEST_MIRROR_PIPELINE=true` (then pipeline pairs); minus `RSS_INGEST_EXCLUDE_DOMAIN_KEYS` |
 | Shared article readiness (ML vs context) | `api/shared/article_processing_gates.py` |
-| Scheduling semantics | `api/services/automation_manager.py` module docstring |
+| Three-window + refinement desk schedule | `api/services/pipeline_schedule_service.py` |
+| Scheduling semantics | this doc + `api/services/automation_manager.py` module docstring |
 
 ---
 
@@ -25,41 +28,45 @@
 
 | Path | Behavior |
 |------|----------|
-| **Scheduler tick** | Builds runnable sequential phases and **parallel-group** members; each runnable phase is enqueued via `_create_and_queue_task` → `task_queue` → a **phase worker** dequeues and runs `_execute_task`. Parallel groups use the **same queue** (scheduler no longer blocks on `gather`). |
-| **`request_phase` / governor** | Pushes to `_requested_task_queue`; phase workers **prefer** this queue over the scheduled `PriorityQueue`. Does **not** go through `_should_run_task` (execute-time gates still apply). |
+| **PipelineController (default)** | Event-driven replan (worker done / `request_phase` / idle timeout). Reads queue depths, runs `pick_next_phases`, then `reconcile_and_enqueue` to reshape `task_queue`. Kill-switch: `PIPELINE_CONTROLLER_ENABLED=false`. |
+| **Legacy `_scheduler` tick** | Only when the kill-switch is off. Builds runnable sequential / parallel-group phases via `_create_and_queue_task` → `task_queue`. Do **not** run both brains at once. |
+| **`request_phase` / governor** | Pushes to `_phase_request_queue`; controller drains into `_requested_task_queue` (or legacy tick does). Phase workers **prefer** requested over scheduled. Triggers immediate `request_replan` when controller is active. |
 | **`run_nightly_sequential_phase`** | `await _execute_task(...)` from the nightly unified drain coroutine (not the worker pool); metadata `nightly_sequential_drain` bypasses several deferrals and per-phase caps as documented in code. |
 
 ### Workload-Driven Scheduling
 
-- **Workload-driven scheduling** (default path): phases with pending work (per `backlog_metrics`) are eligible every tick (subject to cooldown), not only on wall-clock intervals. Idle phases use their `interval` from `schedules`.
-- **Collection throttle:** When downstream pending (enrichment + `context_sync` + `document_processing`, minus `COLLECTION_THROTTLE_EXCLUDE_PHASES`, plus optional `COLLECTION_THROTTLE_EXTRA_PHASES`) exceeds `COLLECTION_THROTTLE_PENDING_THRESHOLD`, workload-driven scheduling **does not enqueue `collection_cycle`** (the whole cycle, not RSS only). Standalone `content_enrichment` and nightly unified drain still run so rows can catch up.
-- **Queue soft cap:** When `AUTOMATION_QUEUE_SOFT_CAP` is exceeded (default 100), new enqueues are skipped except phases in `AUTOMATION_QUEUE_PAUSE_ALLOW`. **`nightly_enrichment_context` is not allowlisted** (it would stack redundant drains). **`AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED`** caps running+queued nightly tasks (default 5).
+- **Default (PipelineController):** phases with pending work are desired by the flat mode machine (`pressure` / `preprocess` / `postprocess` / `maintenance`) and enqueued up to prefetch × `max_concurrent_tasks`. Flat planner kill-switch: `PIPELINE_FLAT_SCHEDULER=false` restores the nested tree inside the controller.
+- **Legacy tick path:** phases with pending work are eligible every tick (subject to cooldown); idle phases use `interval` from `schedules`.
+- **Collection throttle:** When downstream pending (enrichment + `context_sync` + `document_processing`, minus `COLLECTION_THROTTLE_EXCLUDE_PHASES`, plus optional `COLLECTION_THROTTLE_EXTRA_PHASES`) exceeds `COLLECTION_THROTTLE_PENDING_THRESHOLD`, scheduling **does not enqueue `collection_cycle`** (the whole cycle, not RSS only). Standalone `content_enrichment` and nightly unified drain still run so rows can catch up.
+- **Queue soft cap:** When `AUTOMATION_QUEUE_SOFT_CAP` is exceeded, new scheduled enqueues are skipped except phases in `AUTOMATION_QUEUE_PAUSE_ALLOW`. **`nightly_enrichment_context` is not allowlisted**. **`AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED`** caps running+queued nightly tasks.
 - **Widow / split hosts:** `AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE` on the main host when RSS runs elsewhere; `content_enrichment` still drains `{domain}.articles` rows that need full text. See `AGENTS.md` and `docs/WIDOW_DB_ADJACENT_CRON.md`.
+- **~70b refinement desk window:** `content_refinement_queue` runs only **02:00–09:00** local (`REFINEMENT_DESK_START_HOUR` / `REFINEMENT_DESK_END_HOUR`, default 2 / 9). Gated in `automation_phase_allowed`, `refinement_phase_allowed`, and the queue worker itself. Daytime drain override: `REFINEMENT_DESK_ANYTIME=true` (or `PIPELINE_REFINEMENT_ANYTIME`). Not bypassed by `PIPELINE_QUIET_HOURS_DISABLED`.
 
 ### `schedules[phase_name]["last_run"]` — Two Moments, One Field
 
 The same field is updated in different situations:
 
-1. **After a successful scheduled enqueue** (`_create_and_queue_task` → `_enqueue_scheduled_task` returns true): `last_run` is set to **enqueue time**. Workload-driven cooldown uses this so the scheduler does not enqueue the same phase every tick.
-2. **When a run finishes** (success or failure in `_execute_task`): `last_run` is set to **`completed_at` / `finished_at`**.
+1. **After a successful scheduled enqueue** (`_create_and_queue_task` / controller reconcile → `_enqueue_scheduled_task` returns true): `last_run` is set to **enqueue time** on the legacy tick path. Controller tasks carry `plan_generation` and are superseded when stale.
+2. **When a run finishes** (success or failure in `_execute_task`): `last_run` is set to **`completed_at` / `finished_at`**. Worker completion calls `PipelineController.notify_worker_done()` (debounced replan).
 
 **Dependency settling** (`_are_dependencies_satisfied`) compares dependents against **`dep_schedule["last_run"]`**. After an enqueue, that timestamp reflects **enqueue**, not "dependency output visible in DB," until completion overwrites it. In normal operation completion updates dominate; when debugging "dependent never ran," remember **enqueue vs completion** on the dependency.
 
-**Bootstrap**: `last_run is None` is treated specially so first-ever runs can queue together with dependencies (see comments in `_are_dependencies_satisfied`).
+**Bootstrap**: `last_run is None` is treated specially so first-ever runs can queue together with dependencies (see comments in `_are_dependencies_satisfied`). Legacy tick calls `_bootstrap_initial_tasks`; controller replans immediately on start.
 
 ### Parallel Groups
 
-Members of a parallel group are **not** run inline on the scheduler with `asyncio.gather`. They are **enqueued like sequential phases** when the group is eligible (`_should_run_parallel_group`) and each member passes `_should_run_task`. Actual overlap is determined by **worker count**, **per-phase concurrent caps**, and **queue ordering**—not by a dedicated "parallel burst" on the scheduler coroutine.
+On the **legacy tick** path, members of a parallel group are **enqueued like sequential phases** when the group is eligible (`_should_run_parallel_group`) and each member passes `_should_run_task`. The **controller** path selects desired phases from admission priorities instead of parallel-group gather. Actual overlap is determined by **worker count**, **per-phase concurrent caps**, and **queue ordering**.
 
 ### Worker Model and Status Fields
 
 - **`_phase_worker_tasks`**: asyncio tasks running `_worker` (dequeue loop). Count is driven by **`max_concurrent_tasks`** and **`_sync_phase_worker_tasks`** after startup, scale up/down, or dynamic resource allocation.
-- **`_background_automation_tasks`**: scheduler, standalone DB health loop, health monitor, metrics collector, entity organizer downtime loop.
+- **`_background_automation_tasks`**: PipelineController **or** legacy `_scheduler`, plus standalone DB health loop, health monitor, metrics collector, entity organizer downtime loop.
 - **`get_status()`**:
   - **`active_workers`**: phase workers **still running** (not done).
   - **`phase_workers_configured`**: `len(_phase_worker_tasks)` (target matches `max_concurrent_tasks` after sync).
   - **`max_concurrent_tasks`**: configured cap.
   - **`automation_background_tasks_active`**: non-done background tasks.
+  - **`pipeline_controller`**: `get_state()` when active, else `{active: false}`.
 
 ### Throughput vs Wasted Work
 
@@ -88,10 +95,39 @@ This section states **what "good" means per layer**, **what we deliberately igno
 | **Workload-driven scheduling** (`automation_manager`) | If a phase has pending work (`get_all_pending_counts`), it becomes eligible every tick (subject to cooldown + `depends_on`), not only on its idle interval. |
 | **`depends_on`** | **Scheduling order only**: a task is not eligible until dependencies have run at least once in the manager's history window; it does *not* mean "upstream must be empty." Downstream backlog counts are the real "is there work?" signal. |
 | **Collection throttle** | When the configured downstream pending sum exceeds `COLLECTION_THROTTLE_PENDING_THRESHOLD`, **`collection_cycle` is not scheduled** (entire cycle) so quality-sensitive steps can drain — **quality before volume**. Standalone enrichment and nightly drain still run. |
+| **Pending-driven phases** | `SKIP_WHEN_EMPTY` in `backlog_metrics.py` includes LLM/interval-noise phases with cheap SQL pending (`extracted_claims_dedupe`, `event_deduplication`, `story_continuation`, `event_coherence_review`, plus existing drain phases). True polls stay interval-at-zero (`collection_cycle`, `health_check`, …). |
 | **Pipeline domain scope** | Per-domain automation loops use **`get_pipeline_active_domain_keys()`** / **`pipeline_url_schema_pairs()`** so paused legacy silos are not enriched, synced, or story-processed. |
 | **`BATCH_SIZE_PER_TASK`** | Defines "normal" batch per run; pending **above** this is treated as backlog (shorter effective interval in backlog mode). |
 | **`BATCH_PHASES_CONTINUOUS`** + `MAX_REQUEUE_PER_WINDOW` | After `collection_cycle`, some phases may re-enqueue in the same analysis window up to a cap so one pass does not starve others. |
 | **Nightly unified window** | When `in_nightly_pipeline_window_est()` is true, `content_enrichment` / `context_sync` standalone tasks defer to **`nightly_enrichment_context`** (single orchestrated drain). When `NIGHTLY_UNIFIED_PIPELINE_ENABLED=false`, the normal `collection_cycle` + interval phases own enrichment again. |
+
+### Event → desk rail (contracts)
+
+Binding order lives in [`api/shared/assembly_phase_order.py`](../api/shared/assembly_phase_order.py) (`POST_SPINE_PHASE_ORDER`). Handoffs: [`api/shared/pipeline_handoffs.py`](../api/shared/pipeline_handoffs.py). Episode attach SSOT: [`api/services/ASSEMBLY_MODEL.md`](../api/services/ASSEMBLY_MODEL.md).
+
+```mermaid
+flowchart LR
+  UIE[UIE_or_CE_catchup] --> Dedup[event_deduplication]
+  Dedup --> Cont[story_continuation]
+  Cont -->|EEL_plus_CE_stamp| Idx[story_entity_index]
+  Cont -->|materiality| CRQ[content_refinement_queue]
+  Cont -->|handoff| Research[editorial_research_pass]
+  Research --> Narrative[editorial_narrative_pass]
+```
+
+| Phase | Input queue | Success output | Must-request next | Must not rewrite |
+|-------|-------------|----------------|-------------------|------------------|
+| **UIE / `chronological_events_catchup`** | Articles missing CE (or catchup backlog) | Rows in `public.chronological_events` | `event_deduplication` | Linked CE titles / membership stamps |
+| **`event_deduplication`** | CE with `canonical_event_id IS NULL` | Duplicate → canonical pointer; `source_count` / actor merge; promote empty canonical `storyline_id` from linked duplicate | `story_continuation` | Wipe `storyline_id`; delete CE or EEL rows |
+| **`story_continuation`** | Unlinked CE due for recheck (`continuation_recheck_due_sql`) | EEL (when assembly on) + CE `storyline_id` + `story_entity_index`; materiality-gated CRQ finisher enqueue | `editorial_research_pass` via `after_story_continuation` | Re-link already stamped CE; full `membership_store.admit` |
+| **`editorial_research_pass`** | Research / package backlog woken by handoff | Package evidence updates | Narrative / reduction per route | Membership SSOT (`event_episode_links`) |
+| **`content_refinement_queue`** | CRQ pending rows | Canonical narrative / RAG jobs | — | Unrelated storylines |
+
+**CRQ pending vs runnable:** Monitor backlog is queue depth (`sql_content_refinement_queue_pending`). Runnable also requires the refinement desk window (`REFINEMENT_DESK_*` / `REFINEMENT_DESK_ANYTIME`) — pending > 0 can still idle outside the desk.
+
+**Live vs retired (do not burn these for this rail):** From `POST_SPINE_RETIRED_PHASES` / `FULLY_RETIRED_BRIEFING_PHASES` — `timeline_generation`, `event_coherence_review`, bag absorb / `storyline_automation`, `editorial_room_loop`, and fully retired briefing synthesizers. Prefer continuation → CRQ / research → `entity_profile_build`. See [`docs/SIGNAL_FIRST_OPS.md`](SIGNAL_FIRST_OPS.md) burn playbook.
+
+**Post-link narrative rule:** Continuation does **not** call `membership_store.admit`. After a successful link it calls `maybe_enqueue_narrative_finisher_on_membership` (`source=story_continuation`) and may dual-write a derived bag row when enabled. Research packages still come from the handoff wake.
 
 ### Tier A — Ingestion (Reject Early)
 
@@ -146,6 +182,20 @@ Phases that are **DB-heavy** and also call the LLM stack (e.g. some extraction p
 Phases **not** in `OLLAMA_AUTOMATION_PHASES` (e.g. `collection_cycle`, `context_sync`, `claims_to_facts`, `health_check`) do **not** take the semaphore/yield path at the top of `_execute_task` unless they are added to the frozenset.
 
 **To add or remove an Ollama-gated phase:** update **`OLLAMA_AUTOMATION_PHASES`** only; **`GPU_LANE_PHASES`** follows automatically.
+
+### Circuit breaker backpressure (defer / shed / overload)
+
+Single policy for all hosts — see [`MONITOR_REPORTING_AND_METRICS.md`](MONITOR_REPORTING_AND_METRICS.md):
+
+| Signal | AM / drain behavior |
+|--------|---------------------|
+| Any of `OLLAMA_CB_KEYS` `is_open()` | **Shed** intake phases; workers **requeue** deferred (must-run also defers). Monitor-requested phases may still run. |
+| Timeout / 502–504 | **Overload** — do not trip CB; shrink batches (**trickle**) and leave due work pending. |
+| ConnectError / no route | `trip_open` hard shed until recovery probe succeeds. |
+
+Call sites must use `llm_service` / `ollama_generate_*` / `ollama_embed_*` (not raw `requests` to `/api/generate`). Prefer `POST /api/system_monitoring/circuit_breakers/reset` after the host recovers.
+
+**UI yield proxy:** `should_yield_to_api()` / `resource_router.api_yield` combines **in-flight non-polling HTTP** + a short recency window (`API_YIELD_WINDOW_SECONDS`, default 15). Monitor/health polls are excluded. This is still not a true accept-queue metric — use it to explain defer depth, not as capacity planning.
 
 ---
 
@@ -243,7 +293,9 @@ Below: **Task** = scheduler key in `schedules`. **Backlog key** = name in `backl
 | `timeline_generation` | 300s | `rag_enhancement` | `_execute_timeline_generation` | Storylines / events for chronological_events | `chronological_events` |
 | `entity_enrichment` | 1800s | `entity_profile_sync` | `_execute_entity_enrichment` | Profile IDs to enrich (e.g. Wikipedia) | `entity_profiles` external fields |
 | `story_enhancement` | 300s | — | `_execute_story_enhancement` | Story update queues | Story enhancement records |
-| `content_refinement_queue` | 120s | — | `_execute_content_refinement_queue` | `intelligence.content_refinement_queue` | Deep storyline narratives / finisher jobs |
+| `content_refinement_queue` | 120s | — | `_execute_content_refinement_queue` | `intelligence.content_refinement_queue` | Deep storyline narratives / ~70B finisher jobs (materiality-gated) |
+
+**Knowledge loop (finisher):** Jobs are enqueued on material membership attach and material fact snapshots; the runner skips unchanged fingerprints and defers narrow deltas (`narrow_debt_pending`). Nightly GPU refinement drain force-enqueues aged narrow debt. Design: [`KNOWLEDGE_LOOP.md`](KNOWLEDGE_LOOP.md); env: [`STORYLINE_HISTORICAL_MEMORY.md`](STORYLINE_HISTORICAL_MEMORY.md).
 
 ### Phase 10–12 — Editorial, Digests, Watchlist
 
@@ -289,6 +341,14 @@ Below: **Task** = scheduler key in `schedules`. **Backlog key** = name in `backl
 5. **Observability:** `public.automation_run_history` (phase completions), `pipeline_traces` / `pipeline_checkpoints` (stage timing), Monitor UI backlog — use for before/after comparisons when changing methodology.
 
 ---
+
+## Major backlog catchup (ops force-drain only)
+
+**Continuous drain** of `story_enhancement`, `entity_profile_build`, dossier compile, and intake/extraction is owned by **AutomationManager** on the Widow systemd API (`news-intelligence-api-public` under `/opt/news-intelligence`).
+
+[`api/services/run_major_backlog_catchup.py`](../api/services/run_major_backlog_catchup.py) (and thin shell wrappers) are **emergency / ops `--force` CLIs**. They pause competing automation, call the **same** service entrypoints AM uses, and must not be treated as the overnight source of truth. Stale `data/major_backlog_catchup_state.json` / dead `*.pid` files are reset on version mismatch or refused when another catchup PID is alive.
+
+See also `scripts/ensure_widow_api_runtime.sh` so workspace uvicorn does not steal `:8000` from systemd.
 
 ## Operator mental model (June 2026 repair)
 
