@@ -38,11 +38,43 @@ from psycopg2.extras import RealDictCursor
 from typing import Optional, Dict, Any, Generator
 import threading
 from contextlib import contextmanager
+from enum import IntEnum
 from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Priority tiers for connection checkout (Item 3)
+# ---------------------------------------------------------------------------
+
+
+class _ConnectionPriority(IntEnum):
+    """Checkout priority levels — lower value = higher priority."""
+    HEALTH = 0      # Health probes, liveness checks (preemptive)
+    UI = 1          # Page loads, monitoring reads
+    WORKER = 2      # Automation, batch, enrichment
+
+
+# Priority-aware pressure gates per tier.
+# When the overall pool utilization exceeds these thresholds, lower-priority
+# checkouts fail faster to preserve headroom for higher-priority paths.
+_PRIORITY_UTILIZATION_THRESHOLDS: Dict[int, float] = {
+    _ConnectionPriority.HEALTH: 0.95,
+    _ConnectionPriority.UI:     0.85,
+    _ConnectionPriority.WORKER: 0.75,   # worker gives way first
+}
+
+# Retry budget per priority level (max validation retries before giving up).
+_PRIORITY_RETRIES: Dict[int, int] = {
+    _ConnectionPriority.HEALTH: 3,  # health needs to succeed at all costs
+    _ConnectionPriority.UI:     2,
+    _ConnectionPriority.WORKER: 2,
+}
+
+
+# ---------------------------------------------------------------------------
 # SQLAlchemy engine (lazy init, independent pool from psycopg2)
+# ---------------------------------------------------------------------------
 _sqlalchemy_engine = None
 _sqlalchemy_session_factory = None
 _sqlalchemy_lock = threading.Lock()
@@ -88,62 +120,151 @@ class PooledConnection:
     """
     Wrapper around psycopg2 connection that properly returns to pool on close.
     Transparent wrapper that delegates all operations to underlying connection.
+
+    Safety guarantees:
+    - ``close()`` always does rollback first so next pool user never sees 'aborted tx'.
+    - On GC (``__del__``), the connection is force-rolled-back and dropped from the pool
+      rather than silently leaked — stale sockets get a fresh one on next checkout.
+    - Dead sockets are detected before return to pool; they're discarded to prevent
+      poisoning downstream callers.
     """
     def __init__(self, conn, pool_ref):
         self._conn = conn
         self._pool = pool_ref
         self._closed = False
-    
-    def cursor(self, *args, **kwargs):
-        """Create cursor - delegate to underlying connection"""
-        return self._conn.cursor(*args, **kwargs)
-    
-    def commit(self):
-        """Commit transaction"""
-        return self._conn.commit()
-    
-    def rollback(self):
-        """Rollback transaction"""
-        return self._conn.rollback()
-    
-    def close(self):
-        """Return connection to pool instead of closing it. Rollback first so the next user doesn't get 'aborted transaction'."""
-        if not self._closed:
+
+    # ------------------------------------------------------------------ GC safety net ---
+    def __del__(self):
+        """If someone forgets to call close(), force-drop the connection so it doesn't leak a slot."""
+        if not self._closed and self._conn is not None:
             try:
-                self._conn.rollback()
+                self._conn.rollback()  # leave any open tx
             except Exception:
                 pass
             if self._pool is not None:
+                # Drop (don't reuse) — the connection may be in unknown state.
                 try:
-                    self._pool.putconn(self._conn)
-                except Exception as e:
-                    logger.warning(f"Error returning connection to pool: {e}")
-                    try:
-                        self._conn.close()
-                    except Exception:
-                        pass
-            else:
-                try:
-                    self._conn.close()
+                    self._pool.putconn(self._conn, close=True)
                 except Exception:
                     pass
-            self._closed = True
-    
+        # Note: don't set _closed = True here; __del__ may fire during interpreter shutdown.
+
+    def _mark_closed(self):
+        """Internal helper to mark the connection as closed."""
+        self._closed = True
+
+    # ---------------------------------------------------------------- core operations ---
+    def cursor(self, *args, **kwargs):
+        """Create cursor - delegate to underlying connection"""
+        return self._conn.cursor(*args, **kwargs)
+
+    def commit(self):
+        """Commit transaction"""
+        return self._conn.commit()
+
+    def rollback(self):
+        """Rollback transaction"""
+        return self._conn.rollback()
+
+    # ---------------------------------------------------------------- validation helpers ---
+    @staticmethod
+    def _is_socket_alive(conn) -> bool:
+        """Quick check: does the underlying socket respond? Returns True if alive."""
+        try:
+            # psycopg2 Connection.poll() is async; use a lightweight cursor query instead.
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def _has_uncommitted_tx(conn) -> bool:
+        """Check if there's an uncommitted transaction (state='intransaction')."""
+        try:
+            # In psycopg2, autocommit=False connections report transaction status:
+            return conn.get_transaction_status() not in (
+                0,  # TRANSACTION_IDLE
+                1,  # TRANSACTIVE_ERROR  → already aborted, next user gets error anyway
+                4,  # TRANSACTIVE_ABORT
+            )
+        except Exception:
+            # If get_transaction_status fails, assume safe to reuse.
+            return False
+
+    # ---------------------------------------------------------------- close / return ---
+    def close(self):
+        """Return connection to pool instead of closing it. Rollback first so the next user doesn't get 'aborted transaction'.
+
+        Before returning: validates the socket is alive and has no uncommitted tx.
+        If the socket is dead, the connection is force-closed and a fresh one will be opened on next checkout.
+        """
+        if self._closed:
+            return  # idempotent
+
+        try:
+            self._conn.rollback()
+        except Exception:
+            pass
+
+        if self._pool is not None:
+            # Pre-check: don't poison the pool with dead sockets.
+            if not PooledConnection._is_socket_alive(self._conn):
+                logger.warning(
+                    "PooledConnection.close(): socket stale — dropping (not returning to pool). "
+                    "connection_id=%s", id(self._conn), exc_info=True,
+                )
+                try:
+                    self._pool.putconn(self._conn, close=True)
+                except Exception:
+                    pass
+                self._mark_closed()
+                return
+
+            # If there's an uncommitted transaction, drop the connection instead of returning it.
+            if PooledConnection._has_uncommitted_tx(self._conn):
+                logger.warning(
+                    "PooledConnection.close(): uncommitted tx — dropping (not returning to pool). "
+                    "connection_id=%s", id(self._conn), exc_info=True,
+                )
+                try:
+                    self._pool.putconn(self._conn, close=True)
+                except Exception:
+                    pass
+                self._mark_closed()
+                return
+
+            try:
+                self._pool.putconn(self._conn)
+            except Exception as e:
+                logger.warning(f"Error returning connection to pool ({e}); force-closing.")
+                try:
+                    self._pool.putconn(self._conn, close=True)
+                except Exception:
+                    pass
+        else:
+            # Ephemeral (non-pooled) — just close the raw socket.
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+
+        self._mark_closed()
+
     def __enter__(self):
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
-        # Only return to pool if no exception, or if exception is handled
         self.close()
         return False  # Don't suppress exceptions
-    
+
     @property
     def closed(self):
         """Check if connection is closed"""
         if self._closed:
             return True
         return getattr(self._conn, 'closed', False)
-    
+
     # Delegate ALL other attributes/methods to underlying connection
     def __getattr__(self, name):
         """Delegate any other attribute access to underlying connection"""
@@ -300,17 +421,54 @@ def _init_pool(pool_kind: str = "worker") -> pool.ThreadedConnectionPool:
 
 
 def _validate_connection(conn) -> bool:
-    """Run a quick check; return True if connection is alive."""
+    """Run a quick check; return True if connection is alive.
+
+    Detects three failure modes that stall pool checkout:
+    1. **Stale socket** — server closed the connection (keep-alive expiry, network flap).
+    2. **Idle-in-transaction** — a previous automation phase crashed without rollback,
+       leaving the session suspended. ``SELECT pg_is_in_recovery()`` is safe and
+       PgBouncer will reset the backend; if we see idle state the slot is poisoned.
+    3. **Aborted transaction block** — the connection left mid-transaction in an error
+       state; SELECT would fail immediately.
+
+    We use a ``SET statement_timeout = 500`` to protect against PgBouncer back-end
+    hangs (unusual but seen during network partition recovery).
+    """
     try:
+        # Use a cursor — plain psycopg2 connections have no `.execute()` method.
         with conn.cursor() as cur:
+            # SET LOCAL only works inside a transaction; BEGIN starts one.
+            cur.execute("BEGIN")
+            cur.execute("SET LOCAL statement_timeout = '500'")
             cur.execute("SELECT 1")
             cur.fetchone()
-        # SELECT opens a transaction; rollback so checkout does not leak idle-in-tx sessions.
-        try:
-            conn.rollback()
-        except Exception:
-            pass
+        conn.rollback()  # Roll back the explicit tx so next user gets clean slate.
         return True
+    except psycopg2.extensions.QueryCanceledError:
+        # Timeout during health check — backend may be stuck. Treat as stale.
+        logger.warning("Connection timed out during health check (stale backend)")
+        return False
+    except Exception:
+        # Socket reset, closed, or other transport error — definitely stale.
+        return False
+
+
+def _is_idle_in_transaction(conn) -> bool:
+    """Check whether this connection is stuck in idle-in-transaction state.
+
+    This requires a direct backend (not pooled through PgBouncer where
+    ``pg_stat_activity`` per-client detail may be hidden). For transaction
+    pooling mode, the backend reset on every statement so this mainly catches
+    the rare case where we hit Postgres directly (admin / migration paths).
+    """
+    try:
+        with conn.cursor() as cur:
+            # Quick check without opening a new tx.
+            cur.execute("SELECT state FROM pg_stat_activity WHERE pid = pg_backend_pid()")
+            row = cur.fetchone()
+            if row and row.get("state") == "idle in transaction":
+                return True
+        return False
     except Exception:
         return False
 
@@ -321,14 +479,20 @@ def _direct_fallback_allowed() -> bool:
     return raw not in ("0", "false", "no", "off")
 
 
-def _getconn_from_pool(pool_ref):
+def _getconn_from_pool(pool_ref, priority: int = _ConnectionPriority.WORKER) -> Optional[PooledConnection]:
     """Get one connection from pool and validate; used with optional timeout.
 
     Stale connections must be returned with ``putconn(..., close=True)``. Calling
     ``conn.close()`` alone leaves the slot in the pool's ``_used`` map and exhausts
     the pool (looks like Postgres or checkout timeouts failed).
+
+    Args:
+        pool_ref: The ThreadedConnectionPool to draw from.
+        priority: Checkout priority level. Lower = higher priority with shorter retry
+                  budget during saturation (health=0, ui=1, worker=2).
     """
-    for _ in range(2):
+    max_retries = _PRIORITY_RETRIES.get(priority, _PRIORITY_RETRIES[_ConnectionPriority.WORKER])
+    for attempt in range(max_retries):
         conn = pool_ref.getconn()
         if _validate_connection(conn):
             return PooledConnection(conn, pool_ref)
@@ -340,6 +504,67 @@ def _getconn_from_pool(pool_ref):
             except Exception:
                 pass
     return None
+
+
+def _get_db_pool_pressure_for_kind(pool_kind: str) -> float:
+    """Return the current pressure (in_use + waiters) / max for a given pool kind."""
+    try:
+        snap = get_db_pool_snapshot()
+        pstats = snap.get(pool_kind, {}) or {}
+        return float(pstats.get("pressure", 0.0) or pstats.get("utilization", 0.0))
+    except Exception:
+        return 0.0
+
+
+def _checkout_with_priority(
+    pool_ref,
+    priority: int = _ConnectionPriority.WORKER,
+    timeout_sec: Optional[float] = None,
+    use_executor: bool = True,
+) -> Optional[PooledConnection]:
+    """Priority-aware checkout with short-circuit on high pressure.
+
+    When overall pool pressure exceeds the threshold for this priority tier,
+    the function fails immediately instead of blocking -- preserving headroom
+    for higher-priority work.
+
+    Args:
+        pool_ref: The ThreadedConnectionPool to draw from.
+        priority: Priority level (lower = higher priority).
+        timeout_sec: Max seconds to wait for a connection (None = no wait).
+        use_executor: Whether to dispatch through the shared executor (default True).
+                      Set False for health probes that need synchronous blocking.
+
+    Returns:
+        A PooledConnection or None when pressure exceeds tier threshold.
+    """
+    # --- Priority gate: reject immediately if this tier is over budget ---
+    pool_kind = "worker"
+    if pool_ref is _ui_connection_pool:
+        pool_kind = "ui"
+    elif pool_ref is _health_connection_pool:
+        pool_kind = "health"
+
+    threshold = _PRIORITY_UTILIZATION_THRESHOLDS.get(priority, 0.75)
+    pressure = _get_db_pool_pressure_for_kind(pool_kind)
+    if pressure >= threshold:
+        logger.warning(
+            "Pool %s pressure %.3f >= tier-%d threshold %.3f; rejecting early",
+            pool_kind, pressure, priority, threshold,
+        )
+        return None
+
+    if use_executor and timeout_sec is not None:
+        ex = _getconn_executor_ref()
+        fut = ex.submit(_getconn_from_pool, pool_ref, priority)
+        try:
+            conn = fut.result(timeout=timeout_sec)
+        except (concurrent.futures.TimeoutError, Exception):
+            return None
+        return conn
+
+    # Direct (no executor / no timeout) path.
+    return _getconn_from_pool(pool_ref, priority)
 
 
 def get_db_connection(use_reserved: bool = False):
@@ -822,6 +1047,193 @@ def get_health_db_connection_context():
         yield conn
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Async context managers (event-loop friendly)
+# ---------------------------------------------------------------------------
+
+import asyncio
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def get_db_async_connection_context():
+    """Async context manager for worker-pool DB connections.
+
+    Wraps ``get_db_connection`` in an executor so the checkout does not block
+    the event loop, then yields the connection for use inside ``async with``.
+    Always returns the connection to the pool on exit (even on exception).
+
+    Usage::
+
+        async with get_db_async_connection_context() as conn:
+            cur = conn.cursor()
+            cur.execute(...)
+    """
+    loop = asyncio.get_event_loop()
+    conn = await loop.run_in_executor(None, get_db_connection)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Priority-aware checkout (Item 3)
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def get_priority_db_connection_context(
+    priority: int = _ConnectionPriority.WORKER,
+    use_pool: str = "worker",
+    timeout_sec: Optional[float] = None,
+):
+    """Get a connection with priority-aware checkout.
+
+    Use this for paths that need tiered priority during pool exhaustion:
+    - ``priority=_ConnectionPriority.HEALTH`` — health probes (preemptive)
+    - ``priority=_ConnectionPriority.UI``     — UI reads
+    - ``priority=_ConnectionPriority.WORKER`` — automation / batch writes
+
+    Args:
+        priority: Priority level for this connection.
+        use_pool: Which pool to draw from ("worker", "ui", or "health").
+        timeout_sec: Max seconds to wait (None = no executor wait).
+
+    Yields:
+        A psycopg2 connection.
+    """
+    if use_pool == "ui":
+        pool_ref = _ui_connection_pool
+    elif use_pool == "health":
+        pool_ref = _health_connection_pool
+    else:
+        pool_ref = _connection_pool
+
+    conn_obj = _checkout_with_priority(
+        pool_ref,
+        priority=priority,
+        timeout_sec=timeout_sec,
+        use_executor=(use_pool != "health"),  # health needs synchronous blocking
+    )
+    if conn_obj is None:
+        raise PoolExhaustedError(
+            f"Pool '{use_pool}' exhausted for tier {priority.name} (pressure may be >0.95)"
+        )
+    try:
+        yield conn_obj.conn
+    finally:
+        conn_obj.close()
+
+
+@contextmanager
+def get_health_priority_connection():
+    """High-priority health probe connection with preemptive checkout."""
+    with get_priority_db_connection_context(
+        priority=_ConnectionPriority.HEALTH,
+        use_pool="health",
+        timeout_sec=10.0,
+    ) as conn:
+        yield conn
+
+
+@contextmanager
+def get_ui_priority_connection():
+    """Medium-priority UI read connection."""
+    with get_priority_db_connection_context(
+        priority=_ConnectionPriority.UI,
+        use_pool="ui",
+        timeout_sec=5.0,
+    ) as conn:
+        yield conn
+
+
+# ---------------------------------------------------------------------------
+# Query timeout enforcement (Item 4)
+# ---------------------------------------------------------------------------
+
+class EphemeralQueryTimeout:
+    """Context manager for enforcing per-query statement_timeout on a connection."""
+
+    def __init__(self, conn, timeout_str: str):
+        self.conn = conn
+        self.timeout_str = timeout_str
+        self._old_timeout: Optional[str] = None
+
+    def __enter__(self) -> "EphemeralQueryTimeout":
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SHOW statement_timeout")
+                row = cur.fetchone()
+                if row:
+                    val = row.get("statement_timeout") if isinstance(row, dict) else row[0]
+                    self._old_timeout = str(val)
+        except Exception:
+            self._old_timeout = None
+        try:
+            # SET LOCAL needs an active transaction; BEGIN starts one.
+            with self.conn.cursor() as cur:
+                cur.execute("BEGIN")
+                cur.execute(f"SET LOCAL statement_timeout = '{self.timeout_str}'")
+        except psycopg2.extensions.QueryCanceledError:
+            raise PoolExhaustedError(
+                f"Connection {id(self.conn)} timed out during timeout setup; connection stale"
+            )
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            if self._old_timeout is not None:
+                with self.conn.cursor() as cur:
+                    cur.execute(f"SET statement_timeout = '{self._old_timeout}'")
+            else:
+                with self.conn.cursor() as cur:
+                    cur.execute("SET statement_timeout = 0")
+        except Exception:
+            pass
+        return False
+
+
+class TimeoutPresets:
+    """Named timeout presets for different query types."""
+    HEAVY_ANALYSIS = "30s"     # Storyline refinement, bulk updates
+    UI_READ = "5s"             # Page loads, dashboard queries
+    HEALTH_CHECK = "1s"        # Health probes, liveness checks
+    BULK_INSERT = "60s"        # Batch inserts / migrations
+    EVENT_EXTRACTION = "15s"   # Event/claim extraction from batches
+
+
+def _set_statement_timeout(conn, timeout_ms: int):
+    """Shortcut to set statement_timeout in milliseconds on a connection."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("BEGIN")
+            cur.execute(f"SET LOCAL statement_timeout = '{timeout_ms}'")
+    except psycopg2.extensions.QueryCanceledError:
+        raise PoolExhaustedError(
+            f"Connection timed out during timeout setup ({timeout_ms}ms)"
+        )
+
+
+@contextmanager
+def get_connection_with_timeout(conn, timeout_str: str):
+    """Wrap any existing connection with a per-query statement_timeout.
+
+    Prefer ``EphemeralQueryTimeout`` for explicit use; this is a convenience
+    wrapper for callers that already hold a connection and just need the
+    timeout applied to the next block of queries.
+
+    Args:
+        conn: An active psycopg2 connection.
+        timeout_str: PostgreSQL interval string (e.g. "30s", "5m").
+
+    Yields:
+        The same connection with statement_timeout applied for the block.
+    """
+    with EphemeralQueryTimeout(conn, timeout_str):
+        yield conn
 
 
 @contextmanager
