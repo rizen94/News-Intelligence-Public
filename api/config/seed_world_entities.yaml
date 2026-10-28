@@ -229,3 +229,51 @@ artificial-intelligence:
     type: organization
   - name: "CERN"
     type: organization
+  # Research subject board seeds (knowledge_profiles / ledger)
+  - name: "Artificial Intelligence"
+    type: subject
+    aliases: ["AI", "machine learning", "ML"]
+  - name: "Large Language Models"
+    type: subject
+    aliases: ["LLMs", "LLM", "foundation models"]
+  - name: "Computer Vision"
+    type: subject
+    aliases: ["CV", "image recognition"]
+  - name: "AI Alignment"
+    type: subject
+    aliases: ["alignment", "AI safety"]
+  - name: "Robotics"
+    type: subject
+
+neurodiversity:
+  - name: "Autism"
+    type: subject
+    aliases: ["ASD", "autism spectrum", "autism spectrum disorder", "Autistic"]
+  - name: "ADHD"
+    type: subject
+    aliases: ["attention deficit hyperactivity disorder", "attention-deficit/hyperactivity disorder"]
+  - name: "AuDHD"
+    type: subject
+    aliases: ["autism-ADHD", "autism and ADHD", "autism ADHD comorbidity"]
+  - name: "Neurodiversity"
+    type: subject
+    aliases: ["neurodivergent", "neurodivergence"]
+
+medicine:
+  - name: "Clinical Trials"
+    type: subject
+    aliases: ["RCT", "randomized controlled trial"]
+  - name: "Epidemiology"
+    type: subject
+  - name: "Oncology"
+    type: subject
+    aliases: ["cancer", "tumor", "tumour"]
+  - name: "Infectious Disease"
+    type: subject
+    aliases: ["infectious diseases", "pathogen", "antimicrobial"]
+  - name: "Public Health"
+    type: subject
+    aliases: ["population health"]
+  - name: "Genomics"
+    type: subject
+    aliases: ["genome", "GWAS", "exome"]

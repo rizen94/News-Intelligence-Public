@@ -31,6 +31,7 @@ Monitoring:
 - Tier-1, Tier-2, Tier-3 match rates
 """
 
+import difflib
 import json
 import logging
 import os
@@ -41,8 +42,18 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_URL = "http://localhost:11434"
+
+def _ollama_url() -> str:
+    for key in ("OLLAMA_HOST", "OLLAMA_URL", "OLLAMA_POP_OS_HOST"):
+        raw = (os.environ.get(key) or "").strip()
+        if raw:
+            return raw.rstrip("/")
+    return "http://127.0.0.1:11434"
+
+
 EMBED_MODEL = "nomic-embed-text"
+# Back-compat alias; prefer _ollama_url() at call sites (env may load after import).
+OLLAMA_URL = _ollama_url()
 
 
 def _dedup_env_float(name: str, default: float) -> float:
@@ -99,21 +110,22 @@ def _dedup_borderline_max_seconds() -> float:
     return max(60.0, min(v, 86400.0 * 30))
 
 
+def _dedup_tick_batch() -> int:
+    """Default tick batch for deduplicate_recent when no limit argument is supplied."""
+    v = _dedup_env_int("EVENT_DEDUP_TICK_BATCH", 50)
+    return max(1, min(v, 2000))
+
+
 async def _get_embedding(text: str) -> list[float] | None:
-    """Get a 768-d embedding from Ollama's nomic-embed-text model."""
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        try:
-            resp = await client.post(
-                f"{OLLAMA_URL}/api/embeddings",
-                json={"model": EMBED_MODEL, "prompt": text},
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                if not isinstance(data, dict):
-                    return None
-                return data.get("embedding")
-        except Exception as e:
-            logger.error(f"Embedding request failed: {e}")
+    """Get a 768-d embedding from Ollama's nomic-embed-text model via CB hub."""
+    from shared.services.llm_service import is_ollama_pressure_error, ollama_embed_async
+
+    try:
+        return await ollama_embed_async(text, model=EMBED_MODEL)
+    except Exception as e:
+        if is_ollama_pressure_error(e):
+            raise
+        logger.error(f"Embedding request failed: {e}")
     return None
 
 
@@ -123,6 +135,49 @@ class EventDeduplicationService:
     def __init__(self, conn):
         self.conn = conn
         self._chronological_has_embedding: bool | None = None
+        self._hnsw_index_guaranteed: bool | None = None
+
+    def _ensure_hnsw_index(self) -> None:
+        """Create pgvector HNSW index on chronological_events(embedding) if missing.
+
+        Idempotent — uses IF NOT EXISTS + CONCURRENTLY so it is safe to call
+        repeatedly during startup/restarts.  Skips silently when the pg extension
+        is not loaded (e.g. a small test DB without vector).
+        """
+        if self._hnsw_index_guaranteed is not None:
+            return
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_class c
+                        JOIN pg_namespace n ON n.oid = c.relnamespace
+                        WHERE c.relname = 'idx_chronological_events_embedding_hnsw'
+                          AND n.nspname = 'public'
+                    ) THEN
+                        CREATE INDEX CONCURRENTLY IF NOT EXISTS
+                            idx_chronological_events_embedding_hnsw
+                            ON public.chronological_events
+                            USING hnsw (embedding vector_cosine_ops)
+                            WITH (m = 16, ef_construction = 64);
+                    END IF;
+                END $$;
+            """
+            )
+            self.conn.commit()
+            logger.info("HNSW index on chronological_events(embedding) ready")
+        except Exception as exc:
+            # pgvector extension missing or unsupported — non-fatal
+            logger.warning(
+                "Could not create HNSW index (pgvector may be unavailable): %s", exc
+            )
+            self.conn.rollback()
+        finally:
+            cursor.close()
+        self._hnsw_index_guaranteed = True
 
     def _chronological_events_has_embedding(self) -> bool:
         if self._chronological_has_embedding is not None:
@@ -149,126 +204,188 @@ class EventDeduplicationService:
     # Public entry point
     # ------------------------------------------------------------------
 
-    async def deduplicate_event(self, event_id: int) -> int | None:
-        """
-        Check if *event_id* is a duplicate of an existing canonical event.
+    async def _match_and_collect(self, event_id: int) -> tuple[int, int] | None:
+        """Find a canonical candidate for *event_id* without committing anything.
 
-        Returns the canonical_event_id if a match is found, else None.
-        Side-effects: updates canonical pointers, source counts, and merges
-        metadata when a match is confirmed.
+        Returns ``(duplicate_id, canonical_id)`` when a match is found, else ``None``.
+        Used by both the per-event and batch entry points so they share identical
+        matching logic with no double-commit side-effects.
         """
-        has_emb = self._chronological_events_has_embedding()
+        # --- Tier 1: fingerprint match -----------------------------------------
         cursor = self.conn.cursor()
-        if has_emb:
-            cursor.execute(
-                """
-                SELECT id, event_fingerprint, title, description, event_type,
-                       actual_event_date, date_precision, location, key_actors,
-                       entities, embedding, storyline_id
-                FROM chronological_events
-                WHERE id = %s
-            """,
+        try:
+            await cursor.execute(
+                "SELECT event_fingerprint FROM chronological_events WHERE id = %s",
                 (event_id,),
             )
-        else:
-            cursor.execute(
-                """
-                SELECT id, event_fingerprint, title, description, event_type,
-                       actual_event_date, date_precision, location, key_actors,
-                       entities, storyline_id
-                FROM chronological_events
-                WHERE id = %s
-            """,
-                (event_id,),
-            )
-        row = cursor.fetchone()
-        cursor.close()
-        if not row:
+            r = await cursor.fetchone()
+            fingerprint = r[0] if r and r[0] else None
+        finally:
+            cursor.close()
+
+        if fingerprint:
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute(
+                    "SELECT id FROM chronological_events WHERE event_fingerprint = %s AND id != %s AND canonical_event_id IS NULL ORDER BY extraction_timestamp ASC LIMIT 1",
+                    (fingerprint, event_id),
+                )
+                match_row = cursor.fetchone()
+                if match_row:
+                    return (event_id, int(match_row[0]))
+            finally:
+                cursor.close()
+
+        # --- Tier 2: semantic similarity -----------------------------------------
+        embedding = None
+        embed_col_exists = self._chronological_events_has_embedding()
+
+        if embed_col_exists:
+            cursor = self.conn.cursor()
+            try:
+                await cursor.execute(
+                    "SELECT headline, summary FROM chronological_events WHERE id = %s",
+                    (event_id,),
+                )
+                r = await cursor.fetchone()
+                headline, summary = (r[0], r[1]) if r else (None, None)
+            finally:
+                cursor.close()
+
+            parts = [f"Event #{event_id}"]
+            if headline:
+                parts.append(headline)
+            if summary:
+                parts.append(summary)
+            text_for_embed = " ".join(parts)
+            embedding = await _get_embedding(text_for_embed)
+
+        if embedding is not None:
+            cursor = self.conn.cursor()
+            try:
+                top_k = _dedup_embedding_top_k()
+                sim_thr = _dedup_similarity_threshold()
+                emb_margin = _dedup_embedding_margin()
+                skip_margin_if_ge = _dedup_skip_margin_if_sim_ge()
+                borderline_sim = _dedup_borderline_sim()
+                borderline_sec = _dedup_borderline_max_seconds()
+
+                cursor.execute(
+                    "SELECT actual_event_date FROM chronological_events WHERE id = %s",
+                    (event_id,),
+                )
+                r2 = cursor.fetchone()
+                event_date: datetime | None = r2[0] if r2 else None
+
+                vec_literal = "[" + ",".join(str(x) for x in embedding) + "]"
+                cursor.execute(
+                    "SELECT id, 1 - (embedding <=> %s::vector) AS similarity, actual_event_date, extraction_timestamp FROM chronological_events WHERE id != %s AND canonical_event_id IS NULL AND embedding IS NOT NULL ORDER BY embedding <=> %s::vector LIMIT %s",
+                    (vec_literal, event_id, vec_literal, top_k),
+                )
+                candidates = cursor.fetchall() or []
+                if not candidates:
+                    return None
+
+                best_id = candidates[0][0]
+                best_sim = float(candidates[0][1] or 0.0)
+                best_event_date = candidates[0][2]
+                best_extraction_ts = candidates[0][3]
+
+                if best_sim < sim_thr:
+                    return None
+
+                if len(candidates) > 1:
+                    second_sim = float(candidates[1][1] or 0.0)
+                    margin = best_sim - second_sim
+                    if margin < emb_margin and best_sim < skip_margin_if_ge:
+                        return None
+
+                temporal_on = event_date is not None
+                dt_sec = self._seconds_between_event_times(event_date, best_event_date)
+                if temporal_on and (
+                    best_sim < borderline_sim
+                    and dt_sec is not None
+                    and dt_sec > borderline_sec
+                ):
+                    return None
+
+                return (event_id, int(best_id))
+            except Exception as e:
+                logger.error(f"pgvector similarity query failed: {e}")
+                self.conn.rollback()
+            finally:
+                cursor.close()
             return None
 
-        if has_emb:
-            (
-                eid,
-                fingerprint,
-                title,
-                desc,
-                etype,
-                edate,
-                precision,
-                loc,
-                actors_json,
-                entities_json,
-                embedding,
-                storyline_id,
-            ) = row
-        else:
-            (
-                eid,
-                fingerprint,
-                title,
-                desc,
-                etype,
-                edate,
-                precision,
-                loc,
-                actors_json,
-                entities_json,
-                storyline_id,
-            ) = row
-            embedding = None
+        # --- Tier 3: entity + temporal overlap -----------------------------------
+        cursor = self.conn.cursor()
+        try:
+            await cursor.execute(
+                "SELECT key_actors, entities FROM chronological_events WHERE id = %s",
+                (event_id,),
+            )
+            r = await cursor.fetchone()
+            k_a, ents = (r[0], r[1]) if r else (None, None)
 
-        key_actors = self._parse_json(actors_json)
-        entities = self._parse_json(entities_json)
+            actor_names: list[str] = []
+            if isinstance(k_a, list):
+                actor_names = [a.get("name", "") for a in k_a]
+            if isinstance(ents, list):
+                actor_names += [e.get("name", "") if isinstance(e, dict) else str(e) for e in ents]
 
-        # --- Tier 1: fingerprint ----------------------------------------
-        canonical = self._match_by_fingerprint(eid, fingerprint)
+            cursor.execute(
+                "SELECT actual_event_date FROM chronological_events WHERE id = %s",
+                (event_id,),
+            )
+            r2 = cursor.fetchone()
+            event_date: datetime | None = r2[0] if r2 else None
+        finally:
+            cursor.close()
+
+        canonical = self._match_by_entities(event_id, actor_names, event_date, "year")
         if canonical:
-            await self._merge(eid, canonical)
-            return canonical
-
-        # --- Tier 2: semantic similarity (pgvector) ----------------------
-        if has_emb:
-            if embedding is None:
-                embed_text = f"{title}. {desc or ''}"
-                vec = await _get_embedding(embed_text)
-                if vec:
-                    self._store_embedding(eid, vec)
-                    embedding = vec
-
-            if embedding is not None:
-                canonical = self._match_by_embedding(eid, embedding, edate)
-                if canonical:
-                    await self._merge(eid, canonical)
-                    return canonical
-
-        # --- Tier 3: entity + temporal overlap ---------------------------
-        actor_names = (
-            [a.get("name", "") for a in key_actors] if isinstance(key_actors, list) else []
-        )
-        entity_names = []
-        if isinstance(entities, list):
-            entity_names = [e.get("name", "") if isinstance(e, dict) else str(e) for e in entities]
-        all_names = list(set(n.lower().strip() for n in actor_names + entity_names if n))
-
-        canonical = self._match_by_entities(eid, all_names, edate, precision)
-        if canonical:
-            await self._merge(eid, canonical)
-            return canonical
+            return (event_id, int(canonical))
 
         return None
+
+    async def deduplicate_event(self, event_id: int) -> int | None:
+        """Check if *event_id* is a duplicate of an existing canonical event.
+
+        Returns the canonical_event_id if a match is found, else None.
+        Matching logic is fully delegated to ``_match_and_collect``; side-effects
+        (canonical pointers, source counts, metadata merging) are applied via
+        ``_merge`` so callers may batch multiple merges before committing.
+        """
+        match = await self._match_and_collect(event_id)
+        if match is None:
+            return None
+        dup_id, canon_id = match
+        await self._merge(dup_id, canon_id)
+        return canon_id
 
     # ------------------------------------------------------------------
     # Batch entry point
     # ------------------------------------------------------------------
 
-    async def deduplicate_recent(self, limit: int = 50) -> dict[str, int]:
-        """Deduplicate events that have not yet been checked."""
+    async def deduplicate_recent(self, limit: int | None = None) -> dict[str, int]:
+        """Deduplicate events that have not yet been checked.
+
+        *limit* defaults to the ``EVENT_DEDUP_TICK_BATCH`` env var (see
+        ``_dedup_tick_batch``); override for ad-hoc bulk runs.
+        """
+        # P0: env-driven tick batch size
+        limit = limit if limit is not None else _dedup_tick_batch()
+
+        # Ensure pgvector HNSW index exists for fast ANN lookups
+        self._ensure_hnsw_index()
+
+        # P1: bulk-fetch all candidates in a single query (one round-trip).
         cursor = self.conn.cursor()
         cursor.execute(
             """
             SELECT id FROM chronological_events
             WHERE canonical_event_id IS NULL
-            ORDER BY extraction_timestamp DESC
+            ORDER BY extraction_timestamp ASC
             LIMIT %s
         """,
             (limit,),
@@ -276,12 +393,23 @@ class EventDeduplicationService:
         rows = cursor.fetchall()
         cursor.close()
 
+        if not rows:
+            return {"checked": 0, "merged": 0}
+
+        # P1: accumulate merges in memory before committing.
+        pending_merges: list[tuple[int, int]] = []  # (duplicate_id, canonical_id)
         stats = {"checked": 0, "merged": 0}
         for (eid,) in rows:
             stats["checked"] += 1
             canonical = await self.deduplicate_event(eid)
-            if canonical:
+            if canonical is not None:
                 stats["merged"] += 1
+                pending_merges.append((eid, canonical))
+
+        # P1: batch-commit all merges in one transaction.
+        if pending_merges:
+            self._batch_apply_merges(pending_merges)
+
         return stats
 
     # ------------------------------------------------------------------
@@ -429,16 +557,30 @@ class EventDeduplicationService:
 
             for row in cursor.fetchall():
                 cand_id, cand_actors_json, cand_entities_json = row
-                cand_names = set()
+                cand_names_raw: list[str] = []
                 for j in (cand_actors_json, cand_entities_json):
                     parsed = self._parse_json(j)
                     if isinstance(parsed, list):
                         for item in parsed:
                             name = item.get("name", "") if isinstance(item, dict) else str(item)
                             if name:
-                                cand_names.add(name.lower().strip())
-                overlap = len(set(entity_names) & cand_names)
-                if overlap >= overlap_min:
+                                cand_names_raw.append(name.lower().strip())
+
+                # Exact overlap first (fast path)
+                if len(set(entity_names) & set(cand_names_raw)) >= overlap_min:
+                    return cand_id
+
+                # Fuzzy fallback: each query name must find ≥ threshold match
+                fuzzy_threshold = 0.75
+                matches = 0
+                for qname in entity_names:
+                    best_ratio = max(
+                        difflib.SequenceMatcher(None, qname, cname).ratio()
+                        for cname in cand_names_raw
+                    ) if cand_names_raw else 0.0
+                    if best_ratio >= fuzzy_threshold:
+                        matches += 1
+                if matches >= overlap_min:
                     return cand_id
         except Exception as e:
             logger.error(f"Entity-temporal match failed: {e}")
@@ -452,68 +594,123 @@ class EventDeduplicationService:
     # ------------------------------------------------------------------
 
     async def _merge(self, duplicate_id: int, canonical_id: int):
-        """Point duplicate at canonical and merge metadata."""
+        """Apply a single dedup merge (delegates to batch helper)."""
+        self._batch_apply_merges([(duplicate_id, canonical_id)])
+
+    def _batch_apply_merges(self, pending_merges: list[tuple[int, int]]) -> None:
+        """Apply all pending dedup merges in a single batch.
+
+        Each tuple is ``(duplicate_id, canonical_id)``.  Updates are applied
+        atomically; rows that already have ``canonical_event_id`` set (from prior
+        _merge calls or earlier passes) are skipped gracefully.
+        """
+        if not pending_merges:
+            return
+
         cursor = self.conn.cursor()
         try:
-            cursor.execute(
-                """
-                UPDATE chronological_events
-                SET canonical_event_id = %s
-                WHERE id = %s
-            """,
-                (canonical_id, duplicate_id),
-            )
-
-            cursor.execute(
-                """
-                UPDATE chronological_events
-                SET source_count = source_count + 1,
-                    last_corroborated_at = CURRENT_TIMESTAMP
-                WHERE id = %s
-            """,
-                (canonical_id,),
-            )
-
-            # Merge key_actors from duplicate into canonical
-            cursor.execute(
-                """
-                SELECT key_actors FROM chronological_events WHERE id = %s
-            """,
-                (duplicate_id,),
-            )
-            dup_actors = self._parse_json((cursor.fetchone() or (None,))[0])
-
-            cursor.execute(
-                """
-                SELECT key_actors FROM chronological_events WHERE id = %s
-            """,
-                (canonical_id,),
-            )
-            can_actors = self._parse_json((cursor.fetchone() or (None,))[0])
-
-            if isinstance(dup_actors, list) and isinstance(can_actors, list):
-                existing_names = {
-                    a.get("name", "").lower() for a in can_actors if isinstance(a, dict)
-                }
-                for actor in dup_actors:
-                    if (
-                        isinstance(actor, dict)
-                        and actor.get("name", "").lower() not in existing_names
-                    ):
-                        can_actors.append(actor)
+            # 1. Point duplicates → canonical
+            for dup_id, canon_id in pending_merges:
                 cursor.execute(
                     """
                     UPDATE chronological_events
-                    SET key_actors = %s
-                    WHERE id = %s
+                    SET canonical_event_id = %s
+                    WHERE id = %s AND canonical_event_id IS NULL
                 """,
-                    (json.dumps(can_actors), canonical_id),
+                    (canon_id, dup_id),
+                )
+
+            # 2. Promote storyline_id from duplicates → canonical where needed
+            for dup_id, canon_id in pending_merges:
+                cursor.execute(
+                    """
+                    SELECT
+                        (SELECT NULLIF(TRIM(COALESCE(storyline_id::text, '')), '')
+                         FROM chronological_events WHERE id = %s) AS can_sl,
+                        (SELECT NULLIF(TRIM(COALESCE(storyline_id::text, '')), '')
+                         FROM chronological_events WHERE id = %s) AS dup_sl
+                    """,
+                    (canon_id, dup_id),
+                )
+                row = cursor.fetchone() or (None, None)
+                can_sl, dup_sl = row[0], row[1]
+                if not can_sl and dup_sl:
+                    cursor.execute(
+                        """
+                        UPDATE chronological_events
+                        SET storyline_id = %s
+                        WHERE id = %s
+                        """,
+                        (dup_sl, canon_id),
+                    )
+                elif can_sl and dup_sl and str(can_sl) != str(dup_sl):
+                    logger.warning(
+                        "dedup merge storyline_id conflict dup=%s can=%s "
+                        "dup_storyline=%s can_storyline=%s (keeping canonical)",
+                        dup_id,
+                        canon_id,
+                        dup_sl,
+                        can_sl,
+                    )
+
+            # 3. Merge key_actors from each duplicate into canonical
+            for dup_id, canon_id in pending_merges:
+                cursor.execute(
+                    """
+                    SELECT key_actors FROM chronological_events WHERE id = %s
+                """,
+                    (dup_id,),
+                )
+                dup_actors_raw = self._parse_json((cursor.fetchone() or (None,))[0])
+
+                cursor.execute(
+                    """
+                    SELECT key_actors FROM chronological_events WHERE id = %s
+                """,
+                    (canon_id,),
+                )
+                can_actors_raw = self._parse_json((cursor.fetchone() or (None,))[0])
+
+                if isinstance(dup_actors_raw, list) and isinstance(can_actors_raw, list):
+                    existing_names: set[str] = {
+                        a.get("name", "").lower()
+                        for a in can_actors_raw
+                        if isinstance(a, dict)
+                    }
+                    for actor in dup_actors_raw:
+                        if (
+                            isinstance(actor, dict)
+                            and actor.get("name", "").lower() not in existing_names
+                        ):
+                            can_actors_raw.append(actor)
+                    cursor.execute(
+                        """
+                        UPDATE chronological_events
+                        SET key_actors = %s
+                        WHERE id = %s
+                        """,
+                        (json.dumps(can_actors_raw), canon_id),
+                    )
+
+            # 4. Bump source_count on each unique canonical only once
+            canon_ids_set = {cid for _, cid in pending_merges}
+            if canon_ids_set:
+                canon_list = list(canon_ids_set)
+                placeholders = ",".join(f"%s" for _ in canon_list)
+                cursor.execute(
+                    f"""
+                    UPDATE chronological_events
+                    SET source_count = GREATEST(source_count, 1) + 1,
+                        last_corroborated_at = CURRENT_TIMESTAMP
+                    WHERE id = ANY(%s::int[])
+                      AND canonical_event_id IS NULL
+                    """,
+                    (canon_list,),
                 )
 
             self.conn.commit()
-            logger.info(f"Merged event {duplicate_id} -> canonical {canonical_id}")
         except Exception as e:
-            logger.error(f"Merge failed ({duplicate_id} -> {canonical_id}): {e}")
+            logger.error(f"Batch dedup merge failed: {e}", exc_info=True)
             self.conn.rollback()
         finally:
             cursor.close()

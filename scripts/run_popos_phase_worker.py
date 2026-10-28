@@ -6,6 +6,12 @@ Claims spine / phase work from Widow Postgres (PgBouncer) and runs drains locall
 against PopOS Ollama. Widow API must set REMOTE_PHASE_WORKER_OWNED_PHASES (or
 REMOTE_PHASE_WORKER_ENABLED=true) so AutomationManager does not also drain those phases.
 
+DB backpressure: before each drain, reads ``public.db_pool_pressure_advisory`` (published
+by the API from the same ``shared.database`` module). When ``defer_new_work`` is set,
+skips the phase (`skipped: db_pressure`) unless exempt. Disable with
+``POPOS_DB_PRESSURE_DEFER_ENABLED=false``. Same codebase as Widow
+(``~/ni-popos-worker`` → workspace).
+
 Deploy on PopOS only (not Widow):
   WORKER_EXECUTION_HOST=popos
   WORKER_PHASES=unified_intake_extraction
@@ -61,9 +67,45 @@ def _ensure_worker_env() -> None:
     os.environ.setdefault("WORKER_PHASES", "unified_intake_extraction,claim_extraction,topic_clustering,storyline_assembly")
     # Local Ollama on PopOS — do not bounce back to Widow.
     os.environ.setdefault("OLLAMA_HOST", "http://127.0.0.1:11434")
-    os.environ.setdefault("OLLAMA_DUAL_HOST_ROUTING_ENABLED", "false")
-    os.environ.setdefault("AUTOMATION_DUAL_LANE", "false")
-    os.environ.setdefault("BULK_DUAL_LANE_CATCHUP", "false")
+    # Force desk-safe routing/concurrency. Shared .env historically set dual=true
+    # and OLLAMA_MAX_CONCURRENT_TASKS=16 (unused name) which, with dual lanes,
+    # left OLLAMA_GPU/CPU_CONCURRENCY at 6+6 and hard-crashed the RTX 5090.
+    os.environ["OLLAMA_DUAL_HOST_ROUTING_ENABLED"] = "false"
+    os.environ["AUTOMATION_DUAL_LANE"] = "false"
+    os.environ["BULK_DUAL_LANE_CATCHUP"] = "false"
+
+    def _cap_int(name: str, default: int, ceiling: int) -> None:
+        try:
+            cur = int((os.environ.get(name) or str(default)).strip() or default)
+        except ValueError:
+            cur = default
+        os.environ[name] = str(max(1, min(cur, ceiling)))
+
+    # Desk-safe defaults: 2/1. Sunday/ops catchup may raise via POPOS_OLLAMA_*_CEILING
+    # or PIPELINE_QUIET_HOURS_DISABLED (still hard-capped; never the old 6+6 crash zone).
+    quiet_off = (os.environ.get("PIPELINE_QUIET_HOURS_DISABLED") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    try:
+        conc_ceil = int((os.environ.get("POPOS_OLLAMA_CONCURRENCY_CEILING") or "0").strip() or 0)
+    except ValueError:
+        conc_ceil = 0
+    try:
+        gpu_ceil = int((os.environ.get("POPOS_OLLAMA_GPU_CONCURRENCY_CEILING") or "0").strip() or 0)
+    except ValueError:
+        gpu_ceil = 0
+    if conc_ceil <= 0:
+        conc_ceil = 4 if quiet_off else 2
+    if gpu_ceil <= 0:
+        gpu_ceil = 2 if quiet_off else 1
+    conc_ceil = max(1, min(conc_ceil, 4))
+    gpu_ceil = max(1, min(gpu_ceil, 2))
+    _cap_int("OLLAMA_CONCURRENCY", conc_ceil if quiet_off else 2, conc_ceil)
+    _cap_int("MAX_CONCURRENT_OLLAMA_TASKS", conc_ceil if quiet_off else 2, conc_ceil)
+    _cap_int("OLLAMA_GPU_CONCURRENCY", gpu_ceil if quiet_off else 1, gpu_ceil)
+    _cap_int("OLLAMA_CPU_CONCURRENCY", 1, 1)
     os.environ.setdefault("OLLAMA_MODEL_EXTRACTION", "qwen3.6:latest")
     os.environ.setdefault("OLLAMA_USE_QWEN_FOR_EXTRACTION", "true")
 
@@ -188,6 +230,33 @@ async def _run_one_cycle(
             }
             rem = idle_backoff.remaining_seconds(phase)
             min_rem = rem if min_rem is None else min(min_rem, rem)
+            continue
+
+        # Shared Widow DB-pressure advisory — do not pile drains while API pool is waiting.
+        try:
+            from shared.database.pool_pressure_advisory import remote_should_defer_phase
+
+            defer_db, adv = remote_should_defer_phase(phase)
+        except Exception as exc:
+            defer_db, adv = False, {"error": str(exc)[:120]}
+        if defer_db:
+            logger.info(
+                "skip %s: db pool pressure advisory (pressure=%s waiters=%s age=%ss)",
+                phase,
+                adv.get("worker_pressure"),
+                adv.get("worker_waiters"),
+                adv.get("age_sec"),
+            )
+            summary["phases"][phase] = {
+                "skipped": "db_pressure",
+                "advisory": {
+                    "worker_pressure": adv.get("worker_pressure"),
+                    "worker_waiters": adv.get("worker_waiters"),
+                    "worker_in_use": adv.get("worker_in_use"),
+                    "worker_max": adv.get("worker_max"),
+                    "age_sec": adv.get("age_sec"),
+                },
+            }
             continue
 
         # Start heartbeat so Monitor Current activity can show in-flight PopOS work.
@@ -407,7 +476,8 @@ def main() -> int:
     idle_backoff = PhaseIdleBackoff()
     logger.info(
         "Starting PopOS phase worker id=%s phases=%s idle_gate=%s "
-        "backoff_base=%.0fs backoff_max=%.0fs DB=%s:%s/%s OLLAMA=%s",
+        "backoff_base=%.0fs backoff_max=%.0fs DB=%s:%s/%s OLLAMA=%s "
+        "dual=%s ollama_conc=%s/%s gpu_lane=%s cpu_lane=%s",
         worker_id,
         phases,
         idle_gate_enabled(),
@@ -417,6 +487,11 @@ def main() -> int:
         os.getenv("DB_PORT", ""),
         os.getenv("DB_NAME", "news_intel"),
         os.getenv("OLLAMA_HOST", ""),
+        os.getenv("OLLAMA_DUAL_HOST_ROUTING_ENABLED", ""),
+        os.getenv("OLLAMA_CONCURRENCY", ""),
+        os.getenv("MAX_CONCURRENT_OLLAMA_TASKS", ""),
+        os.getenv("OLLAMA_GPU_CONCURRENCY", ""),
+        os.getenv("OLLAMA_CPU_CONCURRENCY", ""),
     )
 
     cycle = 0
@@ -444,20 +519,23 @@ def main() -> int:
         try:
             from services.pipeline_phase_heartbeat_service import record_phase_heartbeat
             from services.pipeline_schedule_service import (
-                automation_phase_allowed,
-                popos_gpu_work_allowed,
                 active_pipeline_window,
+                automation_phase_allowed,
+                popos_gpu_work_allowed_detail,
             )
 
-            if not popos_gpu_work_allowed():
+            gate_detail = popos_gpu_work_allowed_detail()
+            if not bool(gate_detail.get("allowed")):
                 runnable = [p for p in phases if automation_phase_allowed(p)]
                 if not runnable:
-                    win = active_pipeline_window()
+                    win = gate_detail.get("active_window") or active_pipeline_window()
                     logger.info(
-                        "schedule window=%s — PopOS GPU deferred (desk_light); "
-                        "skipping phases=%s",
+                        "schedule window=%s reason=%s — PopOS GPU deferred; "
+                        "skipping phases=%s cotenant=%s",
                         win,
+                        gate_detail.get("reason"),
                         phases,
+                        (gate_detail.get("cotenant") or {}).get("processes"),
                     )
                     try:
                         record_phase_heartbeat(
@@ -472,6 +550,7 @@ def main() -> int:
                                 "cycle": cycle,
                                 "phases": phases,
                                 "active_window": win,
+                                "defer_reason": gate_detail.get("reason"),
                             },
                         )
                     except Exception:

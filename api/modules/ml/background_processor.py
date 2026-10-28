@@ -21,7 +21,7 @@ class BackgroundMLProcessor:
     Background processor for ML operations with timing tracking
     """
     
-    def __init__(self, db_config: Dict[str, str], ollama_url: str = "http://localhost:11434"):
+    def __init__(self, db_config: Dict[str, str], ollama_url: str | None = None):
         """
         Initialize the background ML processor
         
@@ -30,7 +30,7 @@ class BackgroundMLProcessor:
             ollama_url: URL of the Ollama service
         """
         self.db_config = db_config
-        self.ollama_url = ollama_url
+        self.ollama_url = (ollama_url or __import__("os").environ.get("OLLAMA_HOST") or __import__("os").environ.get("OLLAMA_URL") or "http://127.0.0.1:11434").rstrip("/")
         self.ml_service = MLSummarizationService(ollama_url)
         
         # Processing queue and thread management
@@ -188,6 +188,16 @@ class BackgroundMLProcessor:
             logger.info(f"Completed ML task {queue_id} in {duration:.2f}s")
             
         except Exception as e:
+            from shared.services.llm_service import is_ollama_pressure_error
+
+            if is_ollama_pressure_error(e):
+                logger.warning(
+                    "ML task %s deferred (Ollama pressure): %s", queue_id, e
+                )
+                self._update_article_processing_status(article_id, 'pending', str(e))
+                self._update_queue_status(queue_id, 'pending', error=str(e))
+                return
+
             logger.error(f"Error processing ML task {queue_id}: {e}")
             
             # Update article processing status

@@ -6,12 +6,15 @@ import { NavLink, Outlet } from 'react-router-dom';
 import '../styles/broadsheet.css';
 import { DomainFilter, useV2Domain, withDomainQuery } from '../hooks/useV2Domain';
 import AppShell from '../../shell/AppShell';
+import { newsHomePath } from '../../paths';
 
 const NAV = [
-  { to: '/v2', label: 'Home', end: true },
-  { to: '/v2/news', label: 'News' },
-  { to: '/v2/current', label: 'Current' },
-  { to: '/v2/one-offs', label: 'One-offs' },
+  { to: '/', label: 'Home', end: true },
+  { to: '/news', label: 'News' },
+  { to: '/current', label: 'Current' },
+  { to: '/hubs', label: 'Situations' },
+  { to: '/research', label: 'Research' },
+  { to: '/one-offs', label: 'One-offs' },
 ];
 
 export default function UserLayout() {
@@ -36,7 +39,7 @@ export default function UserLayout() {
   return (
     <AppShell
       root='news'
-      brandTo='/v2'
+      brandTo={newsHomePath(domain)}
       headerActions={<DomainFilter />}
       sidebar={sidebar}
       sidebarLabel='News sections'

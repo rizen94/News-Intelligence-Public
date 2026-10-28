@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Widow disk IO governor every 15 seconds
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=15s
+AccuracySec=5s
+Persistent=false
+Unit=widow-disk-io-governor.service
+
+[Install]
+WantedBy=timers.target

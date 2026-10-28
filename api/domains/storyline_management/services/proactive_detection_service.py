@@ -72,6 +72,12 @@ class ProactiveDetectionService(DomainAwareService):
             try:
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
                     cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+                    try:
+                        from shared.article_signal_gate import sql_article_signal_full_lane_and
+
+                        _sig = sql_article_signal_full_lane_and("a", self.schema)
+                    except Exception:
+                        _sig = ""
                     cur.execute(
                         f"""
                         SELECT a.id, a.title, a.content, a.summary, a.published_at,
@@ -80,6 +86,8 @@ class ProactiveDetectionService(DomainAwareService):
                         LEFT JOIN {self.schema}.storyline_articles sa ON a.id = sa.article_id
                         WHERE COALESCE(a.published_at, a.created_at) >= %s
                           AND sa.article_id IS NULL
+                          AND COALESCE(a.metadata->>'content_kind', '') <> 'research_paper'
+                          {_sig}
                         ORDER BY a.published_at DESC
                         LIMIT 1000
                         """,
@@ -113,6 +121,41 @@ class ProactiveDetectionService(DomainAwareService):
                 stored_count, promoted_count = await self._store_emerging_storylines(
                     conn, emerging_storylines
                 )
+                # #region agent log
+                try:
+                    import json as _json
+
+                    with open(
+                        "/home/pete/Documents/projects/News Intelligence/.cursor/debug-b4785d.log",
+                        "a",
+                    ) as _df:
+                        _df.write(
+                            _json.dumps(
+                                {
+                                    "sessionId": "b4785d",
+                                    "runId": "post-fix",
+                                    "hypothesisId": "H2",
+                                    "location": "proactive_detection_service.py:detect_emerging_storylines",
+                                    "message": "proactive detect success",
+                                    "data": {
+                                        "domain": self.domain,
+                                        "articles_analyzed": len(articles),
+                                        "clusters_found": len(clusters),
+                                        "valid_clusters": len(valid_clusters),
+                                        "emerging": len(emerging_storylines),
+                                        "stored_count": stored_count,
+                                        "promoted_count": promoted_count,
+                                    },
+                                    "timestamp": int(
+                                        datetime.now(timezone.utc).timestamp() * 1000
+                                    ),
+                                }
+                            )
+                            + "\n"
+                        )
+                except Exception:
+                    pass
+                # #endregion
 
                 return {
                     "success": True,
@@ -140,6 +183,37 @@ class ProactiveDetectionService(DomainAwareService):
 
         except Exception as e:
             logger.error(f"Error detecting emerging storylines: {e}")
+            # #region agent log
+            try:
+                import json as _json
+
+                with open(
+                    "/home/pete/Documents/projects/News Intelligence/.cursor/debug-b4785d.log",
+                    "a",
+                ) as _df:
+                    _df.write(
+                        _json.dumps(
+                            {
+                                "sessionId": "b4785d",
+                                "runId": "post-fix",
+                                "hypothesisId": "H2",
+                                "location": "proactive_detection_service.py:detect_emerging_storylines",
+                                "message": "proactive detect exception",
+                                "data": {
+                                    "domain": self.domain,
+                                    "error_type": type(e).__name__,
+                                    "error": str(e)[:300],
+                                },
+                                "timestamp": int(
+                                    datetime.now(timezone.utc).timestamp() * 1000
+                                ),
+                            }
+                        )
+                        + "\n"
+                    )
+            except Exception:
+                pass
+            # #endregion
             return {"success": False, "error": str(e)}
 
     async def _cluster_articles_by_similarity(self, articles: list[dict]) -> list[dict[str, Any]]:
@@ -321,9 +395,41 @@ class ProactiveDetectionService(DomainAwareService):
         articles = cluster.get("articles") or []
         if not articles:
             return False
-        title = " ".join(
-            (cluster.get("keywords") or [])[:3]
-        ).title() or "Emerging Story"
+        # keywords from _extract_keywords is a set; coerce before slicing
+        raw_kw = cluster.get("keywords") or []
+        kw_list = list(raw_kw) if not isinstance(raw_kw, list) else raw_kw
+        title = " ".join(kw_list[:3]).title() or "Emerging Story"
+        # #region agent log
+        try:
+            import json as _json
+
+            with open(
+                "/home/pete/Documents/projects/News Intelligence/.cursor/debug-b4785d.log",
+                "a",
+            ) as _df:
+                _df.write(
+                    _json.dumps(
+                        {
+                            "sessionId": "b4785d",
+                            "runId": "post-fix",
+                            "hypothesisId": "H2",
+                            "location": "proactive_detection_service.py:_cluster_passes_coherence_gate",
+                            "message": "coherence gate keywords coerce",
+                            "data": {
+                                "raw_kw_type": type(raw_kw).__name__,
+                                "kw_list_len": len(kw_list),
+                                "title_prefix": title[:80],
+                                "n_articles": len(articles),
+                                "domain": self.domain,
+                            },
+                            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+                        }
+                    )
+                    + "\n"
+                )
+        except Exception:
+            pass
+        # #endregion
         coherent, reason = assess_cluster_coherence(self.domain, title, articles)
         if not coherent:
             logger.debug(
@@ -453,6 +559,18 @@ class ProactiveDetectionService(DomainAwareService):
             return False
         n = len(emerging.get("article_ids") or [])
         conf = float(emerging.get("confidence_score") or 0)
+        try:
+            from services.ai_research_storyline_policy import (
+                STORYLINE_MIN_ARTICLES,
+                is_ai_domain,
+            )
+
+            if is_ai_domain(self.domain):
+                # Thin AI paper clusters stay emerging / one-offs — never promote pairs via outbreak.
+                if n < STORYLINE_MIN_ARTICLES:
+                    return False
+        except Exception:
+            pass
         if emerging.get("outbreak_signal") and n >= 2:
             return conf >= self.promote_min_confidence
         if n >= max(self.promote_min_articles, 5):
@@ -477,10 +595,27 @@ class ProactiveDetectionService(DomainAwareService):
         min_linked = self.min_article_count
         if emerging.get("outbreak_signal"):
             min_linked = 2
+        try:
+            from services.ai_research_storyline_policy import (
+                STORYLINE_MIN_ARTICLES,
+                is_ai_domain,
+            )
+
+            if is_ai_domain(self.domain):
+                min_linked = max(min_linked, STORYLINE_MIN_ARTICLES)
+        except Exception:
+            pass
         if len(article_ids) < min_linked:
             return False
 
-        # Re-check unlinked (avoid duplicate storylines if another process linked articles)
+        # Re-check unlinked (avoid duplicate storylines if another process linked articles).
+        # Signal-first: only full-lane articles count toward promotion.
+        try:
+            from shared.article_signal_gate import sql_article_signal_full_lane_and
+
+            _sig = sql_article_signal_full_lane_and("a", self.schema)
+        except Exception:
+            _sig = ""
         cur.execute(
             f"""
             SELECT a.id FROM {self.schema}.articles a
@@ -488,6 +623,7 @@ class ProactiveDetectionService(DomainAwareService):
               AND NOT EXISTS (
                   SELECT 1 FROM {self.schema}.storyline_articles sa WHERE sa.article_id = a.id
               )
+              {_sig}
             """,
             (article_ids,),
         )
@@ -495,6 +631,16 @@ class ProactiveDetectionService(DomainAwareService):
         min_unlinked = self.promote_min_articles
         if emerging.get("outbreak_signal"):
             min_unlinked = 2
+        try:
+            from services.ai_research_storyline_policy import (
+                STORYLINE_MIN_ARTICLES,
+                is_ai_domain,
+            )
+
+            if is_ai_domain(self.domain):
+                min_unlinked = max(min_unlinked, STORYLINE_MIN_ARTICLES)
+        except Exception:
+            pass
         if len(unlinked) < min_unlinked:
             return False
 
@@ -524,6 +670,24 @@ class ProactiveDetectionService(DomainAwareService):
             automation_mode = get_storyline_automation_mode(self.domain)
         except Exception:
             pass
+
+        story_kind = "storyline"
+        automation_enabled = True
+        try:
+            from services.ai_research_storyline_policy import (
+                is_ai_domain,
+                story_kind_for_cluster,
+            )
+
+            if is_ai_domain(self.domain):
+                # Promote path only runs for ≥3 articles; stamp kind for reader durability.
+                fake_arts = [{"id": i} for i in unlinked]
+                story_kind = story_kind_for_cluster(self.domain, fake_arts)
+                if story_kind == "one_off":
+                    automation_enabled = False
+        except Exception:
+            pass
+
         try:
             cur.execute(
                 f"""
@@ -532,14 +696,14 @@ class ProactiveDetectionService(DomainAwareService):
                     total_articles, article_count,
                     automation_enabled, automation_mode, automation_frequency_hours,
                     automation_settings, search_keywords, search_entities,
-                    key_entities, created_at, updated_at
+                    key_entities, story_kind, created_at, updated_at
                 )
                 VALUES (
                     %s, %s, 'active', 'pending',
                     %s, %s,
-                    TRUE, %s, 6,
+                    %s, %s, 6,
                     %s::jsonb, %s, %s,
-                    %s::jsonb, NOW(), NOW()
+                    %s::jsonb, %s, NOW(), NOW()
                 )
                 RETURNING id
                 """,
@@ -548,11 +712,13 @@ class ProactiveDetectionService(DomainAwareService):
                     desc[:5000] if desc else None,
                     len(unlinked),
                     len(unlinked),
+                    automation_enabled,
                     automation_mode,
                     settings_json,
                     key_kw[:40] if key_kw else [],
                     key_ent[:40] if key_ent else [],
                     json.dumps({"keywords": key_kw[:20], "entities": key_ent[:20]}),
+                    story_kind,
                 ),
             )
         except Exception as e:
@@ -567,25 +733,66 @@ class ProactiveDetectionService(DomainAwareService):
                 """,
                 (title, desc[:5000] if desc else None),
             )
-
         row = cur.fetchone()
         if not row:
             return False
         storyline_id = int(row[0])
 
-        rel = min(0.95, 0.55 + 0.05 * len(unlinked))
+        try:
+            from shared.episode_attach_gate import (
+                lock_episode_signature,
+                seed_signature_from_entity_names,
+            )
+
+            seed_sig = seed_signature_from_entity_names(
+                self.domain,
+                list(key_ent or [])[:40],
+                title=title,
+            )
+            if seed_sig.get("identity") or seed_sig.get("supporting"):
+                lock_episode_signature(cur, self.schema, storyline_id, seed_sig)
+        except Exception as lock_e:
+            logger.debug(
+                "Proactive seed signature lock failed for %s: %s", storyline_id, lock_e
+            )
+
+        from shared.membership_scoring import score_article_storyline_membership
+        from shared.membership_store import MembershipIntent, admit as membership_admit
+
+        conn = cur.connection
         for aid in unlinked:
             try:
-                cur.execute(
-                    f"""
-                    INSERT INTO {self.schema}.storyline_articles (storyline_id, article_id, relevance_score)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT DO NOTHING
-                    """,
-                    (storyline_id, aid, rel),
+                ms = score_article_storyline_membership(
+                    conn,
+                    domain_key=self.domain,
+                    storyline_id=storyline_id,
+                    article_id=int(aid),
+                    schema=self.schema,
+                )
+                blend = (
+                    float(ms.combined)
+                    if not ms.rejected and ms.combined > 0
+                    else min(0.95, 0.55 + 0.05 * len(unlinked))
+                )
+                parts = (
+                    ms.as_metadata()
+                    if not ms.rejected
+                    else {"combined": blend, "scorer": "proactive_seed_fallback"}
+                )
+                membership_admit(
+                    conn,
+                    domain_key=self.domain,
+                    schema=self.schema,
+                    episode_id=storyline_id,
+                    article_id=int(aid),
+                    intent=MembershipIntent.DISCOVERY_SEED,
+                    blend_score=blend,
+                    added_by="proactive_detection",
+                    score_parts=parts,
+                    recompute_score=False,
                 )
             except Exception as sa_err:
-                logger.debug("storyline_articles insert %s/%s: %s", storyline_id, aid, sa_err)
+                logger.debug("storyline_articles admit %s/%s: %s", storyline_id, aid, sa_err)
 
         if os.getenv("PROACTIVE_HEADLINE_70B_REFINE", "0") == "1":
             try:

@@ -199,6 +199,7 @@ class APIService {
   getDocumentSourcesHealth = monitoringApi.getDocumentSourcesHealth;
   getDatabaseConnections = monitoringApi.getDatabaseConnections;
   triggerPhase = monitoringApi.triggerPhase;
+  resetCircuitBreakers = monitoringApi.resetCircuitBreakers;
   triggerPipeline = monitoringApi.triggerPipeline;
   getSystemHealth = monitoringApi.getSystemHealth;
   getSystemMetrics = monitoringApi.getSystemMetrics;

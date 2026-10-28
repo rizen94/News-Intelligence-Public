@@ -131,3 +131,20 @@ def test_sanitize_reader_dek_strips_storyline_colon_prefix():
     # Title-echo after Storyline: strip → empty or non-echo prose only
     assert not out.lower().startswith("storyline:")
     assert "**" not in out
+
+
+def test_html_to_visible_text_strips_guardian_stub():
+    from shared.llm_text_sanitize import html_to_visible_text
+
+    raw = (
+        "<p>Telco board cuts senior executive bonuses by total $1.3m after tech fail "
+        "that affected millions</p><ul><li><p>"
+        '<a href="https://www.theguardian.com/australia-news/live/2026/aug/13/x">'
+        "Follow our Australia news live blog for latest updates</a></p></li></ul>"
+        "<p>Telstra has paid its chief executive, Vicki Brady, $6.8m for the year.</p>"
+    )
+    out = html_to_visible_text(raw)
+    assert "<p>" not in out
+    assert "<a href" not in out
+    assert "Telco board cuts senior executive bonuses" in out
+    assert "Vicki Brady" in out

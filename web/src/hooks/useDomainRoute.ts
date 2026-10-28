@@ -1,9 +1,9 @@
 /**
- * Domain Route Hook
- * Provides utilities for working with domain-aware routes
+ * Domain Route Hook — domain context for Finance / Admin pages.
+ * Classic /:domain spine is retired; paths resolve under /finance or News.
  */
 
-import { useLocation, useParams } from 'react-router-dom';
+import { useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { useDomain } from '../contexts/DomainContext';
 import {
   isValidDomain,
@@ -13,33 +13,39 @@ import {
 
 export const useDomainRoute = () => {
   const { domain: urlDomain } = useParams<{ domain: string }>();
+  const [params] = useSearchParams();
   const { domain: contextDomain } = useDomain();
   const { pathname } = useLocation();
 
-  // Use URL domain if available, otherwise fall back to context
+  const queryDomain = params.get('domain');
   const effectiveDomain =
     urlDomain && isValidDomain(urlDomain)
       ? (urlDomain as DomainKey)
-      : contextDomain;
+      : queryDomain && isValidDomain(queryDomain)
+        ? (queryDomain as DomainKey)
+        : contextDomain;
 
-  /**
-   * Get the current path without the domain prefix
-   */
   const getCurrentPathWithoutDomain = (): string =>
     getPathAfterDomain(pathname);
 
-  /**
-   * Get a domain-qualified path
-   */
-  const getDomainPath = (path: string, targetDomain?: DomainKey): string => {
-    const domain = targetDomain || effectiveDomain;
+  /** Map legacy classic relative paths onto Finance product routes. */
+  const getDomainPath = (path: string, _targetDomain?: DomainKey): string => {
     const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-    return `/${domain}${normalizedPath}`;
+    if (normalizedPath.startsWith('/finance')) {
+      return normalizedPath;
+    }
+    if (normalizedPath.startsWith('/analysis')) {
+      return `/finance/reporting${normalizedPath}`;
+    }
+    if (normalizedPath.startsWith('/trace')) {
+      return `/finance/reporting/traces${normalizedPath.replace(/^\/trace/, '')}`;
+    }
+    if (normalizedPath.startsWith('/commodity')) {
+      return `/finance/markets${normalizedPath}`;
+    }
+    return normalizedPath;
   };
 
-  /**
-   * Check if we're in a specific domain
-   */
   const isInDomain = (checkDomain: DomainKey): boolean => {
     return effectiveDomain === checkDomain;
   };

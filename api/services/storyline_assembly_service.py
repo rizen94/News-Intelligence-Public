@@ -47,6 +47,9 @@ def count_unlinked_articles(domain_key: str, *, lookback_hours: int | None = Non
         except Exception:
             lookback_hours = 72
     try:
+        from shared.article_signal_gate import sql_article_signal_full_lane_and
+
+        sig = sql_article_signal_full_lane_and("a", schema)
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -59,6 +62,7 @@ def count_unlinked_articles(domain_key: str, *, lookback_hours: int | None = Non
                           SELECT 1 FROM {schema}.storyline_articles sa
                           WHERE sa.article_id = a.id
                       )
+                      {sig}
                     """,
                     (lookback_hours,),
                 )

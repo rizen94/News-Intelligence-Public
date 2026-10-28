@@ -44,8 +44,159 @@ _FETCH_TIMEOUT = 10
 
 MAX_CONTENT_CHARS = 50_000
 MIN_CONTENT_TO_ENRICH = 500
-# Burst (48h catch-up): 0.4s between fetches; revert to 0.6 after catch-up
-RATE_LIMIT_SLEEP = 0.4
+# ArXiv RSS abstracts are typically 1–2k chars — above MIN_CONTENT_TO_ENRICH — so they
+# never enter the normal enrichment backlog. Treat abs URLs / abstract-shaped bodies specially.
+ARXIV_ABSTRACT_CONTENT_MAX = 3500
+def _enrichment_rate_limit_sleep() -> float:
+    """Seconds between sequential fetches (parallel path uses host limiter instead)."""
+    try:
+        return max(0.0, float(os.environ.get("CONTENT_ENRICHMENT_RATE_LIMIT_SLEEP", "0.4") or "0.4"))
+    except (TypeError, ValueError):
+        return 0.4
+
+
+def _enrichment_fetch_parallel() -> int:
+    try:
+        return max(1, int(os.environ.get("CONTENT_ENRICHMENT_FETCH_PARALLEL", "1") or "1"))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _enrichment_per_host_limit() -> int:
+    try:
+        return max(1, int(os.environ.get("CONTENT_ENRICHMENT_PER_HOST_LIMIT", "2") or "2"))
+    except (TypeError, ValueError):
+        return 2
+
+
+# Burst default; override with CONTENT_ENRICHMENT_RATE_LIMIT_SLEEP.
+RATE_LIMIT_SLEEP = _enrichment_rate_limit_sleep()
+
+
+def arxiv_id_from_url(url: str) -> str | None:
+    """Extract bare arXiv id from abs/pdf/html/export URLs (e.g. 2608.17176 or 2608.17176v1)."""
+    if not url:
+        return None
+    m = re.search(
+        r"arxiv\.org/(?:abs|pdf|html|ps)/(?:arxiv[:/])?([0-9]{4}\.[0-9]{4,5}(?:v[0-9]+)?)",
+        url,
+        re.I,
+    )
+    if m:
+        return m.group(1)
+    m = re.search(r"arxiv\.org/pdf/([0-9]{4}\.[0-9]{4,5}(?:v[0-9]+)?)\.pdf", url, re.I)
+    return m.group(1) if m else None
+
+
+def is_arxiv_abs_url(url: str) -> bool:
+    return bool(url) and "arxiv.org/abs/" in url.lower()
+
+
+def looks_like_arxiv_abstract_only(content: str | None) -> bool:
+    """True when stored body is RSS-style abstract, not full paper text."""
+    text = (content or "").strip()
+    if not text or len(text) > ARXIV_ABSTRACT_CONTENT_MAX:
+        return False
+    low = text.lower()
+    if "abstract:" in low or low.startswith("arxiv:"):
+        return True
+    # Short body on abs URL is almost always abstract-only
+    return len(text) < ARXIV_ABSTRACT_CONTENT_MAX
+
+
+def needs_arxiv_fulltext(url: str, content: str | None = None) -> bool:
+    if not is_arxiv_abs_url(url) and not arxiv_id_from_url(url or ""):
+        return False
+    if is_arxiv_abs_url(url):
+        return looks_like_arxiv_abstract_only(content) if content else True
+    return looks_like_arxiv_abstract_only(content)
+
+
+def _strip_arxiv_html_chrome(text: str) -> str:
+    """Drop nav/footer chrome left after HTML extraction."""
+    if not text:
+        return ""
+    # Prefer from Abstract / Introduction onward when present
+    for marker in ("###### Abstract", "## Abstract", "Abstract\n", "##  1 Introduction", "## 1 Introduction"):
+        idx = text.find(marker)
+        if idx > 0 and idx < len(text) // 2:
+            text = text[idx:]
+            break
+    # Truncate experimental HTML footer
+    for end in (
+        "\n## Instructions for reporting errors",
+        "\nExperimental support, please",
+        "\nHave a free development cycle?",
+    ):
+        cut = text.find(end)
+        if cut > 2000:
+            text = text[:cut]
+    return text.strip()
+
+
+def _fetch_arxiv_full_text(url: str) -> str:
+    """
+    Full paper body for arXiv abs links: prefer experimental HTML, then PDF text extract.
+    Uses existing download + pdfplumber/pymupdf stack (same as document pipeline).
+    """
+    aid = arxiv_id_from_url(url)
+    if not aid:
+        return ""
+    # Drop version suffix for html path stability (v1 pages exist; bare id redirects)
+    aid_base = re.sub(r"v\d+$", "", aid)
+
+    # 1) HTML full text (Crawl4AI-equivalent path: fetch + trafilatura)
+    html_urls = (
+        f"https://arxiv.org/html/{aid}",
+        f"https://arxiv.org/html/{aid_base}",
+        f"https://arxiv.org/html/{aid_base}v1",
+    )
+    try:
+        import trafilatura
+
+        for html_url in html_urls:
+            try:
+                downloaded = trafilatura.fetch_url(html_url, config=_ONDEMAND_CONFIG or _FAST_CONFIG)
+                if not downloaded or len(downloaded) < 2000:
+                    continue
+                extracted = trafilatura.extract(
+                    downloaded,
+                    include_comments=False,
+                    include_tables=True,
+                    include_formatting=True,
+                    config=_ONDEMAND_CONFIG or _FAST_CONFIG,
+                )
+                text = _strip_arxiv_html_chrome(_finalize_extracted_text(extracted or ""))
+                if text and len(text) >= ARXIV_ABSTRACT_CONTENT_MAX:
+                    return text[:MAX_CONTENT_CHARS]
+            except Exception as e:
+                logger.debug("arxiv html fetch failed %s: %s", html_url, e)
+    except Exception as e:
+        logger.debug("arxiv html path unavailable: %s", e)
+
+    # 2) PDF via shared document download + extractors
+    pdf_url = f"https://arxiv.org/pdf/{aid_base}.pdf"
+    try:
+        from services.document_download_service import download_pdf
+        from services.document_processing_service import _extract_text_from_pdf
+
+        pdf_bytes, err = download_pdf(pdf_url, head_first=True)
+        if err or not pdf_bytes:
+            logger.debug("arxiv pdf download failed %s: %s", pdf_url, err)
+        elif pdf_bytes:
+            extraction = _extract_text_from_pdf(pdf_bytes)
+            raw = (
+                (extraction or {}).get("total_text")
+                or (extraction or {}).get("text")
+                or ""
+            )
+            text = _finalize_extracted_text(raw)
+            if text and len(text) >= 800:
+                return text[:MAX_CONTENT_CHARS]
+    except Exception as e:
+        logger.debug("arxiv pdf extract failed %s: %s", pdf_url, e)
+
+    return ""
 
 
 def _make_fast_config():
@@ -139,6 +290,40 @@ def _is_paywall_content(text: str) -> bool:
     return False
 
 
+# Soft-403 / chrome / cookie walls that must never stay enrichment_status=enriched (F9).
+_FALSE_ENRICHED_NEEDLES = (
+    "access denied",
+    "403 forbidden",
+    "enable javascript",
+    "please enable cookies",
+    "cookie consent",
+    "subscribe to continue",
+    "sign in to continue",
+    "log in to continue",
+    "create a free account",
+    "are you a robot",
+    "cf-browser-verification",
+    "attention required",
+    "just a moment",
+)
+
+
+def is_false_enriched_body(text: str | None, *, min_chars: int = 200) -> bool:
+    """True when body is too thin or looks like chrome/error — not yieldable journalism."""
+    body = (text or "").strip()
+    if len(body) < int(min_chars):
+        return True
+    if _is_paywall_content(body):
+        return True
+    lower = body.lower()
+    if any(n in lower for n in _FALSE_ENRICHED_NEEDLES):
+        return True
+    for frag in _BODY_BOILERPLATE_SUBSTRINGS:
+        if frag in lower and len(body) < 800:
+            return True
+    return False
+
+
 _SENTENCE_BOUNDARY_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -228,7 +413,8 @@ def format_article_body_paragraphs(text: str) -> str:
 
 def _finalize_extracted_text(text: str) -> str:
     """Paywall check + paragraph spacing for stored and returned article bodies."""
-    text = (text or "").strip()
+    # PDF extractors can emit NUL bytes; Postgres rejects them in text columns.
+    text = (text or "").replace("\x00", "").strip()
     if not text:
         return ""
     if _is_paywall_content(text):
@@ -390,6 +576,398 @@ def _remove_article(conn, schema_name: str, article_id: int) -> None:
             pass
 
 
+def demote_false_enriched_batch(*, limit_per_schema: int = 40) -> int:
+    """Demote existing enrichment_status=enriched rows whose body fails the F9 yieldable check."""
+    from shared.database.connection import get_db_connection_context
+    from shared.domain_registry import pipeline_url_schema_pairs
+
+    demoted = 0
+    pairs = list(pipeline_url_schema_pairs())
+    if not pairs:
+        return 0
+    with get_db_connection_context() as conn:
+        for _dk, schema_name in pairs:
+            try:
+                with conn.cursor() as cur:
+                    # Prefer rows that match the F9 SQL proxy so remasurement moves.
+                    # Include EEL-linked sources (A3 residual) even when created_at is older.
+                    cur.execute(
+                        f"""
+                        SELECT id, content
+                        FROM {schema_name}.articles
+                        WHERE enrichment_status = 'enriched'
+                          AND (
+                            created_at > NOW() - INTERVAL '14 days'
+                            OR id IN (
+                              SELECT DISTINCT ce.source_article_id
+                              FROM intelligence.event_episode_links eel
+                              JOIN public.chronological_events ce ON ce.id = eel.event_id
+                              WHERE eel.domain_key = %s
+                                AND eel.created_at > NOW() - INTERVAL '14 days'
+                                AND ce.source_article_id IS NOT NULL
+                                AND COALESCE(eel.inference_stage, '') <> 'quarantined'
+                            )
+                          )
+                          AND (
+                            LENGTH(COALESCE(content,'')) < 200
+                            OR content ILIKE '%%access denied%%'
+                            OR content ILIKE '%%subscribe%%'
+                            OR content ILIKE '%%enable javascript%%'
+                            OR content ILIKE '%%cookie%%'
+                            OR content ILIKE '%%403%%'
+                            OR content ILIKE '%%sign in to continue%%'
+                          )
+                        ORDER BY id DESC
+                        LIMIT %s
+                        """,
+                        (_dk, int(limit_per_schema)),
+                    )
+                    rows = cur.fetchall() or []
+                for aid, content in rows:
+                    if not is_false_enriched_body(content):
+                        continue
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            f"""
+                            UPDATE {schema_name}.articles
+                            SET enrichment_status = 'failed', updated_at = NOW()
+                            WHERE id = %s AND enrichment_status = 'enriched'
+                            """,
+                            (int(aid),),
+                        )
+                        demoted += int(cur.rowcount or 0)
+                conn.commit()
+            except Exception as e:
+                logger.debug("demote_false_enriched %s: %s", schema_name, e)
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+    if demoted:
+        logger.info("F9 demoted false-enriched articles: %s", demoted)
+    return demoted
+
+
+def _fetch_urls_parallel(
+    jobs: list[tuple[str, str, int, str]],
+    *,
+    parallel: int,
+    per_host: int,
+) -> dict[tuple[str, int], str | None]:
+    """
+    Fetch article bodies without holding a DB connection.
+    jobs: (domain_key, schema_name, article_id, url)
+    Returns {(schema, article_id): text_or_None}.
+    """
+    from collections import defaultdict
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from threading import Semaphore
+    from urllib.parse import urlparse
+
+    if not jobs:
+        return {}
+    host_sems: dict[str, Semaphore] = defaultdict(lambda: Semaphore(max(1, per_host)))
+    out: dict[tuple[str, int], str | None] = {}
+
+    def _one(job: tuple[str, str, int, str]) -> tuple[str, int, str | None]:
+        _dk, schema, article_id, url = job
+        host = (urlparse(url).hostname or "").lower() or "_"
+        sem = host_sems[host]
+        sem.acquire()
+        try:
+            text = _fetch_full_text(url)
+            if text:
+                text = text[:MAX_CONTENT_CHARS]
+            return schema, article_id, text
+        finally:
+            sem.release()
+
+    workers = max(1, min(int(parallel), len(jobs)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = [pool.submit(_one, j) for j in jobs]
+        for fut in as_completed(futs):
+            try:
+                schema, article_id, text = fut.result()
+                out[(schema, article_id)] = text
+            except Exception as e:
+                logger.debug("parallel enrichment fetch failed: %s", e)
+    return out
+
+
+def _enrich_articles_batch_parallel(*, batch_size: int, parallel: int) -> int:
+    """
+    Parallel fetch drain: claim/attempt bump under a short DB checkout, fetch without
+    holding the pool, then write results. Avoids the sequential DB-across-HTTP hold.
+    """
+    try:
+        demote_false_enriched_batch(limit_per_schema=max(10, int(batch_size)))
+    except Exception as e:
+        logger.debug("demote_false_enriched_batch: %s", e)
+    try:
+        import trafilatura  # noqa: F401
+    except ImportError:
+        logger.warning("trafilatura not installed; skipping content enrichment")
+        return 0
+
+    from shared.database.connection import get_db_config, get_db_connection
+    from shared.domain_registry import pipeline_url_schema_pairs
+    from shared.article_processing_gates import (
+        strict_enrichment_applies,
+        strict_enrichment_cutoff_utc,
+    )
+    from shared.pipeline_article_selection import sql_order_created_at
+    from services.context_processor_service import (
+        ensure_context_for_article,
+        update_context_content_for_article,
+    )
+
+    pairs = list(pipeline_url_schema_pairs())
+    if not pairs:
+        return 0
+    n_domains = len(pairs)
+    share = max(1, (batch_size + n_domains - 1) // n_domains)
+    _ca_ord = sql_order_created_at()
+    per_host = _enrichment_per_host_limit()
+
+    # Phase 1: select + fast-path + bump attempts (short DB hold)
+    fetch_jobs: list[tuple[str, str, int, str]] = []
+    enriched = 0
+    remaining = batch_size
+    conn = get_db_connection()
+    if not conn:
+        logger.warning("Content enrichment: no DB connection")
+        return 0
+    default_timeout_ms = get_db_config().get("statement_timeout_ms", 120000)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET statement_timeout = '300s'")
+        for domain_key, schema_name in pairs:
+            if remaining <= 0:
+                break
+            fetch_limit = min(share, remaining)
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT id, url, content, created_at, enrichment_status
+                    FROM {schema_name}.articles
+                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
+                      AND COALESCE(enrichment_attempts, 0) < 3
+                      AND url IS NOT NULL AND url != ''
+                    ORDER BY COALESCE(enrichment_attempts, 0) ASC, created_at {_ca_ord}
+                    LIMIT %s
+                    """,
+                    (fetch_limit,),
+                )
+                rows = cur.fetchall()
+            for article_id, url, existing_content, created_at, row_status in rows:
+                if remaining <= 0:
+                    break
+                if not url or not str(url).strip():
+                    continue
+                if (
+                    strict_enrichment_cutoff_utc() is not None
+                    and strict_enrichment_applies(created_at)
+                    and existing_content
+                    and len((existing_content or "").strip()) >= MIN_CONTENT_TO_ENRICH
+                    and (row_status is None or (row_status or "").strip() == "pending")
+                    and not needs_arxiv_fulltext(url, existing_content)
+                ):
+                    if is_false_enriched_body(existing_content):
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                f"""
+                                UPDATE {schema_name}.articles
+                                SET enrichment_status = 'failed', updated_at = NOW()
+                                WHERE id = %s
+                                  AND (enrichment_status IS NULL OR enrichment_status = 'pending')
+                                """,
+                                (article_id,),
+                            )
+                        conn.commit()
+                        remaining -= 1
+                        continue
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            f"""
+                            UPDATE {schema_name}.articles
+                            SET enrichment_status = 'enriched', updated_at = NOW()
+                            WHERE id = %s
+                              AND (enrichment_status IS NULL OR enrichment_status = 'pending')
+                            """,
+                            (article_id,),
+                        )
+                        fast_rows = cur.rowcount or 0
+                    if fast_rows:
+                        conn.commit()
+                        enriched += 1
+                        remaining -= 1
+                        try:
+                            ensure_context_for_article(domain_key, article_id)
+                        except Exception as ctx_e:
+                            logger.debug(
+                                "enrichment fast-path context %s/%s: %s",
+                                domain_key,
+                                article_id,
+                                ctx_e,
+                            )
+                    continue
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"""UPDATE {schema_name}.articles
+                           SET enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1,
+                               updated_at = NOW()
+                           WHERE id = %s""",
+                        (article_id,),
+                    )
+                fetch_jobs.append((domain_key, schema_name, int(article_id), str(url).strip()))
+                remaining -= 1
+        conn.commit()
+    except Exception as e:
+        logger.warning("Content enrichment claim phase failed: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return enriched
+    finally:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SET statement_timeout = '{default_timeout_ms}'")
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    # Phase 2: HTTP fetch with no DB checkout held
+    fetched = _fetch_urls_parallel(fetch_jobs, parallel=parallel, per_host=per_host)
+
+    # Phase 3: write results
+    conn = get_db_connection()
+    if not conn:
+        logger.warning("Content enrichment: no DB connection for writeback")
+        return enriched
+    default_timeout_ms = get_db_config().get("statement_timeout_ms", 120000)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET statement_timeout = '300s'")
+        for domain_key, schema_name, article_id, _url in fetch_jobs:
+            text = fetched.get((schema_name, article_id))
+            with conn.cursor() as cur:
+                if text and is_false_enriched_body(text):
+                    cur.execute(
+                        f"""UPDATE {schema_name}.articles
+                           SET content = %s, enrichment_status = 'failed', updated_at = NOW()
+                           WHERE id = %s""",
+                        (text[:2000], article_id),
+                    )
+                    conn.commit()
+                    continue
+                if text:
+                    cur.execute(
+                        f"""UPDATE {schema_name}.articles
+                           SET content = %s, enrichment_status = 'enriched', updated_at = NOW()
+                           WHERE id = %s""",
+                        (text, article_id),
+                    )
+                    cur.execute(
+                        f"""UPDATE {schema_name}.articles SET entities = NULL WHERE id = %s""",
+                        (article_id,),
+                    )
+                    # Commit content before optional queue insert so a missing
+                    # topic_extraction_queue cannot roll back enrichment or abort the batch.
+                    conn.commit()
+                    enriched += 1
+                    try:
+                        with conn.cursor() as qcur:
+                            qcur.execute(
+                                f"""
+                                INSERT INTO {schema_name}.topic_extraction_queue
+                                    (article_id, status, priority, created_at)
+                                VALUES (%s, 'pending', 3, NOW())
+                                ON CONFLICT (article_id) DO UPDATE
+                                  SET status = 'pending', priority = 3, created_at = NOW()
+                                """,
+                                (article_id,),
+                            )
+                        conn.commit()
+                    except Exception as q_e:
+                        logger.debug(
+                            "enrichment topic queue %s/%s: %s",
+                            schema_name,
+                            article_id,
+                            q_e,
+                        )
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass
+                    try:
+                        update_context_content_for_article(domain_key, article_id)
+                    except Exception as ctx_e:
+                        logger.debug(
+                            "enrichment context update %s/%s: %s",
+                            domain_key,
+                            article_id,
+                            ctx_e,
+                        )
+                    try:
+                        from services.research_paper_profile_service import (
+                            ensure_pending_profile,
+                            stamp_article_research_metadata,
+                        )
+
+                        patch = stamp_article_research_metadata(
+                            schema_name, article_id, _url, title=None
+                        )
+                        if patch:
+                            ensure_pending_profile(
+                                domain_key, article_id, url=_url, metadata=patch
+                            )
+                    except Exception as paper_e:
+                        logger.debug(
+                            "enrichment research stamp %s/%s: %s",
+                            domain_key,
+                            article_id,
+                            paper_e,
+                        )
+                else:
+                    _remove_article(conn, schema_name, article_id)
+                    conn.commit()
+        for _dk, sch in pairs:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""UPDATE {sch}.articles SET enrichment_status = 'inaccessible'
+                       WHERE enrichment_status = 'failed' AND enrichment_attempts >= 3"""
+                )
+            conn.commit()
+        if enriched > 0:
+            logger.info(
+                "Content enrichment (parallel=%s): %s articles enriched",
+                parallel,
+                enriched,
+            )
+        return enriched
+    except Exception as e:
+        logger.warning("Content enrichment writeback failed: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return enriched
+    finally:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SET statement_timeout = '{default_timeout_ms}'")
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def enrich_articles_batch(batch_size: int = 20) -> int:
     """
     Drain enrichment backlog: select by enrichment_status/attempts, fetch with trafilatura (10s timeout),
@@ -398,7 +976,17 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
 
     Fair share: each active domain may fetch up to ceil(batch_size / n_domains) candidates per call
     (capped by remaining success budget), so high display_order silos are not starved by earlier domains.
+
+    Set CONTENT_ENRICHMENT_FETCH_PARALLEL>1 for parallel HTTP (DB not held across fetch).
     """
+    parallel = _enrichment_fetch_parallel()
+    if parallel > 1:
+        return _enrich_articles_batch_parallel(batch_size=batch_size, parallel=parallel)
+
+    try:
+        demote_false_enriched_batch(limit_per_schema=max(10, int(batch_size)))
+    except Exception as e:
+        logger.debug("demote_false_enriched_batch: %s", e)
     try:
         import trafilatura
     except ImportError:
@@ -470,15 +1058,35 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                     break
                 if not url or not url.strip():
                     continue
-                # Strict-ingest long RSS: pending without a second trafilatura pass
+                # Strict-ingest long RSS: pending without a second trafilatura pass.
+                # ArXiv abs abstracts are 1–2k chars (above MIN_CONTENT_TO_ENRICH) but
+                # still need PDF/HTML fulltext — do not fast-path mark them enriched.
                 if (
                     strict_enrichment_cutoff_utc() is not None
                     and strict_enrichment_applies(created_at)
                     and existing_content
                     and len((existing_content or "").strip()) >= MIN_CONTENT_TO_ENRICH
                     and (row_status is None or (row_status or "").strip() == "pending")
+                    and not needs_arxiv_fulltext(url, existing_content)
                 ):
                     fast_rows = 0
+                    if is_false_enriched_body(existing_content):
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                f"""
+                                UPDATE {schema_name}.articles
+                                SET enrichment_status = 'failed', updated_at = NOW()
+                                WHERE id = %s
+                                  AND (enrichment_status IS NULL OR enrichment_status = 'pending')
+                                """,
+                                (article_id,),
+                            )
+                            fast_rows = cur.rowcount or 0
+                        if fast_rows:
+                            conn.commit()
+                            remaining -= 1
+                            time.sleep(RATE_LIMIT_SLEEP)
+                        continue
                     with conn.cursor() as cur:
                         cur.execute(
                             f"""
@@ -517,6 +1125,16 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                 if text:
                     text = text[:MAX_CONTENT_CHARS]
                 with conn.cursor() as cur:
+                    if text and is_false_enriched_body(text):
+                        cur.execute(
+                            f"""UPDATE {schema_name}.articles SET content = %s, enrichment_status = 'failed', updated_at = NOW() WHERE id = %s""",
+                            (text[:2000], article_id),
+                        )
+                        pending_commits += 1
+                        _flush_commit()
+                        remaining -= 1
+                        time.sleep(RATE_LIMIT_SLEEP)
+                        continue
                     if text:
                         cur.execute(
                             f"""UPDATE {schema_name}.articles SET content = %s, enrichment_status = 'enriched', updated_at = NOW() WHERE id = %s""",
@@ -547,6 +1165,30 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                     enriched += 1
                     remaining -= 1
                     update_context_content_for_article(domain_key, article_id)
+                    try:
+                        from services.research_paper_classifier import paper_metadata_patch
+                        from services.research_paper_profile_service import (
+                            ensure_pending_profile,
+                            stamp_article_research_metadata,
+                        )
+
+                        patch = stamp_article_research_metadata(
+                            schema_name, article_id, url, title=None
+                        )
+                        if patch:
+                            ensure_pending_profile(
+                                domain_key,
+                                article_id,
+                                url=url,
+                                metadata=patch,
+                            )
+                    except Exception as paper_e:
+                        logger.debug(
+                            "enrichment research stamp %s/%s: %s",
+                            domain_key,
+                            article_id,
+                            paper_e,
+                        )
 
                 time.sleep(RATE_LIMIT_SLEEP)
 
@@ -585,6 +1227,12 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
 def _fetch_full_text(url: str, config=None) -> str:
     """Fetch URL and extract main content. Tries: live -> browser (if enabled) -> Wayback (if enabled) -> archive.today (if enabled).
     Returns empty string when all attempted paths fail or return paywall content."""
+    # 0. arXiv abs → HTML full text or PDF extract (RSS only stores abstracts)
+    if is_arxiv_abs_url(url) or arxiv_id_from_url(url):
+        arxiv_text = _fetch_arxiv_full_text(url)
+        if arxiv_text:
+            return arxiv_text
+
     # 1. Live (trafilatura fetch_url + extract)
     try:
         import trafilatura
@@ -686,7 +1334,12 @@ def fetch_full_content_for_article(domain_key: str, article_id: int) -> dict[str
                 }
             url, existing = row[0], (row[1] or "")
             existing_stripped = format_article_body_paragraphs(existing.strip())
-            if len(existing_stripped) >= 80:
+            # ArXiv abs abstracts are typically 1–2k chars — skip early return so
+            # on-demand UI still fetches full PDF/HTML paper text.
+            if (
+                len(existing_stripped) >= 80
+                and not needs_arxiv_fulltext(str(url or ""), existing)
+            ):
                 return {
                     "success": True,
                     "not_found": False,
@@ -713,6 +1366,20 @@ def fetch_full_content_for_article(domain_key: str, article_id: int) -> dict[str
                     "content": existing.strip() or None,
                 }
             text = text[:MAX_CONTENT_CHARS]
+            if is_false_enriched_body(text):
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"""UPDATE {schema_name}.articles SET content = %s, enrichment_status = 'failed',
+                            updated_at = NOW() WHERE id = %s""",
+                        (text[:2000], article_id),
+                    )
+                conn.commit()
+                return {
+                    "success": False,
+                    "not_found": False,
+                    "message": "Fetched page looks like a paywall, soft-block, or chrome — not stored as enriched.",
+                    "content": existing.strip() or None,
+                }
             with conn.cursor() as cur:
                 cur.execute(
                     f"""UPDATE {schema_name}.articles SET content = %s, enrichment_status = 'enriched',

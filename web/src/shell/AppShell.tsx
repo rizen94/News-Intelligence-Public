@@ -23,8 +23,6 @@ export type AppShellProps = {
   className?: string;
   /** Extra class on the main content pane. */
   contentClassName?: string;
-  showClassic?: boolean;
-  classicTo?: string;
 };
 
 export default function AppShell({
@@ -37,8 +35,6 @@ export default function AppShell({
   children,
   className,
   contentClassName,
-  showClassic,
-  classicTo,
 }: AppShellProps) {
   const shellClass = ['ni-app-shell', `ni-app-shell--${root}`, className]
     .filter(Boolean)
@@ -49,12 +45,7 @@ export default function AppShell({
     <div className={shellClass} data-product-root={root}>
       <header className='ni-app-header'>
         <div className='ni-app-header-inner'>
-          <ProductRootSwitcher
-            subtitle={subtitle}
-            brandTo={brandTo}
-            showClassic={showClassic}
-            classicTo={classicTo}
-          >
+          <ProductRootSwitcher subtitle={subtitle} brandTo={brandTo}>
             {headerActions}
           </ProductRootSwitcher>
         </div>

@@ -23,7 +23,7 @@ async def reader_home(
     page_size: int = Query(12, ge=1, le=50, description="Items per page (max 50)."),
     section: str | None = Query(
         None,
-        description="Optional: news | current_events | one_offs — returns one section + pagination.",
+        description="Optional: news | current_events | one_offs | research — returns one section + pagination.",
     ),
 ):
     """

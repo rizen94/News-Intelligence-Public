@@ -86,3 +86,29 @@ def test_mega_earnings_children_without_shared_entities_blocked():
     ok, reason = g.assess_mega_group_coherence("finance", children)
     assert ok is False
     assert reason == "finance_earnings_mega_insufficient_entities"
+
+
+def test_bridge_kitchen_sink_titles_blocked():
+    assert g.title_looks_mega_bag(
+        "US Politicians Scramble as Global Crises Escalate: Zelenskyy's "
+        "Domestic Struggles Mirror India's Gov"
+    )
+    assert g.title_looks_mega_bag(
+        "Global Power Shifts: Leaders Scramble to Adapt in Turbulent Year of 2026"
+    )
+    ok, reason = g.assess_cluster_coherence(
+        "politics",
+        "US Politicians Scramble as Global Crises Escalate",
+        [_article("Zelenskyy faces domestic pressure"), _article("Modi cabinet shuffle")],
+    )
+    assert ok is False
+    assert reason == "kitchen_sink_bridge_title"
+
+
+def test_focused_netanyahu_title_not_mega_bag():
+    title = (
+        "Netanyahu Rejects Trump's Gaza Disarmament Plan, "
+        "Vows No Withdrawal Until Hamas Disarms"
+    )
+    assert g.title_looks_mega_bag(title) is False
+    assert g.is_overly_generic_storyline_title(title, "politics") is False

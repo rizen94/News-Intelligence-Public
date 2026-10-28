@@ -21,7 +21,19 @@ echo ""
 # Ensure remote directory exists
 ssh "${WIDOW_USER}@${WIDOW_HOST}" "sudo mkdir -p ${REMOTE_DIR} && sudo chown ${WIDOW_USER}:${WIDOW_USER} ${REMOTE_DIR}"
 
-# Rsync exclude patterns (match start_system.sh exclusions where relevant)
+# Build stamp (written locally then rsynced; also rewritten on remote after rsync)
+GIT_SHA="$(git -C "$PROJECT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+cat >"${PROJECT_DIR}/BUILD_INFO" <<EOF
+git_sha=${GIT_SHA}
+built_at=${BUILD_TIME}
+source_host=$(hostname -s 2>/dev/null || hostname)
+deploy_target=${REMOTE_DIR}
+EOF
+echo "BUILD_INFO: git_sha=${GIT_SHA} built_at=${BUILD_TIME}"
+
+# Rsync exclude patterns (match start_system.sh exclusions where relevant).
+# Also skip kit data / root-owned cron drop-ins that cause rsync code 23 on PopOS→Widow.
 rsync -avz --progress \
   --exclude='.venv' \
   --exclude='.venv.backup' \
@@ -34,6 +46,8 @@ rsync -avz --progress \
   --exclude='logs/' \
   --exclude='chroma_data' \
   --exclude='News-Intelligence-Archive' \
+  --exclude='news-intelligence-kit/' \
+  --exclude='infrastructure/cron.d/' \
   "${PROJECT_DIR}/" "${WIDOW_USER}@${WIDOW_HOST}:${REMOTE_DIR}/"
 
 # Copy DB password if present (for .env and .pgpass on Widow)
@@ -46,8 +60,7 @@ fi
 
 echo ""
 echo "✅ Code deployed. Running setup on Widow..."
-ssh "${WIDOW_USER}@${WIDOW_HOST}" "cd ${REMOTE_DIR} && ./scripts/setup_widow_app.sh"
-
+ssh "${WIDOW_USER}@${WIDOW_HOST}" "cd ${REMOTE_DIR} && chmod +x scripts/ensure_widow_api_runtime.sh scripts/deploy_to_widow.sh 2>/dev/null || true; ./scripts/setup_widow_app.sh"
 echo ""
 echo "=========================================="
 echo "Post-deploy: migrations, schema audit, API restart"
@@ -88,13 +101,44 @@ for mig in 196 231 232; do
   fi
 done
 
-sudo systemctl restart news-intelligence-api-public || true
-sleep 4
+# Prefer dedicated runtime lock-in (stops workspace uvicorn on :8000)
+if [[ -x scripts/ensure_widow_api_runtime.sh ]]; then
+  bash scripts/ensure_widow_api_runtime.sh
+else
+  sudo systemctl enable news-intelligence-api-public
+  sudo systemctl restart news-intelligence-api-public
+  sleep 4
+  systemctl is-active --quiet news-intelligence-api-public \
+    || { echo "FAIL: news-intelligence-api-public not active after restart"; exit 1; }
+fi
+
+# :8000 must be systemd /opt — not workspace uvicorn
+listen_pid="\$(ss -ltnp 2>/dev/null | awk '/:8000/ {print}' | grep -oP 'pid=\\K[0-9]+' | head -1 || true)"
+if [[ -z "\${listen_pid:-}" ]]; then
+  echo "FAIL: nothing listening on :8000" >&2
+  exit 1
+fi
+listen_cwd="\$(readlink -f /proc/\${listen_pid}/cwd 2>/dev/null || true)"
+echo "API listener pid=\${listen_pid} cwd=\${listen_cwd}"
+case "\${listen_cwd}" in
+  ${REMOTE_DIR}/*|${REMOTE_DIR}) ;;
+  *)
+    echo "FAIL: :8000 cwd is not under ${REMOTE_DIR} (got \${listen_cwd}). Stop workspace uvicorn." >&2
+    exit 1
+    ;;
+esac
+
+if [[ -f BUILD_INFO ]]; then
+  echo "BUILD_INFO on deploy host:"
+  cat BUILD_INFO
+fi
 
 echo "Smoke tests..."
-curl -sf http://127.0.0.1:8000/api/ping | head -c 80
-curl -sf "http://127.0.0.1:8000/api/politics/report?lead_limit=1" | head -c 80
-curl -sf "http://127.0.0.1:8000/api/tracked_events?limit=1" | head -c 80
+curl -sf --max-time 15 http://127.0.0.1:8000/api/ping | head -c 80
+echo
+curl -sf --max-time 30 "http://127.0.0.1:8000/api/politics/report?lead_limit=1" | head -c 80
+echo
+curl -sf --max-time 30 "http://127.0.0.1:8000/api/tracked_events?limit=1" | head -c 80
 echo ""
 echo "Post-deploy checks OK"
 REMOTE
@@ -102,6 +146,7 @@ REMOTE
 echo ""
 echo "=========================================="
 echo "Phase 5 deployment complete."
-echo "Dev fix ≠ prod fix until this script succeeds (see PROJECT_STATUS.md)."
+echo "Authoritative runtime: systemd news-intelligence-api-public under ${REMOTE_DIR}."
+echo "Workspace is edit surface only until this script succeeds (see PROJECT_STATUS.md)."
 echo "Next: bash scripts/deploy_public_demo_to_widow.sh for SPA"
 echo "=========================================="

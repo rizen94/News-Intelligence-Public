@@ -67,6 +67,34 @@ _GENERIC_SUBJECTS = frozenset(
     }
 )
 
+# Generic ML tokens that glue unrelated arXiv papers without a shared research question.
+_AI_GENERIC_TOKENS = frozenset(
+    {
+        "llm",
+        "llms",
+        "transformer",
+        "transformers",
+        "benchmark",
+        "benchmarks",
+        "fine-tuning",
+        "finetuning",
+        "inference",
+        "alignment",
+        "agent",
+        "agents",
+        "multimodal",
+        "foundation model",
+        "foundation models",
+        "neural",
+        "deep learning",
+        "machine learning",
+        "artificial intelligence",
+        "dataset",
+        "datasets",
+        "arxiv",
+    }
+)
+
 def _subject_norm(text: str | None) -> str:
     return re.sub(r"\s+", " ", (text or "").strip().lower())
 
@@ -243,6 +271,80 @@ def _title_content_words(title: str) -> list[str]:
     return [w.lower() for w in re.findall(r"[A-Za-z0-9]+", title or "") if len(w) >= 2]
 
 
+def title_looks_mega_bag(title: str | None) -> bool:
+    """
+    Kitchen-sink / bridge titles that launder heterogeneous clusters.
+
+    Shared by mint-time coherence and post-hoc prune/reader demotion.
+    """
+    lower = (title or "").strip().lower()
+    if not lower:
+        return False
+    if "live update" in lower:
+        return True
+    if lower.startswith("ongoing:") or lower.startswith("ongoing "):
+        return True
+    if "global update" in lower:
+        return True
+    # Dual-theater LLM mash titles ("X Mirror Y", "Global Crises", "Scramble as …")
+    if " mirror " in lower and (
+        "zelensky" in lower or "putin" in lower or "modi" in lower or "trump" in lower
+    ):
+        return True
+    if " mirror " in lower and ("crisis" in lower or "crises" in lower or "crackdown" in lower):
+        return True
+    if "global crises" in lower or "global crisis" in lower:
+        return True
+    if "scramble" in lower and (
+        "crisis" in lower or "crises" in lower or "turbulent" in lower
+    ):
+        return True
+    if "power shifts" in lower and "adapt" in lower:
+        return True
+    return False
+
+
+def assess_kitchen_sink_risk(
+    title: str | None, articles: list[dict[str, Any]] | None = None
+) -> tuple[bool, str]:
+    """Cheap kitchen-sink signal for prune/reader (title + optional article sample)."""
+    if title_looks_mega_bag(title):
+        return True, "bridge_title"
+    if articles and len(articles) >= 4:
+        titles = [(a.get("title") or "") for a in articles[:12]]
+        # Pairwise title-token disjoint pairs → mash risk
+        def _toks(t: str) -> set[str]:
+            return {
+                w
+                for w in re.findall(r"[a-z0-9][a-z0-9'-]{3,}", (t or "").lower())
+                if w
+                not in {
+                    "that",
+                    "this",
+                    "with",
+                    "from",
+                    "have",
+                    "after",
+                    "over",
+                    "into",
+                    "said",
+                    "news",
+                    "what",
+                    "know",
+                }
+            }
+
+        sets = [_toks(t) for t in titles if t.strip()]
+        disjoint = 0
+        for i in range(len(sets)):
+            for j in range(i + 1, len(sets)):
+                if sets[i] and sets[j] and sets[i].isdisjoint(sets[j]):
+                    disjoint += 1
+        if disjoint >= max(2, len(sets) // 2):
+            return True, "disjoint_member_headlines"
+    return False, "ok"
+
+
 def is_overly_generic_storyline_title(title: str | None, domain: str = "") -> bool:
     """True when title is too vague to stand alone as a storyline label."""
     t = _norm_title(title)
@@ -346,6 +448,9 @@ def assess_cluster_coherence(
     if is_overly_generic_storyline_title(title, domain):
         return False, "generic_title"
 
+    if title_looks_mega_bag(title):
+        return False, "kitchen_sink_bridge_title"
+
     entity_counts = extract_cluster_specific_entities(articles)
     if common_entities:
         for ent in common_entities:
@@ -354,6 +459,12 @@ def assess_cluster_coherence(
                 entity_counts[key] = max(entity_counts.get(key, 0), 1)
 
     dk = (domain or "").lower().replace("_", "-")
+    # Politics: require at least one entity recurring across ≥2 articles (not
+    # two one-off proper nouns from unrelated liveblogs).
+    if dk.startswith("politics"):
+        recurring = sum(1 for _, n in entity_counts.items() if n >= 2)
+        if recurring < 1 and len(articles) >= 3:
+            return False, "politics_no_shared_non_hub_entity"
     if dk.startswith("finance") and _cluster_has_earnings_report_vocabulary(articles):
         if _cluster_has_shared_theme(articles):
             return True, "finance_earnings_theme"
@@ -365,6 +476,19 @@ def assess_cluster_coherence(
             if top_n >= max(3, int(len(articles) * 0.6)):
                 return True, f"finance_dominant_entity:{top_entity}"
         return False, "finance_generic_earnings_reports"
+
+    if dk.startswith("artificial-intelligence"):
+        # Reject clusters that only share generic ML vocabulary with no specific entities.
+        recurring = sum(1 for _, n in entity_counts.items() if n >= 2)
+        ai_distinct = sum(1 for _, n in entity_counts.items() if n >= 1)
+        blob = " ".join(
+            f"{a.get('title') or ''} {(a.get('summary') or '')[:400]}" for a in articles
+        ).lower()
+        generic_hits = sum(1 for tok in _AI_GENERIC_TOKENS if tok in blob)
+        if recurring < 1 and ai_distinct < min_distinct_specific_entities() and generic_hits >= 3:
+            return False, "ai_generic_ml_overlap"
+        if recurring < 1 and not entity_counts and generic_hits >= 4:
+            return False, "ai_generic_ml_overlap"
 
     distinct_specific = sum(1 for _, n in entity_counts.items() if n >= 1)
     min_distinct = min_distinct_specific_entities()
@@ -410,6 +534,39 @@ def assess_mega_group_coherence(domain: str, children: list[Any]) -> tuple[bool,
             recurring = sum(1 for _, n in all_entities.items() if n >= 2)
             if recurring < 2:
                 return False, "finance_earnings_mega_insufficient_entities"
+
+    return True, "ok"
+
+
+def assess_storyline_pair_merge_coherence(
+    domain: str, primary: Any, secondary: Any
+) -> tuple[bool, str]:
+    """
+    Gate near-dup title merges during storyline hygiene.
+
+    Allows merge when titles look like the same arc; blocks when either side is
+    an overly generic kitchen-sink title (would inflate mega-bags).
+    """
+    if not guardrails_enabled():
+        return True, "disabled"
+
+    p_title = (getattr(primary, "title", None) or "").strip()
+    s_title = (getattr(secondary, "title", None) or "").strip()
+    if not p_title or not s_title:
+        return False, "missing_title"
+
+    if is_overly_generic_storyline_title(p_title, domain) and is_overly_generic_storyline_title(
+        s_title, domain
+    ):
+        return False, "both_generic_titles"
+
+    p_words = set(_title_content_words(p_title))
+    s_words = set(_title_content_words(s_title))
+    if not p_words or not s_words:
+        return False, "no_content_words"
+    overlap = len(p_words & s_words) / float(max(1, min(len(p_words), len(s_words))))
+    if overlap < 0.35:
+        return False, "weak_title_token_overlap"
 
     return True, "ok"
 
