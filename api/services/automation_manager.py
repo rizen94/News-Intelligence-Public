@@ -961,6 +961,7 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "storyline_assembly": 900,  # proactive + discovery + automation per domain
     "fact_verification": 120,  # v8: verify_recent_claims per domain
     "content_refinement_queue": 420,  # storyline RAG / timeline narrative / ~70B finisher (queued user jobs)
+    "storyline_review_agent": 300,  # LLM review of pending article suggestions
     "nightly_enrichment_context": 21600,  # 02:00–07:00 local unified pipeline (NIGHTLY_PIPELINE_*); exits when idle
 }
 
@@ -1625,6 +1626,16 @@ class AutomationManager:
                 "phase": 12,
                 "depends_on": ["story_continuation"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["watchlist_alerts"],
+            },
+            # Phase 7: Storyline Article Suggestion Review (approve/reject via LLM + score fast-path)
+            "storyline_review_agent": {
+                "interval": 300,  # 5 minutes - run often, re-enqueue until empty
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.HIGH,
+                "phase": 7,
+                "depends_on": ["storyline_automation"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["storyline_review_agent"],
             },
             # Phase 4 RAG: Watch patterns — match content, record pattern_matches, create watchlist alerts
             "pattern_matching": {
@@ -4094,6 +4105,8 @@ class AutomationManager:
                 await self._execute_story_continuation_v5(task)
             elif task.name == "watchlist_alerts":
                 await self._execute_watchlist_alerts_v5(task)
+            elif task.name == "storyline_review_agent":
+                await self._execute_storyline_review_agent(task)
             elif task.name == "story_enhancement":
                 await self._execute_story_enhancement(task)
             elif task.name == "content_refinement_queue":
@@ -7344,6 +7357,15 @@ class AutomationManager:
     async def _execute_story_continuation_v5(self, task: Task):
         """v5.0 -- Match events to existing storylines and manage lifecycle states. Runs per domain (storylines/story_entity_index are per-schema)."""
         from services.story_continuation_service import StoryContinuationService
+        from shared.database.disk_io_pressure_advisory import disk_io_should_defer_phase
+
+        defer, disk_meta = disk_io_should_defer_phase("story_continuation")
+        if defer:
+            logger.info(
+                "Story continuation skipped (disk IO pressure): defer_new_work=%s",
+                disk_meta.get("defer_new_work"),
+            )
+            return
 
         total = {"checked": 0, "linked": 0, "flagged": 0}
         for schema in get_pipeline_schema_names_active():
@@ -7412,6 +7434,25 @@ class AutomationManager:
                 logger.warning("Watchlist alerts failed: %s", e)
         finally:
             conn.close()
+
+    async def _execute_storyline_review_agent(self, task: Task):
+        """Drain pending article suggestions via score fast-path + LLM review."""
+        try:
+            from services.storyline_review_agent_service import run_storyline_review_agent_all_domains
+
+            stats = await run_storyline_review_agent_all_domains()
+            approved = int(stats.get("approved") or 0)
+            rejected = int(stats.get("rejected") or 0)
+            llm_calls = int(stats.get("llm_calls") or 0)
+            errors = int(stats.get("errors") or 0)
+            logger.info(
+                f"storyline_review_agent: approved={approved} rejected={rejected} "
+                f"llm_calls={llm_calls} errors={errors}"
+            )
+            if errors > 0:
+                logger.warning("storyline_review_agent had %d errors", errors)
+        except Exception as e:
+            logger.warning("storyline_review_agent failed: %s", e)
 
     async def _execute_quality_scoring(self, task: Task):
         """Execute quality scoring task"""
@@ -8431,7 +8472,7 @@ class AutomationManager:
                 "active_workers": (
                     sum(1 for t in self._phase_worker_tasks if not t.done())
                     if self._phase_worker_tasks
-                    else 0
+                    else 0,
                 ),
             },
         }

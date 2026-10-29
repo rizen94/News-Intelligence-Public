@@ -8,13 +8,13 @@ the automation phases of the system.
 import logging
 import time
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
+from typing import Any
 from .connection import check_database_health, probe_database_server_reachable
 from .db_availability import is_automation_db_ready
 
 logger = logging.getLogger(__name__)
 
-def check_system_health() -> Dict[str, Any]:
+def check_system_health() -> dict[str, Any]:
     """
     Check overall system health including database and other components.
     
@@ -46,7 +46,7 @@ def check_system_health() -> Dict[str, Any]:
             "timestamp": datetime.utcnow().isoformat()
         }
 
-def check_automation_phase_health(phase_name: str) -> Dict[str, Any]:
+def check_automation_phase_health(phase_name: str) -> dict[str, Any]:
     """
     Check health for a specific automation phase.
     

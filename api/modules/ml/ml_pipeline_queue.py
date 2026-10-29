@@ -6,7 +6,7 @@ Integrates with ML queue system for intelligent processing
 
 import logging
 import asyncio
-from typing import Dict, List, Optional, Any
+from typing import Optional, Any
 from datetime import datetime, timedelta
 import psycopg2
 import json
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class MLPipelineQueue:
     """ML Pipeline with intelligent queue management"""
     
-    def __init__(self, db_config: Dict[str, str]):
+    def __init__(self, db_config: dict[str, str]):
         self.db_config = db_config
         self.queue_manager = MLQueueManager(db_config)
         self.timeline_generator = TimelineGenerator(db_config)
@@ -210,7 +210,7 @@ class MLPipelineQueue:
             logger.error(f"Error processing storyline intelligently for {storyline_id}: {e}")
             raise
     
-    async def batch_process_articles(self, article_ids: List[int], priority: TaskPriority = TaskPriority.NORMAL) -> str:
+    async def batch_process_articles(self, article_ids: list[int], priority: TaskPriority = TaskPriority.NORMAL) -> str:
         """Process multiple articles in batch with intelligent resource management"""
         try:
             # Group articles by priority and resource requirements
@@ -243,7 +243,7 @@ class MLPipelineQueue:
             logger.error(f"Error in batch processing: {e}")
             raise
     
-    def get_processing_status(self) -> Dict[str, Any]:
+    def get_processing_status(self) -> dict[str, Any]:
         """Get current processing status and statistics"""
         try:
             queue_status = self.queue_manager.get_queue_status()
@@ -261,7 +261,7 @@ class MLPipelineQueue:
             logger.error(f"Error getting processing status: {e}")
             return {"error": str(e)}
     
-    def _get_article(self, article_id: int) -> Optional[Dict[str, Any]]:
+    def _get_article(self, article_id: int) -> Optional[dict[str, Any]]:
         """Get article data from database"""
         try:
             conn = psycopg2.connect(**self.db_config)
@@ -298,7 +298,7 @@ class MLPipelineQueue:
             logger.error(f"Error getting article {article_id}: {e}")
             return None
     
-    async def _get_storyline_data(self, storyline_id: str) -> Optional[Dict[str, Any]]:
+    async def _get_storyline_data(self, storyline_id: str) -> Optional[dict[str, Any]]:
         """Get storyline data from database"""
         try:
             conn = psycopg2.connect(**self.db_config)
@@ -334,7 +334,7 @@ class MLPipelineQueue:
             logger.error(f"Error getting storyline {storyline_id}: {e}")
             return None
     
-    def _get_storyline_articles(self, storyline_id: str) -> List[Dict[str, Any]]:
+    def _get_storyline_articles(self, storyline_id: str) -> list[dict[str, Any]]:
         """Get articles related to a storyline"""
         try:
             conn = psycopg2.connect(**self.db_config)
@@ -392,7 +392,7 @@ class MLPipelineQueue:
             logger.error(f"Error getting storyline articles for {storyline_id}: {e}")
             return []
     
-    def _is_high_priority_article(self, article: Dict[str, Any]) -> bool:
+    def _is_high_priority_article(self, article: dict[str, Any]) -> bool:
         """Determine if an article should be processed with high priority"""
         # High priority criteria
         high_priority_keywords = [
@@ -436,7 +436,7 @@ class MLPipelineQueue:
         except Exception as e:
             logger.error(f"Error updating article status: {e}")
     
-    def _get_processing_statistics(self) -> Dict[str, Any]:
+    def _get_processing_statistics(self) -> dict[str, Any]:
         """Get processing statistics from database"""
         try:
             conn = psycopg2.connect(**self.db_config)
@@ -489,7 +489,7 @@ class MLPipelineQueue:
             logger.error(f"Error getting processing statistics: {e}")
             return {}
     
-    def _get_system_health(self) -> Dict[str, Any]:
+    def _get_system_health(self) -> dict[str, Any]:
         """Get system health metrics"""
         try:
             import psutil

@@ -6,7 +6,7 @@ Provides comprehensive quality assessment and monitoring across all pipeline pro
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 from dataclasses import dataclass
 from enum import Enum
 
@@ -42,13 +42,13 @@ class QualityAssessment:
     content_type: str
     quality_score: float
     quality_tier: int
-    scores: Dict[str, float]
-    flags: List[str]
+    scores: dict[str, float]
+    flags: list[str]
     recommendation: str
     status: QualityStatus
     assessment_time: datetime
     process_name: str
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
 
 
 @dataclass
@@ -60,9 +60,9 @@ class QualityReport:
     quality_passed: int
     quality_failed: int
     average_quality_score: float
-    quality_metrics: Dict[str, Any]
-    warning_flags: List[str]
-    error_details: List[str]
+    quality_metrics: dict[str, Any]
+    warning_flags: list[str]
+    error_details: list[str]
     success_rate: float
 
 
@@ -85,7 +85,7 @@ class QualityMonitoringService:
             "warning_threshold": 0.6,      # Above this, flag as warning
         }
 
-    def assess_content_quality(self, content_data: Dict[str, Any], 
+    def assess_content_quality(self, content_data: dict[str, Any], 
                              process_name: str = "unknown") -> QualityAssessment:
         """
         Assess quality of content using the content quality service
@@ -236,7 +236,7 @@ class QualityMonitoringService:
             success_rate=round(success_rate, 2)
         )
 
-    def check_quality_alerts(self) -> List[str]:
+    def check_quality_alerts(self) -> list[str]:
         """
         Check for quality alerts based on thresholds
         
@@ -263,7 +263,7 @@ class QualityMonitoringService:
             
         return alerts
 
-    def get_quality_trend(self, window_hours: int = 24) -> Dict[str, Any]:
+    def get_quality_trend(self, window_hours: int = 24) -> dict[str, Any]:
         """
         Get quality trend over time
         
@@ -299,7 +299,7 @@ class QualityMonitoringService:
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
-    def validate_pipeline_output(self, output_data: Dict[str, Any], 
+    def validate_pipeline_output(self, output_data: dict[str, Any], 
                                process_name: str = "unknown") -> bool:
         """
         Validate pipeline output quality

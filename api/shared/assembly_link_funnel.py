@@ -28,11 +28,8 @@ def funnel_candidate_limit(*, mode: str = LINK_MODE_SEQUENCE) -> int:
 
 
 def automation_auto_attach_enabled() -> bool:
-    """Kill-switch: silent bag membership off by default (Event→Episode rebuild).
-
-    STORYLINE_AUTOMATION_AUTO_ATTACH=1 re-enables legacy auto-add (not recommended).
-    """
-    return env_bool("STORYLINE_AUTOMATION_AUTO_ATTACH", False)
+    """Always return True — kill-switch removed in 2026-10-29 remediation."""
+    return True
 
 
 def storyline_articles_dual_write_enabled() -> bool:

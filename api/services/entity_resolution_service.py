@@ -384,10 +384,7 @@ def resolve_to_canonical(
             )
             row = cur.fetchone()
             if row:
-                conn.close()
                 return row[0]
-
-            # --- Step 1b: known abbreviation / geo bucket (US / USA / United States, …) ---
             eq_terms = _equivalence_sql_terms(name, etype)
             if eq_terms:
                 cur.execute(
@@ -409,7 +406,6 @@ def resolve_to_canonical(
                 if row:
                     _add_alias(cur, schema, row[0], name)
                     conn.commit()
-                    conn.close()
                     return row[0]
 
             # --- Step 2: title-stripped match ---
@@ -434,7 +430,6 @@ def resolve_to_canonical(
                 if row:
                     _add_alias(cur, schema, row[0], name)
                     conn.commit()
-                    conn.close()
                     return row[0]
 
             # --- Step 3: last-name fallback for persons (single match, first-name tie-break, or family umbrella)
@@ -468,7 +463,6 @@ def resolve_to_canonical(
                     if len(candidates) == 1:
                         _add_alias(cur, schema, candidates[0][0], name)
                         conn.commit()
-                        conn.close()
                         return candidates[0][0]
                     if len(candidates) > 1:
                         parts_s = stripped.split()
@@ -482,7 +476,6 @@ def resolve_to_canonical(
                             cid = matched[0][0]
                             _add_alias(cur, schema, cid, name)
                             conn.commit()
-                            conn.close()
                             return cid
                         fam_id = _link_surname_cluster_to_family(
                             cur, schema, domain_key, last_name, list(candidates)
@@ -493,11 +486,9 @@ def resolve_to_canonical(
                         ambiguous_multi = len(matched) != 1
                         if fam_id and (single_token_surname or ambiguous_multi):
                             conn.commit()
-                            conn.close()
                             return fam_id
 
             if not create_if_missing:
-                conn.close()
                 return None
 
             cur.execute(
@@ -512,7 +503,6 @@ def resolve_to_canonical(
             )
             new_row = cur.fetchone()
             conn.commit()
-            conn.close()
             return new_row[0] if new_row else None
     except Exception as e:
         logger.debug("entity resolution failed for %s/%s: %s", domain_key, name, e)
@@ -520,11 +510,12 @@ def resolve_to_canonical(
             conn.rollback()
         except Exception:
             pass
+        return None
+    finally:
         try:
             conn.close()
         except Exception:
             pass
-        return None
 
 
 def _add_alias(cur, schema: str, canonical_id: int, alias: str) -> None:

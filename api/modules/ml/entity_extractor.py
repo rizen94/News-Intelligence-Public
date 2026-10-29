@@ -8,7 +8,7 @@ import json
 import os
 import time
 import re
-from typing import Dict, List, Optional, Tuple, Any, Set
+from typing import Optional, Any, Set
 from datetime import datetime
 import requests
 from dataclasses import dataclass
@@ -77,12 +77,12 @@ class Entity:
 @dataclass
 class EntityExtractionResult:
     """Complete entity extraction result"""
-    entities: List[Entity]
+    entities: list[Entity]
     text: str
     model_used: str
     processing_time: float
     total_entities: int
-    entity_types: Dict[str, int]
+    entity_types: dict[str, int]
     local_processing: bool = True
 
 class LocalEntityExtractor:
@@ -115,7 +115,7 @@ class LocalEntityExtractor:
     
     def extract_entities(self, 
                         text: str, 
-                        entity_types: Optional[List[str]] = None,
+                        entity_types: Optional[list[str]] = None,
                         model: Optional[str] = None,
                         use_cache: bool = True) -> EntityExtractionResult:
         """
@@ -226,19 +226,19 @@ class LocalEntityExtractor:
             )
     
     def extract_entities_batch(self, 
-                              texts: List[str], 
-                              entity_types: Optional[List[str]] = None,
-                              model: Optional[str] = None) -> List[EntityExtractionResult]:
+                              texts: list[str], 
+                              entity_types: Optional[list[str]] = None,
+                              model: Optional[str] = None) -> list[EntityExtractionResult]:
         """
         Extract entities from multiple texts
         
         Args:
-            texts: List of texts to analyze
+            texts: list of texts to analyze
             entity_types: Specific entity types to extract (optional)
             model: Specific model to use (optional)
             
         Returns:
-            List of EntityExtractionResult objects
+            list of EntityExtractionResult objects
         """
         results = []
         for i, text in enumerate(texts):
@@ -248,12 +248,12 @@ class LocalEntityExtractor:
         return results
     
     def get_entity_statistics(self, 
-                            extraction_results: List[EntityExtractionResult]) -> Dict[str, Any]:
+                            extraction_results: list[EntityExtractionResult]) -> dict[str, Any]:
         """
         Get statistics from entity extraction results
         
         Args:
-            extraction_results: List of extraction results
+            extraction_results: list of extraction results
             
         Returns:
             Dictionary with entity statistics
@@ -300,7 +300,7 @@ class LocalEntityExtractor:
             logger.error(f"Error calculating entity statistics: {e}")
             return {"error": str(e)}
     
-    def _create_entity_prompt(self, text: str, entity_types: Optional[List[str]] = None) -> str:
+    def _create_entity_prompt(self, text: str, entity_types: Optional[list[str]] = None) -> str:
         """Create structured prompt for entity extraction"""
         if entity_types is None:
             entity_types = list(self.entity_types.keys())
@@ -382,7 +382,7 @@ Guidelines:
         model: str | None = None,
         *,
         log_parse_warning: bool = True,
-    ) -> tuple[List[Entity], bool]:
+    ) -> tuple[list[Entity], bool]:
         """Parse Ollama response. Second value is True when JSON parsed cleanly."""
         model_used = model or self.default_model
         json_start = response.find("{")
@@ -434,7 +434,7 @@ Guidelines:
 
         return self._fallback_parse(response, original_text), False
     
-    def _fallback_parse(self, response: str, original_text: str) -> List[Entity]:
+    def _fallback_parse(self, response: str, original_text: str) -> list[Entity]:
         """Fallback parsing when JSON parsing fails"""
         entities = []
         
@@ -471,7 +471,7 @@ Guidelines:
         self.cache.clear()
         logger.info("Entity extraction cache cleared")
     
-    def get_cache_stats(self) -> Dict[str, Any]:
+    def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics"""
         return {
             "cache_size": len(self.cache),

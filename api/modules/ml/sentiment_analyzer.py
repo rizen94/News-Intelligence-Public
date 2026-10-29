@@ -6,7 +6,7 @@ Uses local LLM models via Ollama for reliable sentiment analysis
 import logging
 import json
 import time
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Optional, Any
 from datetime import datetime
 import requests
 from dataclasses import dataclass
@@ -18,7 +18,7 @@ class SentimentResult:
     """Structured sentiment analysis result"""
     sentiment_score: float  # -1.0 to 1.0
     confidence: float  # 0.0 to 1.0
-    emotions: Dict[str, float]  # Emotion breakdown
+    emotions: dict[str, float]  # Emotion breakdown
     context: str  # Explanation of the sentiment
     model_used: str
     processing_time: float
@@ -125,17 +125,17 @@ class LocalSentimentAnalyzer:
             )
     
     def analyze_batch(self, 
-                     texts: List[str], 
-                     model: Optional[str] = None) -> List[SentimentResult]:
+                     texts: list[str], 
+                     model: Optional[str] = None) -> list[SentimentResult]:
         """
         Analyze sentiment for multiple texts
         
         Args:
-            texts: List of texts to analyze
+            texts: list of texts to analyze
             model: Specific model to use (optional)
             
         Returns:
-            List of SentimentResult objects
+            list of SentimentResult objects
         """
         results = []
         for i, text in enumerate(texts):
@@ -145,13 +145,13 @@ class LocalSentimentAnalyzer:
         return results
     
     def get_sentiment_trends(self, 
-                           articles: List[Dict[str, Any]], 
-                           time_window_hours: int = 24) -> Dict[str, Any]:
+                           articles: list[dict[str, Any]], 
+                           time_window_hours: int = 24) -> dict[str, Any]:
         """
         Analyze sentiment trends over time
         
         Args:
-            articles: List of articles with sentiment data
+            articles: list of articles with sentiment data
             time_window_hours: Time window for trend analysis
             
         Returns:
@@ -264,7 +264,7 @@ Guidelines:
             logger.error(f"Error calling Ollama: {e}")
             raise
     
-    def _parse_sentiment_response(self, response: str) -> Dict[str, Any]:
+    def _parse_sentiment_response(self, response: str) -> dict[str, Any]:
         """Parse Ollama response and extract sentiment data"""
         try:
             # Try to find JSON in response
@@ -303,7 +303,7 @@ Guidelines:
             logger.error(f"Error parsing sentiment response: {e}")
             return self._fallback_parse(response)
     
-    def _fallback_parse(self, response: str) -> Dict[str, Any]:
+    def _fallback_parse(self, response: str) -> dict[str, Any]:
         """Fallback parsing when JSON parsing fails"""
         # Simple keyword-based fallback
         response_lower = response.lower()
@@ -334,7 +334,7 @@ Guidelines:
         self.cache.clear()
         logger.info("Sentiment analysis cache cleared")
     
-    def get_cache_stats(self) -> Dict[str, Any]:
+    def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics"""
         return {
             "cache_size": len(self.cache),

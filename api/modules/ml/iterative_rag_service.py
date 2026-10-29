@@ -5,7 +5,7 @@ Production-ready iterative retrieval-augmented generation
 
 import asyncio
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Any, Optional
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -15,7 +15,7 @@ class IterativeRAGService:
         self.db_connection = db_connection
         self.logger = logging.getLogger(__name__)
     
-    async def enhance_article_with_context(self, article_id: str, max_iterations: int = 3) -> Dict[str, Any]:
+    async def enhance_article_with_context(self, article_id: str, max_iterations: int = 3) -> dict[str, Any]:
         """Enhance article with iterative context building"""
         try:
             self.logger.info(f"Starting iterative RAG enhancement for article {article_id}")
@@ -40,7 +40,7 @@ class IterativeRAGService:
                 "status": "failed"
             }
     
-    async def build_context_iteratively(self, query: str, max_iterations: int = 3) -> Dict[str, Any]:
+    async def build_context_iteratively(self, query: str, max_iterations: int = 3) -> dict[str, Any]:
         """Build context iteratively for better results"""
         try:
             self.logger.info(f"Building iterative context for query: {query}")

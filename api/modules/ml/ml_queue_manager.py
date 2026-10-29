@@ -11,7 +11,7 @@ import time
 import uuid
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Dict, List, Optional, Any, Callable
+from typing import Optional, Any, Callable
 from dataclasses import dataclass, field
 from queue import PriorityQueue, Empty
 import psycopg2
@@ -52,31 +52,31 @@ class MLTask:
     priority: TaskPriority
     storyline_id: Optional[str] = None
     article_id: Optional[int] = None
-    payload: Dict[str, Any] = field(default_factory=dict)
+    payload: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     status: TaskStatus = TaskStatus.PENDING
-    result: Optional[Dict[str, Any]] = None
+    result: Optional[dict[str, Any]] = None
     error: Optional[str] = None
     retry_count: int = 0
     max_retries: int = 3
     estimated_duration: int = 30  # seconds
-    resource_requirements: Dict[str, Any] = field(default_factory=dict)
+    resource_requirements: dict[str, Any] = field(default_factory=dict)
 
 class MLQueueManager:
     """Manages ML task queue and resource allocation"""
     
-    def __init__(self, db_config: Dict[str, str], max_concurrent_tasks: int = 2):
+    def __init__(self, db_config: dict[str, str], max_concurrent_tasks: int = 2):
         self.db_config = db_config
         self.max_concurrent_tasks = max_concurrent_tasks
         self.task_queue = PriorityQueue()
-        self.running_tasks: Dict[str, MLTask] = {}
-        self.completed_tasks: Dict[str, MLTask] = {}
-        self.task_handlers: Dict[TaskType, Callable] = {}
+        self.running_tasks: dict[str, MLTask] = {}
+        self.completed_tasks: dict[str, MLTask] = {}
+        self.task_handlers: dict[TaskType, Callable] = {}
         self.resource_monitor = ResourceMonitor()
         self.is_running = False
-        self.worker_threads: List[threading.Thread] = []
+        self.worker_threads: list[threading.Thread] = []
         
         # Initialize task handlers
         self._register_task_handlers()
@@ -187,7 +187,7 @@ class MLQueueManager:
             logger.error(f"Error cancelling task {task_id}: {e}")
             return False
     
-    def get_queue_status(self) -> Dict[str, Any]:
+    def get_queue_status(self) -> dict[str, Any]:
         """Get current queue status and statistics"""
         return {
             "is_running": self.is_running,
@@ -291,7 +291,7 @@ class MLQueueManager:
             logger.error(f"Task {task.task_id} failed after {task.max_retries} retries")
     
     # Task handlers for different ML operations
-    def _handle_timeline_generation(self, task: MLTask) -> Dict[str, Any]:
+    def _handle_timeline_generation(self, task: MLTask) -> dict[str, Any]:
         """Handle timeline generation task"""
         from .timeline_generator import TimelineGenerator
         
@@ -311,32 +311,32 @@ class MLQueueManager:
             "events": [event.__dict__ for event in events] if events else []
         }
     
-    def _handle_article_summarization(self, task: MLTask) -> Dict[str, Any]:
+    def _handle_article_summarization(self, task: MLTask) -> dict[str, Any]:
         """Handle article summarization task"""
         # Implementation for article summarization
         return {"summary": "Generated summary", "status": "completed"}
     
-    def _handle_content_analysis(self, task: MLTask) -> Dict[str, Any]:
+    def _handle_content_analysis(self, task: MLTask) -> dict[str, Any]:
         """Handle content analysis task"""
         # Implementation for content analysis
         return {"analysis": "Content analyzed", "status": "completed"}
     
-    def _handle_entity_extraction(self, task: MLTask) -> Dict[str, Any]:
+    def _handle_entity_extraction(self, task: MLTask) -> dict[str, Any]:
         """Handle entity extraction task"""
         # Implementation for entity extraction
         return {"entities": [], "status": "completed"}
     
-    def _handle_sentiment_analysis(self, task: MLTask) -> Dict[str, Any]:
+    def _handle_sentiment_analysis(self, task: MLTask) -> dict[str, Any]:
         """Handle sentiment analysis task"""
         # Implementation for sentiment analysis
         return {"sentiment": "neutral", "score": 0.0}
     
-    def _handle_quality_scoring(self, task: MLTask) -> Dict[str, Any]:
+    def _handle_quality_scoring(self, task: MLTask) -> dict[str, Any]:
         """Handle quality scoring task"""
         # Implementation for quality scoring
         return {"quality_score": 0.8, "status": "completed"}
     
-    def _handle_storyline_analysis(self, task: MLTask) -> Dict[str, Any]:
+    def _handle_storyline_analysis(self, task: MLTask) -> dict[str, Any]:
         """Handle storyline analysis task"""
         # Implementation for storyline analysis
         return {"analysis": "Storyline analyzed", "status": "completed"}
@@ -577,7 +577,7 @@ class ResourceMonitor:
                 logger.error(f"Error in resource monitoring: {e}")
                 time.sleep(10)
     
-    def can_allocate_resources(self, requirements: Dict[str, Any]) -> bool:
+    def can_allocate_resources(self, requirements: dict[str, Any]) -> bool:
         """Check if resources can be allocated for a task"""
         max_cpu = requirements.get('max_cpu_usage', 80.0)
         max_memory = requirements.get('max_memory_usage', 80.0)
@@ -587,7 +587,7 @@ class ResourceMonitor:
                 self.memory_usage < max_memory and 
                 self.gpu_usage < max_gpu)
     
-    def get_current_usage(self) -> Dict[str, float]:
+    def get_current_usage(self) -> dict[str, float]:
         """Get current resource usage"""
         return {
             "cpu_usage": self.cpu_usage,

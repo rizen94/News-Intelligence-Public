@@ -8,7 +8,7 @@ for automation phases.
 import logging
 import time
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
+from typing import Any
 from .connection import get_db_connection, get_health_db_connection, check_database_health
 
 logger = logging.getLogger(__name__)
@@ -135,7 +135,7 @@ def wait_for_database_availability(timeout_seconds: int = 60, check_interval: in
     logger.warning("Database did not become available within timeout")
     return False
 
-def get_database_status() -> Dict[str, Any]:
+def get_database_status() -> dict[str, Any]:
     """
     Get comprehensive database status information.
     

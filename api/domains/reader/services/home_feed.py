@@ -11,10 +11,12 @@ import json
 import logging
 import math
 import os
-import threading
 import time
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from cachetools import TTLCache
 
 from shared.database.connection import get_ui_db_connection_context
 from shared.domain_registry import (
@@ -34,14 +36,117 @@ READ_WPM = 220
 AI_RESEARCH_ONE_OFF_MAX_ARTICLES = 2
 AI_DOMAIN_KEY = "artificial-intelligence"
 
-_HOME_CACHE_TTL = float(os.environ.get("READER_HOME_CACHE_TTL", "30"))
-_HOME_CACHE_MAX = 64
-_HOME_CACHE_LOCK = threading.Lock()
-_HOME_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
-
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+_HOME_CACHE_TTL = float(os.environ.get("READER_HOME_CACHE_TTL", "120"))
+_HOME_CACHE_MAX = 64
+# Thread-safe TTL-backed dict with automatic LRU eviction on size overflow.
+_HOME_CACHE: TTLCache = TTLCache(maxsize=_HOME_CACHE_MAX, ttl=_HOME_CACHE_TTL)
+# Hit / miss tracking (thread-safe Counter).
+_HOME_CACHE_STATS: Counter = Counter()
+
+
+def _home_cache_hot_keys() -> list[str]:
+    """Return the keys that deserve pre-warming on startup.
+
+    These are the top-traffic combos that readers hit first after a restart —
+    the default News view, Current Events, One-offs and Research pages.
+    """
+    return [
+        "*|all|1|12",  # default news/current/one-off/research combo page
+        "*|news|1|12",
+        "*|current_events|1|12",
+        "*|one_offs|1|12",
+        "*|research|1|12",
+    ]
+
+
+def _cache_key(domain: str | None, section: str | None, page: int, page_size: int) -> str:
+    return f"{domain or '*'}|{section or 'all'}|{page}|{page_size}"
+
+
+def cache_get_public(key: str) -> dict[str, Any] | None:
+    """Thread-safe TTL lookup.  Returns the payload or *None* on miss/expiry."""
+    raw = _HOME_CACHE.get(key)
+    if raw is not None:
+        _HOME_CACHE_STATS["hits"] += 1
+    else:
+        _HOME_CACHE_STATS["misses"] += 1
+    return raw
+
+
+def cache_set_public(key: str, payload: dict[str, Any]) -> None:
+    """Thread-safe TTL insert (TTLCache evicts oldest on overflow via LRU)."""
+    if _HOME_CACHE_TTL <= 0:
+        return
+    _HOME_CACHE[key] = payload
+    # Track the set so we know it's alive.
+
+
+def get_cache_stats() -> dict[str, int]:
+    """Return hit / miss counts as a plain dict (suitable for JSON responses)."""
+    return {
+        "hits": _HOME_CACHE_STATS["hits"],
+        "misses": _HOME_CACHE_STATS["misses"],
+        "hit_rate": (
+            _HOME_CACHE_STATS["hits"] / max(1, _HOME_CACHE_STATS["hits"] + _HOME_CACHE_STATS["misses"]) * 100
+        ),
+        "current_size": len(_HOME_CACHE),
+        "ttl_seconds": _HOME_CACHE_TTL,
+        "max_size": _HOME_CACHE_MAX,
+    }
+
+
+def cache_clear_all() -> None:
+    """Clear the entire home feed cache (useful for tests / admin)."""
+    del _HOME_CACHE[:]
+    _HOME_CACHE_STATS["hits"] = 0
+    _HOME_CACHE_STATS["misses"] = 0
+
+
+# -- helpers ---------------------------------------------------------------
+
+def key_to_section(key: str) -> str | None:
+    """Extract the *section* segment from a TTLCache key for warm_home_cache.
+
+    Key format: ``{domain or '*'}|{section or 'all'}|{page}|{page_size}``
+    Returns ``"all"`` (treated as default/None) for the combo page, else the
+    section token so we can pass it to :func:`build_reader_home`.
+    """
+    parts = key.split("|")
+    if len(parts) >= 2:
+        sec = parts[1]
+        return None if sec == "all" else sec
+    return None
+
+
+async def warm_home_cache() -> None:
+    """Pre-warm top home-feed keys so first readers don't hammer the DB.
+
+    Called once from the main.py lifespan after pools are ready.  Runs on an
+    executor thread to avoid blocking the event loop and is fully tolerant of
+    failures (empty lists, transient errors, etc.).
+    """
+    import asyncio
+
+    keys = _home_cache_hot_keys()
+    for key in keys:
+        section = key_to_section(key)
+        try:
+            await asyncio.to_thread(_warm_single_internal, key, section)
+        except Exception as exc:
+            logger.debug("home-cache pre-warm %s skipped: %s", key, exc)
+
+
+def _warm_single_internal(key: str, section: str | None) -> None:
+    """Warm a single key on the event-loop executor thread."""
+    from contextlib import suppress
+
+    with suppress(Exception):
+        result = build_reader_home(section=section)
+        cache_set_public(key, result)
 
 
 def _as_aware(dt: datetime | None) -> datetime | None:
@@ -561,7 +666,13 @@ def _inject_morning_ongoing_into_current(items: list[dict[str, Any]]) -> list[di
 
 
 def _fetch_candidate_rows(cur, schema: str, domain_key: str, since: datetime) -> list[dict[str, Any]]:
-    """Pull recent non-merged storylines with editorial + hierarchy signals."""
+    """Pull recent non-merged storylines with editorial + hierarchy signals.
+
+    Filter to 200 storylines *before* the LATERAL aggregate. Joining
+    ``storyline_articles`` first forces a per-row nested loop across the
+    whole unmerged set (USB IOPS). ``idx_*_sa_storyline_added_at`` then
+    covers only the shortlist.
+    """
     cur.execute(
         f"""
         SELECT
@@ -580,7 +691,24 @@ def _fetch_candidate_rows(cur, schema: str, domain_key: str, since: datetime) ->
             s.story_kind,
             agg.last_article_added_at,
             COALESCE(agg.articles_21d, 0) AS articles_21d
-        FROM {schema}.storylines s
+        FROM (
+            SELECT s0.*
+            FROM {schema}.storylines s0
+            WHERE s0.merged_into_id IS NULL
+              AND COALESCE(s0.status, 'active') NOT IN ('archived', 'merged', 'deleted')
+              AND (
+                    s0.updated_at >= %s - INTERVAL '90 days'
+                 OR s0.last_refinement >= %s - INTERVAL '90 days'
+                 OR EXISTS (
+                        SELECT 1
+                        FROM {schema}.storyline_articles sa0
+                        WHERE sa0.storyline_id = s0.id
+                          AND sa0.added_at >= %s - INTERVAL '90 days'
+                    )
+              )
+            ORDER BY s0.updated_at DESC NULLS LAST
+            LIMIT 200
+        ) s
         LEFT JOIN LATERAL (
             SELECT
                 MAX(sa.added_at) AS last_article_added_at,
@@ -590,15 +718,6 @@ def _fetch_candidate_rows(cur, schema: str, domain_key: str, since: datetime) ->
             FROM {schema}.storyline_articles sa
             WHERE sa.storyline_id = s.id
         ) agg ON TRUE
-        WHERE s.merged_into_id IS NULL
-          AND COALESCE(s.status, 'active') NOT IN ('archived', 'merged', 'deleted')
-          AND (
-                s.updated_at >= %s - INTERVAL '90 days'
-             OR s.last_refinement >= %s - INTERVAL '90 days'
-             OR agg.last_article_added_at >= %s - INTERVAL '90 days'
-          )
-        ORDER BY s.updated_at DESC NULLS LAST
-        LIMIT 200
         """,
         (since, since, since, since),
     )
@@ -1038,29 +1157,13 @@ def _cache_key(domain: str | None, section: str | None, page: int, page_size: in
 
 
 def _cache_get(key: str) -> dict[str, Any] | None:
-    if _HOME_CACHE_TTL <= 0:
-        return None
-    with _HOME_CACHE_LOCK:
-        hit = _HOME_CACHE.get(key)
-        if not hit:
-            return None
-        expires, payload = hit
-        if time.monotonic() > expires:
-            _HOME_CACHE.pop(key, None)
-            return None
-        return payload
+    """Thread-safe TTL lookup (wraps public API for legacy callers)."""
+    return cache_get_public(key)
 
 
 def _cache_set(key: str, payload: dict[str, Any]) -> None:
-    if _HOME_CACHE_TTL <= 0:
-        return
-    with _HOME_CACHE_LOCK:
-        if len(_HOME_CACHE) >= _HOME_CACHE_MAX:
-            # Drop oldest expiry first
-            oldest = sorted(_HOME_CACHE.items(), key=lambda kv: kv[1][0])[: max(1, _HOME_CACHE_MAX // 4)]
-            for k, _ in oldest:
-                _HOME_CACHE.pop(k, None)
-        _HOME_CACHE[key] = (time.monotonic() + _HOME_CACHE_TTL, payload)
+    """Thread-safe TTL insert via TTLCache (handles LRU overflow automatically)."""
+    cache_set_public(key, payload)
 
 
 def build_reader_home(

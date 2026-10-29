@@ -5,7 +5,7 @@ Integrates ML services with the existing data pipeline
 
 import logging
 import json
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 from datetime import datetime
 import psycopg2
 
@@ -20,7 +20,7 @@ class MLPipeline:
     ML-enhanced pipeline for processing news articles
     """
     
-    def __init__(self, db_config: Dict):
+    def __init__(self, db_config: dict):
         """
         Initialize the ML Pipeline
         
@@ -49,7 +49,7 @@ class MLPipeline:
             logger.error(f"❌ ML service connection failed: {e}")
             return False
     
-    def process_article(self, article_id: int) -> Dict[str, any]:
+    def process_article(self, article_id: int) -> dict[str, any]:
         """
         Process a single article through the ML pipeline
         
@@ -107,12 +107,12 @@ class MLPipeline:
                 "processed_at": datetime.now().isoformat()
             }
     
-    def process_articles_batch(self, article_ids: List[int]) -> Dict[str, any]:
+    def process_articles_batch(self, article_ids: list[int]) -> dict[str, any]:
         """
         Process multiple articles through the ML pipeline
         
         Args:
-            article_ids: List of article IDs to process
+            article_ids: list of article IDs to process
             
         Returns:
             Dictionary containing batch processing results
@@ -168,7 +168,7 @@ class MLPipeline:
                 "skipped": 0
             }
     
-    def _get_article(self, article_id: int) -> Optional[Dict]:
+    def _get_article(self, article_id: int) -> Optional[dict]:
         """Get article from database"""
         try:
             conn = psycopg2.connect(**self.db_config)
@@ -200,7 +200,7 @@ class MLPipeline:
             logger.error(f"Error getting article {article_id}: {e}")
             return None
     
-    def _analyze_content(self, article: Dict) -> Dict:
+    def _analyze_content(self, article: dict) -> dict:
         """Analyze article content"""
         try:
             # Clean content
@@ -228,7 +228,7 @@ class MLPipeline:
             logger.error(f"Error analyzing content: {e}")
             return {"error": str(e)}
     
-    def _score_quality(self, article: Dict, content_analysis: Dict) -> Dict:
+    def _score_quality(self, article: dict, content_analysis: dict) -> dict:
         """Score article quality"""
         try:
             cleaned_content = content_analysis.get("cleaning_result", {}).get("cleaned_content", article["content"])
@@ -245,7 +245,7 @@ class MLPipeline:
             logger.error(f"Error scoring quality: {e}")
             return {"error": str(e), "overall_score": 0.0}
     
-    def _run_ml_processing(self, article: Dict) -> Dict:
+    def _run_ml_processing(self, article: dict) -> dict:
         """Run ML processing on article"""
         try:
             cleaned_content = article["content"]  # Use original content for now
@@ -280,7 +280,7 @@ class MLPipeline:
             logger.error(f"Error in ML processing: {e}")
             return {"error": str(e)}
     
-    def _store_ml_results(self, article_id: int, content_analysis: Dict, quality_score: Dict, ml_results: Dict) -> Dict:
+    def _store_ml_results(self, article_id: int, content_analysis: dict, quality_score: dict, ml_results: dict) -> dict:
         """Store ML results in database"""
         try:
             conn = psycopg2.connect(**self.db_config)
@@ -352,7 +352,7 @@ class MLPipeline:
             logger.error(f"Error storing ML results: {e}")
             return {"status": "failed", "error": str(e)}
     
-    def get_processing_status(self) -> Dict:
+    def get_processing_status(self) -> dict:
         """Get overall processing status"""
         try:
             conn = psycopg2.connect(**self.db_config)

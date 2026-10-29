@@ -21,7 +21,7 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 _LAST_PUBLISH_MONO = 0.0
-_LAST_PUBLISH_SIGNATURE: Optional[tuple] = None
+_LAST_PUBLISH_SIGNATURE: Optional[tuple[int, float]] = None
 
 _RUN_DIR = Path(os.getenv("DISK_IO_PRESSURE_RUN_DIR", "/run/news-intelligence"))
 _RUN_JSON = Path(
@@ -423,9 +423,9 @@ def publish_disk_io_pressure_advisory(
         return signal
 
     try:
-        from shared.database.connection import get_ephemeral_db_connection_context
+        from shared.database.connection import ephemeral_db_connection_context
 
-        with get_ephemeral_db_connection_context() as conn:
+        with ephemeral_db_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -478,9 +478,9 @@ def read_disk_io_pressure_advisory(
         "age_sec": None,
     }
     try:
-        from shared.database.connection import get_ephemeral_db_connection_context
+        from shared.database.connection import ephemeral_db_connection_context
 
-        with get_ephemeral_db_connection_context() as conn:
+        with ephemeral_db_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """

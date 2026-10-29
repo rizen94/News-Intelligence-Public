@@ -5,7 +5,7 @@ Provides content quality assessment and scoring
 
 import re
 import logging
-from typing import Dict, List, Optional
+from typing import Optional
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ class QualityScorer:
             "language_quality": 0.20
         }
     
-    def score_content(self, content: str, title: str = None, metadata: Dict = None) -> Dict[str, any]:
+    def score_content(self, content: str, title: str = None, metadata: dict = None) -> dict[str, any]:
         """
         Score content quality across multiple dimensions
         
@@ -326,7 +326,7 @@ class QualityScorer:
         else:
             return "F"
     
-    def _get_length_details(self, content: str) -> Dict:
+    def _get_length_details(self, content: str) -> dict:
         """Get details about content length"""
         word_count = len(content.split())
         char_count = len(content)
@@ -337,7 +337,7 @@ class QualityScorer:
             "assessment": "optimal" if 200 <= word_count <= 1000 else "suboptimal"
         }
     
-    def _get_readability_details(self, content: str) -> Dict:
+    def _get_readability_details(self, content: str) -> dict:
         """Get readability details"""
         sentences = re.split(r'[.!?]+', content)
         sentences = [s.strip() for s in sentences if s.strip()]
@@ -350,7 +350,7 @@ class QualityScorer:
             "assessment": "good" if sentences and 10 <= len(words) / len(sentences) <= 25 else "needs_improvement"
         }
     
-    def _get_structure_details(self, content: str) -> Dict:
+    def _get_structure_details(self, content: str) -> dict:
         """Get structure details"""
         paragraphs = content.split('\n\n')
         sentences = re.split(r'[.!?]+', content)
@@ -361,7 +361,7 @@ class QualityScorer:
             "has_proper_structure": len(paragraphs) > 1 and len(sentences) >= 3
         }
     
-    def _get_uniqueness_details(self, content: str) -> Dict:
+    def _get_uniqueness_details(self, content: str) -> dict:
         """Get uniqueness details"""
         words = content.lower().split()
         unique_words = set(words)
@@ -372,7 +372,7 @@ class QualityScorer:
             "uniqueness_ratio": len(unique_words) / len(words) if words else 0
         }
     
-    def _get_completeness_details(self, content: str, title: str = None) -> Dict:
+    def _get_completeness_details(self, content: str, title: str = None) -> dict:
         """Get completeness details"""
         return {
             "has_title": bool(title and len(title.strip()) > 5),
@@ -381,7 +381,7 @@ class QualityScorer:
             "word_count": len(content.split())
         }
     
-    def _get_language_details(self, content: str) -> Dict:
+    def _get_language_details(self, content: str) -> dict:
         """Get language quality details"""
         sentences = re.split(r'[.!?]+', content)
         words = content.split()
@@ -393,7 +393,7 @@ class QualityScorer:
             "vocabulary_size": len(set(word.lower() for word in words if len(word) > 3))
         }
     
-    def _generate_recommendations(self, overall_score: float, dimension_scores: Dict) -> List[str]:
+    def _generate_recommendations(self, overall_score: float, dimension_scores: dict) -> list[str]:
         """Generate improvement recommendations"""
         recommendations = []
         
@@ -423,7 +423,7 @@ class QualityScorer:
         
         return recommendations
     
-    def _create_empty_score(self, reason: str, error: str = None) -> Dict:
+    def _create_empty_score(self, reason: str, error: str = None) -> dict:
         """Create empty score result"""
         return {
             "overall_score": 0.0,

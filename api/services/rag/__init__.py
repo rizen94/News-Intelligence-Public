@@ -13,7 +13,6 @@ All functionality is now available through a single RAGService class.
 import logging
 from shared.domain_registry import resolve_domain_schema
 import os
-from typing import Any, Dict, List, Optional
 
 from .base import BaseRAGService
 from .domain import RAGDomainModule

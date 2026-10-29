@@ -574,6 +574,11 @@ def _remove_article(conn, schema_name: str, article_id: int) -> None:
             conn.rollback()
         except Exception:
             pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def demote_false_enriched_batch(*, limit_per_schema: int = 40) -> int:
@@ -630,7 +635,9 @@ def demote_false_enriched_batch(*, limit_per_schema: int = 40) -> int:
                         cur.execute(
                             f"""
                             UPDATE {schema_name}.articles
-                            SET enrichment_status = 'failed', updated_at = NOW()
+                            SET enrichment_status = 'failed',
+                                enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1,
+                                updated_at = NOW()
                             WHERE id = %s AND enrichment_status = 'enriched'
                             """,
                             (int(aid),),
@@ -777,7 +784,9 @@ def _enrich_articles_batch_parallel(*, batch_size: int, parallel: int) -> int:
                             cur.execute(
                                 f"""
                                 UPDATE {schema_name}.articles
-                                SET enrichment_status = 'failed', updated_at = NOW()
+                                SET enrichment_status = 'failed',
+                                enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1,
+                                updated_at = NOW()
                                 WHERE id = %s
                                   AND (enrichment_status IS NULL OR enrichment_status = 'pending')
                                 """,
@@ -1075,7 +1084,9 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                             cur.execute(
                                 f"""
                                 UPDATE {schema_name}.articles
-                                SET enrichment_status = 'failed', updated_at = NOW()
+                                SET enrichment_status = 'failed',
+                                    enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1,
+                                    updated_at = NOW()
                                 WHERE id = %s
                                   AND (enrichment_status IS NULL OR enrichment_status = 'pending')
                                 """,

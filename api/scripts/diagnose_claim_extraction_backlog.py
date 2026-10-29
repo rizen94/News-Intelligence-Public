@@ -146,9 +146,10 @@ def main() -> int:
 
     if stats.get("passed_no_claims_after_filters", 0) > 0:
         print(
-            "\nHint: contexts marked no_claims_after_filters can be requeued after relaxing "
-            "CLAIM_EXTRACTION_REQUIRE_SEEDED_DOMAIN_KEYS:\n"
-            "  PYTHONPATH=api uv run python api/scripts/requeue_claim_extraction_pass_markers.py --dry-run"
+            "\nNote: no_claims_after_filters is now treated as legitimately empty (cleared).\n"
+            "Use the requeue script only if you want to force-retry these items after\n"
+            "relaxing CLAIM_EXTRACTION_REQUIRE_SEEDED_DOMAIN_KEYS:\n"
+            "  PYTHONPATH=api uv run python api/scripts/requeue_claim_extraction_pass_markers.py --dry-run\n"
         )
     return 0
 

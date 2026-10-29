@@ -173,10 +173,10 @@ def configure_catchup_extraction_routing(
 
     extraction_model = env_str("BULK_EXTRACTION_MODEL", "").strip()
     if not extraction_model:
-        extraction_model = env_str("OLLAMA_MODEL_EXTRACTION", "qwen2.5:14b-instruct").strip()
-        # Prefer mid-size; only leave small tags as-is so resolver can keep 7b/14b on host.
+        extraction_model = env_str("OLLAMA_MODEL_EXTRACTION", "qwen3.6:latest").strip()
+        # Override llama3.1:8b to qwen3.6 for extraction (qwen preferred by default)
         if extraction_model in ("llama3.1:8b",):
-            extraction_model = "qwen2.5:14b-instruct"
+            extraction_model = "qwen3.6:latest"
     if extraction_model:
         env_set("OLLAMA_MODEL_EXTRACTION", extraction_model)
         env_set(

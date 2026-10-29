@@ -85,7 +85,7 @@ def _dossier_narrative_cpu_parallel_workers() -> int:
 def _dossier_narrative_model() -> str:
     from config.runtime import env_str
 
-    return env_str("DOSSIER_NARRATIVE_MODEL", "qwen2.5:7b-instruct")
+    return env_str("DOSSIER_NARRATIVE_MODEL", "qwen3.6:latest")
 
 
 def _generate_dossier_narrative(

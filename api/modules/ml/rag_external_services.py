@@ -7,7 +7,7 @@ import logging
 import requests
 import json
 import time
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Optional, Any
 from datetime import datetime, timedelta
 import re
 from urllib.parse import quote, urlencode
@@ -25,7 +25,7 @@ class WikipediaService:
             'User-Agent': 'NewsIntelligenceSystem/1.0 (https://newsintelligence.com)'
         })
     
-    def search_articles(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def search_articles(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
         """Search Wikipedia for relevant articles"""
         try:
             params = {
@@ -57,7 +57,7 @@ class WikipediaService:
             logger.error(f"Error searching Wikipedia: {e}")
             return []
     
-    def get_article_summary(self, title: str) -> Optional[Dict[str, Any]]:
+    def get_article_summary(self, title: str) -> Optional[dict[str, Any]]:
         """Get article summary from Wikipedia"""
         try:
             url = f"{self.base_url}/page/summary/{quote(title)}"
@@ -79,7 +79,7 @@ class WikipediaService:
             logger.error(f"Error getting Wikipedia article: {e}")
             return None
     
-    def get_related_articles(self, title: str, limit: int = 10) -> List[Dict[str, Any]]:
+    def get_related_articles(self, title: str, limit: int = 10) -> list[dict[str, Any]]:
         """Get related articles from Wikipedia"""
         try:
             params = {
@@ -123,7 +123,7 @@ class NewsAPIService:
             'User-Agent': 'NewsIntelligenceSystem/1.0'
         })
     
-    def search_articles(self, query: str, days: int = 7, limit: int = 20) -> List[Dict[str, Any]]:
+    def search_articles(self, query: str, days: int = 7, limit: int = 20) -> list[dict[str, Any]]:
         """Search for recent articles related to query"""
         try:
             if not self.api_key or self.api_key == "your_newsapi_key_here":
@@ -166,7 +166,7 @@ class NewsAPIService:
             logger.error(f"Error searching NewsAPI: {e}")
             return []
     
-    def get_trending_topics(self, category: str = 'general', limit: int = 10) -> List[Dict[str, Any]]:
+    def get_trending_topics(self, category: str = 'general', limit: int = 10) -> list[dict[str, Any]]:
         """Get trending topics from NewsAPI"""
         try:
             if not self.api_key or self.api_key == "your_newsapi_key_here":
@@ -207,7 +207,7 @@ class KnowledgeGraphService:
         self.base_url = "https://kgsearch.googleapis.com/v1/entities:search"
         self.session = requests.Session()
     
-    def search_entities(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+    def search_entities(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
         """Search for entities in Knowledge Graph"""
         try:
             if not self.api_key or self.api_key == "your_kg_api_key_here":
@@ -263,7 +263,7 @@ class SemanticSearchService:
         except Exception as e:
             logger.error(f"Error loading sentence transformer model: {e}")
     
-    def compute_similarity(self, query: str, articles: List[Dict[str, Any]]) -> List[Tuple[Dict[str, Any], float]]:
+    def compute_similarity(self, query: str, articles: list[dict[str, Any]]) -> list[tuple[dict[str, Any], float]]:
         """Compute semantic similarity between query and articles"""
         try:
             if not self.model:
@@ -296,7 +296,7 @@ class SemanticSearchService:
             logger.error(f"Error computing semantic similarity: {e}")
             return self._fallback_similarity(query, articles)
     
-    def _fallback_similarity(self, query: str, articles: List[Dict[str, Any]]) -> List[Tuple[Dict[str, Any], float]]:
+    def _fallback_similarity(self, query: str, articles: list[dict[str, Any]]) -> list[tuple[dict[str, Any], float]]:
         """Fallback similarity using keyword matching"""
         query_words = set(query.lower().split())
         results = []
@@ -326,7 +326,7 @@ class TimelineAnalysisService:
             r'\b\d{1,2} \w+ \d{4}\b'  # DD Month YYYY
         ]
     
-    def extract_timeline_events(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def extract_timeline_events(self, articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Extract timeline events from articles"""
         try:
             events = []
@@ -357,7 +357,7 @@ class TimelineAnalysisService:
             logger.error(f"Error extracting timeline events: {e}")
             return []
     
-    def _extract_dates(self, text: str) -> List[str]:
+    def _extract_dates(self, text: str) -> list[str]:
         """Extract dates from text using regex patterns"""
         dates = []
         for pattern in self.date_patterns:
@@ -365,7 +365,7 @@ class TimelineAnalysisService:
             dates.extend(matches)
         return list(set(dates))  # Remove duplicates
     
-    def build_story_timeline(self, articles: List[Dict[str, Any]], story_keywords: List[str]) -> Dict[str, Any]:
+    def build_story_timeline(self, articles: list[dict[str, Any]], story_keywords: list[str]) -> dict[str, Any]:
         """Build comprehensive timeline for a story"""
         try:
             events = self.extract_timeline_events(articles)
@@ -385,7 +385,7 @@ class TimelineAnalysisService:
             logger.error(f"Error building story timeline: {e}")
             return {}
     
-    def _group_by_time_periods(self, events: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    def _group_by_time_periods(self, events: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
         """Group events by time periods"""
         periods = {
             'last_24h': [],
@@ -419,7 +419,7 @@ class TimelineAnalysisService:
         
         return periods
     
-    def _identify_milestones(self, events: List[Dict[str, Any]], keywords: List[str]) -> List[Dict[str, Any]]:
+    def _identify_milestones(self, events: list[dict[str, Any]], keywords: list[str]) -> list[dict[str, Any]]:
         """Identify key milestones in the story"""
         milestones = []
         
@@ -435,7 +435,7 @@ class TimelineAnalysisService:
         
         return milestones[:10]  # Limit to 10 milestones
     
-    def _identify_evolution_phases(self, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _identify_evolution_phases(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Identify evolution phases of the story"""
         phases = []
         
@@ -463,7 +463,7 @@ class EntityRelationshipService:
     def __init__(self):
         self.entity_cache = {}
     
-    def extract_entities(self, articles: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    def extract_entities(self, articles: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
         """Extract entities from articles and find relationships"""
         try:
             entities = {
@@ -527,8 +527,8 @@ class EntityRelationshipService:
             logger.error(f"Error extracting entities: {e}")
             return {'people': [], 'organizations': [], 'locations': [], 'topics': []}
     
-    def find_related_stories(self, entities: Dict[str, List[Dict[str, Any]]], 
-                           existing_articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def find_related_stories(self, entities: dict[str, list[dict[str, Any]]], 
+                           existing_articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Find stories related through shared entities"""
         try:
             related_stories = []
@@ -565,7 +565,7 @@ class EntityRelationshipService:
 class RAGExternalServicesManager:
     """Manager for all external RAG services"""
     
-    def __init__(self, config: Dict[str, str] = None):
+    def __init__(self, config: dict[str, str] = None):
         self.config = config or {}
         
         # Initialize services
@@ -593,8 +593,8 @@ class RAGExternalServicesManager:
         
         self.last_request_times[service] = time.time()
     
-    def gather_comprehensive_context(self, query: str, story_keywords: List[str] = None,
-                                   max_results: int = 20) -> Dict[str, Any]:
+    def gather_comprehensive_context(self, query: str, story_keywords: list[str] = None,
+                                   max_results: int = 20) -> dict[str, Any]:
         """Gather comprehensive context from all external services"""
         try:
             logger.info(f"Gathering comprehensive context for query: {query}")
@@ -690,7 +690,7 @@ class RAGExternalServicesManager:
             logger.error(f"Error gathering comprehensive context: {e}")
             return {'error': str(e)}
     
-    def _generate_context_summary(self, context: Dict[str, Any]) -> str:
+    def _generate_context_summary(self, context: dict[str, Any]) -> str:
         """Generate a summary of the gathered context"""
         try:
             sources = context.get('sources', {})

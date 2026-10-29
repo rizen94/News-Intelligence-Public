@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
@@ -36,8 +37,9 @@ async def reader_home(
     reader prev/next navigation.
     """
     try:
-        return build_reader_home(
-            domain=domain,
+        return await asyncio.to_thread(
+            build_reader_home,
+            domain,
             page=page,
             page_size=page_size,
             section=section,

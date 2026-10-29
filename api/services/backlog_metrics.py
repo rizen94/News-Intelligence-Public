@@ -25,7 +25,7 @@ import logging
 import os
 import threading
 import time
-from typing import Dict, Optional
+from typing import Optional
 
 from shared.article_processing_gates import (
     sql_context_sync_article_ready,
@@ -52,12 +52,12 @@ def _backlog_cache_ttl_seconds() -> int:
 
 # Cache TTL seconds; scheduler runs every 5s, default refresh every 90s
 BACKLOG_CACHE_TTL = _backlog_cache_ttl_seconds()
-_backlog_cache: Dict[str, int] = {}
+_backlog_cache: dict[str, int] = {}
 _backlog_cache_time: float = 0
 
 # How many items each task processes per run.  Pending counts at or below this
 # are normal throughput, not a backlog.  Anything above triggers backlog mode.
-BATCH_SIZE_PER_TASK: Dict[str, int] = {
+BATCH_SIZE_PER_TASK: dict[str, int] = {
     "content_enrichment": 60,
     "context_sync": 100,
     "event_tracking": 300,
@@ -161,13 +161,13 @@ RAW_PENDING_COUNT_KEYS = frozenset(
 )
 
 
-def _get_raw_pending_counts(*, budget_s: Optional[float] = None) -> Dict[str, int]:
+def _get_raw_pending_counts(*, budget_s: Optional[float] = None) -> dict[str, int]:
     """Query all raw pending-work counts (not cached — called by the cached wrapper).
 
     ``budget_s``: when set (e.g. Prometheus scrape path), stop issuing new COUNT queries
     after the wall-clock budget and fill remaining keys with 0 so callers return promptly.
     """
-    raw: Dict[str, int] = {}
+    raw: dict[str, int] = {}
     deadline = (time.monotonic() + float(budget_s)) if budget_s is not None else None
     skipped = 0
 
@@ -260,7 +260,7 @@ def _get_raw_pending_counts(*, budget_s: Optional[float] = None) -> Dict[str, in
 
 
 # Two cached dicts: raw pending (for SKIP_WHEN_EMPTY) and true backlog (for priority/interval)
-_pending_cache: Dict[str, int] = {}
+_pending_cache: dict[str, int] = {}
 _pending_cache_time: float = 0
 
 
@@ -344,7 +344,7 @@ def _refresh_cache(*, budget_s: Optional[float] = None) -> None:
     _pending_cache = raw.copy()
     _pending_cache_time = now
 
-    out: Dict[str, int] = {}
+    out: dict[str, int] = {}
     for task, pending in raw.items():
         batch = _per_run_batch_size(task)
         out[task] = max(pending - batch, 0)
@@ -358,7 +358,7 @@ def get_all_backlog_counts(
     max_stale_s: float = 600.0,
     refresh_budget_s: Optional[float] = None,
     skip_refresh_if_empty: bool = False,
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """
     Return current **backlog** count per phase — pending work *exceeding* one batch.
     Cached for BACKLOG_CACHE_TTL.  Values > 0 mean genuine backlog (more work than
@@ -385,7 +385,7 @@ def get_all_pending_counts(
     max_stale_s: float = 600.0,
     refresh_budget_s: Optional[float] = None,
     skip_refresh_if_empty: bool = False,
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """
     Return raw pending-work counts per phase (items waiting, regardless of batch size).
     Used by SKIP_WHEN_EMPTY — a task with *any* pending work (even 1 item) should still run.
@@ -1189,7 +1189,7 @@ def get_storyline_review_queue_pending() -> int:
     return sum(by_domain.values())
 
 
-def get_storyline_review_queue_pending_by_domain() -> Dict[str, int]:
+def get_storyline_review_queue_pending_by_domain() -> dict[str, int]:
     """Pending suggestion rows grouped by domain_key (operator curation pressure)."""
     conn = _get_conn()
     if not conn:

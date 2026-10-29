@@ -7,7 +7,7 @@ import logging
 import json
 import time
 import numpy as np
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Optional, Any
 from datetime import datetime, timedelta
 import requests
 from dataclasses import dataclass
@@ -22,7 +22,7 @@ class TrendData:
     timestamp: datetime
     value: float
     confidence: float
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
 
 @dataclass
 class TrendPattern:
@@ -40,13 +40,13 @@ class TrendPattern:
 @dataclass
 class TrendAnalysis:
     """Complete trend analysis result"""
-    trends: List[TrendPattern]
+    trends: list[TrendPattern]
     overall_trend: str
     trend_strength: float
     volatility_score: float
-    key_events: List[Dict[str, Any]]
-    predictions: List[Dict[str, Any]]
-    analysis_period: Dict[str, datetime]
+    key_events: list[dict[str, Any]]
+    predictions: list[dict[str, Any]]
+    analysis_period: dict[str, datetime]
     processing_time: float
     model_used: str
     local_processing: bool = True
@@ -70,7 +70,7 @@ class LocalTrendAnalyzer:
         self.TREND_STRENGTH_THRESHOLD = 0.5
     
     def analyze_trends(self, 
-                      articles: List[Dict[str, Any]], 
+                      articles: list[dict[str, Any]], 
                       metric: str = 'sentiment',
                       time_window_hours: int = 24,
                       model: Optional[str] = None,
@@ -79,7 +79,7 @@ class LocalTrendAnalyzer:
         Analyze trends in article data
         
         Args:
-            articles: List of articles with timestamps and metrics
+            articles: list of articles with timestamps and metrics
             metric: Metric to analyze ('sentiment', 'engagement', 'volume', 'quality')
             time_window_hours: Time window for analysis
             model: Specific model to use (optional)
@@ -196,8 +196,8 @@ class LocalTrendAnalyzer:
                 model_used=selected_model
             )
     
-    def _prepare_time_series(self, articles: List[Dict[str, Any]], 
-                           metric: str, time_window_hours: int) -> List[TrendData]:
+    def _prepare_time_series(self, articles: list[dict[str, Any]], 
+                           metric: str, time_window_hours: int) -> list[TrendData]:
         """Prepare time series data from articles"""
         try:
             # Filter articles by time window
@@ -240,7 +240,7 @@ class LocalTrendAnalyzer:
             logger.error(f"Error preparing time series: {e}")
             return []
     
-    def _extract_metric_value(self, article: Dict[str, Any], metric: str) -> Optional[float]:
+    def _extract_metric_value(self, article: dict[str, Any], metric: str) -> Optional[float]:
         """Extract metric value from article"""
         try:
             if metric == 'sentiment':
@@ -270,7 +270,7 @@ class LocalTrendAnalyzer:
         except Exception:
             return datetime.now()
     
-    def _detect_trend_patterns(self, time_series: List[TrendData]) -> List[TrendPattern]:
+    def _detect_trend_patterns(self, time_series: list[TrendData]) -> list[TrendPattern]:
         """Detect trend patterns in time series data"""
         try:
             if len(time_series) < 3:
@@ -302,7 +302,7 @@ class LocalTrendAnalyzer:
             logger.error(f"Error detecting trend patterns: {e}")
             return []
     
-    def _detect_rising_trends(self, values: List[float], timestamps: List[datetime]) -> List[TrendPattern]:
+    def _detect_rising_trends(self, values: list[float], timestamps: list[datetime]) -> list[TrendPattern]:
         """Detect rising trend patterns"""
         patterns = []
         
@@ -335,7 +335,7 @@ class LocalTrendAnalyzer:
         
         return patterns
     
-    def _detect_falling_trends(self, values: List[float], timestamps: List[datetime]) -> List[TrendPattern]:
+    def _detect_falling_trends(self, values: list[float], timestamps: list[datetime]) -> list[TrendPattern]:
         """Detect falling trend patterns"""
         patterns = []
         
@@ -368,7 +368,7 @@ class LocalTrendAnalyzer:
         
         return patterns
     
-    def _detect_volatility_patterns(self, values: List[float], timestamps: List[datetime]) -> List[TrendPattern]:
+    def _detect_volatility_patterns(self, values: list[float], timestamps: list[datetime]) -> list[TrendPattern]:
         """Detect high volatility patterns"""
         patterns = []
         
@@ -396,7 +396,7 @@ class LocalTrendAnalyzer:
         
         return patterns
     
-    def _detect_cyclical_patterns(self, values: List[float], timestamps: List[datetime]) -> List[TrendPattern]:
+    def _detect_cyclical_patterns(self, values: list[float], timestamps: list[datetime]) -> list[TrendPattern]:
         """Detect cyclical patterns"""
         patterns = []
         
@@ -424,7 +424,7 @@ class LocalTrendAnalyzer:
         
         return patterns
     
-    def _is_cyclical(self, values: List[float], cycle_length: int) -> bool:
+    def _is_cyclical(self, values: list[float], cycle_length: int) -> bool:
         """Check if values show cyclical pattern"""
         try:
             if len(values) < cycle_length * 2:
@@ -441,7 +441,7 @@ class LocalTrendAnalyzer:
         except Exception:
             return False
     
-    def _analyze_overall_trend(self, time_series: List[TrendData]) -> Tuple[str, float]:
+    def _analyze_overall_trend(self, time_series: list[TrendData]) -> tuple[str, float]:
         """Analyze overall trend direction and strength"""
         try:
             if len(time_series) < 2:
@@ -469,7 +469,7 @@ class LocalTrendAnalyzer:
             logger.error(f"Error analyzing overall trend: {e}")
             return "stable", 0.0
     
-    def _calculate_volatility(self, time_series: List[TrendData]) -> float:
+    def _calculate_volatility(self, time_series: list[TrendData]) -> float:
         """Calculate overall volatility score"""
         try:
             if len(time_series) < 2:
@@ -482,7 +482,7 @@ class LocalTrendAnalyzer:
             logger.error(f"Error calculating volatility: {e}")
             return 0.0
     
-    def _calculate_volatility_in_range(self, values: List[float]) -> float:
+    def _calculate_volatility_in_range(self, values: list[float]) -> float:
         """Calculate volatility for a range of values"""
         try:
             if len(values) < 2:
@@ -501,8 +501,8 @@ class LocalTrendAnalyzer:
             logger.error(f"Error calculating volatility in range: {e}")
             return 0.0
     
-    def _identify_key_events(self, articles: List[Dict[str, Any]], 
-                            time_series: List[TrendData]) -> List[Dict[str, Any]]:
+    def _identify_key_events(self, articles: list[dict[str, Any]], 
+                            time_series: list[TrendData]) -> list[dict[str, Any]]:
         """Identify key events that might explain trends"""
         try:
             key_events = []
@@ -533,7 +533,7 @@ class LocalTrendAnalyzer:
             logger.error(f"Error identifying key events: {e}")
             return []
     
-    def _generate_predictions(self, time_series: List[TrendData], model: str) -> List[Dict[str, Any]]:
+    def _generate_predictions(self, time_series: list[TrendData], model: str) -> list[dict[str, Any]]:
         """Generate trend predictions using LLM"""
         try:
             if len(time_series) < 3:
@@ -635,7 +635,7 @@ Guidelines:
         self.cache.clear()
         logger.info("Trend analysis cache cleared")
     
-    def get_cache_stats(self) -> Dict[str, Any]:
+    def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics"""
         return {
             "cache_size": len(self.cache),

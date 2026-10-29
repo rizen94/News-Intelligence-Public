@@ -10,7 +10,7 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from shared.database.connection import get_ephemeral_db_connection_context
+from shared.database.connection import ephemeral_db_connection_context
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ def _last_completed_week() -> tuple[date, date]:
 def _weekly_digest_exists(week_start: date) -> bool:
     """Return True if weekly_digests already has a row for this week_start."""
     try:
-        with get_ephemeral_db_connection_context() as conn:
+        with ephemeral_db_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT 1 FROM weekly_digests WHERE week_start = %s LIMIT 1",
@@ -77,7 +77,7 @@ def _insert_weekly_digest(
     top_trending = [{"topic": k, "count": v} for k, v in list(top_categories.items())[:20]]
     quality_metrics = trend if isinstance(trend, dict) else {}
     try:
-        with get_ephemeral_db_connection_context() as conn:
+        with ephemeral_db_connection_context() as conn:
             with conn.cursor() as cur:
                 # Pull editorial ledes from storylines updated this week
                 editorial_suggestions = []
@@ -171,7 +171,7 @@ class DigestService:
     def get_latest_weekly_digests(self, limit: int = 10) -> list[dict[str, Any]]:
         """Return latest weekly_digests rows for GET /api/products/weekly_digest."""
         try:
-            with get_ephemeral_db_connection_context() as conn:
+            with ephemeral_db_connection_context() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         """

@@ -7,7 +7,7 @@ import logging
 import time
 import asyncio
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 from dataclasses import dataclass
 from enum import Enum
 import json
@@ -48,7 +48,7 @@ class Alert:
     timestamp: datetime
     process_name: str
     severity_score: int
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     resolved: bool = False
     resolved_at: Optional[datetime] = None
 
@@ -59,11 +59,11 @@ class PipelineHealth:
     timestamp: datetime
     overall_health: str  # "healthy", "warning", "critical"
     health_score: float
-    process_health: Dict[str, Any]
-    quality_metrics: Dict[str, Any]
-    performance_metrics: Dict[str, Any]
+    process_health: dict[str, Any]
+    quality_metrics: dict[str, Any]
+    performance_metrics: dict[str, Any]
     alert_count: int
-    last_alerts: List[Alert]
+    last_alerts: list[Alert]
 
 
 class PipelineMonitoringService:
@@ -72,8 +72,8 @@ class PipelineMonitoringService:
     def __init__(self):
         self.pipeline_logger = get_pipeline_logger()
         self.quality_service = get_quality_monitoring_service()
-        self.alerts: List[Alert] = []
-        self.alert_history: List[Alert] = []
+        self.alerts: list[Alert] = []
+        self.alert_history: list[Alert] = []
         self.health_cache = None
         self.health_cache_time = None
         self.alert_thresholds = {
@@ -171,7 +171,7 @@ class PipelineMonitoringService:
         
         return health
 
-    def _get_performance_metrics(self) -> Dict[str, Any]:
+    def _get_performance_metrics(self) -> dict[str, Any]:
         """Get performance metrics from pipeline logger"""
         try:
             # This would typically query the database for performance data
@@ -193,7 +193,7 @@ class PipelineMonitoringService:
                 "error_rate": 0,
             }
 
-    def check_for_alerts(self) -> List[Alert]:
+    def check_for_alerts(self) -> list[Alert]:
         """
         Check for pipeline issues that should trigger alerts
         
@@ -303,11 +303,11 @@ class PipelineMonitoringService:
                 return True
         return False
 
-    def get_active_alerts(self) -> List[Alert]:
+    def get_active_alerts(self) -> list[Alert]:
         """Get all currently active alerts"""
         return [a for a in self.alerts if not a.resolved]
 
-    def get_alert_history(self, limit: int = 100) -> List[Alert]:
+    def get_alert_history(self, limit: int = 100) -> list[Alert]:
         """Get alert history"""
         return self.alert_history[-limit:]
 
@@ -389,7 +389,7 @@ class PipelineMonitoringService:
         except Exception as e:
             logger.error(f"Error in health check: {e}")
 
-    def get_pipeline_status_report(self) -> Dict[str, Any]:
+    def get_pipeline_status_report(self) -> dict[str, Any]:
         """
         Generate comprehensive pipeline status report
         

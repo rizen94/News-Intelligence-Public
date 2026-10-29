@@ -6,7 +6,7 @@ Uses local processing only - no external AI services
 
 import logging
 import json
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 from datetime import datetime, timedelta
 import psycopg2
 from collections import defaultdict, Counter
@@ -18,7 +18,7 @@ class StorylineTracker:
     Tracks story evolution and generates comprehensive dossiers
     """
     
-    def __init__(self, db_config: Dict):
+    def __init__(self, db_config: dict):
         """
         Initialize the Storyline Tracker
         
@@ -33,7 +33,7 @@ class StorylineTracker:
             "resolved": 0.3
         }
     
-    def generate_topic_cloud(self, days: int = 1) -> Dict[str, any]:
+    def generate_topic_cloud(self, days: int = 1) -> dict[str, any]:
         """
         Generate a topic cloud/summary of breaking issues and topics
         
@@ -89,7 +89,7 @@ class StorylineTracker:
             logger.error(f"Error generating topic cloud: {e}")
             return {"error": str(e)}
     
-    def create_story_dossier(self, story_id: str, include_rag: bool = True) -> Dict[str, any]:
+    def create_story_dossier(self, story_id: str, include_rag: bool = True) -> dict[str, any]:
         """
         Create a comprehensive dossier for a specific story/topic
         
@@ -147,7 +147,7 @@ class StorylineTracker:
             logger.error(f"Error creating story dossier: {e}")
             return {"error": str(e)}
     
-    def track_story_evolution(self, story_id: str, days: int = 7) -> Dict[str, any]:
+    def track_story_evolution(self, story_id: str, days: int = 7) -> dict[str, any]:
         """
         Track how a story has evolved over time
         
@@ -205,7 +205,7 @@ class StorylineTracker:
             logger.error(f"Error tracking story evolution: {e}")
             return {"error": str(e)}
     
-    def _analyze_topics(self, articles: List) -> Dict[str, any]:
+    def _analyze_topics(self, articles: list) -> dict[str, any]:
         """Analyze topics from articles and create topic cloud"""
         try:
             topic_frequency = Counter()
@@ -249,7 +249,7 @@ class StorylineTracker:
             logger.error(f"Error analyzing topics: {e}")
             return {}
     
-    def _identify_breaking_topics(self, articles: List, topic_analysis: Dict) -> List[Dict]:
+    def _identify_breaking_topics(self, articles: list, topic_analysis: dict) -> list[dict]:
         """Identify breaking/trending topics"""
         try:
             breaking_topics = []
@@ -280,7 +280,7 @@ class StorylineTracker:
             logger.error(f"Error identifying breaking topics: {e}")
             return []
     
-    def _generate_daily_summary(self, articles: List, breaking_topics: List) -> str:
+    def _generate_daily_summary(self, articles: list, breaking_topics: list) -> str:
         """Generate a daily summary of news activity"""
         try:
             if not articles:
@@ -310,7 +310,7 @@ class StorylineTracker:
             logger.error(f"Error generating daily summary: {e}")
             return "Error generating daily summary."
     
-    def _generate_comprehensive_dossier(self, articles: List, story_id: str, include_rag: bool) -> str:
+    def _generate_comprehensive_dossier(self, articles: list, story_id: str, include_rag: bool) -> str:
         """Generate comprehensive dossier for a story"""
         try:
             if not articles:
@@ -376,7 +376,7 @@ class StorylineTracker:
             logger.error(f"Error generating dossier: {e}")
             return f"Error generating dossier: {str(e)}"
     
-    def _create_evolution_timeline(self, articles: List) -> List[Dict]:
+    def _create_evolution_timeline(self, articles: list) -> list[dict]:
         """Create timeline of story evolution"""
         try:
             timeline = []
@@ -399,7 +399,7 @@ class StorylineTracker:
             logger.error(f"Error creating timeline: {e}")
             return []
     
-    def _summarize_evolution(self, articles: List, timeline: List) -> str:
+    def _summarize_evolution(self, articles: list, timeline: list) -> str:
         """Summarize story evolution"""
         try:
             if not articles:
@@ -425,7 +425,7 @@ class StorylineTracker:
             logger.error(f"Error summarizing evolution: {e}")
             return "Error summarizing evolution."
     
-    def _calculate_time_span(self, articles: List) -> str:
+    def _calculate_time_span(self, articles: list) -> str:
         """Calculate time span of articles"""
         try:
             if not articles:
@@ -448,7 +448,7 @@ class StorylineTracker:
             logger.error(f"Error calculating time span: {e}")
             return "Unknown"
     
-    def _extract_sources(self, articles: List) -> List[str]:
+    def _extract_sources(self, articles: list) -> list[str]:
         """Extract unique sources from articles"""
         try:
             sources = list(set(article[5] for article in articles if article[5]))
@@ -457,7 +457,7 @@ class StorylineTracker:
             logger.error(f"Error extracting sources: {e}")
             return []
     
-    def _analyze_quality_distribution(self, quality_scores: List[float]) -> str:
+    def _analyze_quality_distribution(self, quality_scores: list[float]) -> str:
         """Analyze quality score distribution"""
         try:
             if not quality_scores:
@@ -474,7 +474,7 @@ class StorylineTracker:
             logger.error(f"Error analyzing quality distribution: {e}")
             return "Error analyzing quality"
     
-    def _calculate_quality_trend(self, articles: List) -> str:
+    def _calculate_quality_trend(self, articles: list) -> str:
         """Calculate quality trend over time"""
         try:
             if len(articles) < 2:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 import httpx
 
@@ -127,7 +127,7 @@ class OllamaModelCaller:
             return self._llm.ollama_cpu_host.rstrip("/")
         return self._ollama_base_url
 
-    async def embed_text(self, text: str) -> tuple[List[float], str]:
+    async def embed_text(self, text: str) -> tuple[list[float], str]:
         """
         Single-document embedding via Ollama /api/embeddings (CB hub).
         Returns (vector, model_name).
@@ -140,9 +140,9 @@ class OllamaModelCaller:
         )
         return emb, self._embedding_model
 
-    async def embed_batch(self, texts: List[str]) -> List[tuple[List[float], str]]:
+    async def embed_batch(self, texts: list[str]) -> list[tuple[list[float], str]]:
         """Sequential embeddings (Ollama typically one request per doc)."""
-        out: List[tuple[List[float], str]] = []
+        out: list[tuple[list[float], str]] = []
         for t in texts:
             out.append(await self.embed_text(t))
         return out

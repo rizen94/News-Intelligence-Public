@@ -5,7 +5,7 @@ DECLARE
   r RECORD;
   s TEXT;
 BEGIN
-  FOR r IN SELECT unnest(ARRAY['politics', 'finance', 'science_tech']) AS schema_name LOOP
+  FOR r IN SELECT unnest(ARRAY['politics', 'finance', 'artificial_intelligence', 'legal', 'medicine', 'neurodiversity']) AS schema_name LOOP
     s := r.schema_name;
     EXECUTE format('ALTER TABLE %I.articles ADD COLUMN IF NOT EXISTS enrichment_attempts SMALLINT DEFAULT 0', s);
     EXECUTE format('ALTER TABLE %I.articles ADD COLUMN IF NOT EXISTS enrichment_status VARCHAR(20) DEFAULT NULL', s);

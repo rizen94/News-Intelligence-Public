@@ -8,3 +8,20 @@ repos:
         files: ^(api|tests)/
       - id: ruff-format
         files: ^(api|tests)/
+
+  # Bandit catches security issues (secrets, weak crypto) but not resource leaks.
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.8
+    hooks:
+      - id: bandit
+        files: ^(api|tests)/
+        args: ["-s", "B101,B301,B404,B605,S101,S301,S307,S603"]  # skip noisy defaults; focus on real risks
+
+  # Semgrep catches resource leaks (unclosed connections, file handles) that Bandit misses.
+  - repo: https://github.com/returntocorp/semgrep
+    rev: v1.90.0
+    hooks:
+      - id: semgrep
+        files: ^(api|tests)/.*\.py$
+        args: ["--config", "p/python/lang/correctness/unclosed-resource"]
+        additional_dependencies: [semgrep]

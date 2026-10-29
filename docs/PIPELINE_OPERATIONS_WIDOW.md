@@ -116,7 +116,7 @@ OLLAMA_MODEL_EMBEDDING=nomic-embed-text
 OLLAMA_DUAL_HOST_ROUTING_ENABLED=false
 OLLAMA_MODEL_PRIMARY=llama3.1:8b
 OLLAMA_MODEL_SECONDARY=llama3.1:8b
-OLLAMA_MODEL_EXTRACTION=qwen2.5:7b
+OLLAMA_MODEL_EXTRACTION=qwen3.6:latest
 ```
 
 **Dockside embeddings health:** `embeddings_host_health_service` probes the dedicated host and sets `ni_embeddings_host_paused=1` after consecutive failures. `embeddings_worker` yields immediately (no per-chunk CB spam). Grafana: `ni_embeddings_*` from `/api/system_monitoring/prometheus`; alert rules in `api/monitoring/grafana/alerts-embeddings-host.yaml`. After Dockside/tunnel recovers, reset `ollama_embeddings` if still open:

@@ -6,7 +6,7 @@ Provides comprehensive quality assessment and validation for all pipeline proces
 import logging
 import json
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 from dataclasses import dataclass
 from enum import Enum
 
@@ -36,9 +36,9 @@ class QualityAssessment:
     item_id: str
     quality_score: float
     quality_tier: int
-    metrics: Dict[str, Any]
-    issues: List[str]
-    recommendations: List[str]
+    metrics: dict[str, Any]
+    issues: list[str]
+    recommendations: list[str]
     timestamp: datetime
     status: str  # "passed", "failed", "warning", "review_needed"
     confidence: float
@@ -58,7 +58,7 @@ class QualityAssessmentService:
             "minimum_tier_for_events": 2,
         }
 
-    def assess_content_quality(self, content_data: Dict[str, Any], 
+    def assess_content_quality(self, content_data: dict[str, Any], 
                              process_name: str, item_id: str) -> QualityAssessment:
         """
         Assess quality of generated content
@@ -156,7 +156,7 @@ class QualityAssessmentService:
                 confidence=0.0
             )
 
-    def validate_generated_content(self, content: Any, content_type: str) -> Dict[str, Any]:
+    def validate_generated_content(self, content: Any, content_type: str) -> dict[str, Any]:
         """
         Validate generated content structure and integrity
         
@@ -216,7 +216,7 @@ class QualityAssessmentService:
             validation_results["errors"].append(f"Validation failed: {str(e)}")
             return validation_results
 
-    def get_process_quality_report(self, process_name: str, time_window_hours: int = 24) -> Dict[str, Any]:
+    def get_process_quality_report(self, process_name: str, time_window_hours: int = 24) -> dict[str, Any]:
         """
         Generate quality report for a specific process
         

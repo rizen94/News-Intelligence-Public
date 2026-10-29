@@ -22,7 +22,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict
+from typing import Optional, Any
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -32,7 +32,7 @@ ENV_PATH = ROOT / ".env"
 _ENV_LINE_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 
 # Staged profiles: conservative -> aggressive.
-PROFILES: dict[str, Dict[str, str]] = {
+PROFILES: dict[str, dict[str, str]] = {
     "baseline": {
         "AUTOMATION_DYNAMIC_RESOURCE_ROUTING_ENABLED": "true",
         "MAX_CONCURRENT_OLLAMA_TASKS": "12",
@@ -114,7 +114,7 @@ def _load_env_lines(path: Path) -> list[str]:
     return path.read_text(encoding="utf-8").splitlines()
 
 
-def _apply_env_updates(lines: list[str], updates: Dict[str, str]) -> list[str]:
+def _apply_env_updates(lines: list[str], updates: dict[str, str]) -> list[str]:
     out = list(lines)
     seen: set[str] = set()
     for i, line in enumerate(out):
@@ -135,8 +135,8 @@ def _apply_env_updates(lines: list[str], updates: Dict[str, str]) -> list[str]:
     return out
 
 
-def _merge_profiles(target: str) -> Dict[str, str]:
-    merged: Dict[str, str] = {}
+def _merge_profiles(target: str) -> dict[str, str]:
+    merged: dict[str, str] = {}
     for name in PROFILE_ORDER:
         merged.update(PROFILES[name])
         if name == target:
@@ -144,7 +144,7 @@ def _merge_profiles(target: str) -> Dict[str, str]:
     return merged
 
 
-def _print_profile(name: str, updates: Dict[str, str]) -> None:
+def _print_profile(name: str, updates: dict[str, str]) -> None:
     print(f"\nProfile: {name}")
     print("-" * (9 + len(name)))
     for k in sorted(updates.keys()):

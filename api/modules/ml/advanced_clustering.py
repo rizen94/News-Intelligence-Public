@@ -7,7 +7,7 @@ import logging
 import json
 import time
 import numpy as np
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Optional, Any
 from datetime import datetime
 import requests
 from dataclasses import dataclass
@@ -23,10 +23,10 @@ logger = logging.getLogger(__name__)
 class ClusterResult:
     """Structured clustering result"""
     cluster_id: int
-    articles: List[Dict[str, Any]]
-    centroid: List[float]
+    articles: list[dict[str, Any]]
+    centroid: list[float]
     size: int
-    keywords: List[str]
+    keywords: list[str]
     summary: str
     coherence_score: float
     local_processing: bool = True
@@ -34,7 +34,7 @@ class ClusterResult:
 @dataclass
 class ClusteringAnalysis:
     """Complete clustering analysis result"""
-    clusters: List[ClusterResult]
+    clusters: list[ClusterResult]
     total_articles: int
     num_clusters: int
     algorithm_used: str
@@ -64,7 +64,7 @@ class LocalAdvancedClustering:
         }
     
     def cluster_articles(self, 
-                        articles: List[Dict[str, Any]], 
+                        articles: list[dict[str, Any]], 
                         algorithm: str = 'kmeans',
                         num_clusters: Optional[int] = None,
                         model: Optional[str] = None,
@@ -73,7 +73,7 @@ class LocalAdvancedClustering:
         Cluster articles using advanced algorithms
         
         Args:
-            articles: List of articles to cluster
+            articles: list of articles to cluster
             algorithm: Clustering algorithm to use
             num_clusters: Number of clusters (auto-determined if None)
             model: Specific model to use (optional)
@@ -182,7 +182,7 @@ class LocalAdvancedClustering:
                 model_used=selected_model
             )
     
-    def _prepare_article_text(self, article: Dict[str, Any]) -> str:
+    def _prepare_article_text(self, article: dict[str, Any]) -> str:
         """Prepare article text for clustering"""
         # Combine title, content, and summary
         text_parts = []
@@ -201,7 +201,7 @@ class LocalAdvancedClustering:
         
         return ' '.join(text_parts)
     
-    def _generate_embeddings(self, texts: List[str], model: str) -> np.ndarray:
+    def _generate_embeddings(self, texts: list[str], model: str) -> np.ndarray:
         """Generate embeddings using local LLM"""
         try:
             if model == "nomic-embed-text":
@@ -222,7 +222,7 @@ class LocalAdvancedClustering:
             # Soft-miss only: TF-IDF when hub is reachable but model path failed
             return self._generate_tfidf_embeddings(texts)
     
-    def _call_embedding_model(self, texts: List[str], model: str) -> List[List[float]]:
+    def _call_embedding_model(self, texts: list[str], model: str) -> list[list[float]]:
         """Call specialized embedding model via CB hub."""
         try:
             from shared.services.llm_service import ollama_embed_sync
@@ -239,7 +239,7 @@ class LocalAdvancedClustering:
             logger.error(f"Error calling embedding model: {e}")
             raise
     
-    def _call_llm_for_embeddings(self, texts: List[str], model: str) -> List[List[float]]:
+    def _call_llm_for_embeddings(self, texts: list[str], model: str) -> list[list[float]]:
         """Use general LLM to generate embeddings via CB hub."""
         try:
             from shared.services.llm_service import ollama_generate_sync
@@ -270,7 +270,7 @@ Format: [0.1, -0.2, 0.3, ...]
             logger.error(f"Error calling LLM for embeddings: {e}")
             raise
     
-    def _parse_embedding_response(self, response: str) -> List[float]:
+    def _parse_embedding_response(self, response: str) -> list[float]:
         """Parse LLM response to extract embedding"""
         try:
             # Try to find JSON array in response
@@ -294,7 +294,7 @@ Format: [0.1, -0.2, 0.3, ...]
             logger.error(f"Error parsing embedding response: {e}")
             return []
     
-    def _generate_tfidf_embeddings(self, texts: List[str]) -> np.ndarray:
+    def _generate_tfidf_embeddings(self, texts: list[str]) -> np.ndarray:
         """Generate TF-IDF embeddings as fallback"""
         try:
             vectorizer = TfidfVectorizer(
@@ -369,10 +369,10 @@ Format: [0.1, -0.2, 0.3, ...]
             # Return single cluster as fallback
             return np.zeros(len(embeddings), dtype=int)
     
-    def _create_cluster_results(self, articles: List[Dict[str, Any]], 
+    def _create_cluster_results(self, articles: list[dict[str, Any]], 
                                cluster_labels: np.ndarray, 
                                embeddings: np.ndarray,
-                               model: str) -> List[ClusterResult]:
+                               model: str) -> list[ClusterResult]:
         """Create cluster results from clustering output"""
         try:
             clusters = []
@@ -414,7 +414,7 @@ Format: [0.1, -0.2, 0.3, ...]
             logger.error(f"Error creating cluster results: {e}")
             return []
     
-    def _analyze_cluster_content(self, articles: List[Dict[str, Any]], model: str) -> Tuple[List[str], str]:
+    def _analyze_cluster_content(self, articles: list[dict[str, Any]], model: str) -> tuple[list[str], str]:
         """Analyze cluster content to generate keywords and summary"""
         try:
             # Combine all article texts
@@ -508,7 +508,7 @@ Guidelines:
         self.cache.clear()
         logger.info("Clustering cache cleared")
     
-    def get_cache_stats(self) -> Dict[str, Any]:
+    def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics"""
         return {
             "cache_size": len(self.cache),

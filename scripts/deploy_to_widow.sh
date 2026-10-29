@@ -89,7 +89,7 @@ echo "Ensuring tracked_events(updated_at) index..."
 psql -h 127.0.0.1 -U newsapp -d news_intel -v ON_ERROR_STOP=1 -c \\
   "CREATE INDEX IF NOT EXISTS idx_tracked_events_updated_at ON intelligence.tracked_events (updated_at DESC)"
 
-for mig in 196 231 232; do
+for mig in 167 196 231 232; do
   if [ -f "api/database/migrations/\${mig}"*.sql ]; then
     file=\$(ls api/database/migrations/\${mig}*.sql | head -1)
     applied=\$(psql -h 127.0.0.1 -U newsapp -d news_intel -tAc "SELECT 1 FROM public.applied_migrations WHERE migration_id='\${mig}'" 2>/dev/null || true)

@@ -83,10 +83,10 @@ def _run_pending_db_flush() -> None:
 
 def _run_terminate_idle_in_transaction(minutes: int = 5) -> int:
     """Terminate stale idle-in-transaction sessions (pool leak recovery)."""
-    from shared.database.connection import get_ephemeral_db_connection_context
+    from shared.database.connection import ephemeral_db_connection_context
 
     terminated = 0
-    with get_ephemeral_db_connection_context() as conn:
+    with ephemeral_db_connection_context() as conn:
         conn.autocommit = True
         with conn.cursor() as cur:
             cur.execute(

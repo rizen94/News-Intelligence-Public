@@ -133,6 +133,46 @@ def _claim_extraction_strict_seeded_domain_keys() -> frozenset[str]:
     return frozenset()
 
 
+def _entity_profile_claim_staleness_seconds() -> int:
+    """Seconds of entity profile staleness for claim extraction gate.
+
+    When strict_seeded_domains is active, contexts from domains whose
+    entity_profiles.updated_at > NOW() - interval are eligible; otherwise
+    skipped to avoid wasting GPU cycles on dead entity pools.
+    """
+    try:
+        n = int(env_str("ENTITY_PROFILE_CLAIM_STALENESS_SECONDS", "0"))
+    except (TypeError, ValueError):
+        n = 0
+    if n <= 0:
+        # Disabled by default; set to a positive value (seconds) to enable.
+        # 259200 == 3 days recommended for production.
+        return 0
+    return max(60, min(n, 86400 * 365))
+
+
+def _sql_entity_profiles_fresh_gate(alias: str = "c") -> str:
+    """SQL fragment: domain has fresh entity_profiles for claim extraction context."""
+    secs = _entity_profile_claim_staleness_seconds()
+    if secs <= 0:
+        return ""
+    return f"""
+        AND EXISTS (
+            SELECT 1
+            FROM intelligence.article_to_context atc_gate
+            JOIN public.domains d_gate ON d_gate.domain_key = atc_gate.domain_key
+            WHERE atc_gate.context_id = {alias}.id
+              AND atc_gate.article_id IS NOT NULL
+              AND EXISTS (
+                  SELECT 1
+                  FROM intelligence.entity_profiles ep_fresh
+                  WHERE ep_fresh.domain_key = d_gate.domain_key
+                    AND ep_fresh.updated_at > NOW() - INTERVAL '{secs} seconds'
+              )
+        )
+    """
+
+
 def _subject_matches_seeded_pool(
     cur,
     domain_key: str,
@@ -261,12 +301,34 @@ def sql_claim_extraction_eligible(alias: str = "c") -> str:
     from shared.article_signal_gate import sql_context_has_full_lane_article
     from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_context_pass_null
 
+    # Only gate on entity profile staleness when strict seeded domains is active
+    # (i.e., CLAIM_EXTRACTION_REQUIRE_SEEDED_DOMAIN_KEYS is set or claim_resolvability_gate is enabled).
+    has_seeded_gate = False
+    try:
+        raw = env_str("CLAIM_EXTRACTION_REQUIRE_SEEDED_DOMAIN_KEYS", "").strip()
+        has_seeded_gate = bool(raw)
+    except Exception:
+        pass
+    if not has_seeded_gate:
+        try:
+            from config.feature_registry import is_feature_enabled
+
+            if is_feature_enabled("claim_resolvability_gate"):
+                from shared.domain_registry import get_pipeline_active_domain_keys
+
+                has_seeded_gate = bool(get_pipeline_active_domain_keys())
+        except Exception:
+            pass
+
     min_len = claim_extraction_min_text_len()
     pass_sql = ""
     if phase_backlog_uses_pass_marker("claim_extraction"):
         pass_sql = f" AND ({sql_context_pass_null('claim_extraction', alias)}) "
     gap_sql = claim_extraction_gap_fill_sql(alias)
     signal_sql = f" AND ({sql_context_has_full_lane_article(alias)}) "
+    staleness_gate = ""
+    if has_seeded_gate and _entity_profile_claim_staleness_seconds() > 0:
+        staleness_gate = _sql_entity_profiles_fresh_gate(alias)
     return f"""
         NOT EXISTS (
             SELECT 1 FROM intelligence.extracted_claims ec
@@ -278,6 +340,7 @@ def sql_claim_extraction_eligible(alias: str = "c") -> str:
         {pass_sql}
         {gap_sql}
         {signal_sql}
+        {staleness_gate}
     """
 
 
@@ -2142,6 +2205,18 @@ def _claim_subject_variant_norms(raw: str) -> list[str]:
         add(" ".join(words[-2:]))
     if len(words) >= 2:
         add(words[-1])
+
+    # ── Alias / abbreviation expansion (abbreviation matching) ──────────────
+    # If any alias matches the raw subject, add canonical names as variants.
+    # E.g. raw="UN" → "united nations"; raw="U.S." → "united states"
+    aliases_hit = _expand_aliases_for_subject(raw)
+    for canon in aliases_hit:
+        add(canon)
+        # Also add stripped-punctuation variant of the canonical itself
+        stripped_canon = re.sub(r"[^\w\s]", "", canon).lower()
+        if stripped_canon and len(stripped_canon) >= 2:
+            add(stripped_canon)
+
     return out
 
 
@@ -2151,6 +2226,113 @@ def _domain_key_sql_tuple(dk: str) -> tuple[str, str, str]:
 
 
 _trgm_ext_available: bool | None = None
+
+# ── Alias → canonical map for abbreviation matching ────────────────────────
+# Loaded lazily from {domain}.entity_canonical.aliases columns.
+_ALIASES_TO_CANONICAL_CACHE: dict[str, str] | None = None
+
+
+def _ensure_alias_cache() -> dict[str, str]:
+    """Build {lower(alias) → canonical_name} from all active domain entity_canonical tables."""
+    global _ALIASES_TO_CANONICAL_CACHE
+    if _ALIASES_TO_CANONICAL_CACHE is not None:
+        return _ALIASES_TO_CANONICAL_CACHE
+
+    try:
+        domains = get_pipeline_active_domain_keys()
+    except Exception:
+        _ALIASES_TO_CANONICAL_CACHE = {}
+        return _ALIASES_TO_CANONICAL_CACHE
+
+    mapping: dict[str, str] = {}
+    conn = get_db_connection()
+    if not conn:
+        _ALIASES_TO_CANONICAL_CACHE = mapping
+        return mapping
+
+    try:
+        with conn.cursor() as cur:
+            for dk in domains:
+                schema = resolve_domain_schema(dk)
+                try:
+                    cur.execute(
+                        f"""
+                        SELECT aliases, canonical_name
+                        FROM {schema}.entity_canonical ec
+                        WHERE COALESCE(aliases, '{{}}'::text[]) != '{{}}'::text[]
+                          AND canonical_name IS NOT NULL
+                          AND canonical_name <> ''
+                        """,
+                    )
+                    for row in cur.fetchall():
+                        aliases = row[0] if isinstance(row[0], list) else []
+                        canon = (row[1] or "").strip()
+                        if not canon:
+                            continue
+                        canon_lower = canon.lower()
+                        for a in aliases:
+                            al = str(a).strip().lower()
+                            if len(al) >= 2 and al != canon_lower:
+                                # Index both the raw alias and its stripped punctuation variant
+                                mapping[al] = canon_lower
+                                stripped_al = re.sub(r"[^\w\s]", "", al).replace(" ", "")
+                                if len(stripped_al) >= 2:
+                                    mapping[stripped_al] = canon_lower
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    _ALIASES_TO_CANONICAL_CACHE = mapping
+    if mapping:
+        logger.info(
+            "alias cache loaded: %d aliases → canonical across %d domains",
+            len(mapping),
+            len(domains),
+        )
+    return mapping
+
+
+def _expand_aliases_for_subject(raw: str) -> list[str]:
+    """Return canonical names whose aliases match *raw* (exact word, substring, or token)."""
+    canon_names: list[str] = []
+    seen: set[str] = set()
+
+    for alias_text, canonical in _ensure_alias_cache().items():
+        raw_lower = raw.lower()
+
+        # 1) Exact alias match against raw
+        if alias_text == raw_lower:
+            if canonical not in seen:
+                seen.add(canonical)
+                canon_names.append(canonical)
+            continue
+
+        # 2) Alias is a substring of raw (e.g. "un" in "minority group") → skip to avoid noise
+        #    unless alias is standalone words in raw
+        if len(alias_text) >= 3 and alias_text in raw_lower:
+            # Check that the alias appears as a whole-word token in raw
+            # Tokenize raw by punctuation/whitespace
+            tokens = re.split(r"[\s,;.!?()\[\]{}\-:/+&@]+", raw_lower)
+            for tok in tokens:
+                if tok == alias_text:
+                    if canonical not in seen:
+                        seen.add(canonical)
+                        canon_names.append(canonical)
+                    break
+
+        # 3) Raw is a substring of alias (e.g. "UN" → aliases like "u.n." after stripping)
+        if len(raw_lower) >= 2 and raw_lower in alias_text:
+            if canonical not in seen:
+                seen.add(canonical)
+                canon_names.append(canonical)
+
+    return canon_names
 
 
 def _pg_trgm_available(cur) -> bool:

@@ -6,7 +6,7 @@ Integrates with ML summarizer for intelligent context retrieval and generation
 import logging
 import json
 import time
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Optional, Any
 from datetime import datetime, timedelta
 import psycopg2
 from collections import defaultdict, Counter
@@ -24,8 +24,8 @@ class MLRAGService:
     ML-specific RAG service that integrates with ML summarizer for intelligent context retrieval
     """
     
-    def __init__(self, db_config: Dict[str, str], ml_service: MLSummarizationService = None, 
-                 external_config: Dict[str, str] = None):
+    def __init__(self, db_config: dict[str, str], ml_service: MLSummarizationService = None, 
+                 external_config: dict[str, str] = None):
         """
         Initialize the Enhanced RAG Service
         
@@ -65,7 +65,7 @@ class MLRAGService:
         }
     
     def build_enhanced_context(self, query: str, context_type: str = 'comprehensive',
-                              max_articles: int = None, include_ml_analysis: bool = True) -> Dict[str, Any]:
+                              max_articles: int = None, include_ml_analysis: bool = True) -> dict[str, Any]:
         """
         Build enhanced RAG context with ML-powered analysis
         
@@ -141,9 +141,9 @@ class MLRAGService:
                 'generated_at': datetime.now().isoformat()
             }
     
-    def build_comprehensive_research_context(self, query: str, story_keywords: List[str] = None,
+    def build_comprehensive_research_context(self, query: str, story_keywords: list[str] = None,
                                            include_external: bool = True,
-                                           include_internal: bool = True) -> Dict[str, Any]:
+                                           include_internal: bool = True) -> dict[str, Any]:
         """
         Build comprehensive research context using both internal and external sources
         
@@ -256,7 +256,7 @@ class MLRAGService:
     def build_story_dossier_with_rag(self, story_id: str, story_title: str = None,
                                    include_historical: bool = True,
                                    include_related: bool = True,
-                                   include_analysis: bool = True) -> Dict[str, Any]:
+                                   include_analysis: bool = True) -> dict[str, Any]:
         """
         Build a comprehensive story dossier with RAG-enhanced context
         
@@ -343,7 +343,7 @@ class MLRAGService:
                 'generated_at': datetime.now().isoformat()
             }
     
-    def _retrieve_relevant_articles(self, query: str, max_articles: int) -> List[Dict[str, Any]]:
+    def _retrieve_relevant_articles(self, query: str, max_articles: int) -> list[dict[str, Any]]:
         """Retrieve relevant articles using enhanced RAG retrieval"""
         try:
             # Use enhanced retrieval service if available
@@ -469,8 +469,8 @@ class MLRAGService:
             logger.error(f"Error retrieving relevant articles: {e}")
             return []
     
-    def _build_base_context(self, query: str, articles: List[Dict[str, Any]], 
-                          context_type: str) -> Dict[str, Any]:
+    def _build_base_context(self, query: str, articles: list[dict[str, Any]], 
+                          context_type: str) -> dict[str, Any]:
         """Build base context from articles"""
         try:
             # Extract key information
@@ -498,8 +498,8 @@ class MLRAGService:
             logger.error(f"Error building base context: {e}")
             return {'error': str(e)}
     
-    def _enhance_with_ml(self, base_context: Dict[str, Any], 
-                        articles: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _enhance_with_ml(self, base_context: dict[str, Any], 
+                        articles: list[dict[str, Any]]) -> dict[str, Any]:
         """Enhance context with ML analysis"""
         try:
             # Prepare content for ML analysis
@@ -559,7 +559,7 @@ class MLRAGService:
             logger.error(f"Error enhancing with ML: {e}")
             return base_context  # Return base context if ML enhancement fails
     
-    def _aggregate_ml_insights(self, ml_articles: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _aggregate_ml_insights(self, ml_articles: list[dict[str, Any]]) -> dict[str, Any]:
         """Aggregate insights from ML-processed articles"""
         try:
             insights = {
@@ -602,8 +602,8 @@ class MLRAGService:
             logger.error(f"Error aggregating ML insights: {e}")
             return {}
     
-    def _generate_expert_analysis(self, articles: List[Dict[str, Any]], 
-                                story_title: str = None) -> Dict[str, Any]:
+    def _generate_expert_analysis(self, articles: list[dict[str, Any]], 
+                                story_title: str = None) -> dict[str, Any]:
         """Generate expert analysis using ML"""
         try:
             if not articles:
@@ -645,8 +645,8 @@ class MLRAGService:
             logger.error(f"Error generating expert analysis: {e}")
             return {'error': str(e)}
     
-    def _analyze_current_story(self, articles: List[Dict[str, Any]], 
-                             story_title: str = None) -> Dict[str, Any]:
+    def _analyze_current_story(self, articles: list[dict[str, Any]], 
+                             story_title: str = None) -> dict[str, Any]:
         """Analyze current story developments"""
         try:
             if not articles:
@@ -685,7 +685,7 @@ class MLRAGService:
             logger.error(f"Error analyzing current story: {e}")
             return {'error': str(e)}
     
-    def _extract_keywords(self, query: str) -> List[str]:
+    def _extract_keywords(self, query: str) -> list[str]:
         """Extract keywords from query"""
         try:
             # Simple keyword extraction
@@ -699,7 +699,7 @@ class MLRAGService:
             logger.error(f"Error extracting keywords: {e}")
             return []
     
-    def _extract_entities(self, articles: List[Dict[str, Any]]) -> List[str]:
+    def _extract_entities(self, articles: list[dict[str, Any]]) -> list[str]:
         """Extract key entities from articles using enhanced extraction"""
         try:
             # Use enhanced entity extractor if available
@@ -750,7 +750,7 @@ class MLRAGService:
             logger.error(f"Error extracting entities: {e}")
             return []
     
-    def _extract_themes(self, articles: List[Dict[str, Any]]) -> List[str]:
+    def _extract_themes(self, articles: list[dict[str, Any]]) -> list[str]:
         """Extract key themes from articles"""
         try:
             word_freq = Counter()
@@ -770,7 +770,7 @@ class MLRAGService:
             logger.error(f"Error extracting themes: {e}")
             return []
     
-    def _build_timeline(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _build_timeline(self, articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Build timeline from articles"""
         try:
             timeline = []
@@ -791,7 +791,7 @@ class MLRAGService:
             logger.error(f"Error building timeline: {e}")
             return []
     
-    def _analyze_sources(self, articles: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _analyze_sources(self, articles: list[dict[str, Any]]) -> dict[str, Any]:
         """Analyze source distribution"""
         try:
             source_count = Counter()
@@ -809,7 +809,7 @@ class MLRAGService:
             logger.error(f"Error analyzing sources: {e}")
             return {}
     
-    def _generate_base_summary(self, articles: List[Dict[str, Any]], query: str) -> str:
+    def _generate_base_summary(self, articles: list[dict[str, Any]], query: str) -> str:
         """Generate base summary without ML"""
         try:
             if not articles:
@@ -832,7 +832,7 @@ class MLRAGService:
             logger.error(f"Error generating base summary: {e}")
             return f"Summary generation failed for query: {query}"
     
-    def _combine_article_content(self, articles: List[Dict[str, Any]]) -> str:
+    def _combine_article_content(self, articles: list[dict[str, Any]]) -> str:
         """Combine article content for ML processing"""
         try:
             combined = []
@@ -856,7 +856,7 @@ class MLRAGService:
             logger.error(f"Error combining article content: {e}")
             return ""
     
-    def _is_controversial_topic(self, query: str, articles: List[Dict[str, Any]]) -> bool:
+    def _is_controversial_topic(self, query: str, articles: list[dict[str, Any]]) -> bool:
         """Determine if topic is controversial"""
         try:
             controversial_keywords = [
@@ -880,8 +880,8 @@ class MLRAGService:
             logger.error(f"Error checking if topic is controversial: {e}")
             return False
     
-    def _generate_ml_insights(self, enhanced_context: Dict[str, Any], 
-                            articles: List[Dict[str, Any]]) -> List[str]:
+    def _generate_ml_insights(self, enhanced_context: dict[str, Any], 
+                            articles: list[dict[str, Any]]) -> list[str]:
         """Generate key insights from ML analysis"""
         try:
             insights = []
@@ -914,7 +914,7 @@ class MLRAGService:
             logger.error(f"Error generating ML insights: {e}")
             return []
     
-    def _get_story_articles(self, story_id: str) -> List[Dict[str, Any]]:
+    def _get_story_articles(self, story_id: str) -> list[dict[str, Any]]:
         """Get articles for a specific story"""
         try:
             conn = psycopg2.connect(**self.db_config)
@@ -953,7 +953,7 @@ class MLRAGService:
             logger.error(f"Error getting story articles: {e}")
             return []
     
-    def _build_story_timeline(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _build_story_timeline(self, articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Build timeline for story articles"""
         try:
             timeline = []
@@ -975,7 +975,7 @@ class MLRAGService:
             logger.error(f"Error building story timeline: {e}")
             return []
     
-    def _extract_key_insights(self, sections: Dict[str, Any]) -> List[str]:
+    def _extract_key_insights(self, sections: dict[str, Any]) -> list[str]:
         """Extract key insights from dossier sections"""
         try:
             insights = []
@@ -1010,7 +1010,7 @@ class MLRAGService:
             logger.error(f"Error extracting key insights: {e}")
             return []
     
-    def _generate_dossier_summary(self, dossier: Dict[str, Any]) -> str:
+    def _generate_dossier_summary(self, dossier: dict[str, Any]) -> str:
         """Generate summary of the dossier"""
         try:
             story_title = dossier.get('story_title', dossier.get('story_id', 'Unknown Story'))
@@ -1038,7 +1038,7 @@ class MLRAGService:
             logger.error(f"Error generating dossier summary: {e}")
             return f"Dossier generated for {dossier.get('story_id', 'Unknown Story')}"
     
-    def _analyze_trends(self, articles: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _analyze_trends(self, articles: list[dict[str, Any]]) -> dict[str, Any]:
         """Analyze trends in articles"""
         try:
             if not articles:
@@ -1072,7 +1072,7 @@ class MLRAGService:
             return {}
     
     def _log_rag_request(self, query: str, context_type: str, 
-                        context: Dict[str, Any], processing_time: float) -> None:
+                        context: dict[str, Any], processing_time: float) -> None:
         """Log RAG request for analytics"""
         try:
             conn = psycopg2.connect(**self.db_config)
@@ -1119,7 +1119,7 @@ class MLRAGService:
         except Exception as e:
             logger.error(f"Error updating stats: {e}")
     
-    def _generate_comprehensive_summary(self, context: Dict[str, Any]) -> str:
+    def _generate_comprehensive_summary(self, context: dict[str, Any]) -> str:
         """Generate comprehensive summary of all gathered context"""
         try:
             query = context.get('query', 'Unknown query')
@@ -1178,7 +1178,7 @@ class MLRAGService:
             logger.error(f"Error generating comprehensive summary: {e}")
             return f"Comprehensive research context generated for: {context.get('query', 'Unknown query')}"
     
-    def get_rag_statistics(self) -> Dict[str, Any]:
+    def get_rag_statistics(self) -> dict[str, Any]:
         """Get RAG service statistics"""
         return {
             'total_requests': self.stats['rag_requests'],
@@ -1189,7 +1189,7 @@ class MLRAGService:
             'config': self.config
         }
     
-    def enhance_article_with_gdelt_timeline(self, article_id: int, keywords: List[str] = None) -> Dict[str, Any]:
+    def enhance_article_with_gdelt_timeline(self, article_id: int, keywords: list[str] = None) -> dict[str, Any]:
         """
         Enhance an article with GDELT timeline and context data
         
@@ -1198,7 +1198,7 @@ class MLRAGService:
             keywords: Optional keywords to use for GDELT search
             
         Returns:
-            Dict containing enhanced article data with GDELT context
+            dict containing enhanced article data with GDELT context
         """
         try:
             start_time = time.time()
@@ -1260,7 +1260,7 @@ class MLRAGService:
             logger.error(f"Error enhancing article {article_id} with GDELT: {e}")
             return {"error": f"Error enhancing article with GDELT: {str(e)}"}
     
-    def _get_article_data(self, article_id: int) -> Optional[Dict[str, Any]]:
+    def _get_article_data(self, article_id: int) -> Optional[dict[str, Any]]:
         """Get article data from database"""
         try:
             conn = psycopg2.connect(**self.db_config)
@@ -1288,7 +1288,7 @@ class MLRAGService:
             if 'conn' in locals():
                 conn.close()
     
-    def _extract_article_keywords(self, article_data: Dict[str, Any]) -> List[str]:
+    def _extract_article_keywords(self, article_data: dict[str, Any]) -> list[str]:
         """Extract keywords from article data"""
         # Simple keyword extraction - could be enhanced with NLP
         text = f"{article_data.get('title', '')} {article_data.get('content', '')}"
@@ -1304,7 +1304,7 @@ class MLRAGService:
         word_counts = Counter(keywords)
         return [word for word, count in word_counts.most_common(10)]
     
-    def _extract_entities_from_article(self, article_data: Dict[str, Any]) -> List[str]:
+    def _extract_entities_from_article(self, article_data: dict[str, Any]) -> list[str]:
         """Extract entities from article data"""
         # Simple entity extraction - could be enhanced with NER
         text = f"{article_data.get('title', '')} {article_data.get('content', '')}"
@@ -1318,7 +1318,7 @@ class MLRAGService:
         
         return list(set(entities))[:5]  # Return top 5 unique entities
     
-    def _store_gdelt_enhancement(self, article_id: int, enhancement_data: Dict[str, Any]) -> bool:
+    def _store_gdelt_enhancement(self, article_id: int, enhancement_data: dict[str, Any]) -> bool:
         """Store GDELT enhancement data in database"""
         try:
             conn = psycopg2.connect(**self.db_config)

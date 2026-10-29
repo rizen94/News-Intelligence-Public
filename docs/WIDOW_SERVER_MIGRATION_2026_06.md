@@ -170,3 +170,28 @@ ollama stop mistral-nemo
 - [x] Monitor resources (VRAM, RAM, CPU)
 - [x] Confirm 70B routing to main server works
 - [x] Archive old main server installation
+
+## Ollama Resource Analysis — Completed 2026-10-28
+
+### Current Host Ollama Models
+| Model | VRAM | Role | Installed? |
+|-------|------|------|------------|
+| llama3.1:8b-instruct-fp16 | ~5GB | Primary extraction model | ✅ |
+| qwen3.6:latest | ~12GB | Extraction/processing (preferred) | ✅ |
+| nomic-embed-text | ~0.4GB | Embeddings | ✅ |
+| phi3.5:latest | ~2.2GB | Secondary model | ✅ |
+| mistral-nemo:12b-instruct | ~8GB | Secondary processing | ✅ |
+| qwen2.5:72b-instruct-q4_K_M | ~40GB | Report generation (high-quality) | ✅ |
+| qwen2.5:32b-instruct-q5_K_M | ~19GB | Report generation (fast) | ✅ |
+
+### Model Usage in Pipeline (Updated)
+- **Primary model**: `llama3.1:8b` — fast, low-memory for extraction/categorization/bulk tasks
+- **Secondary model**: `mistral-nemo:12b` — mid-range for content analysis/summarization
+- **Extraction model** (OLLAMA_MODEL_EXTRACTION): `qwen3.6:latest` — preferred for high-quality structured output
+- **Embedding model**: `nomic-embed-text` — for vector search
+- **70b-class narrative finisher**: `qwen2.5:72b-instruct-q4_K_M` — reserved for overnight refinement (high-value only)
+
+### Model Cleanup History
+- Removed `llama3.1:760b` and `llama3.1:70b-instruct-fp16` (too large, low utilization)
+- Remaining models optimized for balanced GPU usage across pipeline stages
+

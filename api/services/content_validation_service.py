@@ -6,7 +6,7 @@ before proceeding with downstream processing.
 
 import logging
 from shared.domain_registry import resolve_domain_schema
-from typing import Dict, List, Optional, Tuple
+from typing import Optional, Tuple
 from shared.database.connection import get_db_connection
 
 logger = logging.getLogger(__name__)
@@ -15,7 +15,7 @@ class ContentValidationService:
     """Service to validate content availability and pipeline integrity."""
     
     @staticmethod
-    async def validate_article_content_availability(domain: str, article_ids: List[int]) -> Dict[str, any]:
+    async def validate_article_content_availability(domain: str, article_ids: list[int]) -> dict[str, any]:
         """
         Validate that articles have full content available.
         
@@ -101,7 +101,7 @@ class ContentValidationService:
                 pass
     
     @staticmethod
-    async def validate_storyline_content_requirements(domain: str, storyline_id: int) -> Dict[str, any]:
+    async def validate_storyline_content_requirements(domain: str, storyline_id: int) -> dict[str, any]:
         """
         Validate that a storyline has sufficient content for processing.
         
@@ -159,7 +159,7 @@ class ContentValidationService:
                 pass
     
     @staticmethod
-    async def get_pipeline_content_health(domain: str) -> Dict[str, any]:
+    async def get_pipeline_content_health(domain: str) -> dict[str, any]:
         """
         Get overall content health for a pipeline domain.
         

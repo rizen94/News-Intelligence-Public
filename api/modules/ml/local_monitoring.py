@@ -8,7 +8,7 @@ import json
 import time
 import psutil
 import threading
-from typing import Dict, List, Optional, Any, Callable
+from typing import Optional, Any, Callable
 from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
 from collections import defaultdict, deque
@@ -30,7 +30,7 @@ class SystemMetrics:
     disk_free_gb: float
     network_io_bytes: int
     process_count: int
-    load_average: List[float]
+    load_average: list[float]
 
 @dataclass
 class AIMetrics:
@@ -435,7 +435,7 @@ class LocalMonitoringSystem:
         except Exception as e:
             logger.error(f"Error cleaning up cache: {e}")
     
-    def get_system_metrics(self, hours: int = 1) -> List[Dict[str, Any]]:
+    def get_system_metrics(self, hours: int = 1) -> list[dict[str, Any]]:
         """Get system metrics for the last N hours"""
         try:
             cutoff_time = datetime.now() - timedelta(hours=hours)
@@ -448,7 +448,7 @@ class LocalMonitoringSystem:
             logger.error(f"Error getting system metrics: {e}")
             return []
     
-    def get_ai_metrics(self, hours: int = 1) -> List[Dict[str, Any]]:
+    def get_ai_metrics(self, hours: int = 1) -> list[dict[str, Any]]:
         """Get AI processing metrics for the last N hours"""
         try:
             cutoff_time = datetime.now() - timedelta(hours=hours)
@@ -500,7 +500,7 @@ class LocalMonitoringSystem:
                 eviction_count=0
             )
     
-    def get_alerts(self, level: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_alerts(self, level: Optional[str] = None) -> list[dict[str, Any]]:
         """Get recent alerts, optionally filtered by level"""
         try:
             alerts = list(self.alerts)
@@ -511,7 +511,7 @@ class LocalMonitoringSystem:
             logger.error(f"Error getting alerts: {e}")
             return []
     
-    def get_performance_summary(self) -> Dict[str, Any]:
+    def get_performance_summary(self) -> dict[str, Any]:
         """Get overall performance summary"""
         try:
             # System metrics summary
@@ -596,7 +596,7 @@ class LocalMonitoringSystem:
         else:
             logger.warning(f"Invalid eviction policy: {policy}")
     
-    def set_thresholds(self, thresholds: Dict[str, float]):
+    def set_thresholds(self, thresholds: dict[str, float]):
         """Update monitoring thresholds"""
         try:
             for key, value in thresholds.items():

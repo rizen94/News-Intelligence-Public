@@ -29,8 +29,18 @@ TERMINAL_PROCESSED_WITH_OUTPUT = "processed_with_output"
 TERMINAL_PROCESSED_EMPTY_LEGITIMATE = "processed_empty_legitimate"
 TERMINAL_FAILED_NEEDS_RETRY = "failed_needs_retry"
 
+# States that count as "cleared" from pending-backlog (have output or legitimately empty).
+# IMPORTANT: This is checked against terminal_state, NOT outcome. When you add a new
+# cleared state here, ensure every caller that could produce it writes this exact string
+# as its last_terminal_state — outcomes and terminal_states are stored separately in DB.
 CLEARED_TERMINAL_STATES: frozenset[str] = frozenset(
-    {TERMINAL_PROCESSED_WITH_OUTPUT, TERMINAL_PROCESSED_EMPTY_LEGITIMATE}
+    {
+        TERMINAL_PROCESSED_WITH_OUTPUT,
+        TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
+        # "no_entities_stored" can be left by legacy intake or infer_entity_extraction_terminal()
+        # when content > 400 chars but LLM produces no extractable results — retry is futile.
+        "no_entities_stored",
+    }
 )
 
 # Legacy outcomes that cleared backlog without terminal_state — reconciliation targets.
@@ -195,7 +205,9 @@ def infer_entity_extraction_terminal(
     short_threshold = int(env_str("ENTITY_EXTRACTION_LEGITIMATE_EMPTY_MAX_CHARS", "400"))
     if content_length < short_threshold:
         return TERMINAL_PROCESSED_EMPTY_LEGITIMATE, "no_entities_stored"
-    return TERMINAL_FAILED_NEEDS_RETRY, "no_entities_stored"
+    # Zero entities from a successful LLM pass — legitimately empty regardless of length.
+    # Retry would be futile; backlog_metrics treats this as cleared.
+    return TERMINAL_PROCESSED_EMPTY_LEGITIMATE, "no_entities_stored"
 
 
 def infer_claim_extraction_terminal(*, inserted: int, outcome_hint: str) -> tuple[str, str]:
@@ -204,7 +216,9 @@ def infer_claim_extraction_terminal(*, inserted: int, outcome_hint: str) -> tupl
         return TERMINAL_PROCESSED_WITH_OUTPUT, "claims_inserted"
     if outcome_hint in ("skipped_short_text", "parsed_empty"):
         return TERMINAL_PROCESSED_EMPTY_LEGITIMATE, outcome_hint
-    return TERMINAL_FAILED_NEEDS_RETRY, outcome_hint or "no_claims_after_filters"
+    # Zero claims from a successful LLM pass — legitimately empty regardless of outcome hint.
+    # Retry would be futile; backlog_metrics treats this as cleared.
+    return TERMINAL_PROCESSED_EMPTY_LEGITIMATE, outcome_hint or "no_claims_after_filters"
 
 
 def infer_event_extraction_terminal(
@@ -221,7 +235,9 @@ def infer_event_extraction_terminal(
     short_threshold = int(env_str("EVENT_EXTRACTION_LEGITIMATE_EMPTY_MAX_CHARS", "400"))
     if content_length < short_threshold:
         return TERMINAL_PROCESSED_EMPTY_LEGITIMATE, "no_events_stored"
-    return TERMINAL_FAILED_NEEDS_RETRY, "no_events_stored"
+    # Zero events from a successful LLM pass — legitimately empty regardless of length.
+    # Retry would be futile; backlog_metrics treats this as cleared.
+    return TERMINAL_PROCESSED_EMPTY_LEGITIMATE, "no_events_stored"
 
 
 def infer_relationship_extraction_terminal(*, pairs_materialized: int, profile_count: int) -> tuple[str, str]:

@@ -4,7 +4,7 @@ Provides methods to fetch the specific economic indicators needed for the tracke
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Any, Optional
 from datetime import datetime, timedelta
 
 from domains.finance.data_sources.fred import get_client, FREDDataSource
@@ -57,7 +57,7 @@ class FREDTrackerClient:
         """Check if FRED client is available and configured."""
         return self.client is not None and bool(FRED_API_KEY)
     
-    def get_latest_observation(self, series_id: str) -> Optional[Dict[str, Any]]:
+    def get_latest_observation(self, series_id: str) -> Optional[dict[str, Any]]:
         """
         Get the most recent observation for a series.
         
@@ -168,7 +168,7 @@ class FREDTrackerClient:
             return 0.0
         return (base_year_cpi / cpi_value) * 100
     
-    def fetch_all_indicators(self) -> Dict[str, Any]:
+    def fetch_all_indicators(self) -> dict[str, Any]:
         """
         Fetch all indicators needed for the tracker.
         
@@ -214,7 +214,7 @@ class FREDTrackerClient:
         
         return data
     
-    def calculate_changes(self, current_value: float, historical_data: list) -> Dict[str, float]:
+    def calculate_changes(self, current_value: float, historical_data: list) -> dict[str, float]:
         """
         Calculate percentage changes over different periods.
         

@@ -5,7 +5,7 @@ Checks for threshold breaches and sends notifications.
 
 import logging
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Any, Optional
 
 try:
     from config.logging_config import get_component_logger
@@ -34,7 +34,7 @@ class USDPurchasingPowerTrackerAlerts:
             "GOLD_min": 1500.0        # Gold under $1500/oz
         }
     
-    def check_thresholds(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def check_thresholds(self, data: dict[str, Any]) -> list[dict[str, Any]]:
         """
         Check tracker data against thresholds and return any breaches.
         
@@ -115,7 +115,7 @@ class USDPurchasingPowerTrackerAlerts:
         
         return alerts
     
-    def send_alerts(self, alerts: List[Dict[str, Any]]) -> bool:
+    def send_alerts(self, alerts: list[dict[str, Any]]) -> bool:
         """
         Send alerts via configured channels.
         
@@ -152,7 +152,7 @@ class USDPurchasingPowerTrackerAlerts:
         
         return success
     
-    def check_and_alert(self) -> List[Dict[str, Any]]:
+    def check_and_alert(self) -> list[dict[str, Any]]:
         """
         Check current tracker data for threshold breaches and send alerts.
         
@@ -180,7 +180,7 @@ class USDPurchasingPowerTrackerAlerts:
             return []
 
 
-def check_usd_purchasing_power_tracker_alerts() -> List[Dict[str, Any]]:
+def check_usd_purchasing_power_tracker_alerts() -> list[dict[str, Any]]:
     """
     Convenience function to check for and send USD Purchasing Power Tracker alerts.
     

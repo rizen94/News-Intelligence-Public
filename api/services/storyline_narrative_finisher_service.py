@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from shared.database.connection import get_ephemeral_db_connection_context
+from shared.database.connection import ephemeral_db_connection_context
 from shared.domain_registry import domain_key_to_schema, is_valid_domain_key
 from shared.services.ollama_model_caller import get_ollama_model_caller
 from shared.services.ollama_model_policy import InvocationKind
@@ -293,7 +293,7 @@ def load_finisher_bundle_from_db(
         return None
 
     try:
-        with get_ephemeral_db_connection_context() as conn:
+        with ephemeral_db_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
@@ -858,7 +858,7 @@ def persist_narrative_finish_to_db(
         meta["raw_excerpt"] = raw[:4000]
 
     try:
-        with get_ephemeral_db_connection_context() as conn:
+        with ephemeral_db_connection_context() as conn:
             with conn.cursor() as cur:
                 # Bump storyline.updated_at only when canonical text is applied (new narrative), not
                 # on meta-only / empty refresh passes — keeps "last updated" aligned with real change.

@@ -8,7 +8,7 @@ import logging
 import json
 import psycopg2
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Any, Optional
 from dataclasses import dataclass
 import requests
 import os
@@ -28,15 +28,15 @@ class TimelineEvent:
     importance_score: float
     event_type: str
     location: Optional[str]
-    entities: List[str]
-    tags: List[str]
+    entities: list[str]
+    tags: list[str]
     created_at: str
-    source_article_ids: List[int] = None
+    source_article_ids: list[int] = None
 
 class TimelineGenerator:
     """Generates intelligent timeline events using ML/LLM"""
     
-    def __init__(self, db_config: Dict[str, str], ollama_url: str | None = None):
+    def __init__(self, db_config: dict[str, str], ollama_url: str | None = None):
         self.db_config = db_config
         self.ollama_url = (ollama_url or __import__("os").environ.get("OLLAMA_HOST") or __import__("os").environ.get("OLLAMA_URL") or "http://127.0.0.1:11434").rstrip("/")
         self.model_name = "llama3.1:8b"  # Use fast 8B model (llama3.1:405b available for quality)
@@ -48,11 +48,11 @@ class TimelineGenerator:
     def generate_timeline_events(
         self, 
         storyline_id: str, 
-        storyline_data: Dict[str, Any],
+        storyline_data: dict[str, Any],
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         max_events: int = 50
-    ) -> List[TimelineEvent]:
+    ) -> list[TimelineEvent]:
         """
         Generate timeline events for a storyline using ML/LLM analysis
         
@@ -64,7 +64,7 @@ class TimelineGenerator:
             max_events: Maximum number of events to generate
             
         Returns:
-            List of TimelineEvent objects
+            list of TimelineEvent objects
         """
         try:
             # Get relevant articles using intelligent filtering
@@ -107,11 +107,11 @@ class TimelineGenerator:
     def _get_relevant_articles(
         self, 
         storyline_id: str, 
-        storyline_data: Dict[str, Any],
+        storyline_data: dict[str, Any],
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         limit: int = 150
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get articles relevant to the storyline using intelligent filtering"""
         try:
             conn = psycopg2.connect(**self.db_config)
@@ -229,7 +229,7 @@ class TimelineGenerator:
             logger.error(f"Error getting relevant articles: {e}")
             return []
     
-    def _group_articles_by_date(self, articles: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    def _group_articles_by_date(self, articles: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
         """Group articles by publication date"""
         grouped = {}
         for article in articles:
@@ -243,9 +243,9 @@ class TimelineGenerator:
     def _generate_events_for_date(
         self, 
         date: str, 
-        articles: List[Dict[str, Any]], 
-        storyline_data: Dict[str, Any]
-    ) -> List[TimelineEvent]:
+        articles: list[dict[str, Any]], 
+        storyline_data: dict[str, Any]
+    ) -> list[TimelineEvent]:
         """Generate timeline events for a specific date using LLM analysis"""
         try:
             if not articles:
@@ -296,8 +296,8 @@ class TimelineGenerator:
     def _prepare_llm_context(
         self, 
         date: str, 
-        articles: List[Dict[str, Any]], 
-        storyline_data: Dict[str, Any]
+        articles: list[dict[str, Any]], 
+        storyline_data: dict[str, Any]
     ) -> str:
         """Prepare context for LLM analysis"""
         
@@ -347,7 +347,7 @@ Return as JSON array with this format:
         
         return context
     
-    def _call_llm_for_events(self, context: str) -> List[Dict[str, Any]]:
+    def _call_llm_for_events(self, context: str) -> list[dict[str, Any]]:
         """Call LLM to generate timeline events"""
         try:
             from shared.services.llm_service import ollama_generate_sync
@@ -385,7 +385,7 @@ Return as JSON array with this format:
             # Soft miss only — inventing timeline events under shed is skip-and-burn
             return self._generate_fallback_events(context)
     
-    def _generate_fallback_events(self, context: str) -> List[Dict[str, Any]]:
+    def _generate_fallback_events(self, context: str) -> list[dict[str, Any]]:
         """Generate basic timeline events without LLM when connection fails"""
         try:
             # Extract basic information from context
@@ -423,7 +423,7 @@ Return as JSON array with this format:
             logger.error(f"Error generating fallback events: {e}")
             return []
     
-    def _create_fallback_event(self, article: Dict[str, str]) -> Dict[str, Any]:
+    def _create_fallback_event(self, article: dict[str, str]) -> dict[str, Any]:
         """Create a basic timeline event from article data"""
         try:
             title = article.get('title', '')
@@ -468,9 +468,9 @@ Return as JSON array with this format:
     
     def _find_best_article_for_event(
         self, 
-        event_data: Dict[str, Any], 
-        articles: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        event_data: dict[str, Any], 
+        articles: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """Find the most relevant article for a timeline event"""
         if not articles:
             return {}
@@ -504,7 +504,7 @@ Return as JSON array with this format:
         
         return best_article
     
-    def _store_timeline_events(self, storyline_id: str, events: List[TimelineEvent]) -> List[TimelineEvent]:
+    def _store_timeline_events(self, storyline_id: str, events: list[TimelineEvent]) -> list[TimelineEvent]:
         """Store timeline events in the database with proper relationships"""
         try:
             conn = psycopg2.connect(**self.db_config)

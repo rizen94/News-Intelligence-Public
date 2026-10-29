@@ -6,7 +6,7 @@ Provides content analysis, deduplication, and quality assessment
 import hashlib
 import re
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 from datetime import datetime
 import json
 
@@ -117,7 +117,7 @@ class ContentAnalyzer:
             logger.error(f"Error checking content duplication: {e}")
             return False
     
-    def extract_metadata(self, content: str, title: str = None) -> Dict[str, any]:
+    def extract_metadata(self, content: str, title: str = None) -> dict[str, any]:
         """
         Extract metadata from content
         
@@ -198,7 +198,7 @@ class ContentAnalyzer:
                 "error": str(e)
             }
     
-    def clean_content(self, content: str) -> Dict[str, any]:
+    def clean_content(self, content: str) -> dict[str, any]:
         """
         Clean and normalize content
         
@@ -265,7 +265,7 @@ class ContentAnalyzer:
                 "error": str(e)
             }
     
-    def validate_content_quality(self, content: str, title: str = None) -> Dict[str, any]:
+    def validate_content_quality(self, content: str, title: str = None) -> dict[str, any]:
         """
         Validate content quality and provide recommendations
         

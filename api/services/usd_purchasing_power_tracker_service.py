@@ -7,7 +7,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Any, Optional
 
 try:
     from config.logging_config import get_component_logger
@@ -57,7 +57,7 @@ class USDPurchasingPowerTrackerService:
             "GOLD_min": 1500.0    # Gold under $1500/oz
         }
     
-    def load_data(self) -> Dict[str, Any]:
+    def load_data(self) -> dict[str, Any]:
         """Load existing data from JSON file."""
         if self.data_file.exists():
             try:
@@ -69,7 +69,7 @@ class USDPurchasingPowerTrackerService:
         else:
             return self._get_default_data()
     
-    def _get_default_data(self) -> Dict[str, Any]:
+    def _get_default_data(self) -> dict[str, Any]:
         """Return default data structure."""
         return {
             "last_updated": datetime.now().isoformat(),
@@ -77,7 +77,7 @@ class USDPurchasingPowerTrackerService:
             "historical_references": {}
         }
     
-    def save_data(self, data: Dict[str, Any]) -> bool:
+    def save_data(self, data: dict[str, Any]) -> bool:
         """Save data to JSON file."""
         try:
             with open(self.data_file, 'w') as f:
@@ -87,7 +87,7 @@ class USDPurchasingPowerTrackerService:
             logger.error(f"Error saving tracker data: {e}")
             return False
     
-    def fetch_latest_data(self) -> Dict[str, Any]:
+    def fetch_latest_data(self) -> dict[str, Any]:
         """Fetch latest data for all series from FRED."""
         results = {}
         
@@ -135,7 +135,7 @@ class USDPurchasingPowerTrackerService:
         
         return results
     
-    def calculate_changes(self, current_value: float, historical_values: List[float]) -> Dict[str, float]:
+    def calculate_changes(self, current_value: float, historical_values: list[float]) -> dict[str, float]:
         """
         Calculate percentage changes over different periods.
         
@@ -160,7 +160,7 @@ class USDPurchasingPowerTrackerService:
         
         return changes
     
-    def get_historical_context(self, days: int = 30) -> List[float]:
+    def get_historical_context(self, days: int = 30) -> list[float]:
         """Get historical values for change calculations."""
         # This would typically query a time series database
         # For now, return empty list - will use fallback values
@@ -186,7 +186,7 @@ class USDPurchasingPowerTrackerService:
         else:
             return "⚪"
     
-    def generate_markdown(self, data: Dict[str, Any]) -> str:
+    def generate_markdown(self, data: dict[str, Any]) -> str:
         """Generate markdown content for the tracker file."""
         series_data = data.get("series", {})
         historical_refs = data.get("historical_references", {})

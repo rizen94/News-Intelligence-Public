@@ -39,17 +39,16 @@ def canonical_entity_id_to_profile_id(
                 (domain_key, canonical_entity_id),
             )
             row = cur.fetchone()
-        if own_conn:
-            conn.close()
         return int(row[0]) if row else None
     except Exception as e:
         logger.warning("canonical_entity_id_to_profile_id: %s", e)
+        return None
+    finally:
         if own_conn:
             try:
                 conn.close()
             except Exception:
                 pass
-        return None
 
 
 def profile_id_to_canonical_entity_id(
@@ -74,16 +73,15 @@ def profile_id_to_canonical_entity_id(
                 (entity_profile_id,),
             )
             row = cur.fetchone()
-        if own_conn:
-            conn.close()
         if not row:
             return None, None
         return row[0], int(row[1]) if row[1] is not None else None
     except Exception as e:
         logger.warning("profile_id_to_canonical_entity_id: %s", e)
+        return None, None
+    finally:
         if own_conn:
             try:
                 conn.close()
             except Exception:
                 pass
-        return None, None

@@ -6,7 +6,7 @@ Uses local processing only - no external AI services
 
 import logging
 import json
-from typing import Dict, List, Optional
+from typing import Optional
 from datetime import datetime, timedelta
 import psycopg2
 from .storyline_tracker import StorylineTracker
@@ -22,7 +22,7 @@ class DailyBriefingService:
     Service for generating automated daily intelligence briefings
     """
     
-    def __init__(self, db_config: Dict):
+    def __init__(self, db_config: dict):
         """
         Initialize the daily briefing service
         
@@ -36,7 +36,7 @@ class DailyBriefingService:
     def generate_daily_briefing(self, 
                                briefing_date: Optional[datetime] = None,
                                include_deduplication: bool = True,
-                               include_storylines: bool = True) -> Dict[str, any]:
+                               include_storylines: bool = True) -> dict[str, any]:
         """
         Generate a comprehensive daily intelligence briefing
         
@@ -93,7 +93,7 @@ class DailyBriefingService:
             return {"error": str(e)}
     
     def generate_weekly_briefing(self, 
-                                week_start_date: Optional[datetime] = None) -> Dict[str, any]:
+                                week_start_date: Optional[datetime] = None) -> dict[str, any]:
         """
         Generate a weekly intelligence briefing
         
@@ -141,7 +141,7 @@ class DailyBriefingService:
             logger.error(f"Error generating weekly briefing: {e}")
             return {"error": str(e)}
     
-    def _generate_system_overview(self, briefing_date: datetime) -> Dict[str, any]:
+    def _generate_system_overview(self, briefing_date: datetime) -> dict[str, any]:
         """Generate system overview section"""
         try:
             conn = psycopg2.connect(**self.db_config)
@@ -176,7 +176,7 @@ class DailyBriefingService:
             logger.error(f"Error generating system overview: {e}")
             return {"error": str(e)}
     
-    def _generate_content_analysis(self, briefing_date: datetime) -> Dict[str, any]:
+    def _generate_content_analysis(self, briefing_date: datetime) -> dict[str, any]:
         """Generate content analysis section"""
         try:
             conn = psycopg2.connect(**self.db_config)
@@ -236,7 +236,7 @@ class DailyBriefingService:
             logger.error(f"Error generating content analysis: {e}")
             return {"error": str(e)}
     
-    def _generate_storyline_analysis(self, briefing_date: datetime) -> Dict[str, any]:
+    def _generate_storyline_analysis(self, briefing_date: datetime) -> dict[str, any]:
         """Generate storyline analysis section"""
         try:
             # Get topic cloud for the day
@@ -266,7 +266,7 @@ class DailyBriefingService:
             logger.error(f"Error generating storyline analysis: {e}")
             return {"error": str(e)}
     
-    def _generate_deduplication_report(self) -> Dict[str, any]:
+    def _generate_deduplication_report(self) -> dict[str, any]:
         """Generate deduplication report section"""
         try:
             dedup_stats = self.deduplication_service.get_deduplication_stats()
@@ -289,7 +289,7 @@ class DailyBriefingService:
             logger.error(f"Error generating deduplication report: {e}")
             return {"error": str(e)}
     
-    def _generate_quality_metrics(self, briefing_date: datetime) -> Dict[str, any]:
+    def _generate_quality_metrics(self, briefing_date: datetime) -> dict[str, any]:
         """Generate quality metrics section"""
         try:
             conn = psycopg2.connect(**self.db_config)
@@ -352,7 +352,7 @@ class DailyBriefingService:
             logger.error(f"Error generating quality metrics: {e}")
             return {"error": str(e)}
     
-    def _generate_recommendations(self, briefing: Dict) -> Dict[str, any]:
+    def _generate_recommendations(self, briefing: dict) -> dict[str, any]:
         """Generate recommendations based on briefing data"""
         try:
             recommendations = {
@@ -405,7 +405,7 @@ class DailyBriefingService:
             logger.error(f"Error generating recommendations: {e}")
             return {"error": str(e)}
     
-    def _calculate_briefing_statistics(self, briefing: Dict) -> Dict[str, any]:
+    def _calculate_briefing_statistics(self, briefing: dict) -> dict[str, any]:
         """Calculate overall briefing statistics"""
         try:
             sections = briefing.get("sections", {})
@@ -435,7 +435,7 @@ class DailyBriefingService:
             logger.error(f"Error calculating briefing statistics: {e}")
             return {"error": str(e)}
     
-    def _generate_weekly_summary(self, daily_briefings: List[Dict]) -> Dict[str, any]:
+    def _generate_weekly_summary(self, daily_briefings: list[dict]) -> dict[str, any]:
         """Generate weekly summary from daily briefings"""
         try:
             if not daily_briefings:
@@ -468,7 +468,7 @@ class DailyBriefingService:
             logger.error(f"Error generating weekly summary: {e}")
             return {"error": str(e)}
     
-    def _generate_trend_analysis(self, daily_briefings: List[Dict]) -> Dict[str, any]:
+    def _generate_trend_analysis(self, daily_briefings: list[dict]) -> dict[str, any]:
         """Generate trend analysis from daily briefings"""
         try:
             if len(daily_briefings) < 2:
@@ -508,7 +508,7 @@ class DailyBriefingService:
             logger.error(f"Error generating trend analysis: {e}")
             return {"error": str(e)}
     
-    def _analyze_trends(self, article_trends: List[Dict], quality_trends: List[Dict]) -> Dict[str, any]:
+    def _analyze_trends(self, article_trends: list[dict], quality_trends: list[dict]) -> dict[str, any]:
         """Analyze trends in the data"""
         try:
             if not article_trends or not quality_trends:
@@ -532,7 +532,7 @@ class DailyBriefingService:
             logger.error(f"Error analyzing trends: {e}")
             return {"error": str(e)}
     
-    def _generate_trend_recommendations(self, article_trend: str, quality_trend: str) -> List[str]:
+    def _generate_trend_recommendations(self, article_trend: str, quality_trend: str) -> list[str]:
         """Generate recommendations based on trends"""
         recommendations = []
         
@@ -548,7 +548,7 @@ class DailyBriefingService:
         
         return recommendations
     
-    def _generate_deduplication_recommendations(self, dedup_stats: Dict) -> List[str]:
+    def _generate_deduplication_recommendations(self, dedup_stats: dict) -> list[str]:
         """Generate deduplication recommendations"""
         recommendations = []
         
@@ -565,7 +565,7 @@ class DailyBriefingService:
         
         return recommendations
     
-    def _calculate_overall_quality(self, quality_distribution: List) -> float:
+    def _calculate_overall_quality(self, quality_distribution: list) -> float:
         """Calculate overall quality score"""
         try:
             if not quality_distribution:

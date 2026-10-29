@@ -16,7 +16,7 @@ Pool architecture (4 independent psycopg2 pools + SA; target **PgBouncer** or Po
 
 See ``docs/PGBOUNCER_AND_CONNECTION_BUDGET.md`` for multiplexing many app connections onto fewer Postgres backends.
 
-**Ephemeral connections** (``get_ephemeral_db_connection_context``): one-off ``psycopg2.connect`` + real ``close`` on exit.
+**Ephemeral connections** (``ephemeral_db_connection_context``): one-off ``psycopg2.connect`` + real ``close`` on exit.
 Use for infrequent batch work (e.g. daily briefing, weekly digest, narrative finisher load/persist) so those phases do not leave
 extra sessions sitting in the shared pools between runs. High-frequency automation (RSS, enrichment, entity extraction) should
 keep using the pooled APIs.
@@ -30,12 +30,13 @@ RULES (see also CODING_STYLE_GUIDE.md § Database Connection Rules):
 """
 
 import os
+import warnings
 import logging
 import time
 import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
-from typing import Optional, Dict, Any, Generator
+from typing import Optional, Any, Generator
 import threading
 from contextlib import contextmanager
 from enum import IntEnum
@@ -58,14 +59,14 @@ class _ConnectionPriority(IntEnum):
 # Priority-aware pressure gates per tier.
 # When the overall pool utilization exceeds these thresholds, lower-priority
 # checkouts fail faster to preserve headroom for higher-priority paths.
-_PRIORITY_UTILIZATION_THRESHOLDS: Dict[int, float] = {
+_PRIORITY_UTILIZATION_THRESHOLDS: dict[int, float] = {
     _ConnectionPriority.HEALTH: 0.95,
     _ConnectionPriority.UI:     0.85,
     _ConnectionPriority.WORKER: 0.75,   # worker gives way first
 }
 
 # Retry budget per priority level (max validation retries before giving up).
-_PRIORITY_RETRIES: Dict[int, int] = {
+_PRIORITY_RETRIES: dict[int, int] = {
     _ConnectionPriority.HEALTH: 3,  # health needs to succeed at all costs
     _ConnectionPriority.UI:     2,
     _ConnectionPriority.WORKER: 2,
@@ -271,7 +272,7 @@ class PooledConnection:
         return getattr(self._conn, name)
 
 
-def get_db_config() -> Dict[str, Any]:
+def get_db_config() -> dict[str, Any]:
     """
     Get database configuration from environment variables.
 
@@ -320,7 +321,7 @@ def get_db_config() -> Dict[str, Any]:
     }
 
 
-def get_db_connect_kwargs() -> Dict[str, Any]:
+def get_db_connect_kwargs() -> dict[str, Any]:
     """
     Return kwargs suitable for psycopg2.connect() (same config + timeouts).
     Use for code that must open a one-off connection instead of the pool.
@@ -739,7 +740,7 @@ def get_health_db_connection():
     raise ConnectionError(f"Database {pool_kind} pool returned stale connections.")
 
 
-def get_db_pool_snapshot() -> Dict[str, Any]:
+def get_db_pool_snapshot() -> dict[str, Any]:
     """
     Lightweight pool usage snapshot for scheduler/monitoring decisions.
 
@@ -749,7 +750,7 @@ def get_db_pool_snapshot() -> Dict[str, Any]:
 
     def _pool_stats(
         pool_ref: Optional[pool.ThreadedConnectionPool], pool_kind: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         _, maxconn = _pool_sizes(pool_kind)
         if pool_ref is None:
             return {
@@ -906,7 +907,7 @@ def probe_database_server_reachable(connect_timeout: Optional[int] = None) -> bo
                 pass
 
 
-def check_database_health() -> Dict[str, Any]:
+def check_database_health() -> dict[str, Any]:
     """Check database health via the **connection pool** (same path as normal app work)."""
     conn = None
     try:
@@ -996,21 +997,38 @@ def get_db_connection_context():
 
 def get_ephemeral_db_connection():
     """
-    Open a single PostgreSQL session not backed by the worker/UI pools.
-    Caller must ``close()`` when done (fully disconnects from the server).
+    **DEPRECATED** — opens a single ephemeral session.  You must ``close()`` it manually,
+    which is easy to forget and causes pool leaks.
 
-    Prefer ``get_ephemeral_db_connection_context()`` to avoid leaks.
+    Use :func:`ephemeral_db_connection_context` (``with`` block) so the
+    connection is closed automatically even on exception paths.
+    """
+    import warnings as _warnings
+
+    _warnings.warn(
+        "get_ephemeral_db_connection() is deprecated; use ephemeral_db_connection_context()",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return _ephemeral_db_connection_raw()
+
+
+def _ephemeral_db_connection_raw():
+    """Raw ephemeral connection factory — no safety net.
+
+    Callers should prefer :func:`ephemeral_db_connection_context` instead.
+    Exposed only so the context manager does not duplicate ``psycopg2.connect`` logic.
     """
     return psycopg2.connect(**get_db_connect_kwargs())
 
 
 @contextmanager
-def get_ephemeral_db_connection_context():
+def ephemeral_db_connection_context():
     """
     One-off connection: opens with ``get_db_connect_kwargs()`` and **closes the TCP session** on exit
     (does not return to ThreadedConnectionPool). For infrequent jobs; see module docstring.
     """
-    conn = get_ephemeral_db_connection()
+    conn = _ephemeral_db_connection_raw()
     try:
         yield conn
     finally:

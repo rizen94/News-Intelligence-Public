@@ -7,7 +7,7 @@ import requests
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Optional, Any
 import time
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ class GDELTRAGService:
         self.timeout = 30
         self.rate_limit_delay = 1  # seconds between requests
         
-    def get_event_timeline(self, query: str, days_back: int = 7) -> Dict[str, Any]:
+    def get_event_timeline(self, query: str, days_back: int = 7) -> dict[str, Any]:
         """
         Get GDELT event timeline for a query
         
@@ -29,7 +29,7 @@ class GDELTRAGService:
             days_back: Number of days to look back
             
         Returns:
-            Dict containing timeline data and events
+            dict containing timeline data and events
         """
         try:
             # Calculate date range
@@ -85,7 +85,7 @@ class GDELTRAGService:
             logger.error(f"Error processing GDELT timeline: {e}")
             return {"error": f"Error processing GDELT timeline: {str(e)}"}
     
-    def get_entity_context(self, entity: str, entity_type: str = "person") -> Dict[str, Any]:
+    def get_entity_context(self, entity: str, entity_type: str = "person") -> dict[str, Any]:
         """
         Get GDELT context for a specific entity
         
@@ -94,7 +94,7 @@ class GDELTRAGService:
             entity_type: Type of entity (person, org, location, theme)
             
         Returns:
-            Dict containing entity context and related events
+            dict containing entity context and related events
         """
         try:
             # Build entity-specific query
@@ -131,16 +131,16 @@ class GDELTRAGService:
             logger.error(f"Error getting entity context for {entity}: {e}")
             return {"error": f"Error getting entity context: {str(e)}"}
     
-    def get_background_context(self, keywords: List[str], article_date: str = None) -> Dict[str, Any]:
+    def get_background_context(self, keywords: list[str], article_date: str = None) -> dict[str, Any]:
         """
         Get background context for an article using GDELT data
         
         Args:
-            keywords: List of keywords from the article
+            keywords: list of keywords from the article
             article_date: Publication date of the article
             
         Returns:
-            Dict containing background context and historical events
+            dict containing background context and historical events
         """
         try:
             # Combine keywords into query
@@ -170,7 +170,7 @@ class GDELTRAGService:
             logger.error(f"Error getting background context: {e}")
             return {"error": f"Error getting background context: {str(e)}"}
     
-    def _process_gdelt_events(self, articles: List[Dict]) -> List[Dict]:
+    def _process_gdelt_events(self, articles: list[dict]) -> list[dict]:
         """Process raw GDELT articles into structured events"""
         processed_events = []
         
@@ -196,7 +196,7 @@ class GDELTRAGService:
         
         return processed_events
     
-    def _generate_timeline_summary(self, events: List[Dict]) -> Dict[str, Any]:
+    def _generate_timeline_summary(self, events: list[dict]) -> dict[str, Any]:
         """Generate a summary of the timeline events"""
         if not events:
             return {"summary": "No events found", "key_points": []}
@@ -230,7 +230,7 @@ class GDELTRAGService:
             "average_tone": sum(event.get("tone", 0) for event in events) / len(events) if events else 0
         }
     
-    def _extract_sources(self, events: List[Dict]) -> List[Dict]:
+    def _extract_sources(self, events: list[dict]) -> list[dict]:
         """Extract and analyze source information"""
         source_counts = {}
         for event in events:
@@ -240,7 +240,7 @@ class GDELTRAGService:
         
         return [{"source": source, "count": count} for source, count in source_counts.items()]
     
-    def _count_entity_mentions(self, events: List[Dict], entity: str) -> int:
+    def _count_entity_mentions(self, events: list[dict], entity: str) -> int:
         """Count mentions of a specific entity across events"""
         mentions = 0
         for event in events:
@@ -249,7 +249,7 @@ class GDELTRAGService:
                 mentions += 1
         return mentions
     
-    def _extract_related_entities(self, events: List[Dict]) -> List[str]:
+    def _extract_related_entities(self, events: list[dict]) -> list[str]:
         """Extract related entities from events"""
         all_entities = []
         for event in events:
@@ -263,7 +263,7 @@ class GDELTRAGService:
         # Return top entities
         return [entity for entity, count in sorted(entity_counts.items(), key=lambda x: x[1], reverse=True)[:10]]
     
-    def _analyze_entity_sentiment(self, events: List[Dict]) -> Dict[str, Any]:
+    def _analyze_entity_sentiment(self, events: list[dict]) -> dict[str, Any]:
         """Analyze sentiment for entity mentions"""
         sentiments = [event.get("tone", 0) for event in events if event.get("tone")]
         
@@ -283,7 +283,7 @@ class GDELTRAGService:
             "total": len(sentiments)
         }
     
-    def _analyze_geographic_distribution(self, events: List[Dict]) -> Dict[str, Any]:
+    def _analyze_geographic_distribution(self, events: list[dict]) -> dict[str, Any]:
         """Analyze geographic distribution of events"""
         countries = {}
         for event in events:
@@ -296,13 +296,13 @@ class GDELTRAGService:
             "total_countries": len(countries)
         }
     
-    def _identify_key_events(self, events: List[Dict]) -> List[Dict]:
+    def _identify_key_events(self, events: list[dict]) -> list[dict]:
         """Identify key events based on relevance and tone"""
         # Sort by relevance score and tone magnitude
         key_events = sorted(events, key=lambda x: (x.get("relevance_score", 0), abs(x.get("tone", 0))), reverse=True)
         return key_events[:5]  # Top 5 key events
     
-    def _analyze_trends(self, events: List[Dict]) -> Dict[str, Any]:
+    def _analyze_trends(self, events: list[dict]) -> dict[str, Any]:
         """Analyze trends in the timeline"""
         if not events:
             return {"trend": "stable", "description": "No events to analyze"}
@@ -340,7 +340,7 @@ class GDELTRAGService:
             "change_percentage": ((late_count - early_count) / early_count * 100) if early_count > 0 else 0
         }
     
-    def _generate_background_summary(self, timeline_data: Dict[str, Any]) -> str:
+    def _generate_background_summary(self, timeline_data: dict[str, Any]) -> str:
         """Generate a background summary from timeline data"""
         summary = timeline_data.get("summary", {})
         total_events = summary.get("total_events", 0)
@@ -352,7 +352,7 @@ class GDELTRAGService:
         theme_list = ", ".join([theme["theme"] for theme in top_themes[:3]])
         return f"Found {total_events} related events over the past 30 days. Key themes include: {theme_list}."
     
-    def _identify_related_stories(self, events: List[Dict]) -> List[Dict]:
+    def _identify_related_stories(self, events: list[dict]) -> list[dict]:
         """Identify related stories from the timeline"""
         # Sort by relevance and return top stories
         related_stories = sorted(events, key=lambda x: x.get("relevance_score", 0), reverse=True)

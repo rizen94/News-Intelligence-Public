@@ -7,7 +7,7 @@ instead of creating new ones for the same topic.
 
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
+from typing import Any, Optional
 from .connection import get_db_connection
 from .db_availability import is_database_ready
 
@@ -22,7 +22,7 @@ class StorylineMerger:
         """Initialize the StorylineMerger."""
         self.db_ready = is_database_ready()
     
-    def find_existing_storyline(self, topic: str, source: str = None) -> Optional[Dict[str, Any]]:
+    def find_existing_storyline(self, topic: str, source: str = None) -> Optional[dict[str, Any]]:
         """
         Find an existing storyline for a given topic.
         
@@ -141,7 +141,7 @@ class StorylineMerger:
             logger.error(f"Error creating new storyline: {e}")
             return None
     
-    def merge_storylines(self, topic: str, new_content: str, new_source: str) -> Dict[str, Any]:
+    def merge_storylines(self, topic: str, new_content: str, new_source: str) -> dict[str, Any]:
         """
         Merge new content into existing storyline or create a new one if none exists.
         
@@ -207,7 +207,7 @@ class StorylineMerger:
                 'message': f'Error merging storylines: {str(e)}'
             }
     
-    def get_storyline_status(self, storyline_id: int) -> Optional[Dict[str, Any]]:
+    def get_storyline_status(self, storyline_id: int) -> Optional[dict[str, Any]]:
         """
         Get status information for a specific storyline.
         
@@ -247,7 +247,7 @@ class StorylineMerger:
             logger.error(f"Error getting storyline status: {e}")
             return None
 
-    def get_recent_storylines(self, limit: int = 10) -> List[Dict[str, Any]]:
+    def get_recent_storylines(self, limit: int = 10) -> list[dict[str, Any]]:
         """
         Get a list of recent storylines.
         

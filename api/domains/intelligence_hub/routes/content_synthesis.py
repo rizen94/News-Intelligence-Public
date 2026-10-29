@@ -6,7 +6,7 @@ Provides endpoints for creating comprehensive, Wikipedia-style synthesized conte
 import logging
 import threading
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
 from fastapi.responses import StreamingResponse
@@ -358,7 +358,7 @@ synthesis_tasks: dict[str, dict[str, Any]] = {}
 
 @router.post("/{domain}/synthesis/storylines/bulk", response_model=dict[str, Any])
 async def bulk_synthesize_storylines(
-    storyline_ids: list[int] = Body(..., min_items=1, max_items=20),
+    storyline_ids: Annotated[list[int], Field(min_length=1, max_length=20)] = Body(...),
     depth: str = Body("standard"),
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     background_tasks: BackgroundTasks = None,

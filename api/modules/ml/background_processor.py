@@ -8,7 +8,7 @@ import time
 import logging
 import psycopg2
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Optional, Any
 from queue import Queue, Empty
 import json
 
@@ -21,7 +21,7 @@ class BackgroundMLProcessor:
     Background processor for ML operations with timing tracking
     """
     
-    def __init__(self, db_config: Dict[str, str], ollama_url: str | None = None):
+    def __init__(self, db_config: dict[str, str], ollama_url: str | None = None):
         """
         Initialize the background ML processor
         
@@ -126,7 +126,7 @@ class BackgroundMLProcessor:
                 logger.error(f"Error in queue monitor: {e}")
                 time.sleep(10)
     
-    def _process_task(self, task: Dict[str, Any]):
+    def _process_task(self, task: dict[str, Any]):
         """Process a single ML task"""
         queue_id = task['queue_id']
         article_id = task['article_id']
@@ -209,7 +209,7 @@ class BackgroundMLProcessor:
             # Update statistics
             self._update_stats(0, False)
     
-    def _execute_ml_operation(self, operation_type: str, article_data: Dict, model_name: str) -> Dict:
+    def _execute_ml_operation(self, operation_type: str, article_data: dict, model_name: str) -> dict:
         """Execute the specific ML operation"""
         content = article_data.get('content', '')
         title = article_data.get('title', '')
@@ -276,7 +276,7 @@ class BackgroundMLProcessor:
             logger.error(f"Error queueing article {article_id}: {e}")
             raise
     
-    def get_processing_status(self, article_id: int = None) -> Dict[str, Any]:
+    def get_processing_status(self, article_id: int = None) -> dict[str, Any]:
         """Get processing status for articles or specific article"""
         try:
             with psycopg2.connect(**self.db_config) as conn:
@@ -342,7 +342,7 @@ class BackgroundMLProcessor:
             logger.error(f"Error getting processing status: {e}")
             return {'error': str(e)}
     
-    def get_queue_status(self) -> Dict[str, Any]:
+    def get_queue_status(self) -> dict[str, Any]:
         """Get current queue status"""
         try:
             with psycopg2.connect(**self.db_config) as conn:
@@ -385,7 +385,7 @@ class BackgroundMLProcessor:
             return {'error': str(e)}
     
     # Database helper methods
-    def _get_queued_tasks(self) -> List[Dict]:
+    def _get_queued_tasks(self) -> list[dict]:
         """Get queued tasks from database"""
         try:
             with psycopg2.connect(**self.db_config) as conn:
@@ -419,7 +419,7 @@ class BackgroundMLProcessor:
         # This is a simplified check - in production, you'd want a more robust solution
         return False
     
-    def _get_article_data(self, article_id: int) -> Optional[Dict]:
+    def _get_article_data(self, article_id: int) -> Optional[dict]:
         """Get article data from database"""
         try:
             with psycopg2.connect(**self.db_config) as conn:
@@ -470,7 +470,7 @@ class BackgroundMLProcessor:
             logger.error(f"Error updating article processing status: {e}")
     
     def _update_article_with_results(self, article_id: int, operation_type: str, 
-                                   result: Dict, duration: float, model_name: str):
+                                   result: dict, duration: float, model_name: str):
         """Update article with ML processing results"""
         try:
             with psycopg2.connect(**self.db_config) as conn:
@@ -523,7 +523,7 @@ class BackgroundMLProcessor:
     
     def _log_processing_completion(self, article_id: int, operation_type: str, 
                                  model_name: str, start_time: float, end_time: float, 
-                                 duration: float, result: Dict):
+                                 duration: float, result: dict):
         """Log processing completion to database"""
         try:
             with psycopg2.connect(**self.db_config) as conn:
@@ -548,7 +548,7 @@ class BackgroundMLProcessor:
         except Exception as e:
             logger.error(f"Error logging processing completion: {e}")
     
-    def _update_queue_status(self, queue_id: int, status: str, result: Dict = None, error: str = None):
+    def _update_queue_status(self, queue_id: int, status: str, result: dict = None, error: str = None):
         """Update queue item status"""
         try:
             with psycopg2.connect(**self.db_config) as conn:

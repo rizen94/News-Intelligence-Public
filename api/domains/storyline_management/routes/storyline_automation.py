@@ -4,7 +4,7 @@ API endpoints for managing RAG-enhanced article discovery and automation control
 """
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Path, Query, Body
-from typing import List, Dict, Any, Optional
+from typing import Any, Optional
 from datetime import datetime, timedelta
 import logging
 import json
@@ -265,7 +265,7 @@ async def get_domain_automation_settings(
 async def update_domain_automation_settings(
     domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
     storyline_id: int = Path(..., description="Storyline ID"),
-    settings: Dict[str, Any] = Body(...)
+    settings: dict[str, Any] = Body(...)
 ):
     """Update automation settings for a storyline in a specific domain"""
     try:

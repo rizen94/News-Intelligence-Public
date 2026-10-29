@@ -7,7 +7,7 @@ import requests
 import json
 import logging
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ class MLSummarizationService:
             logger.error(f"❌ Ollama API error: {e}")
             return ""
     
-    def generate_summary(self, article_content: str, article_title: str = None) -> Dict[str, any]:
+    def generate_summary(self, article_content: str, article_title: str = None) -> dict[str, any]:
         """
         Generate a concise summary of an article
         
@@ -171,7 +171,7 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 "error": str(e)
             }
     
-    def extract_key_points(self, article_content: str, article_title: str = None) -> Dict[str, any]:
+    def extract_key_points(self, article_content: str, article_title: str = None) -> dict[str, any]:
         """
         Extract key points from an article
         
@@ -243,7 +243,7 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 "error": str(e)
             }
     
-    def analyze_arguments(self, article_content: str, article_title: str = None) -> Dict[str, any]:
+    def analyze_arguments(self, article_content: str, article_title: str = None) -> dict[str, any]:
         """
         Analyze arguments and perspectives in controversial content
         
@@ -301,7 +301,7 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 "error": str(e)
             }
 
-    def analyze_sentiment(self, article_content: str) -> Dict[str, any]:
+    def analyze_sentiment(self, article_content: str) -> dict[str, any]:
         """
         Analyze sentiment of an article
         
@@ -378,7 +378,7 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 "error": str(e)
             }
     
-    def get_service_status(self) -> Dict[str, any]:
+    def get_service_status(self) -> dict[str, any]:
         """
         Get the current status of the ML service
         
@@ -422,12 +422,12 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 "error": str(e)
             }
     
-    def summarize_articles(self, articles: List[Dict]) -> Dict[str, any]:
+    def summarize_articles(self, articles: list[dict]) -> dict[str, any]:
         """
         Summarize multiple articles for storyline analysis
         
         Args:
-            articles: List of article dictionaries with title, content, source
+            articles: list of article dictionaries with title, content, source
             
         Returns:
             Dictionary containing summary and analysis results

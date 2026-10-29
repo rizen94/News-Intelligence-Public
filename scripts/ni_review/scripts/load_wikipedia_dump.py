@@ -63,7 +63,7 @@ def _stream_download(url: str, dest: str) -> str:
 
 
 def load_into_db(
-    rows: Generator[Dict[str, Any], None, None],
+    rows: Generator[dict[str, Any], None, None],
     batch_size: int = BATCH_SIZE_DEFAULT,
     conn=None,
 ) -> int:

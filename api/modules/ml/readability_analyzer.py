@@ -7,7 +7,7 @@ import logging
 import json
 import time
 import re
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Optional, Any
 from datetime import datetime
 import requests
 from dataclasses import dataclass
@@ -46,7 +46,7 @@ class QualityMetrics:
     writing_style: str
     content_type: str
     target_audience: str
-    recommendations: List[str]
+    recommendations: list[str]
     model_used: str
     processing_time: float
     local_processing: bool = True
@@ -489,7 +489,7 @@ Guidelines:
             logger.error(f"Error calling Ollama: {e}")
             raise
     
-    def _parse_quality_response(self, response: str) -> Dict[str, Any]:
+    def _parse_quality_response(self, response: str) -> dict[str, Any]:
         """Parse Ollama response and extract quality data"""
         try:
             # Try to find JSON in response
@@ -524,7 +524,7 @@ Guidelines:
             logger.error(f"Error parsing quality response: {e}")
             return self._fallback_quality_parse(response)
     
-    def _fallback_quality_parse(self, response: str) -> Dict[str, Any]:
+    def _fallback_quality_parse(self, response: str) -> dict[str, Any]:
         """Fallback parsing when JSON parsing fails"""
         return {
             'overall_quality_score': 0.5,
@@ -547,7 +547,7 @@ Guidelines:
         self.cache.clear()
         logger.info("Readability analysis cache cleared")
     
-    def get_cache_stats(self) -> Dict[str, Any]:
+    def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics"""
         return {
             "cache_size": len(self.cache),

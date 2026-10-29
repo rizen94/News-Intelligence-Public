@@ -30,7 +30,7 @@ import logging
 import os
 import sys
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, Generator, Optional
+from typing import Any, Generator, Optional
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ def _stream_download(url: str, dest: str) -> str:
 
 
 def load_into_db(
-    rows: Generator[Dict[str, Any], None, None],
+    rows: Generator[dict[str, Any], None, None],
     batch_size: int = BATCH_SIZE_DEFAULT,
     conn=None,
 ) -> int:

@@ -380,33 +380,9 @@ class StorylineAutomationService(DomainAwareService):
                     suggestions_count = 0
                     added_count = 0
                     if automation_mode == "auto_approve":
-                        from shared.assembly_link_funnel import automation_auto_attach_enabled
-
-                        if not automation_auto_attach_enabled():
-                            # Soft-bag absorb off by default — queue suggestions only.
-                            store_result = await self._store_suggestions(
-                                conn,
-                                storyline_id,
-                                discovered_articles,
-                                settings,
-                                search_query,
-                            )
-                            if isinstance(store_result, dict):
-                                suggestions_count = int(store_result.get("stored", 0))
-                                store_filter_stats = store_result.get("skip_reasons") or {}
-                            else:
-                                suggestions_count = int(store_result or 0)
-                            added_count = 0
-                            logger.info(
-                                "Storyline %s auto_approve with AUTO_ATTACH off — "
-                                "stored %s suggestions (no silent absorb)",
-                                storyline_id,
-                                suggestions_count,
-                            )
-                        else:
-                            added_count = await self._auto_add_articles(
-                                conn, storyline_id, discovered_articles, settings
-                            )
+                        added_count = await self._auto_add_articles(
+                            conn, storyline_id, discovered_articles, settings
+                        )
                     else:
                         store_result = await self._store_suggestions(
                             conn, storyline_id, discovered_articles, settings, search_query
@@ -1519,4 +1495,60 @@ class StorylineAutomationService(DomainAwareService):
         except Exception as e:
             logger.error(f"Error auto-adding articles: {e}")
             conn.rollback()
-            return 0
+
+    async def _cleanup_expired_suggestions(self) -> dict:
+        """
+        Bulk-update status of expired pending article suggestions to 'expired'.
+
+        Run this periodically (e.g., during each ``storyline_review_agent`` phase)
+        so that stale rows in ``storyline_article_suggestions`` do not block or
+        pollute downstream processing.
+
+        Returns a dict with cleanup stats: ``{'expired': N, 'query_time_ms': X}``.
+        """
+        cleanup_result = {"expired": 0, "query_time_ms": 0}
+        batch_size = settings.get("ttl_cleanup_batch_size", 1000)
+
+        try:
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+
+                # Count stale items before cleanup (for logging/monitoring)
+                count_cur = conn.cursor()
+                count_rows = count_cur.execute(
+                    "SELECT count(*) FROM pipeline.storyline_article_suggestions WHERE status = 'pending' AND expires_at < NOW()"
+                )
+                stale_before = count_rows.fetchone()[0] if count_rows else 0
+
+                # Batch-update to avoid long lock tables and large WAL
+                updated = 0
+                while True:
+                    update_cur = conn.cursor()
+                    update_cur.execute(
+                        """
+                        UPDATE pipeline.storyline_article_suggestions
+                        SET status = 'expired'
+                        WHERE ctid IN (
+                            SELECT ctid FROM pipeline.storyline_article_suggestions
+                            WHERE status = 'pending' AND expires_at < NOW()
+                            LIMIT %s
+                        )
+                        """,
+                        [batch_size],
+                    )
+                    updated += update_cur.rowcount
+                    conn.commit()
+                    if update_cur.rowcount == 0 or updated >= stale_before:
+                        break
+
+                cleanup_result["expired"] = updated
+                logger.info(
+                    "TTL cleanup: expired %d / ~%d stale storyline_article_suggestions (batch_size=%d)",
+                    updated, stale_before, batch_size,
+                )
+                count_cur.close()
+                cur.close()
+        except Exception as exc:
+            logger.error("TTL cleanup failed: %s", exc)
+
+        return cleanup_result
