@@ -29,6 +29,7 @@ from domains.content_analysis.services.topic_clustering_service import (
 )
 from modules.ml.entity_extractor import LocalEntityExtractor
 from shared.services.llm_service import LLMService
+from shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED
 
 logger = logging.getLogger(__name__)
 
@@ -141,9 +142,9 @@ class LLMTopicExtractor:
                         f"""
                         INSERT INTO {self.schema}.topic_extraction_queue
                             (article_id, status, priority, retry_count, next_retry_at, last_error, created_at)
-                        VALUES (%s, 'pending', %s, %s, %s, %s, NOW())
+                        VALUES (%s, '{QUEUE_PENDING}', %s, %s, %s, %s, NOW())
                         ON CONFLICT (article_id) DO UPDATE SET
-                            status = 'pending',
+                            status = '{QUEUE_PENDING}',
                             priority = GREATEST({self.schema}.topic_extraction_queue.priority, %s),
                             retry_count = %s,
                             next_retry_at = %s,

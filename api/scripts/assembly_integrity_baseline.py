@@ -43,6 +43,7 @@ def _schemas() -> list[tuple[str, str]]:
 def run_baseline() -> dict[str, Any]:
     from shared.database.connection import get_db_connection_context
     from shared.episode_attach_gate import episode_container_assembly_enabled
+    from shared.pipeline_state_constants import ARTICLE_FAILED, ARTICLE_INACCESSIBLE
 
     assembly_on = bool(episode_container_assembly_enabled())
     schemas = _schemas()
@@ -190,7 +191,7 @@ def run_baseline() -> dict[str, Any]:
                                 OR a.content ILIKE '%%access denied%%'
                                 OR a.content ILIKE '%%enable javascript%%'
                                 OR a.content ILIKE '%%subscribe%%'
-                                OR a.enrichment_status IN ('failed','inaccessible','removed')
+                                OR a.enrichment_status IN ( '{ARTICLE_FAILED}', '{ARTICLE_INACCESSIBLE}', 'removed' )
                            )::int
                     FROM intelligence.event_episode_links eel
                     JOIN public.chronological_events ce ON ce.id = eel.event_id

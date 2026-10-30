@@ -609,6 +609,7 @@ def _apply_rss_source_credibility(
 # Use shared pool (run with api as cwd or PYTHONPATH=api)
 from shared.database.connection import get_db_config
 from shared.database.connection import get_db_connection as _get_conn
+from shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED
 
 
 def get_db_connection():
@@ -2017,8 +2018,8 @@ def collect_rss_feeds() -> int:
                                             f"""
                                             INSERT INTO {schema_name}.topic_extraction_queue
                                             (article_id, status, priority, created_at)
-                                            VALUES (%s, 'pending', 2, NOW())
-                                            ON CONFLICT (article_id) DO UPDATE SET status = 'pending', priority = 2, created_at = NOW()
+                                            VALUES (%s, '{QUEUE_PENDING}', 2, NOW())
+                                            ON CONFLICT (article_id) DO UPDATE SET status = '{QUEUE_PENDING}', priority = 2, created_at = NOW()
                                         """,
                                             (existing_id,),
                                         )
@@ -2173,7 +2174,7 @@ def collect_rss_feeds() -> int:
                                         f"""
                                         INSERT INTO {schema_name}.topic_extraction_queue
                                         (article_id, status, priority, created_at)
-                                        VALUES (%s, 'pending', 2, NOW())
+                                        VALUES (%s, '{QUEUE_PENDING}', 2, NOW())
                                         ON CONFLICT (article_id) DO NOTHING
                                     """,
                                         (article_id,),
@@ -2624,7 +2625,7 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                             f"""
                             INSERT INTO {schema_name}.topic_extraction_queue
                             (article_id, status, priority, created_at)
-                            VALUES (%s, 'pending', 2, NOW())
+                            VALUES (%s, '{QUEUE_PENDING}', 2, NOW())
                             ON CONFLICT (article_id) DO NOTHING
                         """,
                             (article_id,),

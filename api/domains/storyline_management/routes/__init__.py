@@ -17,7 +17,7 @@ from .storyline_assembly import router as assembly_router
 from .storyline_analysis import router as analysis_router
 from .storyline_articles import router as articles_router
 from .storyline_automation import router as automation_router
-from .storyline_automation_bulk import router as automation_bulk_router
+from .storyline_automation_bulk import register_bulk_routes
 from .storyline_consolidation import router as consolidation_router
 from .storyline_crud import router as crud_router
 from .storyline_discovery import router as discovery_router
@@ -50,7 +50,9 @@ router.include_router(analysis_router)
 router.include_router(timeline_router)
 router.include_router(helpers_router)
 router.include_router(watchlist_router)
-router.include_router(automation_bulk_router)
+
+# Register bulk routes (uses register_bulk_routes(router) pattern)
+register_bulk_routes(router)
 
 # Export background tasks for use in other modules
 __all__ = ["router", "trigger_storyline_evolution", "perform_rag_analysis_background"]

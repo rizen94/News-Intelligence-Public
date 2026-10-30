@@ -495,6 +495,21 @@ def write_or_refresh_expansion(
             "Keep it self-contained with enough background for a first-time reader."
         )
 
+    # Priority 2: Inject quality signals into expansion prompt so LLM calibrates tone/depth.
+    qscore_str = ""
+    if lead.get("quality_score") is not None:
+        qs = float(lead["quality_score"])
+        qlevel = "high" if qs >= 0.85 else ("mid" if qs >= 0.40 else "low")
+        qscore_str = f"""\
+Quality score: {qs:.3f} ({qlevel})\
+"""
+
+    ac = lead.get("article_count", 0)
+    art_count_str = f"Article count (sources): {ac}\n" if ac is not None else ""
+
+    phase = str(lead.get("narrative_gate_phase") or "").strip().lower()
+    phase_str = f"Narrative phase: {phase}\n" if phase else ""
+
     # Mirror narrative-finisher desk quality: update + background + opinions.
     # Do NOT emit ---JSON--- or code fences — expansions are reader prose only.
     prompt = f"""You are a senior news desk analyst writing a reader-facing EXPANSION.
@@ -529,6 +544,8 @@ Rules:
 - No ---JSON---, no code fences, no raw HTML, no inventory dumps.
 - Label web corroboration clearly when using Web evidence.
 
+Quality signals:
+{qscore_str}{art_count_str}{phase_str}
 Storyline: {title}
 Domain: {domain_key}
 Lane: {briefing_lane}

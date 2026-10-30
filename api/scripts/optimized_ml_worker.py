@@ -30,6 +30,7 @@ class OptimizedMLWorker:
         self.max_workers = max_workers
         self.batch_size = batch_size
         from shared.database.connection import get_db_config
+        from shared.pipeline_state_constants import ML_PENDING, ML_RUNNING, ML_COMPLETED, ML_FAILED
 
         self.db_config = get_db_config()
         self.is_running = False
@@ -307,10 +308,10 @@ class OptimizedMLWorker:
             cursor = conn.cursor()
 
             cursor.execute(
-                """
+                f"""
                 SELECT id, title, content, source, created_at
                 FROM articles
-                WHERE processing_status = 'processing'
+                WHERE processing_status = '{ML_RUNNING}'
                 ORDER BY created_at ASC
                 LIMIT %s
             """,

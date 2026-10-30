@@ -1281,6 +1281,21 @@ class StorylineAutomationService(DomainAwareService):
                     else:
                         matched = [str(matched_raw)]
 
+                    # Compute keyword_score from actual match signal (not just relevance copy)
+                    article_kw = article.get("keyword_score")
+                    if article_kw is not None:
+                        # RAG path already computed rank-based keyword score — use it directly
+                        kw_score = float(article_kw)
+                    elif matched:
+                        # Entity extraction found real matches — score proportionally
+                        mc = len(matched)
+                        kw_score = min(0.65 + (mc - 1) * 0.08, 0.97)
+                    else:
+                        # No match signal — fall back to relevance as proxy
+                        kw_score = relevance
+
+                    kw_score = round(kw_score, 2)
+
                     reasoning = f"Matched search query: {search_query[:200]}"
                     if matched:
                         reasoning = (
@@ -1312,7 +1327,7 @@ class StorylineAutomationService(DomainAwareService):
                                 article.get("id"),
                                 round(relevance, 2),
                                 round(semantic, 2),
-                                round(relevance, 2),
+                                kw_score,
                                 round(quality, 2),
                                 round(combined, 2),
                                 reasoning,

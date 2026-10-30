@@ -28,6 +28,7 @@ from shared.services.domain_aware_service import (
 )
 from config.settings import MODELS
 from shared.services.llm_service import TaskType, llm_service
+from shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED
 
 logger = logging.getLogger(__name__)
 
@@ -954,23 +955,23 @@ async def get_clustering_status(domain: str = Path(..., pattern=DOMAIN_PATH_PATT
                 last_clustering = cur.fetchone()[0]
 
                 # Get queue statistics
-                queue_stats = {"pending": 0, "processing": 0, "completed": 0, "failed": 0}
+                queue_stats = {QUEUE_PENDING: 0, QUEUE_PROCESSING: 0, QUEUE_COMPLETED: 0, QUEUE_FAILED: 0}
                 try:
                     cur.execute(f"""
                         SELECT
-                            COUNT(*) FILTER (WHERE status = 'pending') as pending,
-                            COUNT(*) FILTER (WHERE status = 'processing') as processing,
-                            COUNT(*) FILTER (WHERE status = 'completed') as completed,
-                            COUNT(*) FILTER (WHERE status = 'failed') as failed
+                            COUNT(*) FILTER (WHERE status = '{QUEUE_PENDING}') as pending,
+                            COUNT(*) FILTER (WHERE status = '{QUEUE_PROCESSING}') as processing,
+                            COUNT(*) FILTER (WHERE status = '{QUEUE_COMPLETED}') as completed,
+                            COUNT(*) FILTER (WHERE status = '{QUEUE_FAILED}') as failed
                         FROM {schema}.topic_extraction_queue
                     """)
                     row = cur.fetchone()
                     if row:
                         queue_stats = {
-                            "pending": row[0] or 0,
-                            "processing": row[1] or 0,
-                            "completed": row[2] or 0,
-                            "failed": row[3] or 0,
+                            QUEUE_PENDING: row[0] or 0,
+                            QUEUE_PROCESSING: row[1] or 0,
+                            QUEUE_COMPLETED: row[2] or 0,
+                            QUEUE_FAILED: row[3] or 0,
                         }
                 except Exception:
                     # Table might not exist yet (migration not applied)
@@ -2433,7 +2434,7 @@ async def process_article_clustering(
                         cur.execute(f"SET search_path TO {schema}, public")
                         cur.execute(f"""
                             SELECT COUNT(*) FROM {schema}.topic_extraction_queue
-                            WHERE status = 'pending'
+                            WHERE status = '{QUEUE_PENDING}'
                         """)
                         queued_count = cur.fetchone()[0] or 0
                         if queued_count > 0:

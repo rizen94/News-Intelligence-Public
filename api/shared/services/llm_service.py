@@ -960,28 +960,55 @@ Storyline context:
             ):
                 # Walkthrough / longform must land in ``response``, not a thinking channel.
                 payload["think"] = False
-            response = await client.post(
-                f"{base_url}/api/generate",
-                json=payload,
-                headers=ollama_priority_headers(),
-            )
 
-            if response.status_code == 200:
-                result = response.json()
-                await cb._record_success()
-                return _ollama_generate_text(result)
-            if response.status_code in (502, 503, 504):
-                raise Exception(f"{cb_key} overloaded (HTTP {response.status_code})")
-            await cb._record_failure()
-            raise Exception(f"{cb_key} API error: {response.status_code} - {response.text}")
+        except ImportError as e:
+            raise Exception(f"Failed to load model policy for {model}: {e}") from e
+        backoff_base = 1.0
+        backoff_max = 30.0
+        max_retries = getattr(self, 'max_retries', 2)
+        backoff_multiplier = getattr(self, 'backoff_multiplier', 2.0)
+        jitter = random.uniform(0, 1)
 
-        except httpx.TimeoutException:
-            # Overload, not host-down: do not trip the breaker. Callers requeue/trickle.
-            raise Exception(f"{cb_key} overloaded (request timed out)")
-        except httpx.ConnectError:
-            # Host unreachable: hard shed so we pause intake instead of retry-storming.
-            await cb.trip_open(f"ConnectError to {base_url}")
-            raise Exception(f"Cannot connect to {cb_key} service")
+        try:
+            for attempt in range(max_retries):
+                try:
+                    response = await client.post(
+                        f"{base_url}/api/generate",
+                        json=payload,
+                        headers=ollama_priority_headers(),
+                    )
+                    if response.status_code == 200:
+                        await cb._record_success()
+                        return _ollama_generate_text(response.json())
+
+                    # --- P0 FIX: Record failure before raising so CB sees overload errors ---
+                    if response.status_code in (502, 503, 504):
+                        await cb._record_failure()
+                        delay = min(backoff_base * (backoff_multiplier ** attempt), backoff_max) * (1 + jitter)
+                        logger.warning("Overload HTTP %s recorded; backing off %.1fs (attempt %d)", response.status_code, delay, attempt)
+                        await asyncio.sleep(delay)  # --- P1 FIX: jittered exponential backoff for overload ---
+                        continue
+
+                    await cb._record_failure()
+                    raise Exception(f"{cb_key} API error: {response.status_code} - {response.text[:500]}")
+
+                except httpx.TimeoutException:
+                    # P0 FIX: record failure on timeout too (gradual degradation detection)
+                    await cb._record_failure()
+                    delay = min(backoff_base * (backoff_multiplier ** attempt), backoff_max) * (1 + jitter)
+                    logger.warning("Timeout recorded as failure; backing off %.1fs (attempt %d)", delay, attempt)
+                    await asyncio.sleep(delay)  # P1 FIX: jittered exponential backoff
+                    continue
+
+                except httpx.ConnectError:
+                    # Host unreachable: hard shed so we pause intake instead of retry-storming.
+                    await cb.trip_open(f"ConnectError to {base_url}")
+                    raise Exception(f"Cannot connect to {cb_key} service")
+
+            # Exhausted retries — trip breaker open to prevent further retry storms
+            await cb.trip_open("Exhausted LLM retries — overload")
+            raise Exception(f"{cb_key} Exhausted LLM retries — overload")
+
         except Exception as e:
             msg = str(e).lower()
             if (

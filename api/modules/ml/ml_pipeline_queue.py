@@ -13,6 +13,7 @@ import json
 
 from .ml_queue_manager import MLQueueManager, MLTask, TaskType, TaskPriority
 from .timeline_generator import TimelineGenerator
+from shared.pipeline_state_constants import ML_COMPLETED, ML_FAILED
 
 logger = logging.getLogger(__name__)
 
@@ -365,7 +366,7 @@ class MLPipelineQueue:
             cur.execute(f"""
                 SELECT id, title, content, summary, source, published_at, category
                 FROM articles
-                WHERE {where_clause} AND processing_status = 'completed'
+                WHERE {where_clause} AND processing_status = ML_COMPLETED
                 ORDER BY published_at DESC
                 LIMIT 100
             """, params)
@@ -447,13 +448,13 @@ class MLPipelineQueue:
                 SELECT 
                     task_type,
                     COUNT(*) as total_tasks,
-                    COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_tasks,
-                    COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_tasks,
+                    COUNT(CASE WHEN status = %s THEN 1 END) as completed_tasks,
+                    COUNT(CASE WHEN status = %s THEN 1 END) as failed_tasks,
                     AVG(EXTRACT(EPOCH FROM (completed_at - started_at))) as avg_duration
                 FROM ml_task_queue
-                WHERE created_at >= NOW() - INTERVAL '24 hours'
+                WHERE created_at >= NOW() - (%s || ' hours')::interval
                 GROUP BY task_type
-            """)
+            """, (ML_COMPLETED, ML_FAILED, 24))
             
             task_stats = {}
             for row in cur.fetchall():

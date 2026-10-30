@@ -84,6 +84,17 @@ from shared.domain_registry import (
     resolve_domain_schema,
     schema_to_primary_domain_key,
 )
+from shared.pipeline_state_constants import (
+    ARTICLE_ENRICHED,
+    ARTICLE_FAILED,
+    ARTICLE_INACCESSIBLE,
+    ARTICLE_PENDING,
+    ML_COMPLETED,
+    PIPELINE_PHASES,
+    PHASE_GROUP,
+    QUEUE_PENDING,
+    QUEUE_FAILED,
+)
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -399,10 +410,10 @@ def research_llm_backlog_pending(*, max_age_s: float = 60.0) -> int:
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """
+                    f"""
                     SELECT count(*)::bigint
                     FROM intelligence.research_paper_profiles
-                    WHERE extraction_status IN ('pending', 'failed')
+                    WHERE extraction_status IN ({ARTICLE_PENDING!r}, {ARTICLE_FAILED!r})
                     """
                 )
                 row = cur.fetchone()
@@ -7037,7 +7048,7 @@ class AutomationManager:
                             LENGTH(a.content) >= 500
                             OR a.created_at < NOW() - INTERVAL '2 hours'
                             OR COALESCE(a.enrichment_status, '') IN (
-                                'enriched', 'failed', 'inaccessible'
+                                {ARTICLE_ENRICHED!r}, {ARTICLE_FAILED!r}, {ARTICLE_INACCESSIBLE!r}
                             )
                           )
                           {pass_clause}
@@ -7263,8 +7274,8 @@ class AutomationManager:
                               AND a.content IS NOT NULL
                               AND LENGTH(a.content) > 100
                               AND (
-                                  a.processing_status = 'completed'
-                                  OR a.enrichment_status IN ('completed', 'enriched')
+                                  a.processing_status = {ML_COMPLETED!r}
+                                  OR a.enrichment_status IN ({ML_COMPLETED!r}, {ARTICLE_ENRICHED!r})
                               )
                               {ev_pass}
                               {ev_sig}
@@ -8003,7 +8014,7 @@ class AutomationManager:
                     for schema in get_pipeline_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.articles
-                                WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
+                                WHERE (enrichment_status IS NULL OR enrichment_status IN ({ARTICLE_PENDING!r}, {ARTICLE_FAILED!r}))
                                   AND COALESCE(enrichment_attempts, 0) < 3
                                   AND url IS NOT NULL AND url != ''
                                 LIMIT 1"""
@@ -8124,7 +8135,7 @@ class AutomationManager:
                     for schema in get_pipeline_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.articles
-                                WHERE processing_status = 'completed' AND timeline_processed = false
+                                WHERE processing_status = {ML_COMPLETED!r} AND timeline_processed = false
                                 AND content IS NOT NULL AND LENGTH(content) > 100
                                 LIMIT 1"""
                         )
@@ -8136,9 +8147,9 @@ class AutomationManager:
                     if in_nightly_pipeline_window_est():
                         return False
                     cur.execute(
-                        """
+                        f"""
                         SELECT 1 FROM intelligence.content_refinement_queue
-                        WHERE status = 'pending'
+                        WHERE status = {QUEUE_PENDING!r}
                         LIMIT 1
                         """
                     )
@@ -8194,9 +8205,9 @@ class AutomationManager:
                             return True
                 elif phase_name == "research_paper_profiling":
                     cur.execute(
-                        """
+                        f"""
                         SELECT 1 FROM intelligence.research_paper_profiles
-                        WHERE extraction_status IN ('pending', 'failed')
+                        WHERE extraction_status IN ({ARTICLE_PENDING!r}, {ARTICLE_FAILED!r})
                         LIMIT 1
                         """
                     )

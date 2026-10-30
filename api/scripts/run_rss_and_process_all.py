@@ -8,6 +8,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED
 
 
 async def main():
@@ -49,7 +50,7 @@ async def main():
                 """)
                 unqueued = cur.fetchone()[0]
                 cur.execute(
-                    f"SELECT COUNT(*) FROM {schema}.topic_extraction_queue WHERE status IN ('pending', 'processing')"
+                    f"SELECT COUNT(*) FROM {schema}.topic_extraction_queue WHERE status IN ('{QUEUE_PENDING}', '{QUEUE_PROCESSING}')"
                 )
                 pending = cur.fetchone()[0]
             conn.close()
@@ -75,7 +76,7 @@ async def main():
                                 cur.execute(
                                     f"""
                                     INSERT INTO {schema}.topic_extraction_queue (article_id, status, priority, created_at)
-                                    VALUES (%s, 'pending', 2, NOW())
+                                    VALUES (%s, '{QUEUE_PENDING}', 2, NOW())
                                     ON CONFLICT (article_id) DO NOTHING
                                 """,
                                     (aid,),

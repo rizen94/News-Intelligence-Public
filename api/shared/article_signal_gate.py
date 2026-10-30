@@ -12,6 +12,7 @@ import time
 from typing import Any
 
 from config.runtime import env_bool, env_float, env_int, env_str
+from shared.pipeline_state_constants import ARTICLE_ENRICHED, ARTICLE_FAILED, ARTICLE_INACCESSIBLE
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +192,7 @@ def article_signal_tier(
         return "skip"
 
     enrich = (article_row.get("enrichment_status") or "").strip().lower()
-    if enrich not in ("enriched", "failed", "inaccessible") and len(content) < 500:
+    if enrich not in ('{ARTICLE_ENRICHED}', '{ARTICLE_FAILED}', '{ARTICLE_INACCESSIBLE}') and len(content) < 500:
         return "skip"
 
     min_q = article_signal_full_min_quality()
@@ -298,7 +299,7 @@ def defer_signal_light_unified_intake_batch(
                               LENGTH(a.content) >= 500
                               OR a.created_at < NOW() - INTERVAL '2 hours'
                               OR COALESCE(a.enrichment_status, '') IN (
-                                  'enriched', 'failed', 'inaccessible'
+                                  '{ARTICLE_ENRICHED}', '{ARTICLE_FAILED}', '{ARTICLE_INACCESSIBLE}'
                               )
                           )
                           AND ({light_filter})

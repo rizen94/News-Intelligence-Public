@@ -10,6 +10,7 @@ from domains.content_analysis.services.llm_activity_tracker import get_llm_activ
 from fastapi import APIRouter, HTTPException, Query
 from shared.domain_registry import get_pipeline_schema_names_active, resolve_domain_schema
 
+from shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
@@ -234,10 +235,10 @@ async def get_llm_dashboard():
                         try:
                             cur.execute(f"""
                                 SELECT
-                                    COUNT(*) FILTER (WHERE status = 'pending') as pending,
-                                    COUNT(*) FILTER (WHERE status = 'processing') as processing,
-                                    COUNT(*) FILTER (WHERE status = 'completed') as completed,
-                                    COUNT(*) FILTER (WHERE status = 'failed') as failed
+                                    COUNT(*) FILTER (WHERE status = '{QUEUE_PENDING}') as pending,
+                                    COUNT(*) FILTER (WHERE status = '{QUEUE_PROCESSING}') as processing,
+                                    COUNT(*) FILTER (WHERE status = '{QUEUE_COMPLETED}') as completed,
+                                    COUNT(*) FILTER (WHERE status = '{QUEUE_FAILED}') as failed
                                 FROM {schema}.topic_extraction_queue
                             """)
                             row = cur.fetchone()

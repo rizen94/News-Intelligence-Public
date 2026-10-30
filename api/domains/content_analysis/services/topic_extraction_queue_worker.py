@@ -27,6 +27,8 @@ from domains.content_analysis.services.topic_filter_rules import filter_topic_li
 
 from services.article_entity_extraction_service import get_article_entity_extraction_service
 
+from shared.pipeline_state_constants import QUEUE_COMPLETED, QUEUE_FAILED, QUEUE_PENDING, QUEUE_PROCESSING
+
 logger = logging.getLogger(__name__)
 
 STARTUP_DELAY_SECONDS = 45
@@ -107,8 +109,8 @@ class TopicExtractionQueueWorker:
                 with conn.cursor() as cur:
                     cur.execute(f"""
                         UPDATE {self.schema}.topic_extraction_queue
-                        SET status = 'pending', started_at = NULL
-                        WHERE status = 'processing'
+                        SET status = '{QUEUE_PENDING}', started_at = NULL
+                        WHERE status = '{QUEUE_PROCESSING}'
                     """)
                     reset_count = cur.rowcount
                     conn.commit()
@@ -166,7 +168,7 @@ class TopicExtractionQueueWorker:
                     f"""
                     SELECT tq.id, tq.article_id, tq.retry_count
                     FROM {self.schema}.topic_extraction_queue tq
-                    WHERE tq.status = 'pending'
+                    WHERE tq.status = '{QUEUE_PENDING}'
                     AND tq.retry_count < %s
                     AND (tq.next_retry_at IS NULL OR tq.next_retry_at <= NOW())
                     ORDER BY tq.priority DESC, tq.created_at ASC
@@ -206,7 +208,7 @@ class TopicExtractionQueueWorker:
                                     f"""
                                     INSERT INTO {self.schema}.topic_extraction_queue
                                     (article_id, status, priority, created_at)
-                                    VALUES (%s, 'pending', 2, NOW())
+                                    VALUES (%s, '{QUEUE_PENDING}', 2, NOW())
                                     ON CONFLICT (article_id) DO NOTHING
                                 """,
                                     (article_id,),
@@ -220,7 +222,7 @@ class TopicExtractionQueueWorker:
                             f"""
                             SELECT tq.id, tq.article_id, tq.retry_count
                             FROM {self.schema}.topic_extraction_queue tq
-                            WHERE tq.status = 'pending'
+                            WHERE tq.status = '{QUEUE_PENDING}'
                             AND tq.retry_count < %s
                             AND (tq.next_retry_at IS NULL OR tq.next_retry_at <= NOW())
                             ORDER BY tq.priority DESC, tq.created_at ASC
@@ -267,7 +269,7 @@ class TopicExtractionQueueWorker:
                     cur.execute(
                         f"""
                         UPDATE {self.schema}.topic_extraction_queue
-                        SET status = 'processing', started_at = NOW()
+                        SET status = '{QUEUE_PROCESSING}', started_at = NOW()
                         WHERE id = %s
                     """,
                         (queue_id,),
@@ -288,7 +290,7 @@ class TopicExtractionQueueWorker:
                         cur.execute(
                             f"""
                             UPDATE {self.schema}.topic_extraction_queue
-                            SET status = 'completed', completed_at = NOW(),
+                            SET status = '{QUEUE_COMPLETED}', completed_at = NOW(),
                                 error_message = 'Article not found'
                             WHERE id = %s
                         """,
@@ -375,7 +377,7 @@ class TopicExtractionQueueWorker:
                         cur.execute(
                             f"""
                             UPDATE {self.schema}.topic_extraction_queue
-                            SET status = 'completed', completed_at = NOW(),
+                            SET status = '{QUEUE_COMPLETED}', completed_at = NOW(),
                                 metadata = jsonb_build_object('topics_extracted', %s)
                             WHERE id = %s
                         """,
@@ -409,7 +411,7 @@ class TopicExtractionQueueWorker:
                                 cur.execute(
                                     f"""
                                     UPDATE {self.schema}.topic_extraction_queue
-                                    SET status = 'pending', last_error = %s,
+                                    SET status = '{QUEUE_PENDING}', last_error = %s,
                                         last_attempt_at = NOW(),
                                         next_retry_at = NOW() + INTERVAL '2 minutes'
                                     WHERE id = %s
@@ -437,7 +439,7 @@ class TopicExtractionQueueWorker:
                                 cur.execute(
                                     f"""
                                     UPDATE {self.schema}.topic_extraction_queue
-                                    SET status = 'failed', last_error = %s,
+                                    SET status = '{QUEUE_FAILED}', last_error = %s,
                                         last_attempt_at = NOW()
                                     WHERE id = %s
                                 """,
@@ -452,7 +454,7 @@ class TopicExtractionQueueWorker:
                                 cur.execute(
                                     f"""
                                     UPDATE {self.schema}.topic_extraction_queue
-                                    SET status = 'pending', retry_count = %s,
+                                    SET status = '{QUEUE_PENDING}', retry_count = %s,
                                         next_retry_at = %s, last_error = %s,
                                         last_attempt_at = NOW()
                                     WHERE id = %s
@@ -492,11 +494,11 @@ class TopicExtractionQueueWorker:
                     # Get queue statistics
                     cur.execute(f"""
                         SELECT
-                            COUNT(*) FILTER (WHERE status = 'pending') as pending,
-                            COUNT(*) FILTER (WHERE status = 'processing') as processing,
-                            COUNT(*) FILTER (WHERE status = 'completed') as completed,
-                            COUNT(*) FILTER (WHERE status = 'failed') as failed,
-                            AVG(retry_count) FILTER (WHERE status = 'pending') as avg_retries
+                            COUNT(*) FILTER (WHERE status = '{QUEUE_PENDING}') as pending,
+                            COUNT(*) FILTER (WHERE status = '{QUEUE_PROCESSING}') as processing,
+                            COUNT(*) FILTER (WHERE status = '{QUEUE_COMPLETED}') as completed,
+                            COUNT(*) FILTER (WHERE status = '{QUEUE_FAILED}') as failed,
+                            AVG(retry_count) FILTER (WHERE status = '{QUEUE_PENDING}') as avg_retries
                         FROM {self.schema}.topic_extraction_queue
                     """)
 

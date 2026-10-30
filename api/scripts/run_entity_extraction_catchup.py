@@ -27,6 +27,7 @@ from shared.database.connection import get_db_connection_context
 from shared.domain_registry import get_pipeline_active_domain_keys, pipeline_url_schema_pairs, resolve_domain_schema
 from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_article_phase_pass, sql_article_pass_null
 from shared.pipeline_article_selection import sql_order_created_at
+from shared.pipeline_state_constants import ARTICLE_ENRICHED, ARTICLE_FAILED, ARTICLE_INACCESSIBLE
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,7 @@ def _fetch_batch(schema: str, *, limit: int) -> list[tuple[int, str, str]]:
                     LENGTH(a.content) >= 500
                     OR a.created_at < NOW() - INTERVAL '2 hours'
                     OR COALESCE(a.enrichment_status, '') IN (
-                        'enriched', 'failed', 'inaccessible'
+                        '{ARTICLE_ENRICHED}', '{ARTICLE_FAILED}', '{ARTICLE_INACCESSIBLE}'
                     )
                   )
                   {pass_clause}

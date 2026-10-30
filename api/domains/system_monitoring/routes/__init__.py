@@ -10,7 +10,7 @@ from .route_supervisor import router as supervisor_router
 from .sql_explorer import router as sql_explorer_router
 from .ml_monitoring import router as ml_monitoring_router
 from .system_monitoring import router as monitoring_router
-from .processing_progress import router as processing_progress_router
+# processing_progress: utilities for resource_dashboard, no standalone router
 
 router = APIRouter(tags=["System Monitoring"])
 router.include_router(monitoring_router)
@@ -22,6 +22,6 @@ router.include_router(resource_dashboard_router)
 router.include_router(realtime_router)
 router.include_router(sql_explorer_router)
 router.include_router(pipeline_metrics_router)
-router.include_router(processing_progress_router)
+# processing_progress: utilities for resource_dashboard, no standalone router
 
 __all__ = ["router"]

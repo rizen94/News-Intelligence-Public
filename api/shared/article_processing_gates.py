@@ -19,8 +19,14 @@ import logging
 import os
 from datetime import datetime, timezone
 from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
+from shared.pipeline_state_constants import (
+    ARTICLE_ENRICHED, ARTICLE_FAILED, ARTICLE_INACCESSIBLE,
+)
 
-logger = logging.getLogger(__name__)
+# Canonical status values — imported from shared.pipeline_state_constants
+_ART = ARTICLE_ENRICHED   # alias for SQL queries (same string value)
+_AF = ARTICLE_FAILED
+_AI = ARTICLE_INACCESSIBLE
 
 # Match RSS inline rule: substantial body without a separate fetch (legacy path)
 SUBSTANTIAL_CONTENT_LENGTH = 500
@@ -68,7 +74,7 @@ def _legacy_ml_inner(table_alias: str) -> str:
     return f"""{a}content IS NOT NULL
       AND LENGTH({a}content) > {MIN_CONTENT_LENGTH_ML}
       AND (
-        {a}enrichment_status = 'enriched'
+        {a}enrichment_status = _ART
         OR ({a}enrichment_status IS NULL AND LENGTH({a}content) >= {SUBSTANTIAL_CONTENT_LENGTH})
       )"""
 
@@ -77,20 +83,20 @@ def _strict_ml_inner(table_alias: str) -> str:
     a = f"{table_alias}." if table_alias else ""
     return f"""{a}content IS NOT NULL
       AND LENGTH({a}content) > {MIN_CONTENT_LENGTH_ML}
-      AND {a}enrichment_status = 'enriched'"""
+      AND {a}enrichment_status = _ART"""
 
 
 def _legacy_context_inner(alias: str) -> str:
     return f"""LENGTH(COALESCE({alias}.content, '')) > {MIN_CONTENT_LENGTH_CONTEXT}
       AND (
         LENGTH(COALESCE({alias}.content, '')) >= {SUBSTANTIAL_CONTENT_LENGTH}
-        OR COALESCE({alias}.enrichment_status, '') IN ('enriched', 'failed', 'inaccessible')
+        OR COALESCE({alias}.enrichment_status, '') IN (_ART, _AF, _AI)
       )"""
 
 
 def _strict_context_inner(alias: str) -> str:
     return f"""LENGTH(COALESCE({alias}.content, '')) > {MIN_CONTENT_LENGTH_CONTEXT}
-      AND COALESCE({alias}.enrichment_status, '') IN ('enriched', 'failed', 'inaccessible')"""
+      AND COALESCE({alias}.enrichment_status, '') IN (_ART, _AF, _AI)"""
 
 
 def sql_ml_ready_and_content_bounds(table_alias: str = "") -> str:
@@ -134,7 +140,8 @@ def article_eligible_for_ml(
     es = (enrichment_status or "").strip()
     if strict_enrichment_applies(created_at):
         return es == "enriched"
-    if es == "enriched":
+    if es == _ART:
+
         return True
     if es == "" and len(c) >= SUBSTANTIAL_CONTENT_LENGTH:
         return True
@@ -156,7 +163,8 @@ def article_eligible_for_context(
         return False
     es = (enrichment_status or "").strip()
     if strict_enrichment_applies(created_at):
-        return es in ("enriched", "failed", "inaccessible")
+        return es in (_ART, _AF, _AI)
+
     if len(c) >= SUBSTANTIAL_CONTENT_LENGTH:
         return True
     if es in ("enriched", "failed", "inaccessible"):

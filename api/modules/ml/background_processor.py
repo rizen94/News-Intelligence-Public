@@ -13,6 +13,7 @@ from queue import Queue, Empty
 import json
 
 from .summarization_service import MLSummarizationService
+from shared.pipeline_state_constants import ML_COMPLETED, ML_FAILED, ML_PENDING, ML_RUNNING
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,7 @@ class BackgroundMLProcessor:
                     # Add to processing queue if not already there
                     if not self._is_task_in_queue(task['queue_id']):
                         self.processing_queue.put(task)
-                        self._update_queue_status(task['queue_id'], 'processing')
+                        self._update_queue_status(task['queue_id'], ML_RUNNING)
                 
                 time.sleep(5)  # Check every 5 seconds
                 
@@ -142,7 +143,7 @@ class BackgroundMLProcessor:
                 raise Exception(f"Article {article_id} not found")
             
             # Update article processing status
-            self._update_article_processing_status(article_id, 'processing')
+            self._update_article_processing_status(article_id, ML_RUNNING)
             
             # Start timing
             start_time = time.time()
@@ -180,7 +181,7 @@ class BackgroundMLProcessor:
             )
             
             # Update queue status
-            self._update_queue_status(queue_id, 'completed', result)
+            self._update_queue_status(queue_id, ML_COMPLETED, result)
             
             # Update statistics
             self._update_stats(duration, True)
@@ -194,17 +195,17 @@ class BackgroundMLProcessor:
                 logger.warning(
                     "ML task %s deferred (Ollama pressure): %s", queue_id, e
                 )
-                self._update_article_processing_status(article_id, 'pending', str(e))
-                self._update_queue_status(queue_id, 'pending', error=str(e))
+                self._update_article_processing_status(article_id, ML_PENDING, str(e))
+                self._update_queue_status(queue_id, ML_PENDING, error=str(e))
                 return
 
             logger.error(f"Error processing ML task {queue_id}: {e}")
             
             # Update article processing status
-            self._update_article_processing_status(article_id, 'failed', str(e))
+            self._update_article_processing_status(article_id, ML_FAILED, str(e))
             
             # Update queue status
-            self._update_queue_status(queue_id, 'failed', error=str(e))
+            self._update_queue_status(queue_id, ML_FAILED, error=str(e))
             
             # Update statistics
             self._update_stats(0, False)
@@ -450,13 +451,13 @@ class BackgroundMLProcessor:
         try:
             with psycopg2.connect(**self.db_config) as conn:
                 with conn.cursor() as cursor:
-                    if status == 'processing':
+                    if status == ML_RUNNING:
                         cursor.execute("""
                             UPDATE articles 
                             SET ml_processing_status = %s, ml_processing_started_at = %s
                             WHERE id = %s
                         """, (status, datetime.now(), article_id))
-                    elif status in ['completed', 'failed']:
+                    elif status in [ML_COMPLETED, ML_FAILED]:
                         cursor.execute("""
                             UPDATE articles 
                             SET ml_processing_status = %s, ml_processing_completed_at = %s,
@@ -553,13 +554,13 @@ class BackgroundMLProcessor:
         try:
             with psycopg2.connect(**self.db_config) as conn:
                 with conn.cursor() as cursor:
-                    if status == 'processing':
+                    if status == ML_RUNNING:
                         cursor.execute("""
                             UPDATE ml_processing_queue 
                             SET status = %s, started_at = %s
                             WHERE queue_id = %s
                         """, (status, datetime.now(), queue_id))
-                    elif status in ['completed', 'failed']:
+                    elif status in [ML_COMPLETED, ML_FAILED]:
                         cursor.execute("""
                             UPDATE ml_processing_queue 
                             SET status = %s, completed_at = %s, result_data = %s, error_message = %s

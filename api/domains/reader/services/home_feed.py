@@ -36,6 +36,11 @@ READ_WPM = 220
 AI_RESEARCH_ONE_OFF_MAX_ARTICLES = 2
 AI_DOMAIN_KEY = "artificial-intelligence"
 
+# Quality signal constants for home feed ranking and gating
+QUALITY_SCORE_CUTOFF = 0.6          # skip news items below this quality_score
+ANCHOR_WEIGHT_MULTIPLIER = 1.05     # +5% score boost for 'anchor_class' rank stories
+NARRATIVE_PHASE_NO_SHOW = ("phase_0",)  # don't surface phase_0 / pre-intake items
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -264,6 +269,8 @@ def _story_unit(
     updated_at: datetime | None,
     article_count: int,
     badges: list[str],
+    quality_score: float | None = None,
+    rank_weight: float | None = None,
     thumb_url: str | None = None,
     announced_on: str | None = None,
     expected_on: str | None = None,
@@ -287,6 +294,10 @@ def _story_unit(
         "surface_kind": surface_kind,
         "href": href or f"/storylines/{domain}/{storyline_id}",
     }
+    if quality_score is not None:
+        unit["quality_score"] = round(quality_score, 3)
+    if rank_weight is not None:
+        unit["rank_weight"] = round(rank_weight, 4)
     if thumb_url:
         unit["thumb_url"] = thumb_url
     if announced_on:
@@ -689,6 +700,8 @@ def _fetch_candidate_rows(cur, schema: str, domain_key: str, since: datetime) ->
             COALESCE(s.is_mega_storyline, FALSE) AS is_mega_storyline,
             s.created_at,
             s.story_kind,
+            s.quality_score,
+            s.narrative_gate_phase,
             agg.last_article_added_at,
             COALESCE(agg.articles_21d, 0) AS articles_21d
         FROM (
@@ -825,8 +838,29 @@ def classify_and_build_feeds(
         created_at = _as_aware(row.get("created_at"))
         age_days = (now - created_at).days if created_at else 0
 
+        # -- Quality signals (Priority 1 + Priority 3) --
+        qscore = row.get("quality_score")
+        qscore_f: float | None = float(qscore) if qscore is not None else None
+        narrative_phase = str(row.get("narrative_gate_phase") or "").strip().lower()
+
         # --- News: material update in 48h + non-empty dek ---
         status = str(row.get("status") or "active").lower()
+        
+        # Phase exclusion: don't surface pre-intake items (Priority 4)
+        is_phase_blocked = narrative_phase in NARRATIVE_PHASE_NO_SHOW
+        
+        # --- Anchor-weighted rank score (Priority 1) ---
+        anchor_score = (qscore_f or 0.0) * ANCHOR_WEIGHT_MULTIPLIER if qscore_f else None
+        article_density = articles_21d / max(article_count, 1) if article_count > 0 else 0
+        density_bonus = article_density * 0.08  # up to ~0.36 for dense clusters
+        rank_weight_val = (anchor_score or 0.0) + density_bonus
+        
+        # --- Priority 3: Hard quality cutoff (tiered filtering) ---
+        if qscore_f is not None and qscore_f < QUALITY_SCORE_CUTOFF:
+            skip_news, skip_current, skip_one_off = True, True, (article_count > 0)
+        else:
+            skip_news = skip_current = skip_one_off = False
+
         is_news = bool(
             material_at
             and material_at >= news_cutoff
@@ -834,6 +868,7 @@ def classify_and_build_feeds(
             and len(dek) >= 12
             and not is_mega
             and status not in ("dormant", "watching", "concluded", "completed", "failed")
+            and not is_phase_blocked
         )
         # Reject shells / membership-only (material_at already excludes last_article_added_at alone)
         if is_news and article_count <= 0 and not editorial.get("lede"):
@@ -922,6 +957,14 @@ def classify_and_build_feeds(
                         dates["date_precision"] = "day"
 
         badges: list[str] = []
+        # Priority 3: confidence badge based on quality tier
+        if qscore_f is not None:
+            if qscore_f >= 0.85:
+                badges.append("High-confidence")
+            elif qscore_f >= QUALITY_SCORE_CUTOFF:
+                badges.append("Mid-confidence")
+            else:
+                badges.append("Low-confidence")
         if is_news:
             badges.append("Updated")
             if material_at and (now - material_at) < timedelta(hours=6):
@@ -929,7 +972,7 @@ def classify_and_build_feeds(
         if is_ai_research_one_off:
             badges = ["Paper"] if article_count <= 1 else ["Papers"]
 
-        if include_news and is_news:
+        if include_news and is_news and not skip_news:
             news.append(
                 _story_unit(
                     section_label="NEWS",
@@ -941,10 +984,12 @@ def classify_and_build_feeds(
                     article_count=article_count,
                     badges=badges,
                     surface_kind="news",
+                    quality_score=qscore_f,
+                    rank_weight=rank_weight_val,
                 )
             )
 
-        if include_current and is_current:
+        if include_current and is_current and not skip_current:
             current.append(
                 _story_unit(
                     section_label="CURRENT",
@@ -956,10 +1001,12 @@ def classify_and_build_feeds(
                     article_count=article_count,
                     badges=["Live"] if has_tracked or is_mega else [],
                     surface_kind="current_events",
+                    quality_score=qscore_f,
+                    rank_weight=rank_weight_val,
                 )
             )
 
-        if include_one_offs and is_one_off and (dates.get("expected_on") or dates.get("announced_on")):
+        if include_one_offs and is_one_off and not skip_one_off and (dates.get("expected_on") or dates.get("announced_on")):
             one_offs.append(
                 _story_unit(
                     section_label="ONE-OFF",
@@ -974,6 +1021,8 @@ def classify_and_build_feeds(
                     expected_on=dates.get("expected_on"),
                     date_precision=dates.get("date_precision"),
                     surface_kind="one_off",
+                    quality_score=qscore_f,
+                    rank_weight=rank_weight_val,
                 )
             )
 
@@ -989,8 +1038,15 @@ def classify_and_build_feeds(
             out.append(it)
         return out
 
-    news = _dedupe(sorted(news, key=lambda x: x.get("updated_at") or "", reverse=True))
-    current = _dedupe(sorted(current, key=lambda x: x.get("updated_at") or "", reverse=True))
+    # Anchor-weighted sort: rank_weight first (desc), updated_at as tiebreaker
+    def _rank_then_date(item: dict) -> tuple[float | int, str]:
+        rw = item.get("rank_weight")
+        if rw is None or rw < 0:
+            rw = -999
+        return (-rw, item.get("updated_at") or "")
+
+    news = _dedupe(sorted(news, key=_rank_then_date))
+    current = _dedupe(sorted(current, key=_rank_then_date))
     one_offs = _dedupe(
         sorted(
             one_offs,

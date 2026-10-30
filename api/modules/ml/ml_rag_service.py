@@ -16,6 +16,7 @@ from .summarization_service import MLSummarizationService
 from .background_processor import BackgroundMLProcessor
 from .rag_external_services import RAGExternalServicesManager
 from .gdelt_rag_service import GDELTRAGService
+from shared.pipeline_state_constants import ML_COMPLETED
 
 logger = logging.getLogger(__name__)
 
@@ -453,7 +454,7 @@ class MLRAGService:
                         'published_at': row[6].isoformat() if row[6] else None,
                         'url': row[7] or "",
                         'quality_score': float(row[8]) if row[8] else 0.0,
-                        'ml_processed': row[9] == 'completed' if row[9] else False,
+                        'ml_processed': row[9] == ML_COMPLETED if row[9] else False,
                         'relevance_score': 0.5,
                         'retrieval_method': 'keyword'
                     })

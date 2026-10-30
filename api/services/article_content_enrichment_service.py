@@ -17,6 +17,11 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
+from shared.pipeline_state_constants import (
+    ARTICLE_PENDING, ARTICLE_ENRICHED, ARTICLE_INACCESSIBLE,
+    QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED,
+    ML_PENDING, ML_RUNNING, ML_COMPLETED, ML_FAILED,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -776,7 +781,7 @@ def _enrich_articles_batch_parallel(*, batch_size: int, parallel: int) -> int:
                     and strict_enrichment_applies(created_at)
                     and existing_content
                     and len((existing_content or "").strip()) >= MIN_CONTENT_TO_ENRICH
-                    and (row_status is None or (row_status or "").strip() == "pending")
+                    and (row_status is None or (row_status or '').strip() == ARTICLE_PENDING)
                     and not needs_arxiv_fulltext(url, existing_content)
                 ):
                     if is_false_enriched_body(existing_content):
@@ -894,9 +899,9 @@ def _enrich_articles_batch_parallel(*, batch_size: int, parallel: int) -> int:
                                 f"""
                                 INSERT INTO {schema_name}.topic_extraction_queue
                                     (article_id, status, priority, created_at)
-                                VALUES (%s, 'pending', 3, NOW())
+                                VALUES (%s, '{QUEUE_PENDING}', 3, NOW())
                                 ON CONFLICT (article_id) DO UPDATE
-                                  SET status = 'pending', priority = 3, created_at = NOW()
+                                  SET status = '{QUEUE_PENDING}', priority = 3, created_at = NOW()
                                 """,
                                 (article_id,),
                             )
@@ -1075,7 +1080,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                     and strict_enrichment_applies(created_at)
                     and existing_content
                     and len((existing_content or "").strip()) >= MIN_CONTENT_TO_ENRICH
-                    and (row_status is None or (row_status or "").strip() == "pending")
+                    and (row_status is None or (row_status or '').strip() == ARTICLE_PENDING)
                     and not needs_arxiv_fulltext(url, existing_content)
                 ):
                     fast_rows = 0
@@ -1158,8 +1163,8 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                         cur.execute(
                             f"""
                             INSERT INTO {schema_name}.topic_extraction_queue (article_id, status, priority, created_at)
-                            VALUES (%s, 'pending', 3, NOW())
-                            ON CONFLICT (article_id) DO UPDATE SET status = 'pending', priority = 3, created_at = NOW()
+                            VALUES (%s, '{QUEUE_PENDING}', 3, NOW())
+                            ON CONFLICT (article_id) DO UPDATE SET status = '{QUEUE_PENDING}', priority = 3, created_at = NOW()
                             """,
                             (article_id,),
                         )
@@ -1404,8 +1409,8 @@ def fetch_full_content_for_article(domain_key: str, article_id: int) -> dict[str
                 cur.execute(
                     f"""
                     INSERT INTO {schema_name}.topic_extraction_queue (article_id, status, priority, created_at)
-                    VALUES (%s, 'pending', 3, NOW())
-                    ON CONFLICT (article_id) DO UPDATE SET status = 'pending', priority = 3, created_at = NOW()
+                    VALUES (%s, '{QUEUE_PENDING}', 3, NOW())
+                    ON CONFLICT (article_id) DO UPDATE SET status = '{QUEUE_PENDING}', priority = 3, created_at = NOW()
                     """,
                     (article_id,),
                 )
