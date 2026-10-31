@@ -1,1 +1,40 @@
-"""Automation package — registry and (future) executor modules."""
+"""Automation package — registry, executor, and extracted constants."""
+
+from .task_model import Task, TaskPriority, TaskStatus
+from .phase_constants import (
+    ANALYSIS_PIPELINE_STEPS,
+    AUTOMATION_EXECUTOR_MAX_WORKERS,
+    AUTOMATION_MAX_CONCURRENT_TASKS,
+    AUTOMATION_SCHEDULER_TICK_SECONDS,
+    BATCH_PHASES_CONTINUOUS,
+    _AUTOMATION_DISABLE_DYNAMIC_TASK_SCALING,
+    MAX_CONCURRENT_OLLAMA_TASKS,
+    PHASE_ESTIMATED_DURATION_SECONDS,
+    STEP_TIME_BUDGETS,
+    SEVERE_BACKLOG_PEER_PHASES,
+    WATCHDOG_SECONDS,
+    WORKLOAD_MIN_COOLDOWN,
+)
+
+__all__ = [
+    # Task model
+    "Task",
+    "TaskPriority",
+    "TaskStatus",
+    # Phase constants
+    "PHASE_ESTIMATED_DURATION_SECONDS",
+    "ANALYSIS_PIPELINE_STEPS",
+    "STEP_TIME_BUDGETS",
+    "BATCH_PHASES_CONTINUOUS",
+    "SEVERE_BACKLOG_PEER_PHASES",
+    # Config
+    "MAX_CONCURRENT_OLLAMA_TASKS",
+    "AUTOMATION_MAX_CONCURRENT_TASKS",
+    "AUTOMATION_EXECUTOR_MAX_WORKERS",
+    "WORKLOAD_MIN_COOLDOWN",
+    "AUTOMATION_SCHEDULER_TICK_SECONDS",
+    "WATCHDOG_SECONDS",
+    # Internal control (used by automation_manager only)
+    "_AUTOMATION_DISABLE_DYNAMIC_TASK_SCALING",
+]
+
