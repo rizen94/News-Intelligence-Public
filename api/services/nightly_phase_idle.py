@@ -1,11 +1,13 @@
 """
 Nightly sequential drain — definitive idle detection per automation phase.
 
-* **Backlog-backed phases** — ``phase_has_pending_work`` reads ``get_all_pending_counts()`` (same
+* **Backlog-backed phases** — ``phase_has_pending_work`` reads ``get_all_pending_counts()`` (same\
   source as the daytime scheduler). When a phase’s raw count is 0, that phase is done for this drain.
-* **Single-pass phases** — exploratory or best-effort work with no cheap global count (e.g.
-  ``pattern_matching``). Exactly **one** invocation per sweep (see
-  ``NIGHTLY_SEQUENTIAL_SINGLE_PASS_PHASES``); the drain does not spin waiting for a backlog metric.
+* **Formerly single-pass phases** — once ran exactly one shot per sweep. They now also loop on their own\
+  backlog metric until zero, so all phases share the same drain-to-zero semantics regardless of category.
+  ``is_single_pass_phase()`` remains for backward compatibility with phase categorization; it no longer\
+  implies "runs once."
+
 """
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ def _single_pass_phases() -> frozenset[str]:
 
 
 def is_single_pass_phase(phase_name: str) -> bool:
-    """Phases that run at most once per nightly sweep (no backlog spin)."""
+    """Phases formerly categorized as single-pass. Now drain to zero like all other phases."""
     return phase_name in _single_pass_phases()
 
 
@@ -45,8 +47,8 @@ def phase_has_pending_work(phase_name: str) -> bool:
     """
     True when backlog metrics indicate this phase still has pending items.
 
-    Not used for single-pass phases (see ``is_single_pass_phase``). Unknown phase names return
-    False so the drain does not loop forever.
+    Unknown phase names return False so the drain does not loop forever.\
+    This function is now used for ALL phases (including formerly single-pass).
     """
     from services.backlog_metrics import get_all_pending_counts, invalidate_backlog_metrics_cache
 

@@ -9,8 +9,9 @@ Nightly off-hours pipeline (America/New_York by default).
 2. Drain **content_enrichment** (direct batch calls; not the scheduled task).
 3. Drain **context_sync** across domains.
 4. For each phase in ``NIGHTLY_SEQUENTIAL_PHASES``: drain until **backlog_metrics** reports no pending
-   work for that phase (see ``nightly_phase_idle.phase_has_pending_work``). Phases listed in
-   ``NIGHTLY_SEQUENTIAL_SINGLE_PASS_PHASES`` run **once** per sweep (best-effort; no backlog spin).
+   work for that phase (see ``nightly_phase_idle.phase_has_pending_work``). All phases — including those
+   formerly listed in ``NIGHTLY_SEQUENTIAL_SINGLE_PASS_PHASES`` — now spin on their own backlog metric
+   until zero (no more one-shot blind spots). Unknown metrics default to 0 so the drain does not block.
 5. Drain **content_refinement_queue** via ``process_nightly_gpu_refinement_drain`` (~70B / RAG jobs).
 
 The outer loop repeats a full sweep until all of (enrichment, context, sequential metrics, refinement queue)
@@ -436,14 +437,27 @@ async def _drain_sequential_phase(
     from services.nightly_phase_idle import is_single_pass_phase, phase_has_pending_work
 
     if is_single_pass_phase(phase_name):
-        if window_active():
-            r = await automation.run_nightly_sequential_phase(phase_name)
-            if not r.get("skipped"):
-                stats["sequential_phase_runs"] = stats.get("sequential_phase_runs", 0) + 1
-                stats.setdefault("sequential_by_phase", {})
-                stats["sequential_by_phase"][phase_name] = (
-                    stats["sequential_by_phase"].get(phase_name, 0) + 1
+        # Single-pass phases now drain to true zero (not just one invocation).
+        # Without this, items processed but not fully handled leak silently until
+        # the next nightly cycle — permanent freshness drift.
+        i = 0
+        while i < max_backlog_loops and window_active():
+            invalidate_backlog_metrics_cache()
+            if not phase_has_pending_work(phase_name):
+                logger.debug(
+                    "Nightly sequential %s: single-pass backlog cleared after run — advancing",
+                    phase_name,
                 )
+                break
+            r = await automation.run_nightly_sequential_phase(phase_name)
+            if r.get("skipped"):
+                break
+            i += 1
+            stats["sequential_phase_runs"] = stats.get("sequential_phase_runs", 0) + 1
+            stats.setdefault("sequential_by_phase", {})
+            stats["sequential_by_phase"][phase_name] = (
+                stats["sequential_by_phase"].get(phase_name, 0) + 1
+            )
         return
 
     phase_max_loops = _phase_loop_cap(phase_name, max_backlog_loops)
@@ -677,7 +691,20 @@ async def run_nightly_unified_pipeline_drain(
                 stats["stopped_reason"] = "pending_counts_error"
                 break
 
-            if _pipeline_fully_idle(pending, context_sync_enabled=context_sync_enabled, sequential_phases=sequential_phases):
+            # Post-processing drain confirmation. Items may have been consumed from the DB
+            # by enrichment / context / GPU *after* our last cache invalidate above but not
+            # yet reflected in the pending count (DB write-ahead log, 90s TTL). A fresh
+            # invalidate + re-read here prevents phantom "all_idle" exits that leave items
+            # pending indefinitely.
+            invalidate_backlog_metrics_cache()
+            try:
+                pending_final = get_all_pending_counts()
+            except Exception as e:
+                logger.warning("nightly unified pipeline: final pending counts: %s", e)
+                stats["stopped_reason"] = "pending_counts_error"
+                break
+
+            if _pipeline_fully_idle(pending_final, context_sync_enabled=context_sync_enabled, sequential_phases=sequential_phases):
                 stats["stopped_reason"] = "all_idle"
                 break
 
