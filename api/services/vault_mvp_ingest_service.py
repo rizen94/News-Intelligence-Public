@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from typing import Any
 
-from shared.database.connection import get_db_connection_context
+from shared.database import get_db_connection_context
 from shared.vault_note_contract import (
     AUTO_TIMELINE_END,
     AUTO_TIMELINE_START,

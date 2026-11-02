@@ -23,7 +23,7 @@ def reload_project_modules():
         "domains.storyline_management.routes.storyline_management",
         "domains.intelligence_hub.routes.intelligence_hub",
         "domains.user_management.routes.user_management",
-        "shared.database.connection",
+        "shared.database",
         "shared.services.llm_service",
         "services.automation_manager",
         "services.ml_processing_service",

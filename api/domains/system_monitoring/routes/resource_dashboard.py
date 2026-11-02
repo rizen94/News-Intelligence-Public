@@ -18,7 +18,7 @@ import requests
 import yaml
 from fastapi import APIRouter, HTTPException, Query
 from shared.gpu_metrics import fetch_gpu_metric_hourly_buckets
-from shared.database.connection import get_ui_db_connection as get_db_connection
+from shared.database import get_ui_db_connection as get_db_connection
 from shared.services.response_cache import cached_response, cached_response_sync
 
 logger = logging.getLogger(__name__)

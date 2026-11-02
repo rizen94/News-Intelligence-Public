@@ -116,7 +116,7 @@ def _dedupe_bullets(bullets: list[str], *, limit: int = 14) -> list[str]:
 
 
 def fetch_entity_row(entity_id: int) -> dict[str, Any] | None:
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
@@ -146,7 +146,7 @@ def fetch_entity_row(entity_id: int) -> dict[str, Any] | None:
 
 
 def fetch_storyline(sid: int) -> dict[str, Any] | None:
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
@@ -174,7 +174,7 @@ def fetch_storyline(sid: int) -> dict[str, Any] | None:
 
 
 def fetch_storyline_article_bullets(sid: int, *, limit: int = 12) -> list[str]:
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
@@ -199,7 +199,7 @@ def fetch_storyline_article_bullets(sid: int, *, limit: int = 12) -> list[str]:
 
 
 def fetch_chrono_bullets_for_storyline(sid: int, *, limit: int = 10) -> list[str]:
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
@@ -227,7 +227,7 @@ def fetch_coanchor_bullets(
     id_a: int, id_b: int, *, limit: int = 10, iran_cluster: bool = True
 ) -> tuple[int, list[str]]:
     """Return (co_article_count, recent co-mention bullets). Prefer Iran/Gaza/Hormuz titles."""
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
@@ -305,7 +305,7 @@ def fetch_coanchor_bullets(
 
 def fetch_related_wikilinks(entity_id: int, names: dict[int, str]) -> list[str]:
     """Wikilinks to other cluster entities that co-occur in priority storylines."""
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     others = [i for i in names if i != entity_id]
     if not others:
@@ -434,7 +434,7 @@ def enrich_entity(
     bullets = fetch_recent_article_bullets(DOMAIN, entity_id, limit=10)
     # Prefer cluster-titled articles when available
     cluster_bullets = []
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:

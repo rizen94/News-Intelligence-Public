@@ -9,7 +9,7 @@ import logging
 import re
 from typing import Any
 
-from shared.database.connection import get_ui_db_connection_context
+from shared.database import get_ui_db_connection_context
 from shared.domain_registry import resolve_domain_schema
 from shared.services.domain_aware_service import validate_domain
 

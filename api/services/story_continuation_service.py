@@ -480,7 +480,7 @@ class StoryContinuationService:
             try:
                 raw = await self.llm._call_ollama(ModelType.LLAMA_8B, prompt)
             finally:
-                from shared.database.connection import get_db_connection
+                from shared.database import get_db_connection
 
                 self.conn = get_db_connection()
                 if self.conn and self.schema:

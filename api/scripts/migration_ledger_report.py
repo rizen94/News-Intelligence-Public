@@ -79,7 +79,7 @@ def main() -> int:
     )
     args = p.parse_args()
 
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
     from shared.migration_sql_paths import (
         archive_historical_dir,
         list_sql_migrations,

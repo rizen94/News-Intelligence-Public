@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from shared.database.connection import get_db_connection_context, get_ui_db_connection_context
+from shared.database import get_db_connection_context, get_ui_db_connection_context
 from schemas.response_schemas import APIResponse
 
 from services.arc_catalog_service import (

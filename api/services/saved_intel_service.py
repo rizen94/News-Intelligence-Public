@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from shared.database.connection import get_db_connection_context
+from shared.database import get_db_connection_context
 
 logger = logging.getLogger(__name__)
 

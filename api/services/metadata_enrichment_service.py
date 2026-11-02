@@ -885,7 +885,7 @@ class MetadataEnrichmentService:
             sentiment_score = await self._calculate_sentiment(text)
             article_placeholder = {"content": text, "language": detected_language}
             quality_score = await self._calculate_quality_score(article_placeholder, text)
-            from shared.database.connection import get_db_connection
+            from shared.database import get_db_connection
 
             conn = get_db_connection()
             if not conn:
@@ -898,31 +898,21 @@ class MetadataEnrichmentService:
                         SET quality_score = %s, sentiment_score = %s,
                             categories = %s::jsonb,
                             metadata = COALESCE(metadata, '{{}}'::jsonb)
-                              || '{{"enrichment_done": true}}'::jsonb
-                              || jsonb_build_object(
-                                  'pipeline',
-                                  COALESCE(metadata->'pipeline', '{{}}'::jsonb)
-                                  || jsonb_build_object(
-                                      'metadata_enrichment',
-                                      COALESCE(metadata->'pipeline'->'metadata_enrichment', '{{}}'::jsonb)
-                                      || jsonb_build_object(
-                                          'last_pass_at', to_jsonb(%s::text),
-                                          'last_outcome', to_jsonb(%s::text)
-                                      )
-                                  )
-                              )
+                              || '{"enrichment_done": true}'::jsonb
                         WHERE id = %s
                         """,
-                        (
-                            quality_score,
-                            sentiment_score,
-                            json.dumps(categories),
-                            datetime.now(timezone.utc).isoformat(),
-                            "enriched",
-                            article_id,
-                        ),
+                        (quality_score, sentiment_score, json.dumps(categories), article_id),
                     )
                 conn.commit()
+
+                # Phase marker — deduplicated to canonical helper
+                from shared.pipeline_pass_marker import record_article_phase_pass
+                record_article_phase_pass(
+                    schema=schema,
+                    article_id=article_id,
+                    phase="metadata_enrichment",
+                    outcome="enriched",
+                )
                 return True
             finally:
                 conn.close()
@@ -937,7 +927,7 @@ async def run_metadata_enrichment_batch_for_domains(limit_per_domain: int = 5) -
     Runs per domain schema (politics, finance, science_tech). Returns total enriched count.
     Call from automation (metadata_enrichment task).
     """
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
     from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
     from shared.pipeline_article_selection import sql_order_id
 

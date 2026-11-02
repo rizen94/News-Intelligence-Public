@@ -68,7 +68,7 @@ def main() -> int:
     from shared.vault_note_contract import entity_vault_rel_path
     from services.research_subject_topics import load_research_subject_topics
     from services.vault_notes_registry_service import upsert_vault_note
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     # Optional Obsidian write via local path if mounted
     vault_root = os.environ.get("NEWS_VAULT_ROOT") or os.environ.get("OBSIDIAN_NEWS_VAULT")

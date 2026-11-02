@@ -25,14 +25,14 @@ logger = logging.getLogger(__name__)
 
 class MLWorker:
     def __init__(self):
-        from shared.database.connection import get_db_config
+        from shared.database import get_db_config
 
         self.db_config = get_db_config()
         self.is_running = False
 
     def get_db_connection(self):
         """Get database connection from shared pool (DB_* env / .env)."""
-        from shared.database.connection import get_db_connection as _get_conn
+        from shared.database import get_db_connection as _get_conn
 
         return _get_conn()
 

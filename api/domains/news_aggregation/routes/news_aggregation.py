@@ -12,7 +12,7 @@ from typing import Any
 
 from domains.news_aggregation.services.article_service import ArticleService
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
-from shared.database.connection import get_db_connection, get_ui_db_connection
+from shared.database import get_db_connection, get_ui_db_connection
 from shared.domain_registry import (
     DOMAIN_PATH_PATTERN,
     first_active_domain_key,

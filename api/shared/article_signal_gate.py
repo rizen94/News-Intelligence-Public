@@ -229,7 +229,7 @@ def load_trending_article_ids(schema: str) -> set[int]:
 
     ids: set[int] = set()
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         sub = sql_trending_cluster_ids_subquery(schema)
         with get_db_connection_context() as conn:
@@ -260,7 +260,7 @@ def defer_signal_light_unified_intake_batch(
     if not article_signal_enabled():
         return {}
 
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.domain_registry import pipeline_url_schema_pairs
     from shared.pipeline_pass_marker import (
         TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
@@ -341,7 +341,7 @@ def defer_signal_light_phase_batch(
     if not article_signal_enabled():
         return {}
 
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.domain_registry import pipeline_url_schema_pairs
     from shared.pipeline_pass_marker import (
         TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
@@ -407,7 +407,7 @@ def defer_signal_light_claim_contexts_batch(*, limit: int = 400) -> int:
     if not article_signal_enabled():
         return 0
 
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.pipeline_pass_marker import (
         TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
         phase_backlog_uses_pass_marker,

@@ -16,7 +16,7 @@ async def main():
     from domains.content_analysis.services.topic_extraction_queue_worker import (
         TopicExtractionQueueWorker,
     )
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
     from shared.domain_registry import url_schema_pairs
 
     print("=" * 60)

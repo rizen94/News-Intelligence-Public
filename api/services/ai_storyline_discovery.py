@@ -217,7 +217,7 @@ class AIStorylineDiscovery:
 
     def get_db_connection(self):
         """Get database connection from shared pool."""
-        from shared.database.connection import get_db_connection as _get_conn
+        from shared.database import get_db_connection as _get_conn
 
         return _get_conn()
 
@@ -2594,7 +2594,7 @@ def get_discovery_service(db_config: dict[str, Any] = None) -> AIStorylineDiscov
 
     if _discovery_service is None:
         if db_config is None:
-            from shared.database.connection import get_db_config
+            from shared.database import get_db_config
 
             db_config = get_db_config()
         _discovery_service = AIStorylineDiscovery(db_config)

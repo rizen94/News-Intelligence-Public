@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-from shared.database.connection import get_db_connection_context
+from shared.database import get_db_connection_context
 from shared.editorial_package_vocab import (
     NARRATIVE_MEMBER_TYPES,
     RESEARCH_MEMBER_TYPES,

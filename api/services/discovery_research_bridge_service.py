@@ -11,7 +11,7 @@ from services.discovery_finding_quality import (
     bridge_sort_key,
     finding_skip_reason,
 )
-from shared.database.connection import get_db_connection_context, get_ui_db_connection_context
+from shared.database import get_db_connection_context, get_ui_db_connection_context
 from shared.post_processing_modals import allowed_domains_for_modal, modals_for_domain
 
 logger = logging.getLogger(__name__)

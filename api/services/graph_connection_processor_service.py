@@ -210,7 +210,7 @@ def process_graph_connection_proposals_batch(
 
 def _apply_entity_merge(domain_key: str, keep_id: int, drop_id: int) -> bool:
     """Repoint article_entities then remove duplicate canonical (same transaction pattern as cleanup)."""
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
     from shared.domain_registry import resolve_domain_schema
 
     if keep_id == drop_id:

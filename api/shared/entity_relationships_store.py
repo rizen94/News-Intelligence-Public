@@ -39,7 +39,7 @@ def entity_relationships_at_cap() -> bool:
 
     cap = env_int("ENTITY_RELATIONSHIPS_MAX_ROWS", 5_000_000)
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:

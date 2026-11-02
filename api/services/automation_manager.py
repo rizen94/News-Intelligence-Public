@@ -121,8 +121,6 @@ from services.automation import (  # noqa: F401
 logger = logging.getLogger(__name__)
 
 
-
-
 # Backlog-driven scheduling: skip empty cycles, run more often when backlog is high
 try:
     from services.backlog_metrics import (
@@ -146,12 +144,6 @@ except ImportError:
 from shared.services.automation_run_history_writer import (
     persist_automation_run_history as _persist_automation_run,
 )
-
-
-# Legacy enrichment-backlog-first flag — removed in v8.1.
-# The pipeline cycle now handles sequencing; no need for per-backlog gating.
-ENRICHMENT_BACKLOG_FIRST_ENABLED = False
-ENRICHMENT_BACKLOG_FIRST_WHITELIST = frozenset()
 
 
 # BATCH_PHASES_CONTINUOUS — extracted to services.automation.phase_constants (imported above).
@@ -328,7 +320,7 @@ def automation_db_pool_should_defer_phase(phase_name: str) -> bool:
     if not _automation_db_pool_pressure_gate_enabled():
         return False
     try:
-        from shared.database.connection import get_db_pool_snapshot
+        from shared.database import get_db_pool_snapshot
 
         snap = get_db_pool_snapshot()
         worker = snap.get("worker") or {}
@@ -397,7 +389,7 @@ def research_llm_backlog_pending(*, max_age_s: float = 60.0) -> int:
         return int(_LLM_BACKLOG_CACHE.get("pending") or 0)
     pending = 0
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -754,23 +746,16 @@ DOWNTIME_POLL_SLEEP = 30  # Seconds to sleep when data load is active (before re
 # ANALYSIS_PIPELINE_STEPS — extracted to services.automation.phase_constants (imported above).
 
 
-
-
 # MAX_CONCURRENT_OLLAMA_TASKS, AUTOMATION_MAX_CONCURRENT_TASKS, AUTOMATION_EXECUTOR_MAX_WORKERS
 # — extracted to services.automation.phase_constants (imported above).
-
 
 
 # Seconds between scheduler ticks; min cooldown between re-enqueue of same phase when backlog exists.
 # WORKLOAD_MIN_COOLDOWN, AUTOMATION_SCHEDULER_TICK_SECONDS — extracted to services.automation.phase_constants (imported above).
 
 
-
-
 # Collection-cycle watchdog: 60 min after cycle starts, check if any phase should be added to the queue.
 # WATCHDOG_SECONDS — extracted to services.automation.phase_constants (imported above).
-
-
 
 
 class TaskStatus(Enum):
@@ -818,12 +803,8 @@ def _phase_max_retries(phase_name: str) -> int:
         return 3
 
 
-
-
 # Estimated duration in seconds per phase (single place to tune)
 # PHASE_ESTIMATED_DURATION_SECONDS — extracted to services.automation.phase_constants (imported above).
-
-
 
 
 class AutomationManager:
@@ -2173,7 +2154,7 @@ class AutomationManager:
 
     def _get_db_connection_sync(self):
         """Synchronous DB connection for use from sync code (e.g. load/save queue)."""
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
 
         return get_db_connection()
 
@@ -2226,7 +2207,7 @@ class AutomationManager:
             )
             return
 
-        from shared.database.connection import (
+        from shared.database import (
             get_db_connection_context,
             get_health_db_connection_context,
         )
@@ -2308,7 +2289,7 @@ class AutomationManager:
         if not MUST_RUN_SCHEDULE_PHASES:
             return
         try:
-            from shared.database.connection import get_db_connection_context
+            from shared.database import get_db_connection_context
 
             with get_db_connection_context() as conn:
                 with conn.cursor() as cur:
@@ -2610,7 +2591,7 @@ class AutomationManager:
         db_snapshot = {}
         worker_util = 0.0
         try:
-            from shared.database.connection import get_db_pool_snapshot
+            from shared.database import get_db_pool_snapshot
 
             db_snapshot = get_db_pool_snapshot()
             worker = db_snapshot.get("worker") or {}
@@ -2794,7 +2775,7 @@ class AutomationManager:
                 except Exception as e:
                     logger.debug("scheduler auto_enqueue comprehensive_rag: %s", e)
 
-                # Drain coordinator-driven phase requests (thread-safe); respect enrichment-backlog-first
+                # Drain coordinator-driven phase requests (thread-safe)
                 try:
                     while True:
                         item = self._phase_request_queue.get_nowait()
@@ -2821,18 +2802,6 @@ class AutomationManager:
                                 "request_phase: phase %s is disabled, skipping", phase_name
                             )
                             continue
-                        if (
-                            ENRICHMENT_BACKLOG_FIRST_ENABLED
-                            and backlog_counts.get("content_enrichment", 0) > 0
-                            and phase_name not in ENRICHMENT_BACKLOG_FIRST_WHITELIST
-                        ):
-                            logger.info(
-                                "request_phase: skipping %s (enrichment backlog first, %s articles pending)",
-                                phase_name,
-                                backlog_counts.get("content_enrichment", 0),
-                            )
-                            continue
-                        # Pipeline exclusive applies to governor/chain requests too (not only
                         # schedule eligibility). Monitor requests (requested_activity_id) bypass.
                         if not requested_activity_id:
                             try:
@@ -3000,13 +2969,7 @@ class AutomationManager:
                     work_score = max(backlog, pending_raw)
                     resource_class = self._phase_resource_class(task_name)
                     lane, _ = self._resolve_effective_lane(task_name, resource_class)
-                    if (
-                        ENRICHMENT_BACKLOG_FIRST_ENABLED
-                        and task_name == "content_enrichment"
-                        and backlog > 0
-                    ):
-                        p = TaskPriority.CRITICAL.value
-                    elif work_score > BACKLOG_HIGH_THRESHOLD:
+                    if work_score > BACKLOG_HIGH_THRESHOLD:
                         # Boost priority by one level when this task has a lot of work (prioritize work that needs doing)
                         p = max(TaskPriority.CRITICAL.value, p - 1)
                     try:
@@ -3272,16 +3235,6 @@ class AutomationManager:
                 return False
         except Exception:
             pass
-
-        backlog_counts = backlog_counts or {}
-        if (
-            ENRICHMENT_BACKLOG_FIRST_ENABLED
-            and backlog_counts.get("content_enrichment", 0) > 0
-            and task_name not in ENRICHMENT_BACKLOG_FIRST_WHITELIST
-        ):
-            return False
-
-        backlog = backlog_counts.get(task_name, 0)
 
         # SKIP_WHEN_EMPTY: skip when no work (so we don't run empty cycles).
         pending = (
@@ -4140,16 +4093,6 @@ class AutomationManager:
                     logger.debug("Research pickup nudge after %s: %s", task.name, e)
 
             # Chain: request any phase that depends on this one so the pipeline keeps moving
-            # When enrichment-backlog-first is enabled and backlog non-empty, do not chain-request phases outside the whitelist
-            enrichment_backlog = 0
-            if (
-                ENRICHMENT_BACKLOG_FIRST_ENABLED
-                and get_all_backlog_counts
-                and task.name == "content_enrichment"
-            ):
-                try:
-                    counts = get_all_backlog_counts()
-                    enrichment_backlog = counts.get("content_enrichment", 0) or 0
                 except Exception:
                     pass
             if (task.metadata or {}).get("nightly_sequential_drain"):
@@ -4160,16 +4103,6 @@ class AutomationManager:
                         continue
                     deps = other_sched.get("depends_on") or []
                     if task.name not in deps:
-                        continue
-                    if (
-                        enrichment_backlog > 0
-                        and other_name not in ENRICHMENT_BACKLOG_FIRST_WHITELIST
-                    ):
-                        logger.info(
-                            "Chained: skipping %s (enrichment backlog first, %s articles pending)",
-                            other_name,
-                            enrichment_backlog,
-                        )
                         continue
                     try:
                         from services.nightly_ingest_window_service import (
@@ -5576,9 +5509,9 @@ class AutomationManager:
             conn = get_db_connection()
             if not conn:
                 return {}
-            
+
             cur = conn.cursor()
-            
+
             # Get all active feeds with their caught-up status
             cur.execute("""
                 SELECT 
@@ -5595,29 +5528,29 @@ class AutomationManager:
                 WHERE is_active = TRUE
                 ORDER BY feed_name
             """)
-            
+
             feeds = cur.fetchall()
             conn.close()
-            
+
             feed_status = []
             for feed in feeds:
                 feed_id, name, url, is_caught_up, caught_up_since, last_check, last_fetched, is_active, fetch_interval = feed
-                
+
                 # Calculate time since last caught up check
                 time_since_check = None
                 if last_check:
                     time_since_check = (datetime.now(timezone.utc) - last_check).total_seconds()
-                
+
                 # Calculate time since last fetch
                 time_since_fetch = None
                 if last_fetched:
                     time_since_fetch = (datetime.now(timezone.utc) - last_fetched).total_seconds()
-                
+
                 # Calculate next expected fetch time
                 next_fetch_time = None
                 if last_fetched and fetch_interval:
                     next_fetch_time = last_fetched + timedelta(seconds=fetch_interval)
-                
+
                 feed_status.append({
                     'id': feed_id,
                     'name': name,
@@ -5632,7 +5565,7 @@ class AutomationManager:
                     'time_since_fetch': time_since_fetch,
                     'next_fetch_time': next_fetch_time
                 })
-            
+
             return {
                 'feeds': feed_status,
                 'total_feeds': len(feeds),
@@ -5825,7 +5758,7 @@ class AutomationManager:
     async def _execute_longitudinal_matview_refresh(self, task: Task):
         import asyncio
 
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         def _refresh():
             with get_db_connection_context() as conn:
@@ -5867,7 +5800,7 @@ class AutomationManager:
                 # Validate content before proceeding with editorial generation
                 # This ensures that downstream processes have sufficient content
                 logger.debug(f"Checking content availability for editorial document generation in domain {domain}")
-                
+
                 # Get storylines that need editorial work
                 schema = resolve_domain_schema(domain)
                 conn = get_db_connection()
@@ -5891,7 +5824,7 @@ class AutomationManager:
                                 """
                             )
                             storylines = cursor.fetchall()
-                        
+
                         # Validate that these storylines have sufficient content
                         for row in storylines:
                             sid, title, description, analysis_summary, existing_doc, doc_version, last_refined, updated_at = row
@@ -5899,7 +5832,7 @@ class AutomationManager:
                             if not storyline_validation.get("valid", False):
                                 logger.warning(f"Skipping storyline {sid} in domain {domain} - insufficient content")
                                 continue
-                            
+
                         conn.commit()
                     except Exception as e:
                         logger.warning(f"Content validation check failed for domain {domain}: {e}")
@@ -5912,7 +5845,7 @@ class AutomationManager:
                             conn.close()
                         except Exception:
                             pass
-                
+
                 result = await generate_storyline_editorial(domain, limit=5)
                 logger.info("Editorial doc generation (%s): %s", domain, result)
             except Exception as e:
@@ -6016,7 +5949,7 @@ class AutomationManager:
 
     async def _execute_health_check(self, task: Task):
         """Execute health check task (manual ``request_phase`` only; scheduled runs use ``_standalone_health_check_loop``)."""
-        from shared.database.connection import get_health_db_connection_context
+        from shared.database import get_health_db_connection_context
 
         loop = asyncio.get_event_loop()
 
@@ -6032,7 +5965,7 @@ class AutomationManager:
 
     async def _standalone_health_check_loop(self):
         """Periodic SELECT 1 on the **health** DB pool — not queued with other phases, does not use the worker pool."""
-        from shared.database.connection import get_health_db_connection_context
+        from shared.database import get_health_db_connection_context
 
         loop = asyncio.get_event_loop()
 
@@ -6160,7 +6093,7 @@ class AutomationManager:
 
     async def _execute_rag_enhancement(self, task: Task):
         """Execute RAG enhancement per domain (v8): enhance storylines with Wikipedia/GDELT context, store by (domain, storyline_id)."""
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
 
         from services.rag import get_rag_service
 
@@ -6456,7 +6389,7 @@ class AutomationManager:
         from domains.storyline_management.services.storyline_service import (
             StorylineService as DomainStorylineService,
         )
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
         from services.content_validation_service import content_validation_service
 
         processed_count = 0
@@ -6492,13 +6425,13 @@ class AutomationManager:
                         row[4],
                     )
                     summary_for_check = analysis_summary or master_summary
-                    
+
                     # Validate content before proceeding with processing
                     storyline_validation = await content_validation_service.validate_storyline_content_requirements(domain, sid)
                     if not storyline_validation.get("valid", False):
                         logger.warning("Skipping storyline %s/%s: insufficient content", domain, sid)
                         continue
-                    
+
                     if len(summary_for_check) < 100:
                         try:
                             result = await svc.generate_storyline_summary(sid)
@@ -6993,7 +6926,7 @@ class AutomationManager:
         """v5.0 -- Extract structured events with temporal grounding from domain articles."""
         try:
             from services.event_extraction_service import EventExtractionService
-            from shared.database.connection import get_db_connection
+            from shared.database import get_db_connection
 
             svc = EventExtractionService()
             loop = asyncio.get_event_loop()
@@ -7534,7 +7467,7 @@ class AutomationManager:
             LOW_CONFIDENCE_COUNT = 6  # 30% of batch size
             MEDIUM_CONFIDENCE_COUNT = 6  # 30% of batch size
 
-            from shared.database.connection import get_db_config
+            from shared.database import get_db_config
 
             db_config = get_db_config()
             total_processed = 0
@@ -7769,7 +7702,7 @@ class AutomationManager:
 
     async def _get_db_connection(self):
         """Get database connection from shared pool. Runs in executor to avoid blocking the event loop."""
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
 
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, get_db_connection)
@@ -8244,7 +8177,7 @@ class AutomationManager:
         }
         # Fresh pool snapshot for Monitor (headroom may be a few seconds stale).
         try:
-            from shared.database.connection import get_db_pool_snapshot
+            from shared.database import get_db_pool_snapshot
             from shared.database.pool_pressure_advisory import (
                 build_pool_pressure_signal,
                 publish_db_pool_pressure_advisory,

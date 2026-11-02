@@ -12,7 +12,7 @@ from decimal import Decimal
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Query
-from shared.database.connection import get_db_connection, get_ui_db_connection_context
+from shared.database import get_db_connection, get_ui_db_connection_context
 from shared.domain_registry import (
     domain_key_to_schema,
     get_active_domain_keys,

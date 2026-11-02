@@ -298,7 +298,7 @@ def sample_resources() -> ResourceSnapshot:
 
     db_worker_util = 0.0
     try:
-        from shared.database.connection import get_db_pool_snapshot
+        from shared.database import get_db_pool_snapshot
 
         snap = get_db_pool_snapshot()
         db_worker_util = float((snap.get("worker") or {}).get("utilization") or 0.0)

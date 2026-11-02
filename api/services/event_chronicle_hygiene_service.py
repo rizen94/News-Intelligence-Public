@@ -305,7 +305,7 @@ def hygiene_all_tracked_event_chronicles(
     progress_every: int = 100,
 ) -> dict[str, Any]:
     """Run hygiene across tracked events. Uses a direct DB connection (caller env)."""
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

@@ -20,7 +20,7 @@ if env_file.exists():
 
 
 def main() -> int:
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
     from shared.membership_store import reconcile_derived_bag_from_eel
 

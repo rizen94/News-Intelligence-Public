@@ -15,7 +15,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from config.runtime import env_bool, env_int, env_str
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 

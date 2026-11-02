@@ -207,7 +207,14 @@ def quiet_hours_disabled() -> bool:
 
 
 def wall_clock_popos_gpu_allowed(*, now_local: datetime | None = None) -> bool:
-    """Clock-only PopOS GPU gate (no co-tenant check)."""
+    """Clock-only PopOS GPU gate (no co-tenant check).
+
+    When ``PIPELINE_QUIET_HOURS_DISABLED=true`` on the desk host, time windows are
+    ignored and resource availability (game / co-tenant detection) becomes the
+    *only* scheduling mechanism.  This implements user-first behaviour: low-effort
+    phases run whenever resources permit; heavy GPU work only when interactive use
+    is absent.
+    """
     if quiet_hours_disabled():
         return True
     return active_pipeline_window(now_local) in ("nightly_heavy", "weekday_daytime")

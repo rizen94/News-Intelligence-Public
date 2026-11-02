@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, NamedTuple
 
-from shared.database.connection import get_db_connection, get_db_connection_context
+from shared.database import get_db_connection, get_db_connection_context
 from shared.domain_registry import (
     get_pipeline_schema_names_active,
     pipeline_url_schema_pairs,
@@ -351,6 +351,20 @@ def claim_extraction_min_text_len() -> int:
     except (TypeError, ValueError):
         n = 80
     return max(40, min(n, 2000))
+
+
+def get_claim_extraction_max_retries() -> int:
+    """Maximum LLM failure retries before marking context as processed.
+
+    When the LLM repeatedly fails for the same context (timeout, bad prompt pattern),
+    this prevents infinite retry loops that starve other pipeline stages of compute cycles.
+    Default 5; set CLAIM_EXTRACTION_MAX_RETRY_ATTEMPTS=0 to disable (never mark as done).
+    """
+    try:
+        n = int(env_str("CLAIM_EXTRACTION_MAX_RETRY_ATTEMPTS", "5"))
+    except ValueError:
+        n = 5
+    return max(0, n)
 
 
 def claim_pipeline_max_fetch() -> int:
@@ -1024,7 +1038,60 @@ Keep each subject under ~80 characters when possible."""
         raw = gen.text
     except Exception as e:
         logger.warning("Claim extraction LLM failed for context %s: %s", context_id, e)
+        # Detect pressure errors (overload / circuit breaker / connect) so we
+        # skip the retry counter — a transient spike should not burn retries.
+        try:
+            from shared.services.llm_service import is_ollama_pressure_error
+        except ImportError:
+            is_ollama_pressure_error = lambda exc: False  # type: ignore[misc,assignment]
+        if is_ollama_pressure_error(e):
+            return 0  # Defer; pressure will lift — drain loop retries later.
+        # Write a non-terminal failure marker so the context stays eligible but we track
+        # attempts. After MAX_RETRY_ATTEMPTS failures the context is marked processed to
+        # break infinite retry loops when Ollama/LLM is down for a specific prompt pattern.
+        try:
+            from shared.pipeline_pass_marker import (
+                TERMINAL_FAILED_NEEDS_RETRY,
+                record_context_phase_pass,
+            )
+            conn = get_db_connection()
+            if conn:
+                with conn.cursor() as cur:
+                    # Read current retry count from metadata pipeline.claim_extraction
+                    cur.execute(
+                        "SELECT COALESCE(metadata::jsonb->'pipeline'->'claim_extraction'->>'retry_count', '0')"
+                        " FROM intelligence.contexts WHERE id = %s",
+                        (context_id,),
+                    )
+                    row = cur.fetchone()
+                    retry_count = int(row[0] or 0) + 1
+                    terminal = TERMINAL_FAILED_NEEDS_RETRY
+                    if retry_count >= get_claim_extraction_max_retries():
+                        terminal = "TERMINAL_PROCESSED_EMPTY_LEGITIMATE"
+                    # Update metadata with incremented retry count
+                    cur.execute(
+                        """
+                        UPDATE intelligence.contexts
+                        SET metadata = jsonb_set(
+                            COALESCE(metadata::jsonb, '{}'::jsonb),
+                            '{pipeline,claim_extraction,retry_count}',
+                            %s::text
+                        ),
+                        updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                        """,
+                        (str(retry_count), context_id),
+                    )
+                    record_context_phase_pass(
+                        context_id, "claim_extraction", "llm_error",
+                        terminal_state=terminal,
+                    )
+                conn.commit()
+                conn.close()
+        except Exception:
+            pass  # best-effort; do not lose the retry opportunity if DB write fails
         return 0
+
 
     claims = _parse_claims_response(raw)
     parse_ok = len(claims) > 0

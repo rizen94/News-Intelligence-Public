@@ -14,7 +14,7 @@ from enum import Enum
 from typing import Any
 
 from psycopg2.extras import RealDictCursor
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection_context
 
 # Try to import Prometheus client
 try:
@@ -252,39 +252,36 @@ class AdvancedMonitoringService:
     async def _get_database_metrics(self) -> dict[str, Any]:
         """Get database-related metrics"""
         try:
-            conn = get_db_connection()
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            with get_db_connection_context() as conn:
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-            # Get database connection count
-            cursor.execute("SELECT count(*) as connections FROM pg_stat_activity")
-            connections = cursor.fetchone()["connections"]
+                # Get database connection count
+                cursor.execute("SELECT count(*) as connections FROM pg_stat_activity")
+                connections = cursor.fetchone()["connections"]
 
-            # Get recent error count
-            cursor.execute("""
-                SELECT count(*) as error_count
-                FROM system_logs
-                WHERE level = 'ERROR'
-                AND created_at > NOW() - INTERVAL '5 minutes'
-            """)
-            error_count = cursor.fetchone()["error_count"]
+                # Get recent error count
+                cursor.execute("""
+                    SELECT count(*) as error_count
+                    FROM system_logs
+                    WHERE level = 'ERROR'
+                    AND created_at > NOW() - INTERVAL '5 minutes'
+                """)
+                error_count = cursor.fetchone()["error_count"]
 
-            # Get recent processing count
-            cursor.execute("""
-                SELECT count(*) as processed_count
-                FROM articles
-                WHERE created_at > NOW() - INTERVAL '5 minutes'
-            """)
-            processed_count = cursor.fetchone()["processed_count"]
+                # Get recent processing count
+                cursor.execute("""
+                    SELECT count(*) as processed_count
+                    FROM articles
+                    WHERE created_at > NOW() - INTERVAL '5 minutes'
+                """)
+                processed_count = cursor.fetchone()["processed_count"]
 
-            cursor.close()
-            conn.close()
-
-            return {
-                "db_connections": connections,
-                "error_count_5min": error_count,
-                "articles_processed_5min": processed_count,
-                "articles_per_minute": processed_count / 5.0,
-            }
+                return {
+                    "db_connections": connections,
+                    "error_count_5min": error_count,
+                    "articles_processed_5min": processed_count,
+                    "articles_per_minute": processed_count / 5.0,
+                }
 
         except Exception as e:
             logger.warning(f"Error getting database metrics: {e}")
@@ -293,29 +290,26 @@ class AdvancedMonitoringService:
     async def _get_cache_metrics(self) -> dict[str, Any]:
         """Get cache-related metrics"""
         try:
-            conn = get_db_connection()
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            with get_db_connection_context() as conn:
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-            # Get cache statistics
-            cursor.execute("""
-                SELECT
-                    count(*) as total_entries,
-                    count(*) FILTER (WHERE expires_at > NOW()) as active_entries,
-                    avg(size_bytes) as avg_size_bytes
-                FROM api_cache
-            """)
-            cache_stats = cursor.fetchone()
+                # Get cache statistics
+                cursor.execute("""
+                    SELECT
+                        count(*) as total_entries,
+                        count(*) FILTER (WHERE expires_at > NOW()) as active_entries,
+                        avg(size_bytes) as avg_size_bytes
+                    FROM api_cache
+                """)
+                cache_stats = cursor.fetchone()
 
-            cursor.close()
-            conn.close()
-
-            return {
-                "cache_total_entries": cache_stats["total_entries"],
-                "cache_active_entries": cache_stats["active_entries"],
-                "cache_avg_size_bytes": float(cache_stats["avg_size_bytes"])
-                if cache_stats["avg_size_bytes"]
-                else 0,
-            }
+                return {
+                    "cache_total_entries": cache_stats["total_entries"],
+                    "cache_active_entries": cache_stats["active_entries"],
+                    "cache_avg_size_bytes": float(cache_stats["avg_size_bytes"])
+                    if cache_stats["avg_size_bytes"]
+                    else 0,
+                }
 
         except Exception as e:
             logger.warning(f"Error getting cache metrics: {e}")
@@ -324,39 +318,36 @@ class AdvancedMonitoringService:
     async def _get_processing_metrics(self) -> dict[str, Any]:
         """Get processing-related metrics"""
         try:
-            conn = get_db_connection()
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            with get_db_connection_context() as conn:
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-            # Get processing statistics
-            cursor.execute("""
-                SELECT
-                    count(*) as total_articles,
-                    count(*) FILTER (WHERE status = 'processed') as processed_articles,
-                    count(*) FILTER (WHERE status = 'error') as error_articles,
-                    avg(processing_time) as avg_processing_time
-                FROM articles
-                WHERE created_at > NOW() - INTERVAL '1 hour'
-            """)
-            processing_stats = cursor.fetchone()
+                # Get processing statistics
+                cursor.execute("""
+                    SELECT
+                        count(*) as total_articles,
+                        count(*) FILTER (WHERE status = 'processed') as processed_articles,
+                        count(*) FILTER (WHERE status = 'error') as error_articles,
+                        avg(processing_time) as avg_processing_time
+                    FROM articles
+                    WHERE created_at > NOW() - INTERVAL '1 hour'
+                """)
+                processing_stats = cursor.fetchone()
 
-            total = processing_stats["total_articles"]
-            processed = processing_stats["processed_articles"]
-            errors = processing_stats["error_articles"]
+                total = processing_stats["total_articles"]
+                processed = processing_stats["processed_articles"]
+                errors = processing_stats["error_articles"]
 
-            error_rate = errors / total if total > 0 else 0.0
+                error_rate = errors / total if total > 0 else 0.0
 
-            cursor.close()
-            conn.close()
-
-            return {
-                "total_articles_1h": total,
-                "processed_articles_1h": processed,
-                "error_articles_1h": errors,
-                "error_rate": error_rate,
-                "avg_processing_time": float(processing_stats["avg_processing_time"])
-                if processing_stats["avg_processing_time"]
-                else 0.0,
-            }
+                return {
+                    "total_articles_1h": total,
+                    "processed_articles_1h": processed,
+                    "error_articles_1h": errors,
+                    "error_rate": error_rate,
+                    "avg_processing_time": float(processing_stats["avg_processing_time"])
+                    if processing_stats["avg_processing_time"]
+                    else 0.0,
+                }
 
         except Exception as e:
             logger.warning(f"Error getting processing metrics: {e}")
@@ -481,35 +472,33 @@ class AdvancedMonitoringService:
     async def _store_alert(self, alert: Alert):
         """Store alert in database"""
         try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
+            with get_db_connection_context() as conn:
+                cursor = conn.cursor()
 
-            cursor.execute(
-                """
-                INSERT INTO alerts (
-                    id, type, severity, title, message, timestamp,
-                    source, metrics, resolved, resolved_at
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                cursor.execute(
+                    """
+                    INSERT INTO alerts (
+                        id, type, severity, title, message, timestamp,
+                        source, metrics, resolved, resolved_at
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                """,
+                    (
+                        alert.id,
+                        alert.type.value,
+                        alert.severity.value,
+                        alert.title,
+                        alert.message,
+                        alert.timestamp,
+                        alert.source,
+                        json.dumps(alert.metrics),
+                        alert.resolved,
+                        alert.resolved_at,
+                    ),
                 )
-            """,
-                (
-                    alert.id,
-                    alert.type.value,
-                    alert.severity.value,
-                    alert.title,
-                    alert.message,
-                    alert.timestamp,
-                    alert.source,
-                    json.dumps(alert.metrics),
-                    alert.resolved,
-                    alert.resolved_at,
-                ),
-            )
 
-            conn.commit()
-            cursor.close()
-            conn.close()
+                conn.commit()
 
         except Exception as e:
             logger.error(f"Error storing alert: {e}")
@@ -923,38 +912,35 @@ class AdvancedMonitoringService:
             if not PROMETHEUS_AVAILABLE or not self.registry:
                 return
 
-            conn = get_db_connection()
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            with get_db_connection_context() as conn:
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-            # Update RSS feed counts
-            cursor.execute("""
-                SELECT status, tier, COUNT(*) as count
-                FROM rss_feeds
-                GROUP BY status, tier
-            """)
-            feed_counts = cursor.fetchall()
+                # Update RSS feed counts
+                cursor.execute("""
+                    SELECT status, tier, COUNT(*) as count
+                    FROM rss_feeds
+                    GROUP BY status, tier
+                """)
+                feed_counts = cursor.fetchall()
 
-            # Clear and update feed counts
-            for status, tier, count in feed_counts:
-                self.prometheus_metrics["rss_feeds_total"].labels(
-                    status=status, tier=str(tier)
-                ).set(count)
+                # Clear and update feed counts
+                for status, tier, count in feed_counts:
+                    self.prometheus_metrics["rss_feeds_total"].labels(
+                        status=status, tier=str(tier)
+                    ).set(count)
 
-            # Update success rates
-            cursor.execute("""
-                SELECT id, name, success_rate
-                FROM rss_feeds
-                WHERE is_active = true
-            """)
-            success_rates = cursor.fetchall()
+                # Update success rates
+                cursor.execute("""
+                    SELECT id, name, success_rate
+                    FROM rss_feeds
+                    WHERE is_active = true
+                """)
+                success_rates = cursor.fetchall()
 
-            for row in success_rates:
-                self.prometheus_metrics["rss_feed_success_rate"].labels(
-                    feed_id=str(row["id"]), feed_name=row["name"]
-                ).set(float(row["success_rate"]) if row["success_rate"] else 0.0)
-
-            cursor.close()
-            conn.close()
+                for row in success_rates:
+                    self.prometheus_metrics["rss_feed_success_rate"].labels(
+                        feed_id=str(row["id"]), feed_name=row["name"]
+                    ).set(float(row["success_rate"]) if row["success_rate"] else 0.0)
 
         except Exception as e:
             logger.error(f"Error updating Prometheus metrics from database: {e}")
@@ -968,8 +954,8 @@ class AdvancedMonitoringService:
             # Check database connection
             db_healthy = True
             try:
-                conn = get_db_connection()
-                conn.close()
+                with get_db_connection_context():
+                    pass
             except Exception:
                 db_healthy = False
 
@@ -1005,8 +991,8 @@ class AdvancedMonitoringService:
             # Check database connection
             db_ready = True
             try:
-                conn = get_db_connection()
-                conn.close()
+                with get_db_connection_context():
+                    pass
             except Exception:
                 db_ready = False
 
@@ -1052,21 +1038,19 @@ class AdvancedMonitoringService:
                     alert.resolved_at = datetime.now(timezone.utc)
 
                     # Update in database
-                    conn = get_db_connection()
-                    cursor = conn.cursor()
+                    with get_db_connection_context() as conn:
+                        cursor = conn.cursor()
 
-                    cursor.execute(
-                        """
-                        UPDATE alerts
-                        SET resolved = true, resolved_at = %s
-                        WHERE id = %s
-                    """,
-                        (alert.resolved_at, alert_id),
-                    )
+                        cursor.execute(
+                            """
+                            UPDATE alerts
+                            SET resolved = true, resolved_at = %s
+                            WHERE id = %s
+                        """,
+                            (alert.resolved_at, alert_id),
+                        )
 
-                    conn.commit()
-                    cursor.close()
-                    conn.close()
+                        conn.commit()
 
                     logger.info(f"Alert {alert_id} resolved")
                     return True

@@ -100,7 +100,7 @@ class TopicClusteringService:
 
     def _get_db_connection(self):
         """Get database connection from shared pool and set search_path to domain schema."""
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
 
         conn = get_db_connection()
         with conn.cursor() as cur:

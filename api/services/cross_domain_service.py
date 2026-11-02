@@ -9,7 +9,7 @@ import uuid
 from datetime import date, timedelta
 from typing import Any
 
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 

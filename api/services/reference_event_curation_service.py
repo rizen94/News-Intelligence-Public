@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from shared.database.connection import get_db_connection_context, get_ui_db_connection_context
+from shared.database import get_db_connection_context, get_ui_db_connection_context
 
 from services.reference_events_loader import _parse_event_date
 

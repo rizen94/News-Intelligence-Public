@@ -68,7 +68,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

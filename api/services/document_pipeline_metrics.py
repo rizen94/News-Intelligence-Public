@@ -26,7 +26,7 @@ def get_document_pipeline_metrics() -> dict[str, Any]:
         "error": None,
     }
     try:
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
 
         conn = get_db_connection()
         if not conn:

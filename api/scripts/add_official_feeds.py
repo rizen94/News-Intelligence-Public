@@ -37,7 +37,7 @@ except Exception as e:
 
 def get_db_connection():
     """Get database connection from shared pool. Raises if DB unreachable."""
-    from shared.database.connection import get_db_connection as _get_conn
+    from shared.database import get_db_connection as _get_conn
 
     return _get_conn()
 

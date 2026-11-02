@@ -163,7 +163,7 @@ def fetch_timeline_for_storylines(
     limit: int = 18,
     title_filter: str | None = None,
 ) -> list[str]:
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     if not storyline_ids:
         return []
@@ -210,7 +210,7 @@ def fetch_recent_theme_articles(
     limit: int = 14,
     schema: str = SCHEMA,
 ) -> list[str]:
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     like_clause = " OR ".join(["a.title ILIKE %s"] * len(patterns))
     params: list[Any] = [int(days)] + [f"%{p}%" for p in patterns] + [int(limit)]

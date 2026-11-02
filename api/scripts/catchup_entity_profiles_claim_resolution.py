@@ -36,7 +36,7 @@ from services.entity_profile_sync_service import (  # noqa: E402
 
 
 def _profile_counts(domain_key: str) -> dict[str, int]:
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.domain_registry import resolve_domain_schema
 
     schema = resolve_domain_schema(domain_key)

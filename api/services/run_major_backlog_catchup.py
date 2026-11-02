@@ -465,7 +465,7 @@ def _cut_stale_fact_change_log(days: int) -> int:
     """Mark old unprocessed fact_change_log rows processed (drain tail without story updates)."""
     if days <= 0:
         return 0
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
@@ -538,7 +538,7 @@ async def _run_event_extraction(batch: int, resources: ResourceSnapshot) -> dict
     from shared.backlog_orchestration import sprint_gpu_only
     from shared.database.db_availability import schema_has_table
     from shared.domain_registry import get_pipeline_schema_names_active
-    from shared.legacy_intake_rollback import legacy_intake_rollback_active, load_event_extraction_runner
+    from shared.recovery.intake_rollback import legacy_intake_rollback_active, load_event_extraction_runner
 
     if not legacy_intake_rollback_active():
         return await _run_unified_intake_extraction(batch, resources)

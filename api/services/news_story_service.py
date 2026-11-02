@@ -11,7 +11,7 @@ import json
 import logging
 from typing import Any
 
-from shared.database.connection import get_ui_db_connection_context
+from shared.database import get_ui_db_connection_context
 from shared.editorial_package_vocab import PRESENTATION_KINDS
 from services.editorial_package_service import (
     _append_decision,

@@ -192,7 +192,7 @@ async def run_unified_intake_extraction_batch_drain(
                 {pass_clause}
             """
         limit_sql = "" if article_ids else f" LIMIT {per_domain}"
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cursor:

@@ -186,7 +186,7 @@ def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] |
             if work_queues
             else None,
         }
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -231,7 +231,7 @@ def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] |
 def read_monitor_backlog_snapshot(*, allow_stale: bool = False) -> dict[str, Any] | None:
     """Load snapshot from automation_state; None if missing or too old."""
     try:
-        from shared.database.connection import get_ui_db_connection_context
+        from shared.database import get_ui_db_connection_context
 
         with get_ui_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -271,7 +271,7 @@ def _append_snapshot_history(
     phase_count: int,
 ) -> None:
     """Persist a history row for read-mostly trend / p95 analysis (Phase E)."""
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     queue_depths = payload.get("queue_depths") or payload.get("pending") or {}
     backlog_counts = payload.get("backlog") or payload.get("backlog_counts") or {}

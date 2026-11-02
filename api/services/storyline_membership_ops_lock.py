@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator
 
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 

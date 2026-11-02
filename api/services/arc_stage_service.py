@@ -248,7 +248,7 @@ def infer_arc_stage(
     try:
         if conn is not None:
             return _run(conn)
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         with get_db_connection_context() as db:
             return _run(db)

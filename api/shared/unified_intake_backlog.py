@@ -132,7 +132,7 @@ def sql_legacy_backfill_eligible(schema: str, alias: str = "a") -> str:
 
 
 def _query_unified_intake_backlog_stats() -> dict[str, int]:
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     out = {
         "total_missing_unified_pass": 0,
@@ -209,7 +209,7 @@ def backfill_unified_pass_from_legacy_batch(
     Set unified_intake_extraction pass marker for legacy-complete articles (no LLM).
     Returns article ids backfilled.
     """
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.pipeline_pass_marker import bulk_record_article_phase_pass
 
     if not unified_intake_legacy_aware_backlog_enabled():

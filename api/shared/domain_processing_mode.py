@@ -125,7 +125,7 @@ def get_domain_processing_modes() -> dict[str, str]:
     try:
         from psycopg2.extras import RealDictCursor
 
-        from shared.database.connection import get_ui_db_connection
+        from shared.database import get_ui_db_connection
     except Exception:
         return yaml_modes
 

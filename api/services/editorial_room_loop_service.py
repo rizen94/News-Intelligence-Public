@@ -10,7 +10,7 @@ import logging
 from typing import Any
 
 from shared.assembly_phase_order import editorial_room_loop_enabled
-from shared.legacy_editorial_rollback import (
+from shared.recovery.editorial_phase_recoverer import (
     legacy_editorial_writers_enabled,
     load_editorial_room_loop_service,
 )

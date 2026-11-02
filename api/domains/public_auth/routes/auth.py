@@ -14,7 +14,7 @@ from config.settings import (
     news_intel_auth_cookie_secure,
     news_intel_public_web_auth_enabled,
 )
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 from shared.middleware.public_web_auth import attach_public_web_auth_state
 from shared.services.public_web_auth_service import (
     hash_password,

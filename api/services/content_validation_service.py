@@ -7,7 +7,7 @@ before proceeding with downstream processing.
 import logging
 from shared.domain_registry import resolve_domain_schema
 from typing import Optional, Tuple
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 

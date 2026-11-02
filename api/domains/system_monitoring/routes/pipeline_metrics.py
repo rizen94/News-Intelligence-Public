@@ -104,7 +104,7 @@ def _get_phase_names_cached(window_hrs: int) -> list[str]:
     import time
 
     try:
-        from shared.database.connection import get_ui_db_connection
+        from shared.database import get_ui_db_connection
 
         if (_phase_names_time + _PHASE_NAMES_TTL) > time.monotonic():
             return list(_phase_names_cache)
@@ -128,7 +128,7 @@ def _get_phase_names_cached(window_hrs: int) -> list[str]:
 def _recently_processed(phase: str) -> int:
     """Count success-finished rows in the last 6 hours for one phase."""
     try:
-        from shared.database.connection import get_ui_db_connection
+        from shared.database import get_ui_db_connection
 
         conn = get_ui_db_connection()
         cur = conn.cursor()

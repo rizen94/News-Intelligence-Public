@@ -10,7 +10,7 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from shared.database.connection import ephemeral_db_connection_context
+from shared.database import ephemeral_db_connection_context
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ _digest_service: Any = None
 def _get_daily_briefing_service():
     """Lazy init DailyBriefingService with shared db_config."""
     from modules.ml.daily_briefing_service import DailyBriefingService
-    from shared.database.connection import get_db_config
+    from shared.database import get_db_config
 
     return DailyBriefingService(get_db_config())
 

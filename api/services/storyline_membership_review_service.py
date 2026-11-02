@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from config.runtime import env_int, env_str
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 from shared.storyline_article_counts import sync_counts_update_sql, sync_storyline_derived_metrics
 
@@ -1284,7 +1284,7 @@ def run_storyline_membership_review_all_domains(
         if skip_chemistry:
             try:
                 from shared.domain_registry import resolve_domain_schema
-                from shared.database.connection import get_db_connection
+                from shared.database import get_db_connection
 
                 schema = resolve_domain_schema(dk)
                 conn = get_db_connection()

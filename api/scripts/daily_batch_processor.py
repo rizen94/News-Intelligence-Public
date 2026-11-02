@@ -64,7 +64,7 @@ async def process_articles_ml():
     logger.info("=" * 80)
 
     try:
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
 
         conn = get_db_connection()
         if not conn:
@@ -135,7 +135,7 @@ async def process_topic_clustering():
     logger.info("=" * 80)
 
     from domains.content_analysis.services.topic_clustering_service import TopicClusteringService
-    from shared.database.connection import get_db_config, get_db_connection
+    from shared.database import get_db_config, get_db_connection
 
     conn = None
     try:
@@ -267,7 +267,7 @@ async def update_statistics():
     logger.info("=" * 80)
 
     try:
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
 
         conn = get_db_connection()
         if not conn:

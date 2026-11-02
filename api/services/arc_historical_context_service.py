@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from shared.database.connection import get_db_connection_context, get_ui_db_connection_context
+from shared.database import get_db_connection_context, get_ui_db_connection_context
 from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 
 from services.arc_catalog_service import get_arc_definition

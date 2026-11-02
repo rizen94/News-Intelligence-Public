@@ -264,7 +264,7 @@ async def drain_phase(
     if name == "story_continuation":
         from shared.domain_processing_mode import domain_runs_phase
         from shared.domain_registry import pipeline_url_schema_pairs
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
         from shared.services.llm_service import llm_service
         from services.story_continuation_service import StoryContinuationService
 

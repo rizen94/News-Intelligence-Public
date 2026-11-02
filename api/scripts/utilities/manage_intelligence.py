@@ -9,7 +9,7 @@ import logging
 import os
 import sys
 
-# Add api to path so shared.database.connection is available
+# Add api to path so shared.database is available
 _API_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _API_ROOT not in sys.path:
     sys.path.insert(0, _API_ROOT)
@@ -17,7 +17,7 @@ if _API_ROOT not in sys.path:
 
 def _get_db_config():
     """Database config from shared source (DB_* env / .env)."""
-    from shared.database.connection import get_db_config
+    from shared.database import get_db_config
 
     return get_db_config()
 

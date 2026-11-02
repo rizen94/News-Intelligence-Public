@@ -293,7 +293,7 @@ def get_shortlist(
     # 2) Intelligence contexts (finance domain) — reporting/disclosures summarized as contexts
     if include_contexts and terms:
         try:
-            from shared.database.connection import get_db_connection
+            from shared.database import get_db_connection
 
             conn = get_db_connection()
             if conn:
@@ -388,7 +388,7 @@ def get_supply_chain_items(
     shortlist: list[tuple[float, dict[str, Any]]] = []
     try:
         from config.settings import finance_intelligence_context_domain_key
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
 
         ctx_dk = finance_intelligence_context_domain_key()
         conn = get_db_connection()

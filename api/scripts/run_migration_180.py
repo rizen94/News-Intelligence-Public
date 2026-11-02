@@ -70,7 +70,7 @@ def main():
     )
     args = parser.parse_args()
 
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
     from shared.services.domain_silo_post_migration import (
         apply_domain_silo_post_sql,
         load_domain_onboarding_yaml,

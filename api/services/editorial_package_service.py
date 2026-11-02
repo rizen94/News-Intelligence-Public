@@ -12,7 +12,7 @@ import logging
 import re
 from typing import Any
 
-from shared.database.connection import get_ui_db_connection_context
+from shared.database import get_ui_db_connection_context
 from shared.editorial_package_vocab import (
     ALL_MEMBER_TYPES,
     DECISION_ACTIONS,

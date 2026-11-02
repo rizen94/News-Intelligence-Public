@@ -58,7 +58,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
     from shared.domain_registry import get_schema_names_active
 
     conn = get_db_connection()

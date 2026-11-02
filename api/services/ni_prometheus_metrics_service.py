@@ -233,7 +233,7 @@ def _collect_latency_metrics() -> list[str]:
 def _collect_inventory_metrics() -> list[str]:
     lines: list[str] = []
     try:
-        from shared.database.connection import get_ui_db_connection_context
+        from shared.database import get_ui_db_connection_context
 
         row_samples: list[tuple[dict[str, str], float]] = []
         size_samples: list[tuple[dict[str, str], float]] = []
@@ -291,7 +291,7 @@ def _collect_rss_metrics() -> list[str]:
     """Light RSS gauges aligned with Homelab scrape (replaces orphan advanced_monitoring names)."""
     lines: list[str] = []
     try:
-        from shared.database.connection import get_ui_db_connection_context
+        from shared.database import get_ui_db_connection_context
         from shared.domain_registry import iter_url_schema_pairs
 
         feed_samples: list[tuple[dict[str, str], float]] = []
@@ -443,7 +443,7 @@ def _collect_embeddings_host_metrics() -> list[str]:
             )
         # Recent chunk ingestion (DB) — work-done signal for Grafana (cheap windows only).
         try:
-            from shared.database.connection import get_db_connection_context
+            from shared.database import get_db_connection_context
 
             with get_db_connection_context() as conn:
                 with conn.cursor() as cur:
@@ -481,7 +481,7 @@ def _collect_embeddings_host_metrics() -> list[str]:
 def _collect_content_and_run_metrics() -> list[str]:
     lines: list[str] = []
     try:
-        from shared.database.connection import get_ui_db_connection_context
+        from shared.database import get_ui_db_connection_context
 
         content_samples: list[tuple[dict[str, str], float]] = []
         run_samples: list[tuple[dict[str, str], float]] = []

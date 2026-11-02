@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 import requests
 from psycopg2.extras import RealDictCursor
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 from shared.domain_registry import normalize_domain_key, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ class BaseRAGService:
             db_config: Database configuration (optional, uses env vars if not provided)
         """
         if db_config is None:
-            from shared.database.connection import get_db_config
+            from shared.database import get_db_config
 
             db_config = get_db_config()
         self.db_config = db_config

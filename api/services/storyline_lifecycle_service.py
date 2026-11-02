@@ -123,7 +123,7 @@ def get_storyline_lifecycle(
     domain_key: str,
     storyline_id: int,
 ) -> dict[str, Any]:
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.domain_registry import resolve_domain_schema
 
     schema = resolve_domain_schema(domain_key)
@@ -211,7 +211,7 @@ def apply_lifecycle_transition(
     if not can_transition(cur, nxt):
         return {**info, "ok": False, "error": f"illegal_transition:{cur}->{nxt}"}
     if persist and lifecycle_enabled() and nxt != cur:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
         from shared.domain_registry import resolve_domain_schema
 
         schema = resolve_domain_schema(domain_key)

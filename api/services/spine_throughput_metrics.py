@@ -124,7 +124,7 @@ def sample_spine_latencies_from_db(*, limit: int = 200) -> int:
     Returns number of samples recorded.
     """
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
         from shared.domain_registry import pipeline_url_schema_pairs
         from shared.pipeline_pass_marker import sql_article_pass_cleared
 

@@ -108,7 +108,7 @@ def maybe_record_gpu_metric_sample() -> None:
     if metrics.get("gpu_memory_total_mb") is None:
         return
     try:
-        from shared.database.connection import get_ui_db_connection
+        from shared.database import get_ui_db_connection
 
         conn = get_ui_db_connection()
         try:
@@ -159,7 +159,7 @@ def fetch_gpu_metric_hourly_buckets(*, hours: int = 72) -> list[dict[str, Any]]:
     h = max(1, min(int(hours), 168))
     out: list[dict[str, Any]] = []
     try:
-        from shared.database.connection import get_ui_db_connection
+        from shared.database import get_ui_db_connection
 
         conn = get_ui_db_connection()
         try:

@@ -14,7 +14,7 @@ from collections import defaultdict
 from typing import Any
 
 from config.runtime import env_str
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 

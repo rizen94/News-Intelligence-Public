@@ -63,7 +63,7 @@ def _load_yaml_registry() -> dict[str, dict[str, Any]]:
 
 def _db_overrides() -> dict[str, dict[str, Any]]:
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:

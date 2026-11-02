@@ -9,13 +9,37 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from services.automation.registry import MENTION_RESOLUTION_PHASE
 
 logger = logging.getLogger(__name__)
 
-PhaseExecutor = Callable[[Any], Awaitable[None]]
+
+@dataclass(frozen=True)
+class PhaseResult:
+    """Outcome of a phase execution.
+
+    Success/failure status surfaces through ``dispatch_phase`` so the outer
+    ``_execute_task`` handler can retry failed phases instead of silently marking
+    them completed.
+    """
+
+    success: bool  # True = no exception; False = caught an error
+    stats: Any = None
+    error: str = ""
+
+
+PhaseExecutor = Callable[[Any], Awaitable[PhaseResult]]
+
+
+def _ok(stats: Any) -> PhaseResult:
+    return PhaseResult(success=True, stats=stats)
+
+
+def _fail(error: Exception) -> PhaseResult:
+    return PhaseResult(success=False, error=str(error))
 
 VAULT_TAG_LINK_SYNC_PHASE = "vault_tag_link_sync"
 VAULT_NOTES_WRITER_PHASE = "vault_notes_writer"
@@ -25,7 +49,7 @@ STORYLINE_HYGIENE_PHASE = "storyline_hygiene"
 RSS_FEED_HEALTH_PHASE = "rss_feed_health"
 
 
-async def execute_mention_resolution(task: Any) -> None:
+async def execute_mention_resolution(task: Any) -> PhaseResult:
     """Drain CEM mention resolver (replaces nri-mention-resolver.timer)."""
     from nri_core.resolver_runner import run_mention_resolution_drain
     from shared.pipeline_batch_drain import phase_run_budget_seconds
@@ -38,11 +62,13 @@ async def execute_mention_resolution(task: Any) -> None:
             lambda: run_mention_resolution_drain(budget_seconds=float(budget)),
         )
         logger.info("%s drain: %s", MENTION_RESOLUTION_PHASE, stats)
+        return _ok(stats)
     except Exception as e:
-        logger.warning("%s failed: %s", MENTION_RESOLUTION_PHASE, e)
+        logger.error("%s failed: %s", MENTION_RESOLUTION_PHASE, e)
+        return _fail(e)
 
 
-async def execute_vault_tag_link_sync(task: Any) -> None:
+async def execute_vault_tag_link_sync(task: Any) -> PhaseResult:
     """Mirror Obsidian tags/wikilinks into Postgres (Obsidian wins)."""
     from services.vault_tag_link_sync_service import sync_vault_tags_and_links
 
@@ -50,22 +76,26 @@ async def execute_vault_tag_link_sync(task: Any) -> None:
     try:
         stats = await loop.run_in_executor(None, sync_vault_tags_and_links)
         logger.info("%s: %s", VAULT_TAG_LINK_SYNC_PHASE, stats)
+        return _ok(stats)
     except Exception as e:
-        logger.warning("%s failed: %s", VAULT_TAG_LINK_SYNC_PHASE, e)
+        logger.error("%s failed: %s", VAULT_TAG_LINK_SYNC_PHASE, e)
+        return _fail(e)
 
 
-async def execute_vault_notes_writer(task: Any) -> None:
+async def execute_vault_notes_writer(task: Any) -> PhaseResult:
     """Drain vault_update_queue — fence-safe note patches."""
     from services.vault_note_writer_service import run_vault_notes_writer_cycle
 
     try:
         stats = await run_vault_notes_writer_cycle()
         logger.info("%s: %s", VAULT_NOTES_WRITER_PHASE, stats)
+        return _ok(stats)
     except Exception as e:
-        logger.warning("%s failed: %s", VAULT_NOTES_WRITER_PHASE, e)
+        logger.error("%s failed: %s", VAULT_NOTES_WRITER_PHASE, e)
+        return _fail(e)
 
 
-async def execute_vault_cluster_hub_refresh(task: Any) -> None:
+async def execute_vault_cluster_hub_refresh(task: Any) -> PhaseResult:
     """Discover + refresh Obsidian cluster hubs (index only; no bag merge)."""
     from services.vault_cluster_discovery_service import run_cluster_hub_discovery_cycle
 
@@ -73,11 +103,13 @@ async def execute_vault_cluster_hub_refresh(task: Any) -> None:
     try:
         stats = await loop.run_in_executor(None, run_cluster_hub_discovery_cycle)
         logger.info("%s: %s", VAULT_CLUSTER_HUB_REFRESH_PHASE, stats)
+        return _ok(stats)
     except Exception as e:
-        logger.warning("%s failed: %s", VAULT_CLUSTER_HUB_REFRESH_PHASE, e)
+        logger.error("%s failed: %s", VAULT_CLUSTER_HUB_REFRESH_PHASE, e)
+        return _fail(e)
 
 
-async def execute_vault_morning_prime(task: Any) -> None:
+async def execute_vault_morning_prime(task: Any) -> PhaseResult:
     """Batch expansions + daily briefing for reader (cache-only web path)."""
     from services.vault_morning_prime_service import run_vault_morning_prime
 
@@ -85,11 +117,13 @@ async def execute_vault_morning_prime(task: Any) -> None:
     try:
         stats = await loop.run_in_executor(None, run_vault_morning_prime)
         logger.info("%s: %s", VAULT_MORNING_PRIME_PHASE, stats)
+        return _ok(stats)
     except Exception as e:
-        logger.warning("%s failed: %s", VAULT_MORNING_PRIME_PHASE, e)
+        logger.error("%s failed: %s", VAULT_MORNING_PRIME_PHASE, e)
+        return _fail(e)
 
 
-async def execute_storyline_hygiene(task: Any) -> None:
+async def execute_storyline_hygiene(task: Any) -> PhaseResult:
     """Tight bags: core prune + near-dup merge across pipeline domains."""
     from services.storyline_hygiene_service import run_storyline_hygiene_all_domains
 
@@ -97,11 +131,13 @@ async def execute_storyline_hygiene(task: Any) -> None:
     try:
         stats = await loop.run_in_executor(None, run_storyline_hygiene_all_domains)
         logger.info("%s: %s", STORYLINE_HYGIENE_PHASE, stats)
+        return _ok(stats)
     except Exception as e:
-        logger.warning("%s failed: %s", STORYLINE_HYGIENE_PHASE, e)
+        logger.error("%s failed: %s", STORYLINE_HYGIENE_PHASE, e)
+        return _fail(e)
 
 
-async def execute_rss_feed_health(task: Any) -> None:
+async def execute_rss_feed_health(task: Any) -> PhaseResult:
     """Weekly quality cull (or legacy warn/silence) for active RSS feeds."""
     from services.rss_feed_health_service import run_feed_health_cycle
 
@@ -109,8 +145,10 @@ async def execute_rss_feed_health(task: Any) -> None:
     try:
         stats = await loop.run_in_executor(None, run_feed_health_cycle)
         logger.info("%s: %s", RSS_FEED_HEALTH_PHASE, stats)
+        return _ok(stats)
     except Exception as e:
-        logger.warning("%s failed: %s", RSS_FEED_HEALTH_PHASE, e)
+        logger.error("%s failed: %s", RSS_FEED_HEALTH_PHASE, e)
+        return _fail(e)
 
 
 PHASE_EXECUTORS: dict[str, PhaseExecutor] = {
@@ -125,9 +163,19 @@ PHASE_EXECUTORS: dict[str, PhaseExecutor] = {
 
 
 async def dispatch_phase(task: Any) -> bool:
-    """Run a registered phase executor. Returns True if handled."""
+    """Run a registered phase executor. Returns True if handled (even on failure).
+
+    On failure the executor returns a PhaseResult with *success*=False; this
+    function re-raises so the outer ``_execute_task`` handler can retry instead of
+    silently marking the task completed.
+    """
     handler = PHASE_EXECUTORS.get(task.name)
     if handler is None:
         return False
-    await handler(task)
+
+    result = await handler(task)
+    if not result.success:
+        logger.error("Phase %s failed: %s", task.name, result.error)
+        raise RuntimeError(f"{task.name} failed") from RuntimeError(result.error)
+
     return True

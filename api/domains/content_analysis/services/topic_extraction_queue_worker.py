@@ -28,6 +28,7 @@ from domains.content_analysis.services.topic_filter_rules import filter_topic_li
 from services.article_entity_extraction_service import get_article_entity_extraction_service
 
 from shared.pipeline_state_constants import QUEUE_COMPLETED, QUEUE_FAILED, QUEUE_PENDING, QUEUE_PROCESSING
+from shared.database import get_db_connection_context
 
 logger = logging.getLogger(__name__)
 

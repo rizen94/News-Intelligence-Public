@@ -671,7 +671,7 @@ def get_signal_lane_counts_24h(cur=None) -> dict[str, int]:
     close_conn = False
     conn = None
     if cur is None:
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
 
         conn = get_db_connection()
         if not conn:

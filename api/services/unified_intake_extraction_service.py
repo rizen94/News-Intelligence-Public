@@ -25,7 +25,7 @@ from shared.fast_ner_lane import (
     format_ner_hints_for_prompt,
     merge_entity_dicts,
 )
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 from shared.intake_fusion_schema import (
     fusion_prompt_schema_block,
     normalize_sentiment_label,
@@ -580,7 +580,7 @@ Return ONLY valid JSON — no markdown fences, no text before or after the JSON 
 
 def _store_topic_tags(cur, schema: str, article_id: int, topic_tags: list[dict[str, Any]]) -> None:
     """Seed article_keywords from fusion topic_tags for fast topic match."""
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
     from shared.pg_savepoint import execute_with_savepoint
 
     conn = getattr(cur, "connection", None) or get_db_connection()

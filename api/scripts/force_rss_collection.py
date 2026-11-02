@@ -42,7 +42,7 @@ def main() -> None:
         get_rss_ingest_excluded_domain_keys,
         rss_ingest_mirror_pipeline_enabled,
     )
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
     from shared.domain_registry import pipeline_url_schema_pairs, url_schema_pairs
 
     from_registry = list(url_schema_pairs())

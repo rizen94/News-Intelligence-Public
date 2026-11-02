@@ -29,6 +29,7 @@ import {
   MenuItem,
   Button,
   Link,
+  Grid,
 } from '@mui/material';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
@@ -257,12 +258,22 @@ export default function MonitorPage() {
   const grafanaUrl = getGrafanaOpsUrl();
   const [overview, setOverview] = useState<{
     success?: boolean;
+    degraded?: boolean;
+    data_status?: string;
+    partial?: boolean;
+    error?: string;
     connections?: Record<string, unknown>;
     activities?: {
       current?: Array<Record<string, unknown>>;
       recent?: Array<Record<string, unknown>>;
     };
-    error?: string;
+    dedup_stats?: {
+      pending_count?: number;
+      failed_count?: number;
+      successful_count?: number;
+      total_articles?: number;
+      as_of_utc?: string;
+    };
   } | null>(null);
   const [pipeline, setPipeline] = useState<{
     success?: boolean;
@@ -639,10 +650,20 @@ export default function MonitorPage() {
     );
   };
 
-  const phaseRows =
-    processingPulse?.data?.phase_dashboard ??
-    processingPulse?.data?.phases ??
-    [];
+  const phaseRows = useMemo(
+    () =>
+      [
+        ...(processingPulse?.data?.phase_dashboard ??
+          processingPulse?.data?.phases ??
+          []),
+      ].sort(
+        (a, b) => (b.batches_to_drain ?? 0) - (a.batches_to_drain ?? 0)
+      ),
+    [
+      processingPulse?.data?.phase_dashboard,
+      processingPulse?.data?.phases,
+    ],
+  );
   const capacityChip = formatCapacityLedgerChip(
     processingPulse?.data?.backlog_measurement?.capacity_ledger
   );
@@ -684,6 +705,31 @@ export default function MonitorPage() {
           </strong>
         </Alert>
       )}
+
+      {/* Degraded/partial data warning */}
+      {(overview?.degraded === true || overview?.partial === true) && (
+        <Alert severity='warning' sx={{ mb: 2 }}>
+          Data is incomplete or degraded. Some metrics may be unavailable due to timeouts during collection.{' '}
+          {overview?.data_status && (
+            <strong>{String(overview.data_status)}</strong>
+          )}
+          {overview?.dedup_stats ? (
+            <>
+              {' · '}
+              Articles: pending={overview.dedup_stats.pending_count ?? '?'},{' '}
+              failed={overview.dedup_stats.failed_count ?? '?'},{' '}
+              total={overview.dedup_stats.total_articles ?? '?'}
+              {overview.dedup_stats.as_of_utc && (
+                <Typography variant='caption' sx={{ display: 'block', mt: 0.5 }}>
+                  Stats as of: {overview.dedup_stats.as_of_utc}
+                </Typography>
+              )}
+            </>
+          ) : null}
+        </Alert>
+      )}
+
+      {/* Dedup stats detail (when no degradation) */}
 
       {/* 1. Status strip */}
       <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
@@ -859,6 +905,65 @@ export default function MonitorPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Dedup stats panel */}
+      {!overview?.degraded &&
+        !overview?.partial &&
+        overview?.dedup_stats && (
+          <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
+            Article Deduplication Status
+          </Typography>
+        )}
+      {(overview?.degraded || overview?.partial) &&
+        overview?.dedup_stats && (
+          <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
+            Partial — Dedup Stats (last available)
+          </Typography>
+        )}
+      {overview?.dedup_stats && (
+        <Card variant='outlined' sx={{ mb: 3 }}>
+          <CardContent sx={{ py: 1.5 }}>
+            <Grid container spacing={2}>
+              <Grid item xs={6} sm={3}>
+                <Typography variant='caption' color='text.secondary' display='block'>
+                  Pending
+                </Typography>
+                <Typography variant='h6' sx={{ lineHeight: 1.5 }}>
+                  {overview.dedup_stats.pending_count ?? '?'}
+                </Typography>
+              </Grid>
+              <Grid item xs={6} sm={3}>
+                <Typography variant='caption' color='text.secondary' display='block'>
+                  Failed
+                </Typography>
+                <Typography variant='h6' sx={{ lineHeight: 1.5, color: 'error.main' }}>
+                  {overview.dedup_stats.failed_count ?? '?'}
+                </Typography>
+              </Grid>
+              <Grid item xs={6} sm={3}>
+                <Typography variant='caption' color='text.secondary' display='block'>
+                  Total Articles
+                </Typography>
+                <Typography variant='h6' sx={{ lineHeight: 1.5 }}>
+                  {overview.dedup_stats.total_articles ?? '?'}
+                </Typography>
+              </Grid>
+              <Grid item xs={6} sm={3}>
+                <Typography variant='caption' color='text.secondary' display='block'>
+                  As of
+                </Typography>
+                <Typography variant='body2' sx={{ lineHeight: 1.5 }}>
+                  {overview.dedup_stats.as_of_utc ? (
+                    timeAgo(String(overview.dedup_stats.as_of_utc))
+                  ) : (
+                    '—'
+                  )}
+                </Typography>
+              </Grid>
+            </Grid>
+          </CardContent>
+        </Card>
+      )}
 
       {/* 2. Now */}
       <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>

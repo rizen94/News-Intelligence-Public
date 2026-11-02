@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from config.runtime import env_bool, env_int
-from shared.database.connection import get_ui_db_connection_context
+from shared.database import get_ui_db_connection_context
 from shared.editorial_package_theme import is_theme_mismatch, package_spine_tokens
 
 logger = logging.getLogger(__name__)
@@ -695,7 +695,7 @@ def _attach_completed_rag_pulls(
     limit: int = 4,
 ) -> int:
     """Attach completed rag_evidence_pull → processed_documents as context members."""
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     domains = [str(d) for d in (package.get("domain_keys") or []) if d]
     attached = 0

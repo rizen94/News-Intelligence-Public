@@ -377,7 +377,7 @@ def collect_diagnostic_events(
     events: list[DiagnosticEvent] = []
 
     try:
-        from shared.database.connection import get_ui_db_connection
+        from shared.database import get_ui_db_connection
 
         conn = get_ui_db_connection()
         if conn:

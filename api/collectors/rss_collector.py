@@ -607,8 +607,8 @@ def _apply_rss_source_credibility(
 
 
 # Use shared pool (run with api as cwd or PYTHONPATH=api)
-from shared.database.connection import get_db_config
-from shared.database.connection import get_db_connection as _get_conn
+from shared.database import get_db_config
+from shared.database import get_db_connection as _get_conn
 from shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED
 
 

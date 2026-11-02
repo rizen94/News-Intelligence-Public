@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from shared.database.connection import get_ui_db_connection_context
+from shared.database import get_ui_db_connection_context
 from shared.domain_registry import resolve_domain_schema
 from shared.editorial_package_vocab import provenance_has_citeable_source
 from shared.evidence_grade import normalize_evidence_grade

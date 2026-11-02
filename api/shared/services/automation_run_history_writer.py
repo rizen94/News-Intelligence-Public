@@ -69,7 +69,7 @@ def persist_automation_run_history(
         if sleeps_before_attempt[attempt]:
             time.sleep(sleeps_before_attempt[attempt])
         try:
-            from shared.database.connection import (
+            from shared.database import (
                 get_db_connection,
                 get_health_db_connection,
                 get_ui_db_connection,

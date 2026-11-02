@@ -13,4 +13,4 @@
 | `api/config/briefing_filters.yaml` | Briefing output filters |
 | `api/config/domains/*.yaml` | Per-domain silo provisioning templates |
 
-**Rules:** Application code imports env via `config.runtime` helpers. DB connections use `shared.database.connection` or `database_targets.*_dsn()`.
+**Rules:** Application code imports env via `config.runtime` helpers. DB connections use `shared.database` or `database_targets.*_dsn()`.

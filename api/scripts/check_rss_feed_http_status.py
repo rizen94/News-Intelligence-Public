@@ -128,7 +128,7 @@ def main() -> int:
         print("ERROR: pip install requests", file=sys.stderr)
         return 1
 
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
     from shared.domain_registry import url_schema_pairs
 
     pairs = list(url_schema_pairs())

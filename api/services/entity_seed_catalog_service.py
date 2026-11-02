@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 from shared.domain_registry import is_valid_domain_key, resolve_domain_schema
 
 from services.entity_profile_sync_service import sync_domain_entity_profiles

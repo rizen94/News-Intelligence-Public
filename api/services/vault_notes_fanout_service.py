@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from config.feature_registry import is_feature_enabled
-from shared.database.connection import get_db_connection_context
+from shared.database import get_db_connection_context
 from shared.vault_note_contract import (
     DEFAULT_COOLDOWN_HOURS,
     DEFAULT_LIVING_MENTION_TIER,

@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel, Field
-from shared.database.connection import (
+from shared.database import (
     get_db_connection_context,
     get_ui_db_connection_context,
 )

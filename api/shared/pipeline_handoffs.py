@@ -140,7 +140,7 @@ def after_event_deduplication(
 def _stale_morning_slate_needs_wake(*, min_novel: int = 3, max_age_hours: int = 36) -> bool:
     """True when living expansions are missing/stale and novel episode work exists."""
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
         from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
     except Exception:
         return False

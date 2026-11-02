@@ -125,7 +125,7 @@ def _event_types_compatible(a: str | None, b: str | None) -> bool:
 def _canonical_ids_for_articles(schema: str, article_ids: list[int]) -> set[int]:
     if not article_ids:
         return set()
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     ids: set[int] = set()
     try:
@@ -149,7 +149,7 @@ def _canonical_ids_for_articles(schema: str, article_ids: list[int]) -> set[int]
 def _canonical_ids_from_profile_ids(profile_ids: set[int]) -> set[int]:
     if not profile_ids:
         return set()
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     out: set[int] = set()
     try:
@@ -172,7 +172,7 @@ def _canonical_ids_from_profile_ids(profile_ids: set[int]) -> set[int]:
 def _canonical_ids_for_entity_names(schema: str, names: list[str]) -> set[int]:
     if not names:
         return set()
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     out: set[int] = set()
     try:
@@ -201,7 +201,7 @@ def _canonical_ids_for_entity_names(schema: str, names: list[str]) -> set[int]:
 def _event_types_for_articles(article_ids: list[int]) -> set[str]:
     if not article_ids:
         return set()
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     types: set[str] = set()
     try:
@@ -246,7 +246,7 @@ def _score_tracked_events(
     event_types: set[str],
 ) -> list[tuple[float, int, int | None, str]]:
     """Returns (score, tracked_event_id, storyline_id_or_none, reason)."""
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     results: list[tuple[float, int, int | None, str]] = []
     if not canonical_ids and not geo_tokens:
@@ -343,7 +343,7 @@ def _score_storylines(
     domain_key: str | None = None,
 ) -> list[tuple[float, int, str]]:
     """Returns (score, storyline_id, reason)."""
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     results: list[tuple[float, int, str]] = []
     title_tokens = _tokenize(title_hint or "")
@@ -581,7 +581,7 @@ def attach_articles_to_storyline(
     if not aids:
         return 0
 
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.membership_scoring import score_article_storyline_membership
     from shared.membership_store import MembershipIntent, admit
     from shared.storyline_article_counts import sync_counts_update_sql

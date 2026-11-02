@@ -13,7 +13,7 @@ import re
 from typing import Any
 
 from services.vault_bridge_service import _FRONTMATTER_RE, vault_root
-from shared.database.connection import get_db_connection_context
+from shared.database import get_db_connection_context
 from shared.vault_note_contract import (
     AUTO_SIGNIFICANCE_END,
     AUTO_SIGNIFICANCE_START,

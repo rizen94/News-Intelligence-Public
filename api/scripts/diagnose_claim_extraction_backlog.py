@@ -23,7 +23,7 @@ assert _spec and _spec.loader
 _ce = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_ce)
 
-from shared.database.connection import get_db_connection_context
+from shared.database import get_db_connection_context
 from services.backlog_metrics import get_all_pending_counts
 
 

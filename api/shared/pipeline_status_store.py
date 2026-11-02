@@ -26,7 +26,7 @@ def upsert_pipeline_status(
     if not pipeline_status_enabled():
         return
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:

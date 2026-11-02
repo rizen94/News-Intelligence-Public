@@ -19,7 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "api"))
 
-from shared.database.connection import get_db_connection_context  # noqa: E402
+from shared.database import get_db_connection_context  # noqa: E402
 from shared.domain_registry import resolve_domain_schema  # noqa: E402
 from shared.membership_scoring import score_article_storyline_membership  # noqa: E402
 from shared.storyline_article_counts import sync_counts_update_sql  # noqa: E402

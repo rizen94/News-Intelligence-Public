@@ -74,7 +74,7 @@ def main() -> int:
         _write_file,
     )
     from services.vault_notes_registry_service import upsert_vault_note
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.vault_note_contract import (
         connection_vault_rel_path,
         entity_vault_rel_path,
@@ -195,7 +195,7 @@ def main() -> int:
     ):
         # Anthropic id from prior seed was profiled; look up
         if name_b == "Anthropic":
-            from shared.database.connection import get_db_connection_context as _ctx
+            from shared.database import get_db_connection_context as _ctx
 
             with _ctx() as conn:
                 with conn.cursor() as cur:

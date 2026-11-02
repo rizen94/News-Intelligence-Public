@@ -10,7 +10,7 @@ What this file does:
     intelligence_hub (includes context_centric + report), finance, user_management, system_monitoring).
 
 Where to read next:
-  - DB access: ``shared.database.connection`` (single source of truth; never ad-hoc psycopg2).
+  - DB access: ``shared.database`` (single source of truth; never ad-hoc psycopg2).
   - Background work: ``services.automation_manager`` (v8 collection_cycle + scheduled phases).
   - Reviewer docs: repo ``docs/CODEBASE_MAP.md``, ``docs/PIPELINE_AND_ORDER_OF_OPERATIONS.md``.
 
@@ -149,7 +149,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize database connection pool early (persistent connection)
     try:
-        from shared.database.connection import _init_pool, get_db_config, get_db_connection
+        from shared.database import _init_pool, get_db_config, get_db_connection
 
         # get_db_config enforces NAS tunnel rules and logs host/port
         db_config = get_db_config()
@@ -350,7 +350,7 @@ async def lifespan(app: FastAPI):
                 from domains.content_analysis.services.topic_extraction_queue_worker import (
                     TopicExtractionQueueWorker,
                 )
-                from shared.database.connection import get_db_connection
+                from shared.database import get_db_connection
 
                 def start_queue_workers_background():
                     import asyncio
@@ -413,7 +413,7 @@ async def lifespan(app: FastAPI):
     try:
         from collectors.rss_collector import collect_rss_feeds
         from services.orchestrator_coordinator import OrchestratorCoordinator
-        from shared.database.connection import get_db_connection as get_db
+        from shared.database import get_db_connection as get_db
 
         coordinator = OrchestratorCoordinator(
             get_finance_orchestrator=lambda: getattr(app.state, "finance_orchestrator", None),
@@ -587,7 +587,7 @@ async def lifespan(app: FastAPI):
         else:
             from orchestration.base import NewsroomOrchestrator
             from orchestration.config import load_newsroom_config
-            from shared.database.connection import get_db_connection
+            from shared.database import get_db_connection
 
             newsroom_config = load_newsroom_config()
             if newsroom_config.get("enabled"):
@@ -790,7 +790,7 @@ async def lifespan(app: FastAPI):
 
     # Close DB pools last (releases server-side sessions for this process)
     try:
-        from shared.database.connection import close_pool
+        from shared.database import close_pool
 
         close_pool()
         logger.info("Database connection pools closed")

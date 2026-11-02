@@ -871,7 +871,7 @@ def assemble_from_idea(
     # Only when we already have some on-theme members (avoid OR-token spam).
     if attached > 0 and attached < attach_limit and primary_dk:
         try:
-            from shared.database.connection import get_db_connection_context
+            from shared.database import get_db_connection_context
             from shared.domain_registry import resolve_domain_schema
 
             schema = resolve_domain_schema(primary_dk)

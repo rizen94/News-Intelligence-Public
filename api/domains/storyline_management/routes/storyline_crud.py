@@ -9,7 +9,7 @@ import math
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 from shared.domain_registry import DOMAIN_PATH_PATTERN, pipeline_url_schema_pairs, resolve_domain_schema
 from shared.services.domain_aware_service import validate_domain
 

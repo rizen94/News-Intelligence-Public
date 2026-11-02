@@ -14,7 +14,7 @@ from domains.content_analysis.services.topic_filter_rules import (
 )
 from domains.content_analysis.services.topic_merge_suggestions import get_merge_suggestions
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
-from shared.database.connection import get_db_connection, get_ui_db_connection_context
+from shared.database import get_db_connection, get_ui_db_connection_context
 from shared.domain_registry import (
     DOMAIN_PATH_PATTERN,
     resolve_domain_schema,
@@ -2535,7 +2535,7 @@ async def process_new_storyline_comprehensive(domain: str, storyline_id: int, sc
             process_storyline_rag_analysis,
         )
         from domains.storyline_management.services.storyline_service import StorylineService
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
 
         logger.info(
             f"Starting comprehensive processing for storyline {storyline_id} (domain: {domain})"

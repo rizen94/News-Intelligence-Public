@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 from shared.domain_registry import resolve_domain_schema, get_active_domain_keys
 from config.logging_config import get_component_logger
 from shared.services.domain_aware_service import validate_domain

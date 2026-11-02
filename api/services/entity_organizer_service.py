@@ -75,7 +75,7 @@ def get_key_entities(
     Return a ranked list of entities by mention count (recurring / key targets).
     Uses entity_canonical + article_entities counts; does not require a cache table.
     """
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

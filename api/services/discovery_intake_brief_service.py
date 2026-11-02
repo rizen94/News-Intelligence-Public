@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from config.runtime import env_int
-from shared.database.connection import get_db_connection_context
+from shared.database import get_db_connection_context
 from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 
 logger = logging.getLogger(__name__)

@@ -260,7 +260,7 @@ def record_article_phase_pass(
     p = _norm_phase(phase)
     iso = datetime.now(timezone.utc).isoformat()
     ts = terminal_state or TERMINAL_PROCESSED_WITH_OUTPUT
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -316,7 +316,7 @@ def bulk_record_article_phase_pass(
     p = _norm_phase(phase)
     iso = datetime.now(timezone.utc).isoformat()
     ts = terminal_state or TERMINAL_PROCESSED_WITH_OUTPUT
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -371,7 +371,7 @@ def bulk_record_article_phase_pass(
 def clear_article_phase_pass(schema: str, article_id: int, phase: str) -> None:
     """Remove pass marker so article re-enters backlog (reconciliation)."""
     p = _norm_phase(phase)
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -410,7 +410,7 @@ def record_context_phase_pass(
     p = _norm_phase(phase)
     iso = datetime.now(timezone.utc).isoformat()
     ts = terminal_state or TERMINAL_PROCESSED_WITH_OUTPUT
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -470,7 +470,7 @@ def record_context_phase_pass(
 def clear_context_phase_pass(context_id: int, phase: str) -> None:
     """Remove pass marker from context (reconciliation)."""
     p = _norm_phase(phase)
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

@@ -12,7 +12,7 @@ from collections import defaultdict
 import psycopg2
 from psycopg2.extras import Json
 
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 from shared.domain_registry import resolve_domain_schema
 from shared.services.domain_aware_service import validate_domain
 

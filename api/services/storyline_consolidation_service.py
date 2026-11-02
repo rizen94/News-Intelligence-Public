@@ -282,7 +282,7 @@ class StorylineConsolidationService:
 
     def get_db_connection(self):
         """Get database connection from shared pool."""
-        from shared.database.connection import get_db_connection as _get_conn
+        from shared.database import get_db_connection as _get_conn
 
         return _get_conn()
 
@@ -1275,7 +1275,7 @@ def get_consolidation_service(db_config: dict[str, Any] = None) -> StorylineCons
 
     if _consolidation_service is None:
         if db_config is None:
-            from shared.database.connection import get_db_config
+            from shared.database import get_db_config
 
             db_config = get_db_config()
         _consolidation_service = StorylineConsolidationService(db_config)

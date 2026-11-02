@@ -361,6 +361,23 @@ class TopicClusteringService:
                         )
 
             db.commit()
+
+            # Phase markers — deduplicated to canonical helper (bulk)
+            from shared.pipeline_pass_marker import bulk_record_article_phase_pass
+            # Collect unique article IDs across all clusters
+            seen_article_ids: set[int] = set()
+            for t in topics_data.get("topics", []):
+                for idx in t.get("article_indices", []):
+                    if idx < len(articles) and articles[idx]["id"] not in seen_article_ids:
+                        seen_article_ids.add(articles[idx]["id"])
+            if seen_article_ids:
+                bulk_record_article_phase_pass(
+                    schema="public",
+                    article_ids=list(seen_article_ids),
+                    phase="topic_clustering",
+                    outcome="clustered",
+                )
+
             logger.info(f"Saved {len(topics_data.get('topics', []))} topic clusters to database")
             return True
 

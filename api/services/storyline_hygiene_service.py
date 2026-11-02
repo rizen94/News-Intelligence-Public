@@ -14,7 +14,7 @@ from difflib import SequenceMatcher
 from typing import Any
 
 from config.runtime import env_int, env_str
-from shared.database.connection import get_db_connection_context
+from shared.database import get_db_connection_context
 from shared.domain_registry import (
     get_pipeline_active_domain_keys,
     resolve_domain_schema,
@@ -381,7 +381,7 @@ def run_storyline_hygiene_for_domain(
             )
             if not result:
                 try:
-                    from shared.database.connection import get_db_connection_context
+                    from shared.database import get_db_connection_context
                     from services.episode_merge_service import merge_episodes_eel_aware
 
                     with get_db_connection_context() as conn:
@@ -424,7 +424,7 @@ def run_storyline_hygiene_for_domain(
             episode_merge_enabled,
             scan_and_merge_duplicate_episodes,
         )
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         if not dry_run and episode_merge_enabled():
             with get_db_connection_context() as conn:

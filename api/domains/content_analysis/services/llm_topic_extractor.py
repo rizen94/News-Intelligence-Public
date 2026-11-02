@@ -12,6 +12,7 @@ import re
 import sys
 import uuid
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -30,6 +31,7 @@ from domains.content_analysis.services.topic_clustering_service import (
 from modules.ml.entity_extractor import LocalEntityExtractor
 from shared.services.llm_service import LLMService
 from shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED
+from shared.database import get_db_connection_context
 
 logger = logging.getLogger(__name__)
 
@@ -179,55 +181,62 @@ class LLMTopicExtractor:
 
     async def extract_topics_from_articles(self, time_period_hours: int = 24) -> list[TopicInsight]:
         """
-        Extract topics from recent articles using LLM (with fallback)
+        Extract topics from recent articles using LLM (with fallback).
+
+        DB connection is closed immediately after fetching articles so it is not held
+        during external LLM calls.
         """
         try:
-            conn = self.get_db_connection()
-            if not conn:
+            # Fetch articles with a short-lived connection — close before any external calls.
+            async with get_db_connection_context() as conn:
+                if not conn:
+                    return []
+
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(f"SET search_path TO {self.schema}, public")
+                        cutoff_time = datetime.now() - timedelta(hours=time_period_hours)
+
+                        # Build query as single line to avoid any formatting issues
+                        query = (
+                            f"SELECT id, title, content, summary, published_at, sentiment_score, source_domain "
+                            f"FROM {self.schema}.articles "
+                            f"WHERE created_at >= %s "
+                            f"AND content IS NOT NULL "
+                            f"AND LENGTH(content) > 100 "
+                            f"ORDER BY published_at DESC "
+                            f"LIMIT 100"
+                        )
+                        logger.debug(f"Executing query for schema {self.schema}")
+                        cur.execute(query, (cutoff_time,))
+
+                        articles = cur.fetchall()
+
+                except Exception as qe:
+                    logger.error(f"Error querying articles for schema {self.schema}: {qe}")
+                    return []
+
+            # At this point the connection is committed and closed. Safe to call external services.
+
+            if not articles:
+                logger.info("No recent articles found for topic extraction")
                 return []
 
-            try:
-                with conn.cursor() as cur:
-                    cur.execute(f"SET search_path TO {self.schema}, public")
-                    cutoff_time = datetime.now() - timedelta(hours=time_period_hours)
-
-                    # Build query as single line to avoid any formatting issues
-                    query = (
-                        f"SELECT id, title, content, summary, published_at, sentiment_score, source_domain "
-                        f"FROM {self.schema}.articles "
-                        f"WHERE created_at >= %s "
-                        f"AND content IS NOT NULL "
-                        f"AND LENGTH(content) > 100 "
-                        f"ORDER BY published_at DESC "
-                        f"LIMIT 100"
+            if self.use_llm:
+                # Use LLM-based extraction (connection already closed)
+                topics = await self._extract_topics_with_llm(articles)
+            else:
+                # Queue articles for LLM processing when available
+                logger.info("LLM unavailable - queueing articles for later processing")
+                for article in articles:
+                    article_id = article[0]
+                    self._queue_article_for_llm_extraction(
+                        article_id, priority=2, error_message="LLM service unavailable"
                     )
-                    logger.debug(f"Executing query for schema {self.schema}")
-                    cur.execute(query, (cutoff_time,))
+                # Return empty topics - will be processed when LLM is available
+                topics = []
 
-                    articles = cur.fetchall()
-
-                    if not articles:
-                        logger.info("No recent articles found for topic extraction")
-                        return []
-
-                    if self.use_llm:
-                        # Use LLM-based extraction
-                        topics = await self._extract_topics_with_llm(articles)
-                    else:
-                        # Queue articles for LLM processing when available
-                        logger.info("LLM unavailable - queueing articles for later processing")
-                        for article in articles:
-                            article_id = article[0]
-                            self._queue_article_for_llm_extraction(
-                                article_id, priority=2, error_message="LLM service unavailable"
-                            )
-                        # Return empty topics - will be processed when LLM is available
-                        topics = []
-
-                    return topics
-
-            finally:
-                conn.close()
+            return topics
 
         except Exception as e:
             logger.error(f"Error extracting topics: {e}")

@@ -6,7 +6,7 @@ Endpoints for building timelines and generating narrative summaries.
 import logging
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 from shared.domain_registry import DOMAIN_PATH_PATTERN, domain_key_to_schema, is_valid_domain_key
 
 from ..schemas.storyline_schemas import StorylineRefinementEnqueueRequest

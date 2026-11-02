@@ -187,7 +187,7 @@ class DeepContentSynthesisService:
         logger.info("Deep Content Synthesis Service initialized")
 
     def get_db_connection(self):
-        from shared.database.connection import get_db_connection as _get_conn
+        from shared.database import get_db_connection as _get_conn
 
         return _get_conn()
 

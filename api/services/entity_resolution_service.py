@@ -14,7 +14,7 @@ import re
 import unicodedata
 from typing import Any
 
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 from shared.domain_registry import domain_key_to_schema, get_active_domain_keys, is_valid_domain_key
 
 logger = logging.getLogger(__name__)

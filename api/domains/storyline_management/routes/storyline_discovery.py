@@ -149,7 +149,7 @@ async def get_article_similarity(
     """
     try:
         from psycopg2.extras import RealDictCursor
-        from shared.database.connection import get_db_config, get_db_connection
+        from shared.database import get_db_config, get_db_connection
 
         db_config = get_db_config()
         service = get_discovery_service(db_config)
@@ -238,7 +238,7 @@ async def analyze_cluster(
     try:
         import requests
         from psycopg2.extras import RealDictCursor
-        from shared.database.connection import get_db_config, get_db_connection
+        from shared.database import get_db_config, get_db_connection
 
         get_db_config()
         schema = resolve_domain_schema(domain)

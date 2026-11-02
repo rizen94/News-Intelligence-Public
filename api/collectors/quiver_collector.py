@@ -18,7 +18,7 @@ import psycopg2
 import psycopg2.errors
 import psycopg2.extras
 
-from shared.database.connection import get_db_connection_context
+from shared.database import get_db_connection_context
 
 logger = logging.getLogger(__name__)
 

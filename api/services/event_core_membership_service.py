@@ -245,7 +245,7 @@ def find_quality_anchors_in_article(
 
 
 def _get_conn():
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     return get_db_connection()
 

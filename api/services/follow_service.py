@@ -9,7 +9,7 @@ import logging
 from typing import Any
 
 from config.runtime import follow_living_cap
-from shared.database.connection import get_ui_db_connection_context
+from shared.database import get_ui_db_connection_context
 
 logger = logging.getLogger(__name__)
 

@@ -12,7 +12,7 @@ import logging
 from typing import Any
 
 from config.runtime import env_str
-from shared.database.connection import get_db_connection_context
+from shared.database import get_db_connection_context
 from shared.domain_registry import pipeline_url_schema_pairs, resolve_domain_schema
 from shared.entity_relationships_store import UPSERT_ENTITY_RELATIONSHIP_SQL, normalize_edge
 from shared.pipeline_pass_marker import sql_article_pass_cleared

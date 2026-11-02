@@ -71,7 +71,7 @@ def upsert_graph_connection_proposal(
     Insert or update one proposal (confidence/evidence monotonic on conflict).
     Returns proposal id, or None if DB unavailable.
     """
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -141,7 +141,7 @@ def upsert_graph_connection_proposal(
 def mark_storyline_merge_applied(domain_key: str, primary_id: int, secondary_id: int) -> None:
     """Mark pairwise storyline merge proposal as auto_applied after DB merge succeeds."""
     dk = storyline_pair_dedupe_key(domain_key, primary_id, secondary_id)
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -337,7 +337,7 @@ def fetch_pending_proposals(
     proposal_kind: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return pending proposals for workers / review APIs."""
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -385,7 +385,7 @@ def mark_proposal_resolved(
     """Set proposal status (auto_applied, applied_manual, rejected, superseded)."""
     if status not in ("auto_applied", "applied_manual", "rejected", "superseded", "pending"):
         status = "applied_manual"
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -440,7 +440,7 @@ def insert_graph_connection_link_pair(
 ) -> bool:
     """Insert one undirected link (canonical endpoint order). Returns True if attempted OK."""
     lk, li, rk, ri = _ordered_link_tuple(left_kind, left_id, right_kind, right_id)
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -485,7 +485,7 @@ def insert_graph_connection_link_pair(
 
 def count_pending_graph_connection_proposals() -> int:
     try:
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
 
         conn = get_db_connection()
         if not conn:
@@ -510,7 +510,7 @@ def finalize_entity_merges_in_queue(domain_key: str, pairs: list[tuple[int, int]
     After duplicate canonicals are merged in DB, mark matching proposals auto_applied
     or insert a resolved audit row (so the graph queue reflects completed merges).
     """
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     if not pairs:
         return

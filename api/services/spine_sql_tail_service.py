@@ -10,7 +10,7 @@ import logging
 from typing import Any
 
 from config.runtime import env_str
-from shared.database.connection import get_db_connection, get_db_connection_context
+from shared.database import get_db_connection, get_db_connection_context
 from shared.domain_registry import pipeline_url_schema_pairs
 from shared.pipeline_batch_drain import DrainStallTracker, RunBudget, phase_run_budget_seconds
 from shared.pipeline_pass_marker import (

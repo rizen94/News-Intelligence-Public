@@ -46,7 +46,7 @@ class RSSDuplicateDetector:
             _api = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
             if _api not in sys.path:
                 sys.path.insert(0, _api)
-            from shared.database.connection import get_db_connection
+            from shared.database import get_db_connection
 
             self.conn = get_db_connection()
             logger.info("✅ Database connected successfully")

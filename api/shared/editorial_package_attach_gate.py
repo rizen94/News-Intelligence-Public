@@ -183,7 +183,7 @@ def fetch_storyline_title(domain_key: str | None, storyline_id: int | None) -> s
     if not dk or storyline_id is None:
         return ""
     try:
-        from shared.database.connection import get_ui_db_connection_context
+        from shared.database import get_ui_db_connection_context
         from shared.domain_registry import resolve_domain_schema
 
         schema = resolve_domain_schema(dk)

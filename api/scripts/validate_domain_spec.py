@@ -65,7 +65,7 @@ def main() -> None:
         pw_file = _API.parent / ".db_password_widow"
         if not os.environ.get("DB_PASSWORD") and pw_file.is_file():
             os.environ["DB_PASSWORD"] = pw_file.read_text(encoding="utf-8").strip()
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
 
         conn = get_db_connection()
         if conn:

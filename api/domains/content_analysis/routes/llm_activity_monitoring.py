@@ -224,7 +224,7 @@ async def get_llm_dashboard():
         active_tasks = tracker.get_active_tasks()
 
         # Get queue status for all domains
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
 
         queue_stats = {}
         conn = get_db_connection()

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sys
 
-from shared.database.connection import get_ui_db_connection_context
+from shared.database import get_ui_db_connection_context
 
 REQUIRED_TABLES = (
     "intelligence.reference_events",

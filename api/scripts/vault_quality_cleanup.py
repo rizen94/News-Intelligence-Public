@@ -33,7 +33,7 @@ def _now() -> str:
 
 
 def mark_stub_entities_index() -> int:
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
@@ -60,7 +60,7 @@ def mark_stub_entities_index() -> int:
 def archive_junk_cluster_hubs() -> list[str]:
     from services.vault_bridge_service import vault_root, vault_write_enabled
     from services.vault_quality_gates import is_junk_title
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     moved: list[str] = []
     if not vault_write_enabled():
@@ -118,7 +118,7 @@ def demote_uncited_daily_briefings() -> int:
         briefing_require_citations_enabled,
         daily_briefing_serve_allowed,
     )
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     if not briefing_require_citations_enabled():
         return 0
@@ -160,7 +160,7 @@ def demote_uncited_daily_briefings() -> int:
 
 def flag_mismatched_expansions() -> int:
     from services.vault_quality_gates import expansion_coherence_ok
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     n = 0
     with get_db_connection_context() as conn:
@@ -197,7 +197,7 @@ def flag_mismatched_expansions() -> int:
 
 def write_reading_mocs() -> dict[str, str]:
     from services.vault_bridge_service import vault_root, vault_write_enabled
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     if not vault_write_enabled():
         return {}
@@ -297,7 +297,7 @@ Entity markdown is created only when an entity is followed, a cluster hub seed, 
 def main() -> int:
     # Apply lifecycle constraint migration if needed (best-effort)
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         sql_path = PROJECT_ROOT / "api/database/migrations/246_vault_notes_lifecycle_index_archived.sql"
         if sql_path.is_file():

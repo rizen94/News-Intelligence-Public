@@ -10,7 +10,7 @@ from typing import Any
 
 import psutil
 from psycopg2.extras import RealDictCursor
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 

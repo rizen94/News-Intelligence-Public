@@ -44,7 +44,7 @@ async def list_research_subjects(
     else:
         domains = sorted(KNOWLEDGE_PROFILE_DOMAINS)
 
-    from shared.database.connection import get_ui_db_connection_context
+    from shared.database import get_ui_db_connection_context
     from shared.domain_registry import resolve_domain_schema
 
     fallback_map = domain_fallback_subjects()
@@ -193,7 +193,7 @@ async def get_research_subject_board(domain_key: str, entity_id: int):
     vault_path = None
     vault_title = None
     try:
-        from shared.database.connection import get_ui_db_connection_context
+        from shared.database import get_ui_db_connection_context
 
         with get_ui_db_connection_context() as conn:
             with conn.cursor() as cur:

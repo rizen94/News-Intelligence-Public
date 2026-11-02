@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from config.runtime import env_bool, env_int, env_str
-from shared.database.connection import get_db_connection_context
+from shared.database import get_db_connection_context
 from shared.domain_processing_mode import corpus_domain_keys, is_corpus_domain
 from shared.domain_registry import resolve_domain_schema
 from shared.evidence_grade import assert_valid_appraisal_payload
@@ -272,14 +272,12 @@ async def _appraise_document(row: dict[str, Any], *, domain_key: str) -> dict[st
         validated["_grader_model"] = result.model
         return validated
     except Exception as e:
-        msg = str(e).lower()
-        # Overload / CB shed: leave document due for retry — do not write terminal fallbacks.
-        if (
-            "overloaded" in msg
-            or "circuit breaker is open" in msg
-            or "timed out" in msg
-            or "cannot connect" in msg
-        ):
+        # Detect pressure errors via canonical helper — do not write terminal fallbacks.
+        try:
+            from shared.services.llm_service import is_ollama_pressure_error
+        except ImportError:
+            is_ollama_pressure_error = lambda exc: False  # type: ignore[misc,assignment]
+        if is_ollama_pressure_error(e):
             logger.info(
                 "appraisal deferring document_id=%s (overload/shed): %s",
                 row.get("id"),
@@ -287,16 +285,8 @@ async def _appraise_document(row: dict[str, Any], *, domain_key: str) -> dict[st
             )
             raise
         logger.warning("appraisal LLM failed document_id=%s: %s", row.get("id"), e)
-        # Deterministic refusal fallback (no invented quotes) for true parse/model failures
-        return assert_valid_appraisal_payload(
-            {
-                "finding_text": None,
-                "paper_support": "insufficient_reporting",
-                "evidence_quotes": [],
-                "abstract_only": abstract_only,
-                "replication_status": "needs_follow_up",
-            }
-        )
+        # Return a sentinel to signal "no appraisal written" — caller decides whether to retry.
+        return None
 
 
 def _insert_appraisal(
@@ -464,13 +454,12 @@ def run_claim_evidence_appraisal_batch(
                 errors += 1
             return "ok"
         except Exception as e:
-            msg = str(e).lower()
-            if (
-                "overloaded" in msg
-                or "circuit breaker is open" in msg
-                or "timed out" in msg
-                or "cannot connect" in msg
-            ):
+            # Detect pressure errors via canonical helper.
+            try:
+                from shared.services.llm_service import is_ollama_pressure_error
+            except ImportError:
+                is_ollama_pressure_error = lambda exc: False  # type: ignore[misc,assignment]
+            if is_ollama_pressure_error(e):
                 return "defer"
             errors += 1
             logger.warning("appraisal batch item failed: %s", e)

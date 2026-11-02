@@ -14,7 +14,7 @@ import psycopg2
 from config.settings import SQL_EXPLORER_ENABLED
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from shared.database.connection import get_db_connect_kwargs
+from shared.database import get_db_connect_kwargs
 
 logger = logging.getLogger(__name__)
 

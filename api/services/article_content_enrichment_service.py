@@ -588,7 +588,7 @@ def _remove_article(conn, schema_name: str, article_id: int) -> None:
 
 def demote_false_enriched_batch(*, limit_per_schema: int = 40) -> int:
     """Demote existing enrichment_status=enriched rows whose body fails the F9 yieldable check."""
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.domain_registry import pipeline_url_schema_pairs
 
     demoted = 0
@@ -721,7 +721,7 @@ def _enrich_articles_batch_parallel(*, batch_size: int, parallel: int) -> int:
         logger.warning("trafilatura not installed; skipping content enrichment")
         return 0
 
-    from shared.database.connection import get_db_config, get_db_connection
+    from shared.database import get_db_config, get_db_connection
     from shared.domain_registry import pipeline_url_schema_pairs
     from shared.article_processing_gates import (
         strict_enrichment_applies,
@@ -1007,7 +1007,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
         logger.warning("trafilatura not installed; skipping content enrichment")
         return 0
 
-    from shared.database.connection import get_db_config, get_db_connection
+    from shared.database import get_db_config, get_db_connection
     from shared.domain_registry import pipeline_url_schema_pairs
 
     from shared.article_processing_gates import (
@@ -1323,7 +1323,7 @@ def fetch_full_content_for_article(domain_key: str, article_id: int) -> dict[str
             "content": None,
         }
 
-    from shared.database.connection import get_ui_db_connection_context
+    from shared.database import get_ui_db_connection_context
 
     from services.context_processor_service import (
         sync_context_from_article_after_content_change,

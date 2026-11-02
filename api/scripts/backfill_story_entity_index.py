@@ -14,7 +14,7 @@ import argparse
 import logging
 import sys
 
-from shared.database.connection import get_db_connection_context
+from shared.database import get_db_connection_context
 from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")

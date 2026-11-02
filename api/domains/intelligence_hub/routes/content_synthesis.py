@@ -358,8 +358,8 @@ synthesis_tasks: dict[str, dict[str, Any]] = {}
 
 @router.post("/{domain}/synthesis/storylines/bulk", response_model=dict[str, Any])
 async def bulk_synthesize_storylines(
-    storyline_ids: Annotated[list[int], Field(min_length=1, max_length=20)] = Body(...),
-    depth: str = Body("standard"),
+    storyline_ids: list[int] = Body(default=[]),
+    depth: str = Body(default="standard"),
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     background_tasks: BackgroundTasks = None,
 ):

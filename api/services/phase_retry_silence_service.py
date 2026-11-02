@@ -78,7 +78,7 @@ def list_auto_silenced_phases() -> set[str]:
     """Active auto-silences (cleared_at IS NULL)."""
     out: set[str] = set()
     try:
-        from shared.database.connection import get_ui_db_connection_context
+        from shared.database import get_ui_db_connection_context
 
         with get_ui_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -113,7 +113,7 @@ def silence_phase(
     import json
 
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -172,7 +172,7 @@ def silence_phase(
 
 def clear_phase_silence(phase_name: str) -> None:
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -193,7 +193,7 @@ def _active_auto_silences_with_backlog() -> dict[str, int | None]:
     """Active auto-silences → queue depth captured when each was silenced."""
     out: dict[str, int | None] = {}
     try:
-        from shared.database.connection import get_ui_db_connection_context
+        from shared.database import get_ui_db_connection_context
 
         with get_ui_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -221,7 +221,7 @@ def reset_failing_streak(phase_name: str) -> None:
     import json
 
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -252,7 +252,7 @@ def reset_failing_streak(phase_name: str) -> None:
 
 def _record_lift(phase_name: str, reason: str) -> None:
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -382,7 +382,7 @@ def _bump_failing_streak(phase: str, *, status: str) -> int:
 
     key = "phase_failing_streaks"
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:

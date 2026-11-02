@@ -13,7 +13,7 @@ from typing import Any
 
 from config.settings import OLLAMA_HOST
 
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 from shared.domain_registry import schema_to_primary_domain_key
 from shared.services.llm_service import LLMService
 from shared.services.ollama_model_caller import get_ollama_model_caller

@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
 from config.settings import MODELS
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
 from shared.services.domain_aware_service import validate_domain
 from shared.services.llm_service import llm_service
@@ -1429,7 +1429,7 @@ async def process_storyline_rag_analysis(
 ):
     """Background task for RAG-enhanced storyline analysis"""
     try:
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
         from shared.services.llm_service import llm_service
 
         schema = resolve_domain_schema(domain)
@@ -1458,7 +1458,7 @@ async def process_storyline_rag_analysis(
                 build_vault_pack_for_entity_ids,
                 render_vault_context_pack_for_llm,
             )
-            from shared.database.connection import get_db_connection_context
+            from shared.database import get_db_connection_context
 
             entity_ids: list[int] = []
             with get_db_connection_context() as _conn:

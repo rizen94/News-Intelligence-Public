@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from config.runtime import env_bool, env_int
-from shared.database.connection import get_ui_db_connection_context
+from shared.database import get_ui_db_connection_context
 from shared.editorial_package_vocab import provenance_has_citeable_source
 
 logger = logging.getLogger(__name__)

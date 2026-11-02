@@ -159,7 +159,7 @@ async def discover_events_from_contexts(
     Analyze recent contexts and create tracked events from clusters.
     Returns summary of events created.
     """
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -514,7 +514,7 @@ def backfill_key_participants_for_tracked_events(limit: int = 30) -> int:
     Backfill key_participant_entity_ids for events that have none.
     Call from automation after event_tracking batch. Returns number of events updated.
     """
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -557,7 +557,7 @@ def link_tracked_events_to_storylines(limit: int = 50) -> int:
     domain whose articles mention the same entities; set storyline_id = 'schema:id'.
     Returns number of events linked.
     """
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -706,7 +706,7 @@ async def _update_existing_event_chronicles(limit: int = 20) -> int:
     For existing tracked_events, check for new contexts that match
     and append chronicle entries.
     """
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

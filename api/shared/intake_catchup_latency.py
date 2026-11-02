@@ -221,7 +221,7 @@ def compute_intake_catchup_latency(
                 out.pop("_cache_key", None)
                 return out
 
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.domain_registry import pipeline_url_schema_pairs
 
     pairs = list(pipeline_url_schema_pairs())
@@ -528,7 +528,7 @@ def record_intake_catchup_latency_sample(snapshot: dict[str, Any] | None = None)
             "preprocess_ok": (snap.get("preprocess") or {}).get("ok_under_sla"),
             "preprocess_sla_hours": (snap.get("preprocess") or {}).get("sla_hours"),
         }
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         keep = max(24, env_int("CATCHUP_LATENCY_SAMPLE_KEEP", 72))
         with get_db_connection_context() as conn:

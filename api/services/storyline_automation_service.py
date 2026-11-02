@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 from shared.services.domain_aware_service import DomainAwareService
 
 from services.domain_synthesis_config import get_domain_synthesis_config
@@ -1302,6 +1302,18 @@ class StorylineAutomationService(DomainAwareService):
                             f"Matched storyline entities: {', '.join(matched[:8])}"
                         )
 
+                    # Guard: if any score column is zeroed/None, backfill from quality_score
+                    # so the reviewer-agent fast-path can drain them (needs relevance_score > 0)
+                    _s_relevance = round(relevance, 2)
+                    _s_semantic = round(semantic, 2)
+                    _s_keyword = kw_score
+                    if _s_relevance <= 0 or _s_semantic <= 0 or _s_keyword <= 0:
+                        quality_for_fill = round(quality, 2)
+                        if quality_for_fill > 0:
+                            _s_relevance = quality_for_fill
+                            _s_semantic = quality_for_fill
+                            _s_keyword = quality_for_fill
+
                     try:
                         cur.execute(
                             """
@@ -1313,6 +1325,8 @@ class StorylineAutomationService(DomainAwareService):
                                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                             ) ON CONFLICT (domain_key, storyline_id, article_id) DO UPDATE SET
                                 relevance_score = EXCLUDED.relevance_score,
+                                semantic_score = EXCLUDED.semantic_score,
+                                keyword_score = EXCLUDED.keyword_score,
                                 combined_score = EXCLUDED.combined_score,
                                 reasoning = EXCLUDED.reasoning,
                                 matched_keywords = EXCLUDED.matched_keywords,
@@ -1325,9 +1339,9 @@ class StorylineAutomationService(DomainAwareService):
                                 self.domain,
                                 storyline_id,
                                 article.get("id"),
-                                round(relevance, 2),
-                                round(semantic, 2),
-                                kw_score,
+                                _s_relevance,
+                                _s_semantic,
+                                _s_keyword,
                                 round(quality, 2),
                                 round(combined, 2),
                                 reasoning,

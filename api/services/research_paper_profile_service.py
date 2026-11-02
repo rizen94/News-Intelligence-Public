@@ -13,7 +13,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from shared.database.connection import get_db_connection, get_db_connection_context
+from shared.database import get_db_connection, get_db_connection_context
 from shared.domain_registry import domain_key_to_schema, pipeline_url_schema_pairs
 from shared.llm_text_sanitize import parse_llm_json_response
 
@@ -291,6 +291,20 @@ async def extract_profile_for_article(domain_key: str, article_id: int) -> dict[
         )
         raw_text = gen.text or ""
     except Exception as e:
+        # Detect pressure errors (overload / circuit breaker / connect) via canonical helper.
+        try:
+            from shared.services.llm_service import is_ollama_pressure_error
+        except ImportError:
+            is_ollama_pressure_error = lambda exc: False  # type: ignore[misc,assignment]
+        if is_ollama_pressure_error(e):
+            logger.info(
+                "research profile deferred (pressure error) %s/%s: %s",
+                domain_key,
+                article_id,
+                e,
+            )
+            raise  # Re-raise so drain loop breaks; item stays in 'processing' for next run.
+        # Non-pressure error: mark as permanently failed.
         logger.warning("research profile LLM failed %s/%s: %s", domain_key, article_id, e)
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -435,11 +449,14 @@ async def drain_research_paper_profiling(limit: int | None = None) -> dict[str, 
                 err = str(res.get("error") or "").lower()
                 if "timed out" in err or "overloaded" in err:
                     deferred_overload += 1
-                    # Stop this batch early — leave remaining pending for next trickle.
                     break
         except Exception as e:
-            msg = str(e).lower()
-            if "timed out" in msg or "overloaded" in msg or "circuit breaker is open" in msg:
+            # Detect pressure errors via canonical helper.
+            try:
+                from shared.services.llm_service import is_ollama_pressure_error
+            except ImportError:
+                is_ollama_pressure_error = lambda exc: False  # type: ignore[misc,assignment]
+            if is_ollama_pressure_error(e):
                 deferred_overload += 1
                 logger.info(
                     "profile drain pausing batch on overload/shed %s/%s: %s",

@@ -258,6 +258,14 @@ ollama list
 | **API not systemd** | Manual nohup since Jun 5 | **Fixed Jun 6:** `setup_widow_boot_stack.sh` + `news-intelligence-api-public` enabled |
 | **Stale ML phases** | `topic_clustering`, `ml_processing` last run Jun 2 | Lower concurrency + restart; trigger via Monitor or wait for workload-driven scheduling |
 
+## Recent Fixes (October 2026)
+
+| Issue | Evidence | Fix applied | Deployed |
+|-------|----------|-------------|----------|
+| **INTERVAL parameterization bug** (`INTERVAL %s DAY` invalid SQL) in `cron-purge` | `/api/domains/storyline_management/routes/storyline_automation_bulk.py` and `scheduler.py` used `INTERVAL %s DAY` which psycopg2 renders as `INTERVAL '5' DAY` — invalid PostgreSQL (unit must be part of the interval literal). ~696k stale rows with status='pending' could not be purged via cron-purge. | Changed to string concatenation: `(%s || ' days')::INTERVAL` in both files (6 total occurrences: 5 in `storyline_automation_bulk.py`, 1 in `scheduler.py`) | ✅ **2026-10-30** — files copied to Widow, `news-intelligence-api-public.service` restarted, verified active |
+
+**See also**: [Pending Items Triage](../handoffs/2026-10-28-pending-items-triage.md) in Obsidian for full investigation details and data state analysis.
+
 ---
 
 ## Related

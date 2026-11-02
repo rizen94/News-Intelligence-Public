@@ -55,7 +55,7 @@ def main() -> int:
     _load_dotenv_from_repo_root()
 
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
     except ImportError:
         print(
             "Import failed: run from repo root with PYTHONPATH=api "

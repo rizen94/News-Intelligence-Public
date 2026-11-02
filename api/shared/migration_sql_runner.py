@@ -45,7 +45,7 @@ def apply_sql_at_path(sql_path: str) -> int:
     if api_root not in sys.path:
         sys.path.insert(0, api_root)
 
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

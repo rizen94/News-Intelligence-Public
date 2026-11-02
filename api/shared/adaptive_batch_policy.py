@@ -499,7 +499,7 @@ def _state_key(phase: str) -> str:
 
 def _load_persisted_state(phase: str) -> dict[str, Any]:
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -531,7 +531,7 @@ def _load_persisted_batch(phase: str) -> int | None:
 
 def _persist_batch(phase: str, batch: int, meta: dict[str, Any]) -> None:
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         # Preserve last_yield across tune writes so yield-gate can see prior run.
         existing = _load_persisted_state(phase)
@@ -586,7 +586,7 @@ def record_adaptive_batch_yield(
         "batch_limit": int(batch_limit) if batch_limit is not None else None,
     }
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         existing = _load_persisted_state(phase_key)
         payload = {**existing, "last_yield": yield_info}
@@ -731,7 +731,7 @@ def apply_adaptive_batch_yield_gate(phase: str) -> tuple[int, dict[str, Any]]:
         state = _load_persisted_state(phase_key)
         payload = {**state, **meta, "batch": int(new_batch)}
         try:
-            from shared.database.connection import get_db_connection_context
+            from shared.database import get_db_connection_context
 
             with get_db_connection_context() as conn:
                 with conn.cursor() as cur:

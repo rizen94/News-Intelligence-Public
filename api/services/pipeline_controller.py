@@ -667,7 +667,7 @@ def assess_phase_health(
 def _recent_run_history(phase: str, limit: int = 5) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     try:
-        from shared.database.connection import get_ui_db_connection_context
+        from shared.database import get_ui_db_connection_context
 
         skip = ("drain_started", "phase_started")
         with get_ui_db_connection_context() as conn:

@@ -13,7 +13,7 @@ from modules.deduplication.advanced_deduplication_service import (
     ClusterResult,
 )
 from psycopg2.extras import RealDictCursor
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 

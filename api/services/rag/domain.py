@@ -63,7 +63,7 @@ class RAGDomainModule:
 
     def get_db_connection(self):
         """Get database connection from shared pool."""
-        from shared.database.connection import get_db_connection as _get_conn
+        from shared.database import get_db_connection as _get_conn
 
         return _get_conn()
 

@@ -78,7 +78,7 @@ def hydrate_member_provenance(
     provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return provenance enriched from CE / article / claim source rows."""
-    from shared.database.connection import get_ui_db_connection_context
+    from shared.database import get_ui_db_connection_context
     from shared.domain_registry import resolve_domain_schema
 
     prov = dict(provenance or {})

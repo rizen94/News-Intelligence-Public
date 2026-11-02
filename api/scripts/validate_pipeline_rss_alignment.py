@@ -110,7 +110,7 @@ def main() -> None:
 
     conn = None
     try:
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
 
         conn = get_db_connection()
         if conn:

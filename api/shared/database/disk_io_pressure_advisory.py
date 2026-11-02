@@ -423,7 +423,7 @@ def publish_disk_io_pressure_advisory(
         return signal
 
     try:
-        from shared.database.connection import ephemeral_db_connection_context
+        from shared.database import ephemeral_db_connection_context
 
         with ephemeral_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -478,7 +478,7 @@ def read_disk_io_pressure_advisory(
         "age_sec": None,
     }
     try:
-        from shared.database.connection import ephemeral_db_connection_context
+        from shared.database import ephemeral_db_connection_context
 
         with ephemeral_db_connection_context() as conn:
             with conn.cursor() as cur:

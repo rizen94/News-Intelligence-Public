@@ -176,7 +176,7 @@ def _dedupe(bullets: list[str], *, limit: int = 12) -> list[str]:
 
 
 def existing_ids(schema: str, table: str, ids: list[int]) -> list[int]:
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     if not ids:
         return []
@@ -191,7 +191,7 @@ def existing_ids(schema: str, table: str, ids: list[int]) -> list[int]:
 
 
 def fetch_theme(schema: str, patterns: list[str], *, days: int = 90, limit: int = 10) -> list[str]:
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     like = " OR ".join(["a.title ILIKE %s"] * len(patterns))
     params: list[Any] = [days] + [f"%{p}%" for p in patterns] + [limit]
@@ -218,7 +218,7 @@ def fetch_theme(schema: str, patterns: list[str], *, days: int = 90, limit: int 
 
 
 def resolve_anthropic_id() -> int | None:
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
@@ -358,7 +358,7 @@ def seed_hubs(*, force: bool, dry_run: bool) -> dict[str, Any]:
 
 
 def entity_hits(domain: str, eid: int) -> int:
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.domain_registry import resolve_domain_schema
 
     schema = resolve_domain_schema(domain)
@@ -383,7 +383,7 @@ def seed_entities(*, force: bool, dry_run: bool) -> list[dict[str, Any]]:
         fetch_recent_article_bullets,
     )
     from services.vault_notes_registry_service import upsert_vault_note
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.domain_registry import resolve_domain_schema
     from shared.vault_note_contract import entity_vault_rel_path
 
@@ -557,7 +557,7 @@ def sync_finance_clipping_bodies(*, dry_run: bool, limit: int = 40) -> dict[str,
     """Mirror disk clipping markdown into empty PG body_md rows."""
     from services.vault_bridge_service import vault_root
     from services.vault_notes_registry_service import upsert_vault_note
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     root = vault_root()
     with get_db_connection_context() as conn:

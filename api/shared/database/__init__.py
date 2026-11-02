@@ -47,6 +47,15 @@ from .health_check import (
 
 from .storyline_merger import StorylineMerger
 
+# Import high-level accessors so services can use the facade instead of connection internals.
+from .accessors import (
+    db_execute,
+    db_fetch_one,
+    db_fetch_many,
+    db_execute_many,
+    db_heartbeat,
+)
+
 # Package version
 __version__ = "1.0.0"
 
@@ -90,4 +99,11 @@ __all__ = [
     
     # Storyline merger
     "StorylineMerger",
+
+    # High-level accessors (prefer these over connection internals)
+    "db_execute",
+    "db_fetch_one",
+    "db_fetch_many",
+    "db_execute_many",
+    "db_heartbeat",
 ]

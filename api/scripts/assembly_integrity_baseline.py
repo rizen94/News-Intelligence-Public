@@ -41,7 +41,7 @@ def _schemas() -> list[tuple[str, str]]:
 
 
 def run_baseline() -> dict[str, Any]:
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.episode_attach_gate import episode_container_assembly_enabled
     from shared.pipeline_state_constants import ARTICLE_FAILED, ARTICLE_INACCESSIBLE
 

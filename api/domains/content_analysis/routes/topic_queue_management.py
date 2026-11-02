@@ -11,7 +11,7 @@ from domains.content_analysis.services.topic_extraction_queue_worker import (
     TopicExtractionQueueWorker,
 )
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Path, Query
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
 from shared.services.domain_aware_service import validate_domain
 from shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED

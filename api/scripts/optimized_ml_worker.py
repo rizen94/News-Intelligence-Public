@@ -29,7 +29,7 @@ class OptimizedMLWorker:
         self.worker_id = worker_id
         self.max_workers = max_workers
         self.batch_size = batch_size
-        from shared.database.connection import get_db_config
+        from shared.database import get_db_config
         from shared.pipeline_state_constants import ML_PENDING, ML_RUNNING, ML_COMPLETED, ML_FAILED
 
         self.db_config = get_db_config()
@@ -39,7 +39,7 @@ class OptimizedMLWorker:
 
     def get_db_connection(self):
         """Get database connection from shared pool (DB_* env / .env)."""
-        from shared.database.connection import get_db_connection as _get_conn
+        from shared.database import get_db_connection as _get_conn
 
         return _get_conn()
 

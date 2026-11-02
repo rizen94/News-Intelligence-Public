@@ -57,7 +57,7 @@ MIGRATIONS_140_152 = [
 
 
 def main():
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     start_from = 140
     if "--from" in sys.argv:

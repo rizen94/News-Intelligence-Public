@@ -172,7 +172,7 @@ def evaluate_weekly_cull(domain_key: str | None = None) -> list[FeedHealthVerdic
     if not rss_feed_silence_enabled():
         return []
 
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.domain_registry import pipeline_url_schema_pairs
 
     pairs = pipeline_url_schema_pairs()
@@ -260,7 +260,7 @@ def evaluate_feeds(domain_key: str | None = None) -> list[FeedHealthVerdict]:
     if not rss_feed_silence_enabled():
         return []
 
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.domain_registry import pipeline_url_schema_pairs
 
     pairs = pipeline_url_schema_pairs()
@@ -406,7 +406,7 @@ def apply_verdicts(
     if not verdicts:
         return counts
 
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -512,7 +512,7 @@ def run_feed_health_cycle(*, dry_run: bool | None = None) -> dict[str, Any]:
 
 def get_feed_health_monitor_counts() -> dict[str, int]:
     """Active warning feeds and feeds silenced in last 7 days."""
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.domain_registry import get_pipeline_schema_names_active
 
     warning = 0

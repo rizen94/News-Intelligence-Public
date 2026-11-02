@@ -7,7 +7,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Path, Query
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 from shared.domain_registry import (
     domain_key_to_schema,
     pipeline_url_schema_pairs,

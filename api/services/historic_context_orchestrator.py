@@ -197,7 +197,7 @@ def _build_search_query(
 
 def _get_db():
     try:
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
 
         return get_db_connection()
     except Exception as e:

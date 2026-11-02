@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from shared.database.connection import get_db_connection_context
+from shared.database import get_db_connection_context
 
 if TYPE_CHECKING:
     from shared.phase_idle_gate import PhaseIdleBackoff

@@ -31,7 +31,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Use shared DB config (run with api as cwd or PYTHONPATH=api)
-from shared.database.connection import get_db_connection as _get_db_connection
+from shared.database import get_db_connection as _get_db_connection
 
 
 def get_db_connection():

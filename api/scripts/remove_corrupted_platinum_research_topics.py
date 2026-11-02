@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def main():
     from config.settings import finance_postgres_content_domain_key
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
     from shared.domain_registry import resolve_domain_schema
 
     schema = resolve_domain_schema(finance_postgres_content_domain_key())

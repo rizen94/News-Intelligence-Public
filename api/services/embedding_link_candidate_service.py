@@ -11,7 +11,7 @@ import logging
 from typing import Any
 
 from config.runtime import env_float, env_int, env_str
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 from shared.domain_processing_mode import filter_domains_for_phase
 from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 

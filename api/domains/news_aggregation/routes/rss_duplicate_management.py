@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 from shared.services.domain_aware_service import get_domain_data_schemas
 
 

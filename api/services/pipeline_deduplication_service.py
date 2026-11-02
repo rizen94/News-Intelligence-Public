@@ -292,31 +292,40 @@ class PipelineDeduplicationService:
             try:
                 # Get deduplication statistics
                 with self.deduplicator.conn.cursor() as cur:
-                    # Total articles
-                    cur.execute("SELECT COUNT(*) FROM articles")
+                    # Enforce statement timeout to prevent runaway queries
+                    cur.execute("SET LOCAL statement_timeout = '5s'")
+
+                    # Total articles (only active/non-failed, skip archived/stale)
+                    cur.execute(
+                        "SELECT COUNT(*) FROM articles WHERE enrichment_status != 'failed'"
+                    )
                     total_articles = cur.fetchone()[0]
 
                     # Articles with content hash
-                    cur.execute("SELECT COUNT(*) FROM articles WHERE content_hash IS NOT NULL")
+                    cur.execute(
+                        """SELECT COUNT(*) FROM articles
+                           WHERE content_hash IS NOT NULL AND enrichment_status != 'failed'"""
+                    )
                     articles_with_hash = cur.fetchone()[0]
 
-                    # URL duplicates
+                    # URL duplicates (bounded)
                     cur.execute("""
                         SELECT COUNT(*) FROM (
                             SELECT url, COUNT(*) as count
                             FROM articles
+                            WHERE enrichment_status != 'failed'
                             GROUP BY url
                             HAVING COUNT(*) > 1
                         ) duplicates
                     """)
                     url_duplicates = cur.fetchone()[0]
 
-                    # Content duplicates
+                    # Content duplicates (bounded)
                     cur.execute("""
                         SELECT COUNT(*) FROM (
                             SELECT content_hash, COUNT(*) as count
                             FROM articles
-                            WHERE content_hash IS NOT NULL
+                            WHERE content_hash IS NOT NULL AND enrichment_status != 'failed'
                             GROUP BY content_hash
                             HAVING COUNT(*) > 1
                         ) duplicates

@@ -180,7 +180,7 @@ def main() -> None:
         _print_report(cfg_path, domain_key, schema_name, errors, warnings)
         _exit_with_status(errors, warnings, args.strict)
 
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

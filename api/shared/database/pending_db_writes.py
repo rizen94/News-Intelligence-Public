@@ -129,7 +129,7 @@ def flush_pending_writes() -> dict[str, Any]:
         flushed = failed = skipped = discarded = 0
 
         try:
-            from shared.database.connection import get_db_connection
+            from shared.database import get_db_connection
         except Exception as e:
             logger.warning("pending_db_writes: no DB module: %s", e)
             return {"flushed": 0, "failed": 0, "skipped": len(lines), "error": str(e)}

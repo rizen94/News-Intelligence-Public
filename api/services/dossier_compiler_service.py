@@ -11,7 +11,7 @@ import logging
 from datetime import date
 from typing import Any
 
-from shared.database.connection import get_db_connection, get_db_connection_context
+from shared.database import get_db_connection, get_db_connection_context
 from shared.domain_registry import is_valid_domain_key, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
@@ -474,7 +474,7 @@ def _run_scheduled_dossier_compiles(
 
     ``stale_days`` is deprecated; set ``ENTITY_DOSSIER_STALE_DAYS`` in env instead.
     """
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
     from shared.entity_dossier_eligibility import sql_entity_dossier_needs_compile
     from shared.pipeline_domain_sql import pipeline_domain_any_sql
 

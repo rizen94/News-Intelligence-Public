@@ -12,7 +12,7 @@ import math
 from datetime import datetime, timezone
 from typing import Any
 
-from shared.database.connection import get_ui_db_connection as get_db_connection
+from shared.database import get_ui_db_connection as get_db_connection
 from shared.domain_registry import get_schema_names_active, pipeline_url_schema_pairs
 
 logger = logging.getLogger(__name__)
@@ -614,6 +614,8 @@ def compute_processing_progress_response(
             from services.backlog_metrics import (
                 get_storyline_review_queue_pending,
                 get_storyline_review_queue_pending_by_domain,
+                get_storyline_review_queue_score_completeness,
+                get_storyline_review_queue_orphan_count,
             )
 
             operator_metrics = {
@@ -621,6 +623,8 @@ def compute_processing_progress_response(
                 "storyline_review_queue_pending_by_domain": (
                     get_storyline_review_queue_pending_by_domain()
                 ),
+                "score_completeness": get_storyline_review_queue_score_completeness(),
+                "orphaned_suggestions_count": get_storyline_review_queue_orphan_count(),
             }
         except Exception as e:
             logger.debug("processing_progress operator_metrics: %s", e)

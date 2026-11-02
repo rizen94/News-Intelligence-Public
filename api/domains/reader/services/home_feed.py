@@ -18,7 +18,7 @@ from typing import Any
 
 from cachetools import TTLCache
 
-from shared.database.connection import get_ui_db_connection_context
+from shared.database import get_ui_db_connection_context
 from shared.domain_registry import (
     get_active_domain_keys,
     pipeline_url_schema_pairs,

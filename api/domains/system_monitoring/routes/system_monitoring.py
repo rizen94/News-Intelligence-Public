@@ -13,7 +13,7 @@ from typing import Any
 
 import psutil
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Query, Request
-from shared.database.connection import get_ui_db_connection
+from shared.database import get_ui_db_connection
 from shared.domain_registry import (
     get_active_domain_keys,
     get_pipeline_schema_names_active,
@@ -168,7 +168,7 @@ def get_registry_domains() -> dict[str, Any]:
 def _probe_db_health_fast() -> str:
     """Quick SELECT 1 on the isolated health pool — never checkout from UI/worker pools."""
     try:
-        from shared.database.connection import get_health_db_connection_context
+        from shared.database import get_health_db_connection_context
 
         with get_health_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -610,18 +610,10 @@ def _build_monitoring_overview_sync(request: Request) -> dict[str, Any]:
     connections: dict[str, Any] = {"api": "ok"}
     db_status = "unknown"
     try:
-        import concurrent.futures
-
-        def _overview_db_probe() -> str:
-            result = _probe_db_health_fast()
-            return "healthy" if result == "healthy" else "unhealthy"
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            fut = ex.submit(_overview_db_probe)
-            try:
-                db_status = fut.result(timeout=2.5)
-            except concurrent.futures.TimeoutError:
-                db_status = "timeout"
+        # Direct sync call — we are already on asyncio.to_thread() event loop.
+        # No need for nested ThreadPoolExecutor(max_workers=1).
+        result = _probe_db_health_fast()
+        db_status = "healthy" if result == "healthy" else "unhealthy"
     except Exception:
         db_status = "unhealthy"
     connections["database"] = db_status
@@ -689,10 +681,52 @@ def _build_monitoring_overview_sync(request: Request) -> dict[str, Any]:
                 pass
         activities = {"current": syn, "recent": []}
 
+    # Dedup stats: aggregate enrichment_status across all active domain articles tables
+    dedup_stats = None
+    try:
+        conn = get_monitoring_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '3s'")
+            pairs = list(iter_url_schema_pairs())
+            if not pairs:
+                logger.debug("No active domains for dedup stats")
+            else:
+                parts: list[str] = []
+                for _domain_key, schema in pairs:
+                    parts.append(
+                        f"SELECT "
+                        f"  COUNT(*) FILTER (WHERE enrichment_status = 'pending')    AS pending,"
+                        f"  COUNT(*) FILTER (WHERE enrichment_status = 'failed')     AS failed,"
+                        f"  COUNT(*) FILTER (WHERE enrichment_status IN ('enriched','partial')) AS partial,"
+                        f"  COUNT(*) FILTER (WHERE enrichment_status NOT IN ('pending','failed','enriched','partial')) AS other,"
+                        f"  COUNT(*)                                                   AS total "
+                        f"FROM {schema}.articles"
+                    )
+                sql = " UNION ALL ".join(parts)
+                cur.execute(sql)
+                rows = cur.fetchall()
+                if rows:
+                    pending_count = sum(r[0] or 0 for r in rows)
+                    failed_count = sum(r[1] or 0 for r in rows)
+                    partial_count = sum(r[2] or 0 for r in rows)
+                    other_count = sum(r[3] or 0 for r in rows)
+                    total_items = sum(r[4] or 0 for r in rows)
+                    dedup_stats = {
+                        "pending_count": pending_count,
+                        "failed_count": failed_count,
+                        "partial_count": partial_count,
+                        "other_count": other_count,
+                        "total_items": total_items,
+                        "as_of_utc": datetime.now().isoformat(),
+                    }
+    except Exception as e:
+        logger.debug("Dedup stats collection failed: %s", e)
+
     return {
         "success": True,
         "connections": connections,
         "activities": activities,
+        "dedup_stats": dedup_stats,
         "timestamp": datetime.now().isoformat(),
     }
 
@@ -709,17 +743,35 @@ async def get_monitoring_overview(request: Request):
             timeout=8.0,
         )
     except asyncio.TimeoutError:
-        logger.warning("monitoring/overview timed out after 8s")
+        # Return best-effort data so the UI never blanks out on page load.
+        logger.warning("monitoring/overview timed out after 8s — returning degraded snapshot")
+        try:
+            webserver = {}
+            from shared.services.route_supervisor import get_route_supervisor
+
+            supervisor = get_route_supervisor()
+            if supervisor.frontend_health:
+                f = supervisor.frontend_health
+                webserver = {
+                    "status": f.status.value if hasattr(f.status, "value") else str(f.status),
+                    "response_time_ms": getattr(f, "response_time_ms", None),
+                    "api_connection": getattr(f, "api_connection", None),
+                    "url": getattr(f, "url", None),
+                    "last_check": f.last_check.isoformat() if getattr(f, "last_check", None) else None,
+                }
+        except Exception:
+            pass
         return {
             "success": False,
             "degraded": True,
             "connections": {
                 "api": "ok",
                 "database": "timeout",
-                "webserver": {"status": "unknown"},
+                "webserver": webserver or {"status": "unknown"},
             },
             "activities": {"current": [], "recent": []},
             "error": "overview_handler_timeout",
+            "partial": True,
             "timestamp": datetime.now().isoformat(),
         }
 
@@ -898,7 +950,7 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
         except Exception as e:
             out["api_yield"] = {"error": str(e)[:120]}
         try:
-            from shared.database.connection import get_db_pool_snapshot
+            from shared.database import get_db_pool_snapshot
             from shared.database.pool_pressure_advisory import (
                 build_pool_pressure_signal,
                 publish_db_pool_pressure_advisory,
@@ -2125,9 +2177,15 @@ def get_system_status():
                     )
                     recent_errors = cur.fetchone()[0]
 
+                    # Bounded deduplication metrics — enforce statement timeout to prevent the
+                    # UNION-ALL cross-silo GROUP BY queries from hanging when the database is
+                    # under heavy load.  Fallback: leave dedup stats at zero (the catch block
+                    # will set db_status="degraded" but not blow up the whole endpoint).
+                    cur.execute("SET LOCAL statement_timeout = '8s'")
+
                     # Get deduplication metrics from all registry silos
                     sub_hash = " + ".join(
-                        f"(SELECT COUNT(*) FROM {s}.articles WHERE content_hash IS NOT NULL)"
+                        f"(SELECT COUNT(*) FROM {s}.articles WHERE content_hash IS NOT NULL AND enrichment_status != 'failed')"
                         for s in sch_list
                     )
                     cur.execute(f"SELECT {sub_hash} as articles_with_hash")
@@ -2135,7 +2193,7 @@ def get_system_status():
                     articles_with_hash = hash_result[0] if hash_result and hash_result[0] else 0
 
                     union_urls = " UNION ALL ".join(
-                        f"SELECT url FROM {s}.articles" for s in sch_list
+                        f"SELECT url FROM {s}.articles WHERE enrichment_status != 'failed'" for s in sch_list
                     )
                     cur.execute(
                         f"""
@@ -2152,7 +2210,7 @@ def get_system_status():
                     url_duplicates = url_result[0] if url_result and url_result[0] else 0
 
                     union_ch = " UNION ALL ".join(
-                        f"SELECT content_hash FROM {s}.articles WHERE content_hash IS NOT NULL"
+                        f"SELECT content_hash FROM {s}.articles WHERE content_hash IS NOT NULL AND enrichment_status != 'failed'"
                         for s in sch_list
                     )
                     cur.execute(
@@ -2817,7 +2875,7 @@ def execute_pipeline_orchestration():
         _log_pipeline_trace(trace_id, "topic_clustering", "started")
 
         try:
-            from shared.database.connection import get_db_connection
+            from shared.database import get_db_connection
 
             from domains.content_analysis.services.advanced_topic_extractor import (
                 AdvancedTopicExtractor,

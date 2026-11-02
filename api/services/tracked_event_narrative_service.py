@@ -15,7 +15,7 @@ import json
 import logging
 from typing import Any
 
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 from shared.domain_registry import get_active_domain_keys
 from services.quality_monitoring_service import get_quality_monitoring_service
 

@@ -9,8 +9,8 @@ from typing import Any, Optional
 from fastapi import Body, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
-from shared.database.connection import get_db_connection
-from shared.domain_registry import resolve_domain_schema
+from shared.database import get_db_connection
+from shared.domain_registry import DOMAIN_PATH_PATTERN, get_pipeline_schema_names_active, resolve_domain_schema
 from shared.services.domain_aware_service import validate_domain
 from services.storyline_automation_service import StorylineAutomationService
 
@@ -84,7 +84,7 @@ def _approve_suggestion_row(
 def register_bulk_routes(router) -> None:
     @router.post("/{domain}/storylines/review-queue/bulk-approve")
     async def bulk_approve_suggestions(
-        domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+        domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
         body: BulkSuggestionBody = Body(...),
     ):
         if not validate_domain(domain):
@@ -148,7 +148,7 @@ def register_bulk_routes(router) -> None:
 
     @router.post("/{domain}/storylines/review-queue/bulk-reject")
     async def bulk_reject_suggestions(
-        domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+        domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
         body: BulkSuggestionBody = Body(...),
     ):
         if not validate_domain(domain):
@@ -195,9 +195,255 @@ def register_bulk_routes(router) -> None:
         finally:
             conn.close()
 
+    @router.post("/{domain}/storylines/review-queue/cleanup")
+    async def cleanup_stale_suggestions(
+        domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+        max_age_days: int = Query(30, ge=1),
+        dry_run: bool = Query(False),
+    ):
+        """Remove stale pending suggestions (orphaned or exceeding age threshold).
+
+        Returns counts of deleted/orphaned rows before committing.
+        Set `dry_run=true` to preview without deleting.
+        """
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        try:
+            with conn.cursor() as cur:
+                # 1. Count orphans (article_id no longer exists in any active schema)
+                schema_list = get_pipeline_schema_names_active()
+                if schema_list:
+                    subqueries = []
+                    for s in schema_list:
+                        subqueries.append(f"SELECT id FROM {s}.articles")
+                    union_sql = " UNION ALL ".join(subqueries)
+                    cur.execute(
+                        f"""
+                        SELECT COUNT(*) FROM public.storyline_article_suggestions
+                        WHERE status = 'pending'
+                          AND domain_key = %s
+                          AND article_id NOT IN ({union_sql})
+                        """,
+                        (domain,),
+                    )
+                    orphan_count = int(cur.fetchone()[0] or 0)
+                else:
+                    orphan_count = 0
+
+                # 2. Count stale items (by age, cross-domain)
+                cur.execute(
+                    """
+                    SELECT COUNT(*) FROM public.storyline_article_suggestions
+                    WHERE status = 'pending' AND suggested_at < NOW() - (%s || ' days')::INTERVAL
+                    """,
+                    (max_age_days,),
+                )
+                stale_count = int(cur.fetchone()[0] or 0)
+
+                if dry_run:
+                    return {
+                        "success": True,
+                        "dry_run": True,
+                        "would_delete_orphaned": orphan_count,
+                        "would_delete_stale": stale_count,
+                        "total_would_delete": orphan_count + stale_count,
+                    }
+
+                # 3. Delete orphans first (safer — just removes broken refs)
+                if schema_list:
+                    subqueries = []
+                    for s in schema_list:
+                        subqueries.append(f"SELECT id FROM {s}.articles")
+                    union_sql = " UNION ALL ".join(subqueries)
+                    cur.execute(
+                        f"""
+                        DELETE FROM public.storyline_article_suggestions
+                        WHERE status = 'pending' AND domain_key = %s
+                          AND article_id NOT IN ({union_sql})
+                        """,
+                        (domain,),
+                    )
+                    deleted_orphans = cur.rowcount
+
+                # 4. Delete stale items (by age, cross-domain)
+                cur.execute(
+                    """
+                    DELETE FROM public.storyline_article_suggestions
+                    WHERE status = 'pending' AND suggested_at < NOW() - (%s || ' days')::INTERVAL
+                    """,
+                    (max_age_days,),
+                )
+                deleted_stale = cur.rowcount
+
+            conn.commit()
+            return {
+                "success": True,
+                "dry_run": False,
+                "deleted_orphaned": deleted_orphans,
+                "deleted_stale": deleted_stale,
+                "total_deleted": deleted_orphans + deleted_stale,
+            }
+        except Exception as e:
+            conn.rollback()
+            logger.error("cleanup_stale_suggestions: %s", e)
+            raise HTTPException(status_code=500, detail=str(e)[:200])
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
+    # Fix 1 – Cron purge route (scheduled stale-pending rows)
+    # ------------------------------------------------------------------
+    @router.post("/{domain}/storylines/review-queue/cron-purge")
+    async def cron_purge_stale_pending(
+        domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+        max_age_days: int = Query(30, ge=1),
+        dry_run: bool = Query(False),
+    ):
+        """Purge stale pending suggestions — designed for cron/scheduled execution."""
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        result: dict[str, Any] = {"success": False, "dry_run": dry_run}
+        try:
+            with conn.cursor() as cur:
+                schema_list = get_pipeline_schema_names_active()
+                if schema_list:
+                    subqueries = [f"SELECT id FROM {s}.articles" for s in schema_list]
+                    union_sql = " UNION ALL ".join(subqueries)
+                    cur.execute(
+                        f"""SELECT COUNT(*) FROM public.storyline_article_suggestions
+                        WHERE status = 'pending' AND domain_key = %s
+                          AND article_id NOT IN ({union_sql})""", (domain,))
+                    orphan_count = int(cur.fetchone()[0] or 0)
+                else:
+                    orphan_count = 0
+                cur.execute(
+                    "SELECT COUNT(*) FROM public.storyline_article_suggestions\n"
+                    "WHERE status = 'pending' AND domain_key = %s\n"
+                    "  AND suggested_at < NOW() - (%s || ' days')::INTERVAL",
+                    (domain, max_age_days),
+                )
+                stale_count = int(cur.fetchone()[0] or 0)
+                result["orphan_count"] = orphan_count
+                result["stale_count"] = stale_count
+                result["total"] = orphan_count + stale_count
+                if dry_run:
+                    result["success"] = True
+                    logger.info(
+                        "cron-purge dry-run domain=%s max_age=%d  orphaned=%d stale=%d",
+                        domain, max_age_days, orphan_count, stale_count)
+                    return result
+                if schema_list:
+                    subqueries = [f"SELECT id FROM {s}.articles" for s in schema_list]
+                    union_sql = " UNION ALL ".join(subqueries)
+                    cur.execute(
+                        f"""DELETE FROM public.storyline_article_suggestions
+                        WHERE status = 'pending' AND domain_key = %s
+                          AND article_id NOT IN ({union_sql})""", (domain,))
+                    deleted_orphans = cur.rowcount
+                else:
+                    deleted_orphans = 0
+                cur.execute(
+                    "DELETE FROM public.storyline_article_suggestions\n"
+                    "WHERE status = 'pending' AND domain_key = %s\n"
+                    "  AND suggested_at < NOW() - (%s || ' days')::INTERVAL",
+                    (domain, max_age_days),
+                )
+                deleted_stale = cur.rowcount
+            conn.commit()
+            result.update(success=True, deleted_orphaned=deleted_orphans,
+                          deleted_stale=deleted_stale)
+            logger.info(
+                "cron-purge domain=%s max_age=%d  deleted=%d (%d orphaned + %d stale)",
+                domain, max_age_days, deleted_orphans + deleted_stale,
+                deleted_orphans, deleted_stale)
+            return result
+        except Exception as exc:
+            conn.rollback()
+            logger.error("cron-purge failed domain=%s: %s", domain, exc)
+            result["error"] = str(exc)[:200]
+            raise HTTPException(status_code=500, detail=f"cron-purge failed: {exc}"[:200])
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
+    # Fix 3 – Agent-direct approve_all (no human review required)
+    # ------------------------------------------------------------------
+    @router.post("/{domain}/storylines/review-queue/approve-all")
+    async def approve_all_eligible_suggestions(
+        domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+        min_score: float = Query(0.75, ge=0.0, le=1.0),
+        max_age_days: int = Query(7, ge=0),
+        dry_run: bool = Query(False),
+    ):
+        """Approve all eligible pending suggestions — for agent/system use."""
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        result: dict[str, Any] = {"success": False, "dry_run": dry_run}
+        try:
+            schema = resolve_domain_schema(domain)
+            with conn.cursor() as cur:
+                age_clause = ""
+                params: list[Any] = [domain, min_score]
+                if max_age_days > 0:
+                    age_clause = " AND suggested_at >= NOW() - (%s || ' days')::INTERVAL"
+                    params.append(max_age_days)
+                cur.execute(
+                    f"""SELECT id, storyline_id, article_id, combined_score
+                        FROM public.storyline_article_suggestions
+                        WHERE status = 'pending' AND domain_key = %s
+                          AND combined_score >= %s{age_clause}
+                        ORDER BY combined_score DESC""", params)
+                eligible = cur.fetchall()
+                if dry_run:
+                    result.update(
+                        success=True, eligible_count=len(eligible),
+                        eligible_ids=[int(r[0]) for r in eligible])
+                    logger.info("approve-all dry-run domain=%s  eligible=%d",
+                                domain, len(eligible))
+                    return result
+                approved = 0
+                now_ts = datetime.now()
+                for sug_id, storyline_id, article_id, score in eligible:
+                    cur.execute(
+                        f"""INSERT INTO {schema}.storyline_articles
+                            (storyline_id, article_id, added_at, relevance_score)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT (storyline_id, article_id) DO NOTHING""",
+                        (storyline_id, article_id, now_ts, score))
+                    cur.execute(
+                        """UPDATE public.storyline_article_suggestions
+                           SET status = 'approved', reviewed_at = %s,
+                               review_notes = %s
+                           WHERE id = %s AND domain_key = %s""",
+                        (now_ts, "approved-via-approve-all-agent", sug_id, domain))
+                    if cur.rowcount:
+                        approved += 1
+                conn.commit()
+                result.update(success=True, approved=approved)
+                logger.info("approve-all domain=%s  approved=%d eligible=%d",
+                            domain, approved, len(eligible))
+                return result
+        except Exception as exc:
+            conn.rollback()
+            logger.error("approve-all failed domain=%s: %s", domain, exc)
+            result["error"] = str(exc)[:200]
+            raise HTTPException(
+                status_code=500, detail=f"approve-all failed: {exc}"[:200])
+        finally:
+            conn.close()
+
     @router.post("/{domain}/storylines/automation/discover")
     async def domain_automation_discover(
-        domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+        domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
         force_refresh: bool = Query(False),
         limit: int = Query(15, ge=1, le=100),
     ):

@@ -11,7 +11,7 @@ import logging
 from collections import defaultdict
 from typing import Any
 
-from shared.database.connection import get_db_connection_context
+from shared.database import get_db_connection_context
 from shared.domain_registry import resolve_domain_schema
 from shared.vault_note_contract import slugify_entity_name
 

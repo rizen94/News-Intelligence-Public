@@ -10,7 +10,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from shared.database.connection import get_db_connection_context
+from shared.database import get_db_connection_context
 from shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
@@ -404,16 +404,35 @@ async def run_context_pull_job(pull_id: int) -> dict[str, Any]:
         from shared.services.ollama_model_policy import InvocationKind
 
         caller = get_ollama_model_caller()
-        result = await caller.generate(
-            prompt,
-            kind=InvocationKind.LONG_SYNTHESIS,
-            urgency="high",
-            approx_prompt_chars=len(prompt),
-        )
-        text = (result.text or "").strip()
-        if not text:
-            _mark(pull_id, status="failed", error="empty_llm_response")
-            return {"ok": False, "error": "empty_llm_response"}
+
+        # --- LLM call with pressure error detection ---
+        llm_ok = False
+        try:
+            result = await caller.generate(
+                prompt,
+                kind=InvocationKind.LONG_SYNTHESIS,
+                urgency="high",
+                approx_prompt_chars=len(prompt),
+            )
+            text = (result.text or "").strip()
+            if not text:
+                _mark(pull_id, status="failed", error="empty_llm_response")
+                return {"ok": False, "error": "empty_llm_response"}
+            llm_ok = True
+        except Exception as e:
+            logger.exception("context pull %s failed (LLM): %s", pull_id, e)
+            # Detect pressure errors via canonical helper so we don't invent fallbacks.
+            try:
+                from shared.services.llm_service import is_ollama_pressure_error
+            except ImportError:
+                is_ollama_pressure_error = lambda exc: False  # type: ignore[misc,assignment]
+            if is_ollama_pressure_error(e):
+                _mark(pull_id, status="pending")  # Let drain retry later.
+            else:
+                _mark(pull_id, status="failed", error=str(e))
+            return {"ok": False, "error": str(e)}
+
+        # --- normal continuation after LLM success ---
 
         meta = {
             "vault_note_count": vpack.get("note_count") or 0,

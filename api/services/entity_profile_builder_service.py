@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any, NamedTuple
 
 from config.runtime import env_str
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 from shared.services.llm_service import LLMService, ModelType
 
 logger = logging.getLogger(__name__)
@@ -901,9 +901,12 @@ async def _process_batched_profile_chunk(
         results = _parse_batched_response(raw_response, len(chunk))
     except Exception as e:
         err = str(e).lower()
-        # Proxy preemption / hard timeout: per-profile fallback multiplies the same
-        # contested LOW-priority path (can hang past run budget with CLOSE-WAIT sockets).
-        if "preempt" in err or "503" in err or "timed out" in err or "timeout" in err:
+        # Detect pressure errors via canonical helper, plus proxy preemption / 503.
+        try:
+            from shared.services.llm_service import is_ollama_pressure_error
+        except ImportError:
+            is_ollama_pressure_error = lambda exc: False  # type: ignore[misc,assignment]
+        if is_ollama_pressure_error(e) or "preempt" in err or "503" in err:
             logger.warning(
                 "Batched profile chunk LLM failed (%s); skipping per-profile fallback",
                 e,

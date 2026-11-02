@@ -46,7 +46,7 @@ def main() -> int:
         CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL,
         get_claims_to_facts_min_confidence,
     )
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

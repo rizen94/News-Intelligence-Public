@@ -446,12 +446,12 @@ def _get_conn():
     its main query block) can still show ``pending_records`` instead of silent all-zeros.
     """
     try:
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
 
         return get_db_connection()
     except Exception:
         try:
-            from shared.database.connection import get_ui_db_connection
+            from shared.database import get_ui_db_connection
 
             conn = get_ui_db_connection()
             logger.debug(
@@ -515,12 +515,16 @@ def _count_content_enrichment_backlog() -> int:
 
 
 def _count_context_sync_backlog() -> int:
-    """Articles not yet in article_to_context — matches ``sync_domain_articles_to_contexts`` (excludes removed)."""
+    """Articles not yet in article_to_context — matches ``sync_domain_articles_to_contexts`` (excludes removed).
+    Includes pass marker guard to avoid counting articles that already completed context_sync phase."""
     conn = _get_conn()
     if not conn:
         return 0
     total = 0
     ready = sql_context_sync_article_ready("a")
+    pass_sql = ""
+    if phase_backlog_uses_pass_marker("context_sync"):
+        pass_sql = f" AND ({sql_article_pass_null('context_sync', 'a')}) "
     try:
         for domain_key, schema in pipeline_url_schema_pairs():
             with conn.cursor() as cur:
@@ -533,6 +537,7 @@ def _count_context_sync_backlog() -> int:
                     WHERE atc.context_id IS NULL
                       AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
                       AND ({ready})
+                      {pass_sql}
                     """,
                     (domain_key,),
                 )
@@ -786,21 +791,26 @@ def _count_metadata_enrichment_pending() -> int:
 
 
 def _count_ml_processing_pending() -> int:
-    """Articles not yet through ML background queue (ml_processed)."""
+    """Articles not yet through ML background queue (ml_processed).
+    Includes pass marker guard to exclude articles that completed ml_preprocessing phase."""
     conn = _get_conn()
     if not conn:
         return 0
     total = 0
     ml_ready = sql_ml_ready_and_content_bounds()
+    pass_sql = ""
+    if phase_backlog_uses_pass_marker("ml_preprocessing"):
+        pass_sql = f" AND ({sql_article_pass_null('ml_preprocessing', 'a')}) "
     try:
         for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
                     f"""
-                    SELECT COUNT(*) FROM {schema}.articles
-                    WHERE ml_processed = FALSE
+                    SELECT COUNT(*) FROM {schema}.articles a
+                    WHERE a.ml_processed = FALSE
                       AND ({ml_ready})
+                      {pass_sql}
                     """
                 )
                 total += int(cur.fetchone()[0] or 0)
@@ -897,21 +907,27 @@ def _count_sentiment_analysis_pending() -> int:
 
 
 def _count_quality_scoring_pending() -> int:
+    """Articles pending quality scoring — includes pass marker guard to exclude articles
+    that already completed their required phase pipeline (avoids double-counting in Monitor)."""
     conn = _get_conn()
     if not conn:
         return 0
     total = 0
     ml_ready = sql_ml_ready_and_content_bounds()
+    pass_sql = ""
+    if phase_backlog_uses_pass_marker("quality_scoring"):
+        pass_sql = f" AND ({sql_article_pass_null('quality_scoring', 'a')}) "
     try:
         for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
                     f"""
-                    SELECT COUNT(*) FROM {schema}.articles
-                    WHERE quality_score IS NULL
-                      AND COALESCE((metadata #>> '{{pipeline_skip,quality_scoring_skip}}')::boolean, false) = false
+                    SELECT COUNT(*) FROM {schema}.articles a
+                    WHERE a.quality_score IS NULL
+                      AND COALESCE((a.metadata #>> '{{pipeline_skip,quality_scoring_skip}}')::boolean, false) = false
                       AND ({ml_ready})
+                      {pass_sql}
                     """
                 )
                 total += int(cur.fetchone()[0] or 0)
@@ -1187,6 +1203,115 @@ def get_storyline_review_queue_pending() -> int:
     """Pending rows in public.storyline_article_suggestions (operator curation pressure)."""
     by_domain = get_storyline_review_queue_pending_by_domain()
     return sum(by_domain.values())
+
+
+def get_storyline_review_queue_pending_by_domain() -> dict[str, int]:
+    """Pending suggestion rows grouped by domain_key (operator curation pressure)."""
+    conn = _get_conn()
+    if not conn:
+        return {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '3s'")
+            cur.execute(
+                """
+                SELECT domain_key, COUNT(*) FROM public.storyline_article_suggestions
+                WHERE status = 'pending'
+                GROUP BY domain_key
+                """
+            )
+            return {str(row[0]): int(row[1] or 0) for row in cur.fetchall() if row[0]}
+    except Exception as e:
+        logger.debug("backlog storyline_review_queue count: %s", e)
+        return {}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def get_storyline_review_queue_score_completeness() -> dict[str, int]:
+    """Breakdown of pending suggestions by score completeness.
+
+    Returns dict with keys:
+      - fully_scored: all five scores > 0
+      - partial_scored: any of relevance/semantic/keyword == 0 (but combined exists)
+      - no_combined: pending rows missing combined_score entirely
+    """
+    conn = _get_conn()
+    if not conn:
+        return {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '3s'")
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE relevance_score > 0 AND semantic_score > 0
+                        AND keyword_score > 0 AND combined_score IS NOT NULL),
+                    COUNT(*) FILTER (WHERE combined_score IS NOT NULL
+                        AND (relevance_score <= 0 OR semantic_score <= 0
+                             OR keyword_score <= 0)),
+                    COUNT(*) FILTER (WHERE combined_score IS NULL)
+                FROM public.storyline_article_suggestions
+                WHERE status = 'pending'
+                """
+            )
+            row = cur.fetchone()
+            return {
+                "fully_scored": int(row[0] or 0),
+                "partial_scored": int(row[1] or 0),
+                "no_combined": int(row[2] or 0),
+            }
+    except Exception as e:
+        logger.debug("backlog score_completeness count: %s", e)
+        return {}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def get_storyline_review_queue_orphan_count() -> int:
+    """Count pending suggestions whose article_id has been purged from the domain.
+
+    Orphans silently vanish from all fetch/join queries but inflate the pending count.
+    """
+    conn = _get_conn()
+    if not conn:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '3s'")
+            # Collect active domain schemas first
+            schema_list = get_pipeline_schema_names_active()
+            if not schema_list:
+                return 0
+
+            # Build UNION ALL across all active domain schemas to check article existence
+            subqueries = []
+            for s in schema_list:
+                subqueries.append(f"SELECT id FROM {s}.articles")
+            union_sql = " UNION ALL ".join(subqueries)
+
+            cur.execute(
+                f"""
+                SELECT COUNT(*) FROM public.storyline_article_suggestions
+                WHERE status = 'pending'
+                  AND article_id NOT IN ({union_sql})
+                """,
+            )
+            return int(cur.fetchone()[0] or 0)
+    except Exception as e:
+        logger.debug("backlog orphan count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def get_storyline_review_queue_pending_by_domain() -> dict[str, int]:
@@ -1510,7 +1635,7 @@ def _count_storyline_synthesis_pending() -> int:
 def _count_legislative_references_backlog() -> int:
     """Politics/legal articles without a legislative_article_scans row (bill-citation pass)."""
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
         from shared.domain_registry import is_valid_domain_key, resolve_domain_schema
         from services.legislative_reference_service import (
             LEGISLATIVE_SCAN_DOMAIN_KEYS,

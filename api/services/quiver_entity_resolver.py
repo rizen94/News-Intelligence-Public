@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any, Optional
 
-from shared.database.connection import get_db_connection_context
+from shared.database import get_db_connection_context
 
 logger = logging.getLogger(__name__)
 

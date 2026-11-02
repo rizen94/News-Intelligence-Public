@@ -182,7 +182,7 @@ def extract_expectation_from_claim(
 
 
 def store_expectation(row: dict[str, Any]) -> int | None:
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     import json
 
     try:
@@ -235,7 +235,7 @@ def harvest_expectations_from_claims(
     if not expectation_tracking_enabled():
         return {"enabled": False, "stored": 0}
 
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.domain_registry import get_pipeline_active_domain_keys
     from psycopg2.extras import RealDictCursor
 
@@ -286,7 +286,7 @@ def list_expectations(
     overdue_only: bool = False,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    from shared.database.connection import get_ui_db_connection_context
+    from shared.database import get_ui_db_connection_context
     from psycopg2.extras import RealDictCursor
 
     clauses: list[str] = []
@@ -323,7 +323,7 @@ def list_expectations(
 
 def mark_overdue(*, as_of: date | None = None) -> int:
     today = as_of or datetime.now(timezone.utc).date()
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     try:
         with get_db_connection_context() as conn:
@@ -351,7 +351,7 @@ def search_outcome_events(
     limit: int = 5,
 ) -> list[dict[str, Any]]:
     """Keyword search chronological_events for likely outcome coverage."""
-    from shared.database.connection import get_ui_db_connection_context
+    from shared.database import get_ui_db_connection_context
     from psycopg2.extras import RealDictCursor
 
     subject = (expectation.get("subject_text") or "").strip()
@@ -389,7 +389,7 @@ def resolve_overdue_expectations(*, limit: int = 40) -> dict[str, Any]:
     marked = mark_overdue()
     rows = list_expectations(status="overdue", limit=limit)
     resolved = 0
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     for exp in rows:
         events = search_outcome_events(exp, limit=3)

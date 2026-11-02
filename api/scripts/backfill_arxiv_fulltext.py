@@ -44,7 +44,7 @@ def _load_env() -> None:
 
 
 def _fetch_candidates(schema: str, limit: int, max_len: int):
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
@@ -131,7 +131,7 @@ def main() -> int:
 
         sync_context = sync_context_from_article_after_content_change
 
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
 
     ok = fail = attempted = 0
     t0 = time.time()

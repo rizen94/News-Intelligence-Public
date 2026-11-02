@@ -52,7 +52,7 @@ def record_link_score_outcome(
         src = "other"
     parts = score_parts if isinstance(score_parts, dict) else {}
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:

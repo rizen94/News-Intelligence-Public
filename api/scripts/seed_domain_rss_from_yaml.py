@@ -37,7 +37,7 @@ if (
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import yaml  # noqa: E402
-from shared.database.connection import get_db_connection  # noqa: E402
+from shared.database import get_db_connection  # noqa: E402
 from shared.services.domain_rss_seed import seed_from_domain_config  # noqa: E402
 
 

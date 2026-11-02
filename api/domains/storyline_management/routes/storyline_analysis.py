@@ -139,7 +139,7 @@ async def analyze_domain_storyline(
             JOB_COMPREHENSIVE_RAG,
             enqueue_content_refinement,
         )
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
 
         schema = resolve_domain_schema(domain)
 
@@ -210,7 +210,7 @@ async def perform_domain_rag_analysis(
             JOB_COMPREHENSIVE_RAG,
             enqueue_content_refinement,
         )
-        from shared.database.connection import get_db_connection
+        from shared.database import get_db_connection
 
         schema = resolve_domain_schema(domain)
         conn = get_db_connection()

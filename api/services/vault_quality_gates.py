@@ -198,7 +198,7 @@ def expansions_for_briefing_day(briefing_day: str | None, *, limit: int = 40) ->
     if not day:
         return []
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
     except Exception:
         return []
     out: list[dict[str, Any]] = []
@@ -251,7 +251,7 @@ def daily_briefing_serve_allowed(
 
 def _entity_is_followed(canonical_entity_id: int) -> bool:
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -275,7 +275,7 @@ def _entity_is_followed(canonical_entity_id: int) -> bool:
 
 def _entity_is_hub_seed(canonical_entity_id: int) -> bool:
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -301,7 +301,7 @@ def _entity_is_hub_seed(canonical_entity_id: int) -> bool:
 def _entity_recent_article_hits(domain_key: str, canonical_entity_id: int) -> int:
     """Count distinct articles mentioning entity in the hot window."""
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
         from shared.domain_registry import resolve_domain_schema
 
         schema = resolve_domain_schema(domain_key)
@@ -362,7 +362,7 @@ def entity_md_write_allowed(
 
 def load_storyline_member_titles(domain_key: str, storyline_id: int, *, limit: int = 40) -> list[str]:
     try:
-        from shared.database.connection import get_db_connection_context
+        from shared.database import get_db_connection_context
         from shared.domain_registry import resolve_domain_schema
 
         schema = resolve_domain_schema(domain_key)

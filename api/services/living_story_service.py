@@ -13,7 +13,7 @@ from config.runtime import (
     living_republish_min_hours,
     living_republish_min_new_members,
 )
-from shared.database.connection import get_ui_db_connection_context
+from shared.database import get_ui_db_connection_context
 from shared.domain_registry import resolve_domain_schema
 from shared.episode_attach_gate import parse_anchor_signature
 

@@ -63,7 +63,7 @@ def _probe_claim_extraction() -> bool:
 
 def _probe_unified_intake_extraction() -> bool:
     from config.settings import unified_intake_extraction_enabled
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.domain_registry import get_pipeline_schema_names_active
     from shared.pipeline_resource_policy import intake_extraction_suppressed
     from shared.unified_intake_backlog import (
@@ -104,7 +104,7 @@ def _probe_unified_intake_extraction() -> bool:
 
 
 def _probe_topic_clustering() -> bool:
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.domain_registry import get_pipeline_schema_names_active
 
     try:
@@ -158,7 +158,7 @@ def _probe_storyline_assembly() -> bool:
 
 
 def _probe_content_enrichment() -> bool:
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.domain_registry import get_pipeline_schema_names_active
 
     try:
@@ -192,7 +192,7 @@ def _probe_entity_profile_build() -> bool:
         _entity_profile_upstream_gate_for_select,
         sql_entity_profile_upstream_cleared_exists,
     )
-    from shared.database.connection import get_db_connection_context
+    from shared.database import get_db_connection_context
     from shared.entity_profile_eligibility import sql_entity_profile_needs_build
     from shared.pipeline_domain_sql import pipeline_domain_any_sql
 
@@ -273,7 +273,7 @@ def _probe_chronological_events_catchup() -> bool:
 
 
 def _probe_story_continuation() -> bool:
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
     from shared.domain_processing_mode import domain_runs_phase
     from shared.domain_registry import pipeline_url_schema_pairs
 
@@ -325,7 +325,7 @@ def _probe_story_continuation() -> bool:
 
 
 def _probe_content_refinement_queue() -> bool:
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

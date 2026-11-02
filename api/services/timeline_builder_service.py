@@ -352,7 +352,7 @@ def build_storyline_spine(domain_key: str, storyline_id: int, conn=None) -> dict
     """
     Domain-scoped chronological spine (public.chronological_events + schema storylines join).
   """
-    from shared.database.connection import get_db_connection
+    from shared.database import get_db_connection
     from shared.domain_registry import resolve_domain_schema
 
     schema = resolve_domain_schema(domain_key)

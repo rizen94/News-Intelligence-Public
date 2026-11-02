@@ -24,7 +24,7 @@ sys.path.insert(0, _API_ROOT)
 
 from datetime import datetime
 
-from shared.database.connection import get_db_connection
+from shared.database import get_db_connection
 from shared.migration_sql_runner import bootstrap_migration_env
 from shared.services.public_web_auth_service import hash_password
 
