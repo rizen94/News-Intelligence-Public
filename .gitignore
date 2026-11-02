@@ -143,3 +143,24 @@ docs/_local_expanded/
 
 # Repomix generated exports (config files are tracked)
 repomix-output.*
+
+# Archived/deprecated code — never commit stale implementations
+# If ref value exists, write a brief migration note and delete the rest.
+_archived_duplicates/
+_archived_*/
+legacy_*/
+old_*/
+deprecated_*/
+
+# Database dumps (large exports — use external storage)
+*.sql.gz
+*.dump
+*.pg_dump
+
+# Diagnostic output (grows during troubleshooting)
+diagnostics/
+**/discovery_report*
+
+# Agent scratch directories (ephemeral by nature)
+.scratch/
+_temp_work/
