@@ -8,7 +8,7 @@
 
 1. **[README.md](../README.md)** — product summary, reviewer section, doc links.
 2. **[AGENTS.md](../AGENTS.md)** — terminology (`storylines`, `domains`, `/api/...`), entry points.
-3. **[SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md)** — routes, services, and data flow; stakeholder-style overview (archived): [_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md](_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md).
+3. **[SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md)** — routes, services, and data flow; stakeholder-style overview (archived: see `docs/archive/retired_root_docs_2026_03/` for historical copy).
 4. **[DATA_FLOW_ARCHITECTURE.md](DATA_FLOW_ARCHITECTURE.md)** — intelligence cascade (article → contexts → claims → storylines → editorial).
 5. **[SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md)** — API routes and web areas (long but authoritative).
 6. **[PIPELINE_AND_ORDER_OF_OPERATIONS.md](PIPELINE_AND_ORDER_OF_OPERATIONS.md)** — automation phases and dependencies (follow-along with code).

@@ -49,11 +49,11 @@ sudo systemctl start news-intelligence.target
 
 Install once: [WIDOW_BOOT_RESILIENCE.md](WIDOW_BOOT_RESILIENCE.md).
 
-**Dev only** — local frontend + manual processes (do **not** run alongside production API):
+**Dev only** — local frontend + manual processes (do **not** run alongside production API on Widow):
 
 ```bash
-cd "/home/pete/Documents/projects/News Intelligence"
-./start_system.sh   # WARNING: spawns duplicate AutomationManager if API already running
+cd /home/pete/Documents/projects/News\ Intelligence
+./start_system.sh   # dev-only; spawns uvicorn + Vite locally; avoid on Widow
 ```
 
 **URLs**
@@ -95,6 +95,33 @@ cd "/home/pete/Documents/projects/News Intelligence"
 - RSS worker: `newsplatform-secondary.service` (every 10 min)
 - DB backups: cron **03:00 daily** — `news_intel_latest.pgdump` under `/mnt/nas/Data Lake Storage/news-intelligence/database-backup/`
 
+### Widow systemd units (deployed to `/opt/news-intelligence/`)
+
+| Unit | Purpose |
+|------|---------|
+| `news-intelligence-api-public.service` | API server (uvicorn :8000) |
+| `news-intelligence-web-nginx-proxy.service` | Caddy reverse proxy for web |
+
+### PopOS phase workers (5 services + target)
+
+| Service | Worker ID | Phases | Budget |
+|---------|-----------|--------|--------|
+| `news-intelligence-popos-worker-assembly.service` | `assembly` | `storyline_assembly` | 20 min |
+| `news-intelligence-popos-worker-claim-topic.service` | `claim_topic` | `claim_extraction,topic_clustering` | — |
+| `news-intelligence-popos-worker-editorial.service` | `editorial` | `story_continuation,editorial_research_pass,editorial_narrative_pass,editorial_reduction_pass` | 15 min |
+| `news-intelligence-popos-worker-refine.service` | `refine` | `entity_profile_build,content_refinement_queue` | 15 min |
+| `news-intelligence-popos-worker-uie.service` | `uie` | `unified_intake_extraction,chronological_events_catchup` | — |
+
+All PopOS workers use `.env.popos_worker` for vault path and GPU safety overrides.
+
+### Local systemd units (user-level on PopOS dev host)
+
+| Unit | Purpose |
+|------|---------|
+| `news-intel-api.service` | API server (uvicorn :8000), starts after 10s delay |
+| `news-intel-web.service` | Frontend (Vite :3000), starts after API is ready (+5s) |
+| `news-intelligence-popos-workers.target` | Master target for all 5 phase workers |
+
 **SSH**
 
 ```bash
@@ -111,22 +138,24 @@ sudo systemctl status postgresql
 
 ---
 
-## Key scripts
+## Key scripts (local dev)
 
 | Script | Purpose |
 |--------|---------|
-| `start_system.sh` | Start all services |
-| `stop_system.sh` | Stop API and frontend |
-| `status_system.sh` | Status of all components |
-| `scripts/deploy_to_widow.sh` | Deploy code to Widow |
+| `start_system.sh` | Start API (uvicorn :8000) + Vite (:3000) locally **(dev only)** |
+| `stop_system.sh` | Stop local API and Vite processes |
+| `status_system.sh` | Status of local components |
+| `scripts/deploy_to_widow.sh` | Deploy code to Widow `/opt/news-intelligence/` |
 | `scripts/configure_widow_no_sleep.sh` | Disable Widow sleep |
-| `scripts/decommission_nas_postgresql.sh` | Stop NAS PostgreSQL |
+| `scripts/decommission_nas_postgresql.sh` | Stop NAS PostgreSQL (legacy) |
+
+**Note:** `start_system.sh` / `stop_system.sh` / `status_system.sh` are **dev-only** helpers. Production deployment uses systemd on Widow and PopOS (see sections above). Do not use them alongside production systemd services.
 
 ---
 
 ## Data pipeline and automations
 
-When the API is running (`./start_system.sh`), the following run **without manual triggers**:
+When the API is running (via systemd on Widow or PopOS), the following run **without manual triggers**:
 
 | Component | What runs | Trigger |
 |-----------|-----------|--------|

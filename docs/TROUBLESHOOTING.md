@@ -8,8 +8,8 @@
 
 For full-stack DB alignment (schema, API, web, automation persistence), baseline scripts, and cleanup bundles:
 
-- [_archive/retired_root_docs_2026_03/DB_FULL_ASSESSMENT.md](_archive/retired_root_docs_2026_03/DB_FULL_ASSESSMENT.md) — matrices, gates, expert checklist  
-- [_archive/retired_root_docs_2026_03/DB_CLEANUP_BUNDLES.md](_archive/retired_root_docs_2026_03/DB_CLEANUP_BUNDLES.md) — bundles A/B/C and pre-delete rules  
+- ~~`DB_FULL_ASSESSMENT.md`~~ (archived, removed from repo; see `docs/archive/root_analysis_snapshots/` for analysis snapshots)
+- ~~`DB_CLEANUP_BUNDLES.md`~~ (archived, removed from repo)  
 - Commands: `PYTHONPATH=api uv run python api/scripts/verify_migrations_160_167.py`, `PYTHONPATH=api uv run python scripts/db_full_inventory.py`, `PYTHONPATH=api uv run python scripts/db_persistence_gates.py`
 
 ### **`claims_to_facts` runs but `versioned_facts` stays empty**

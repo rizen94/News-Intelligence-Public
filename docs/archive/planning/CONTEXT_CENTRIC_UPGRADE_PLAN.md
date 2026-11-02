@@ -4,7 +4,7 @@
 **Last updated:** 2026-03-21  
 **Status:** Active (Phase 2 and 3 complete; Phase 4 frontend in progress — entity profiles, context browser, event dashboard, pipeline status added.)  
 **Recovery:** See [Recovery & verification](#recovery--verification) below if the project was interrupted (e.g. crash) and you need to re-verify state.  
-**Source:** Adapted from [CONTEXT_CENTRIC_TRANSITION_PLAN_ORIGINAL.md](_archive/CONTEXT_CENTRIC_TRANSITION_PLAN_ORIGINAL.md) to align with [CODING_STYLE_GUIDE.md](CODING_STYLE_GUIDE.md) and current project plans.
+**Source:** Adapted from `CONTEXT_CENTRIC_TRANSITION_PLAN_ORIGINAL.md` (archived, removed from repo) to align with [CODING_STYLE_GUIDE.md](CODING_STYLE_GUIDE.md) and current project plans.
 
 ---
 

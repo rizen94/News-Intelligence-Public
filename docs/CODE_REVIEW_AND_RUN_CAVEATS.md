@@ -27,7 +27,7 @@ Optional: `uv sync` and static checks without PostgreSQL if your goal is only co
 | **Python 3.11+** | Recommended for dependencies (e.g. Finance/Chroma paths). **`uv sync`** from repo root. |
 | **Node.js** | For `web/` — `npm install`, `npm run dev` or production build. |
 
-Disk: clone + `.venv` + `node_modules` is typically **1–3+ GB**; Ollama models add **many GB**; the **database** grows with usage (see [_archive/retired_root_docs_2026_03/STORAGE_ESTIMATES_AND_OPTIMIZATION.md](_archive/retired_root_docs_2026_03/STORAGE_ESTIMATES_AND_OPTIMIZATION.md) for scale planning, archived, not a “demo minimum”).
+Disk: clone + `.venv` + `node_modules` is typically **1–3+ GB**; Ollama models add **many GB**; the **database** grows with usage (see [`docs/archive/root_analysis_snapshots/`](archive/root_analysis_snapshots/) for scale planning, archived, not a “demo minimum”).
 
 GPU: **not strictly required** to browse code; for **continuous** operation with default automation, a capable **NVIDIA GPU** + Ollama is what the system is tested around. CPU-only Ollama is possible but slow and easy to overload.
 
@@ -35,7 +35,7 @@ GPU: **not strictly required** to browse code; for **continuous** operation with
 
 ## Why we do **not** recommend a casual “clone and run” (today)
 
-- **Docker is archived** (not the default path): old Compose + Dockerfiles live under [`docs/archive/docker_stack/`](archive/docker_stack/README.md). **Production on Widow uses systemd only** — `news-intelligence-api-public.service` at `/opt/news-intelligence`; deploy via [`scripts/deploy_to_widow.sh`](../scripts/deploy_to_widow.sh). Do not use `start_system.sh` alongside the systemd API.
+- **Docker is archived** (not the default path): old Compose + Dockerfiles live under [`docs/archive/docker_stack/`](archive/docker_stack/README.md). **Production on Widow uses systemd only** — `news-intelligence-api-public.service` at `/opt/news-intelligence`; deploy via [`scripts/deploy_to_widow.sh`](../scripts/deploy_to_widow.sh). The local `start_system.sh` is dev-only; avoid running it on Widow where systemd services run production code.
 - **Defaults target a lab setup** (e.g. DB host / tunnel behavior in connection helpers). You must **override env** for your network.
 - **Automation is heavy**: many phases call **Ollama** and touch the DB on timers — weak laptops will struggle; you may need to tune or disable phases in governance config.
 - **Multi-service reality**: RSS workers, NAS paths, and optional Redis may exist in ops docs; a minimal run still needs **Postgres + API + (optional) web + Ollama** thought through.

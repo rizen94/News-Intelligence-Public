@@ -9,9 +9,9 @@
 | Area | Location |
 |------|----------|
 | API layer | `api/` — domain routes, services, DB connection module |
-| Frontend | `web/src/` — SPA app code |
+| Frontend | `web/src/` — SPA app code (entry: `App.tsx`) |
 | Database migrations | `api/database/migrations/` |
-| Config / env | `.env*`, `docker-compose*.yml` at project root |
+| Config / env | `.env*`, `.env.example` at project root; PopOS workers use `.env.popos_worker` |
 | Docs | `docs/` — design docs, runbooks |
 | Archive (cold) | `archive/` — retired code, old UI |
 

@@ -48,7 +48,7 @@ Archive locations to check:
 - `web/_archived_interface/` — archived frontend components (e.g. old DomainLayout)
 - `api/_archived/` — archived API files
 - `scripts/archive/` — archived scripts
-- `docs/_archive/` — archived documentation (excluded from Cursor context)
+- `docs/archive/` — archived documentation (excluded from Cursor context)
 
 #### **The "Improve Existing" Pattern**
 ```python
@@ -703,7 +703,7 @@ News Intelligence/
 │   ├── DOCS_INDEX.md             # Start here
 │   ├── CODING_STYLE_GUIDE.md
 │   ├── ARCHITECTURE_AND_OPERATIONS.md
-│   └── _archive/                 # Superseded docs (excluded from Cursor)
+│   └── archive/                  # Superseded docs (excluded from Cursor)
 └── scripts/                      # Utility scripts
 ```
 
@@ -759,7 +759,7 @@ configs/.env
 
 ### **Keep docs in sync with code**
 When you make a **major change** (e.g. API path scheme, versioning, removal of a feature, or a new system boundary), **retroactively update all affected docs** so they stay accurate. Check at least:
-- [DOCS_INDEX.md](DOCS_INDEX.md), [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md), archived product narrative: [_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md](_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md); release notes in `_archive/releases/` and `_archive/retired_root_docs_2026_03/`
+- [DOCS_INDEX.md](DOCS_INDEX.md), [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md), archived product narrative: `_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md`; release notes in `_archive/releases/` and `_archive/retired_root_docs_2026_03/`
 - Architecture trio: [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md), [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md), [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md) when exposure or ops change
 - API reference or route tables in any of the above
 
@@ -832,7 +832,7 @@ class DatabaseManager:
 ```
 
 ### **Container sprawl (out of scope for default dev)**
-Bare-metal runs use `start_system.sh` and `.env` for Postgres (Widow/tunnel). Any Docker Compose material is **archived** under `docs/archive/docker_stack/` and is not part of the active programming path.
+Production bare-metal uses systemd (Widow + PopOS) or local `uvicorn`/`.env`; dev uses `./start_system.sh` locally only. Any Docker Compose material is **archived** under `docs/archive/docker_stack/` and is not part of the active programming path.
 
 ---
 
@@ -933,7 +933,7 @@ When you change the **API** (routes, path segments, response shape) or **core be
 ### **Related Documents**
 - [DOCS_INDEX.md](./DOCS_INDEX.md) - Documentation index
 - [ARCHITECTURE_AND_OPERATIONS.md](./ARCHITECTURE_AND_OPERATIONS.md) - Architecture and ops
-- [DATABASE_SCHEMA_DOCUMENTATION.md](./_archive/retired_root_docs_2026_03/DATABASE_SCHEMA_DOCUMENTATION.md) - Legacy database schema snapshot (archived)
+- `DATABASE_SCHEMA_DOCUMENTATION.md` - Legacy database schema snapshot (archived)
 - [API_REFERENCE.md](./API_REFERENCE.md) - API endpoints
 
 ### **External References**

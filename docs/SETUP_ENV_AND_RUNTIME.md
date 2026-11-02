@@ -1,16 +1,38 @@
 # Setup, environment, and runtime
 
 **Purpose:** Single entry point for installation, Python/venv, GPU, Ollama, and day-to-day service startup.  
-**Last updated:** March 2026
+**Last updated:** November 2026
 
 ---
 
 ## Quick start
 
-From the project root:
+### Production (Widow — systemd, survives reboot)
 
 ```bash
-./start_system.sh          # API, frontend, checks Redis/DB as configured
+# API + frontend + RSS worker + DB backup cron on Widow:
+ssh widow "sudo systemctl enable --now news-intelligence.target"
+
+# Verify all services healthy:
+ssh widow "systemctl status newsplatform-secondary; pg_isready -h 127.0.0.1 -p 5432"
+```
+
+### PopOS workers (5 phase-workers, survive reboot)
+
+```bash
+# Enable all on your PopOS host:
+systemctl --user enable --now news-intelligence-popos-workers.target
+
+# Verify:
+systemctl --user list-units 'news-intelligence-popos-worker*' | grep -c loaded
+# Should show 8 units (5 workers + worker target + individual workers)
+```
+
+### Dev only (local machine)
+
+```bash
+cd /home/pete/Documents/projects/News\ Intelligence
+./start_system.sh          # API (uvicorn :8000) + Vite dev (:3000) locally
 ./status_system.sh
 ./stop_system.sh
 ./restart_system.sh        # after .env changes (e.g. API keys)
@@ -24,7 +46,7 @@ From the project root:
 
 ## Requirements
 
-- **PostgreSQL** reachable from the app (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` in project-root `.env`). See [DATABASE.md](DATABASE.md) and [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md).
+- **PostgreSQL** reachable from the app (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` in project-root `.env`). See **[DATABASE.md]** and [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md).
 - **Python 3.11+** recommended (Finance/Chroma/onnxruntime). Use **`uv`** and project **`.venv`**:
   ```bash
   uv sync
@@ -41,7 +63,7 @@ From the project root:
 
 1. Copy or merge from `configs/env.example` → project-root `.env`.
 2. **Required for DB:** `DB_PASSWORD` (and usually `DB_HOST`, `DB_NAME`, `DB_USER`). Never commit `.env`.
-3. **Optional:** `NEWS_API_KEY`, `FRED_API_KEY`, `OLLAMA_HOST`, finance keys — see `configs/env.example` and [_archive/retired_root_docs_2026_03/SOURCES_AND_EXPECTED_USAGE.md](_archive/retired_root_docs_2026_03/SOURCES_AND_EXPECTED_USAGE.md) (archived source inventory).
+3. **Optional:** `NEWS_API_KEY`, `FRED_API_KEY`, `OLLAMA_HOST`, finance keys — see `configs/env.example` and `_archive/retired_root_docs_2026_03/SOURCES_AND_EXPECTED_USAGE.md` (archived source inventory).
 4. **Production / exposure:** see [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md) — `NEWS_INTEL_ENV`, `NEWS_INTEL_CORS_ORIGINS`, `NEWS_INTEL_TRUSTED_HOSTS`, API docs toggles.
 
 ---
@@ -68,9 +90,9 @@ ChromaDB (evidence embeddings) needs a **Python 3.11+** venv and successful `uv 
 - **Start:** `ollama serve` (tune `OLLAMA_*` env vars per host; see [scripts/SCRIPTS_INDEX.md](../scripts/SCRIPTS_INDEX.md) and `api/scripts/refresh_ollama_models.py`):
   - `OLLAMA_NUM_PARALLEL`, `OLLAMA_MAX_LOADED_MODELS`, `OLLAMA_KEEP_ALIVE`, etc.
 - **Models:** align tags with `api/config/settings.py` `MODELS` and `ollama pull`. Defaults: primary `llama3.1:8b`, secondary `mistral-nemo:12b` (override with `OLLAMA_MODEL_SECONDARY`), optional `OLLAMA_MODEL_PHI`, `OLLAMA_MODEL_EXTRACTION` for policy flags. Refresh weights: `PYTHONPATH=api uv run python api/scripts/refresh_ollama_models.py` (see [scripts/SCRIPTS_INDEX.md](../scripts/SCRIPTS_INDEX.md)). Compare installed images to config: `PYTHONPATH=api uv run python api/scripts/verify_ollama_model_tags.py`.
-- **Optional large model:** narrative finisher (~70B) — [_archive/retired_root_docs_2026_03/STORYLINE_70B_NARRATIVE_FINISHER.md](_archive/retired_root_docs_2026_03/STORYLINE_70B_NARRATIVE_FINISHER.md).
+- **Optional large model:** narrative finisher (~70B) — `_archive/retired_root_docs_2026_03/STORYLINE_70B_NARRATIVE_FINISHER.md`.
 
-Full historical detail (storage sizes, extra commands): [_archive/consolidated/OLLAMA_SETUP.md](_archive/consolidated/OLLAMA_SETUP.md).
+Full historical detail (storage sizes, extra commands): `_archive/consolidated/OLLAMA_SETUP.md`.
 
 ---
 
@@ -80,7 +102,7 @@ Full historical detail (storage sizes, extra commands): [_archive/consolidated/O
 - **ResourceManager:** `api/shared/llm/resource_manager.py` — workload profiles for batch vs real-time (see archived venv doc for examples).
 - **Runtime behavior:** `api/shared/gpu_metrics.py` — health exposes GPU stats; `AutomationManager` throttles Ollama when GPU temp is high and caps concurrent Ollama tasks.
 
-Tuning (temp threshold, concurrency) and migration-162 RSS/topic note: [_archive/consolidated/GPU_AND_OLLAMA_MANAGEMENT.md](_archive/consolidated/GPU_AND_OLLAMA_MANAGEMENT.md).
+Tuning (temp threshold, concurrency) and migration-162 RSS/topic note: `_archive/consolidated/GPU_AND_OLLAMA_MANAGEMENT.md`.
 
 ---
 
@@ -92,7 +114,7 @@ The API process starts **AutomationManager** and related workers (RSS, ML phases
 
 ## Logs
 
-Typical locations: `logs/api_server.log`, `logs/frontend.log`, `logs/startup.log`; systemd `journalctl --user` if installed. See archived [SETUP_AND_DEPLOYMENT.md](_archive/consolidated/SETUP_AND_DEPLOYMENT.md) for Docker-oriented log commands.
+Typical locations: `logs/api_server.log`, `logs/frontend.log`, `logs/startup.log`; systemd `journalctl --user` if installed. See archived `SETUP_AND_DEPLOYMENT.md` for Docker-oriented log commands.
 
 ---
 
@@ -108,16 +130,16 @@ Typical locations: `logs/api_server.log`, `logs/frontend.log`, `logs/startup.log
 ## Related docs
 
 - [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) — three-machine layout, Widow, scripts.
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — common failures.
+- **[TROUBLESHOOTING.md]** — common failures.
 - [NAS_LEGACY_AND_STORAGE.md](NAS_LEGACY_AND_STORAGE.md) — NAS rollback and storage.
 - [WEB_API_CONNECTIONS.md](WEB_API_CONNECTIONS.md) — frontend → API base URL.
-- [VENV_AND_GPU_SETUP.md](_archive/consolidated/VENV_AND_GPU_SETUP.md) — archived full venv/GPU page.
+- `VENV_AND_GPU_SETUP.md` — archived full venv/GPU page.
 
 ---
 
 ## Superseded full copies (archive)
 
-Detailed versions of this guide (merged here) live under `docs/_archive/consolidated/`:
+Detailed versions of this guide (merged here) live under `docs/archive/consolidated/`:
 
 - `SETUP_AND_DEPLOYMENT.md`
 - `VENV_AND_GPU_SETUP.md`

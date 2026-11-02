@@ -2,7 +2,7 @@
 
 Use this index for **current** documentation. See **[../PROJECT_STATUS.md](../PROJECT_STATUS.md)** for host authority (Widow is canonical; PopOS copy is cold storage).
 
-**Proposals and retired docs:** [`_archive/retired_root_docs_2026_03/`](_archive/retired_root_docs_2026_03/README.md)
+**Proposals and retired docs:** `_archive/retired_root_docs_2026_03/`
 
 ---
 
@@ -58,7 +58,7 @@ Use this index for **current** documentation. See **[../PROJECT_STATUS.md](../PR
 | [WEB_API_CONNECTIONS.md](WEB_API_CONNECTIONS.md) | Web → API base URL, proxy, checklist. |
 | [PGBOUNCER_AND_CONNECTION_BUDGET.md](PGBOUNCER_AND_CONNECTION_BUDGET.md) | Connection pooling and PgBouncer. |
 | [CODING_STYLE_GUIDE.md](CODING_STYLE_GUIDE.md) | Naming, patterns, project layout. |
-| [_archive/retired_root_docs_2026_03/IMPLEMENTATION_CONSTRAINTS.md](_archive/retired_root_docs_2026_03/IMPLEMENTATION_CONSTRAINTS.md) | Hard rules (archived copy). |
+| `_archive/retired_root_docs_2026_03/IMPLEMENTATION_CONSTRAINTS.md` | Hard rules (archived copy). |
 | [API_TESTING_GUIDE.md](API_TESTING_GUIDE.md) | API testing. |
 | [FRONTEND_DEBUGGING_GUIDE.md](FRONTEND_DEBUGGING_GUIDE.md) | Frontend debugging. |
 
@@ -114,9 +114,9 @@ Use this index for **current** documentation. See **[../PROJECT_STATUS.md](../PR
 
 | Location | Purpose |
 |----------|---------|
-| [_archive/retired_root_docs_2026_03/](_archive/retired_root_docs_2026_03/README.md) | Retired root docs (March 2026). |
-| [_archive/ni_review_mirror_2026_06/](_archive/ni_review_mirror_2026_06/README.md) | Retired `scripts/ni_review/docs/` mirror. |
-| [_archive/](_archive/) | Older release notes, deprecated guides. |
+| `_archive/retired_root_docs_2026_03/` | Retired root docs (March 2026). |
+| `_archive/ni_review_mirror_2026_06/` | Retired `scripts/ni_review/docs/` mirror. |
+| `_archive/` | Older release notes, deprecated guides. |
 
 ---
 
