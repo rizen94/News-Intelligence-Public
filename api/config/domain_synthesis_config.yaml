@@ -7,8 +7,9 @@ defaults:
   max_articles_per_synthesis: 50
   max_entities_per_synthesis: 30
   min_article_confidence: 0.3
-  clustering_similarity_threshold: 0.70
-  storyline_min_cluster_size: 3
+  clustering_similarity_threshold: 0.62
+  storyline_min_cluster_size: 2
+  unlinked_article_threshold: 5
   # Chemistry model: domain protein shape + attach-score blend (see DomainSynthesisConfig).
   story_kind: event_narrative
   link_score_profile:
@@ -31,13 +32,13 @@ defaults:
     allow_storyline_merge: true
   storyline_development:
     discovery:
-      clustering_similarity_threshold: 0.75
-      min_cluster_size: 3
+      clustering_similarity_threshold: 0.65
+      min_cluster_size: 2
       semantic_weight: 0.85
       entity_weight: 0.10
       temporal_weight: 0.05
     proactive:
-      keyword_similarity_threshold: 0.35
+      keyword_similarity_threshold: 0.25
       min_articles: 3
       promote_min_articles: 4
       promote_min_confidence: 0.60
@@ -58,7 +59,7 @@ defaults:
     automation:
       default_mode: auto_approve
       assembly_after_enrichment: true
-      unlinked_article_threshold: 25
+      unlinked_article_threshold: 5
       automation_batch_per_assembly: 20
   # Merged into every domain’s topic_filter (RSS is_excluded_content + synthesis).
   # High-precision phrases for affiliate credit-card / personal-finance spam that
@@ -249,12 +250,12 @@ domains:
 
     storyline_development:
       discovery:
-        clustering_similarity_threshold: 0.73
-        min_cluster_size: 4
+        clustering_similarity_threshold: 0.63
+        min_cluster_size: 3
         semantic_weight: 0.82
         entity_weight: 0.12
       proactive:
-        keyword_similarity_threshold: 0.35
+        keyword_similarity_threshold: 0.25
         promote_min_articles: 4
       consolidation:
         merge_similarity_threshold: 0.68
@@ -277,6 +278,7 @@ domains:
       automation:
         # Until episode identity lock is fully proven in prod, do not silent-absorb.
         default_mode: suggest_only
+        unlinked_article_threshold: 5
 
   finance: &finance_v1
     story_kind: market_regulatory_arc
@@ -394,17 +396,22 @@ domains:
 
     storyline_development:
       discovery:
-        clustering_similarity_threshold: 0.74
-        min_cluster_size: 4
+        clustering_similarity_threshold: 0.62
+        min_cluster_size: 3
         semantic_weight: 0.80
         entity_weight: 0.15
       proactive:
-        keyword_similarity_threshold: 0.35
+        keyword_similarity_threshold: 0.25
         promote_min_articles: 4
       consolidation:
         merge_similarity_threshold: 0.68
         parent_similarity_threshold: 0.52
         min_articles_for_mega: 12
+      automation:
+        default_mode: auto_approve
+        assembly_after_enrichment: true
+        unlinked_article_threshold: 5
+        automation_batch_per_assembly: 20
 
   legal:
     story_kind: matter_docket
@@ -479,17 +486,14 @@ domains:
       - local ordinance cycles (hearing, vote, implementation)
       - federal–state interaction (preemption, funding, enforcement shifts)
 
-    clustering_similarity_threshold: 0.68
-    storyline_min_cluster_size: 3
-
     storyline_development:
       discovery:
-        clustering_similarity_threshold: 0.68
-        min_cluster_size: 3
+        clustering_similarity_threshold: 0.62
+        min_cluster_size: 2
         semantic_weight: 0.75
         entity_weight: 0.18
       proactive:
-        keyword_similarity_threshold: 0.28
+        keyword_similarity_threshold: 0.22
         min_articles: 2
         promote_min_articles: 3
         promote_min_confidence: 0.50
@@ -497,6 +501,11 @@ domains:
         merge_similarity_threshold: 0.68
         parent_similarity_threshold: 0.55
         min_articles_for_mega: 12
+      automation:
+        default_mode: auto_approve
+        assembly_after_enrichment: true
+        unlinked_article_threshold: 5
+        automation_batch_per_assembly: 20
 
     editorial_sections:
       - What Changed
@@ -571,8 +580,6 @@ domains:
         role: who
         names: ["WHO", "World Health Organization"]
       - key: ema
-        role: who
-        names: ["EMA", "European Medicines Agency"]
     focus_areas:
       - randomized trials, effect sizes, and pre-specified endpoints
       - regulatory decisions (FDA, EMA) and label changes grounded in evidence
@@ -610,7 +617,7 @@ domains:
         semantic_weight: 0.78
         entity_weight: 0.17
       proactive:
-        keyword_similarity_threshold: 0.28
+        keyword_similarity_threshold: 0.22
         min_articles: 2
         promote_min_articles: 3
         promote_min_confidence: 0.50
@@ -621,7 +628,7 @@ domains:
         min_articles_for_mega: 8
       automation:
         default_mode: auto_approve
-        unlinked_article_threshold: 25
+        unlinked_article_threshold: 5
         automation_batch_per_assembly: 40
         # Tight attach — evidence threads must not absorb generic medicine RSS
         min_relevance_score: 0.72
@@ -774,7 +781,7 @@ domains:
         semantic_weight: 0.82
         entity_weight: 0.12
       proactive:
-        keyword_similarity_threshold: 0.28
+        keyword_similarity_threshold: 0.22
         min_articles: 2
         promote_min_articles: 3
         promote_min_confidence: 0.50
@@ -784,7 +791,7 @@ domains:
         min_articles_for_mega: 8
       automation:
         default_mode: auto_approve
-        unlinked_article_threshold: 25
+        unlinked_article_threshold: 5
         automation_batch_per_assembly: 40
         min_relevance_score: 0.52
         min_semantic_score: 0.50
@@ -851,4 +858,28 @@ domains:
       Prefer peer-reviewed designs and registry records. Quote paper-owned evidence;
       never invent citations. Absence of replication is needs_follow_up, not false.
       Abstract-only sources cannot support the strongest evidence grades.
+
+    storyline_development:
+      discovery:
+        clustering_similarity_threshold: 0.62
+        min_cluster_size: 2
+        semantic_weight: 0.75
+        use_domain_hubs_for_recall: true
+        hub_enrichment_min_links: 3
+        llm_clustering: true
+      proactive:
+        auto_approve_combined: 0.90
+        aggressive_membership: false
+        allow_storyline_merge: false
+        max_member_articles: 32
+        temporal_half_life_days: 45
+      consolidation:
+        enable_cross_domain_federation: true
+        federation_max_domains: 3
+        federation_score_cap: 0.88
+      automation:
+        default_mode: auto_approve
+        assembly_after_enrichment: true
+        unlinked_article_threshold: 5
+        automation_batch_per_assembly: 20
 
