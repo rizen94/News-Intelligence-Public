@@ -56,11 +56,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 
-# Add the modules directory to the path
-sys.path.append(os.path.join(os.path.dirname(__file__), "modules"))
-sys.path.append(os.path.join(os.path.dirname(__file__), "shared"))
-sys.path.append(os.path.join(os.path.dirname(__file__), "domains"))
-
 # Configure logging from centralized config (uses settings.LOG_LEVEL, LOG_DIR)
 try:
     from config.logging_config import setup_logging
