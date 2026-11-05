@@ -410,6 +410,30 @@ class EventExtractionService:
             conn.commit()
         cursor.close()
         logger.info(f"Saved {saved}/{len(events)} events to database")
+
+        # ------------------------------------------------------------------
+        # Generate + store embeddings so dedup can match on this batch
+        # ------------------------------------------------------------------
+        text_rows = [
+            (
+                evt["event_id"],
+                f"{(evt.get('title') or '').strip()} {(evt.get('description') or '').strip()}"
+                .strip(),
+            )
+            for evt in events
+        ]
+        try:
+            from services.event_embedding_service import (
+                embed_and_store_chronological_events,
+            )
+
+            n = embed_and_store_chronological_events(conn, text_rows)
+            if n > 0:
+                logger.info(f"Stored embeddings for {n}/{len(text_rows)} events")
+        except Exception as _emb_err:
+            # Don't block event persistence on embedding failure
+            logger.warning("Event embedding post-save failed: %s", _emb_err)
+
         return saved
 
     async def close(self):

@@ -325,6 +325,58 @@ The system uses four independent psycopg2 pools plus SQLAlchemy. In production, 
 
 All pool sizes are configurable via environment variables. Defaults favor **UI wait/retry under load** (12 s checkout) and a **moderate worker cap** so automation does not crowd out small `max_connections` budgets; raise worker limits when metrics show headroom. `DB_ALLOW_DIRECT_FALLBACK` defaults **false**.
 
+---
+
+### **Database Connection Rules — THE SINGLE SOURCE OF TRUTH** ⭐🔴
+
+Every file in this project that opens a PostgreSQL connection **MUST** route through the canonical utility at `api/shared/database/connection.py`. There are no exceptions for scripts, services, ML modules, or background processors.
+
+#### **❌ NEVER do these:**
+| Anti-Pattern | What It Looks Like | Why It Breaks |
+|---|---|---|
+| Hardcoded localhost creds | `psycopg2.connect(host="localhost", database="news_intelligence")` | Fails on Widow, staging, prod — all non-local. |
+| Inline env var parsing | `os.environ.get("DB_HOST"); os.path.join(".env")` | Diverges from canonical logic; silently stale when `.env` keys change. |
+| Magic string params | `{"host":"localhost", "port":5432, "database":"..."}` | Same as above + no PgBouncer awareness. |
+
+#### **✅ ALWAYS do this:**
+```python
+import psycopg2
+from shared.database.connection import get_db_connect_kwargs
+
+kwargs = get_db_connect_kwargs()  # Resolves host/port/db/user/pool/PgBouncer
+conn = psycopg2.connect(**kwargs)
+```
+
+#### **Context managers (auto-close):**
+```python
+from shared.database.connection import ephemeral_db_connection
+
+with ephemeral_db_connection() as conn:
+    cur = conn.cursor()
+    cur.execute("SELECT ...")
+# conn is closed automatically, even on exception
+```
+
+#### **Connection pooling for repeated use:**
+```python
+from shared.database.connection import create_pool
+
+pool = create_pool()  # Thread-safe psycopg.pool (or Psycopg)
+conn = pool.connection()   # borrow
+# ... use ...
+conn.close()               # return to pool; does NOT destroy the connection
+```
+
+#### **Migration scripts** (`migrations/*.py`) — only place allowed to parse `.env` directly, because they may run before the app's dependency tree is fully importable. Even there, prefer `get_db_connect_kwargs()` if it is importable in that context.
+
+#### **Agent / human checklist (add before every commit):**
+- [ ] No raw `psycopg2.connect(` calls outside `api/shared/database/connection.py`
+- [ ] No hardcoded host/port/database strings for PostgreSQL connections
+- [ ] If writing a new script/service: searched `shared/database/connection.py` first
+
+#### **Automated enforcement (see § Tooling):**
+Semgrep rule in `.pre-commit-config.yaml` blocks `psycopg2.connect(` outside the canonical module. Pre-commit will fail your commit if you bypass it.
+
 | Pool | Library | Env Vars | Defaults | Purpose |
 |------|---------|----------|----------|---------|
 | **UI** | psycopg2 `ThreadedConnectionPool` | `DB_POOL_UI_MIN/MAX` | 2 / 16 | Page loads, monitoring, hot read paths (12 s checkout wait/retry) |

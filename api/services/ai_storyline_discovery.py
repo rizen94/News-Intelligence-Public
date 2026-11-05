@@ -502,7 +502,7 @@ class AIStorylineDiscovery:
                         try:
                             cached_embedding = np.array(json.loads(row["embedding_vector"]))
                             cached = True
-                        except:
+                        except Exception:
                             pass
 
                     # Parse cached entities

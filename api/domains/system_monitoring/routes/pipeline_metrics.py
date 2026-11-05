@@ -109,14 +109,16 @@ def _get_phase_names_cached(window_hrs: int) -> list[str]:
         if (_phase_names_time + _PHASE_NAMES_TTL) > time.monotonic():
             return list(_phase_names_cache)
 
-        conn = get_ui_db_connection()
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT DISTINCT phase_name FROM automation_run_history WHERE started_at >= NOW() - INTERVAL %s ORDER BY phase_name;",
-            (f"{window_hrs} hours",),
-        )
-        rows = cur.fetchall()
-        conn.close()
+        from shared.database import get_ui_db_connection_context
+
+        with get_ui_db_connection_context() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT DISTINCT phase_name FROM automation_run_history WHERE started_at >= NOW() - INTERVAL %s ORDER BY phase_name;",
+                (f"{window_hrs} hours",),
+            )
+            rows = cur.fetchall()
+
         _phase_names_cache = tuple(str(r[0]) for r in rows) if rows else ()
         _phase_names_time = time.monotonic()
         return list(_phase_names_cache)
@@ -128,22 +130,22 @@ def _get_phase_names_cached(window_hrs: int) -> list[str]:
 def _recently_processed(phase: str) -> int:
     """Count success-finished rows in the last 6 hours for one phase."""
     try:
-        from shared.database import get_ui_db_connection
+        from shared.database import get_ui_db_connection_context
 
-        conn = get_ui_db_connection()
-        cur = conn.cursor()
-        cur.execute(
-            """\
+        with get_ui_db_connection_context() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """\
 SELECT COUNT(*) AS processed
 FROM automation_run_history
 WHERE phase_name = %s
   AND started_at >= NOW() - INTERVAL '6 hours'
   AND finished_at >= NOW() - INTERVAL '6 hours'
   AND success = true;""",
-            (phase,),
-        )
-        row = cur.fetchone()
-        conn.close()
+                (phase,),
+            )
+            row = cur.fetchone()
+
         return int(row[0]) if row and row[0] else 0
     except Exception:
         return 0

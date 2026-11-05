@@ -71,6 +71,7 @@ def _fetch_batch(schema: str, *, limit: int) -> list[tuple[int, str, str]]:
                   ) = false
                   AND a.content IS NOT NULL
                   AND LENGTH(a.content) > 100
+                  AND a.enrichment_status != 'pull_deferred'
                   AND (
                     LENGTH(a.content) >= 500
                     OR a.created_at < NOW() - INTERVAL '2 hours'

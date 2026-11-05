@@ -29,9 +29,8 @@ if os.path.isfile(os.path.join(ROOT, ".env")):
                 key, _, val = line.partition("=")
                 if key.strip() in ("DB_PASSWORD", "DB_HOST", "DB_PORT", "DB_NAME", "DB_USER"):
                     os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
-if not os.environ.get("DB_PASSWORD") and os.path.isfile(os.path.join(ROOT, ".db_password_widow")):
-    with open(os.path.join(ROOT, ".db_password_widow")) as f:
-        os.environ.setdefault("DB_PASSWORD", f.read().splitlines()[0].strip())
+
+    # DB credentials are sourced from .env at script entry. The legacy .db_password_widow file was removed in the credential-sourcing migration.
 
 sys.path.insert(0, os.path.join(ROOT, "api"))
 

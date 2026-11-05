@@ -56,6 +56,13 @@ from .accessors import (
     db_heartbeat,
 )
 
+# ── Upsert helpers (replaces raw f-string INSERT patterns) ────────────
+from .upsert import (
+    insert_or_upsert,
+    insert_or_ignore,
+    insert_many,
+)
+
 # Package version
 __version__ = "1.0.0"
 
@@ -106,4 +113,9 @@ __all__ = [
     "db_fetch_many",
     "db_execute_many",
     "db_heartbeat",
+
+    # Upsert helpers (replaces raw f-string INSERT patterns)
+    "insert_or_upsert",
+    "insert_or_ignore",
+    "insert_many",
 ]

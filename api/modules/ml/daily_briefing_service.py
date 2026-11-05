@@ -14,6 +14,7 @@ from modules.deduplication.advanced_deduplication_service import (
     AdvancedDeduplicationService,
     get_deduplication_service
 )
+from shared.database.connection import get_db_connect_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +145,7 @@ class DailyBriefingService:
     def _generate_system_overview(self, briefing_date: datetime) -> dict[str, any]:
         """Generate system overview section"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cursor = conn.cursor()
             
             # Get system statistics
@@ -179,7 +180,7 @@ class DailyBriefingService:
     def _generate_content_analysis(self, briefing_date: datetime) -> dict[str, any]:
         """Generate content analysis section"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cursor = conn.cursor()
             
             # Get content statistics for the day
@@ -269,20 +270,67 @@ class DailyBriefingService:
     def _generate_deduplication_report(self) -> dict[str, any]:
         """Generate deduplication report section"""
         try:
-            dedup_stats = self.deduplication_service.get_deduplication_stats()
+            conn = psycopg2.connect(**get_db_connect_kwargs())
+            cursor = conn.cursor()
             
-            if "error" in dedup_stats:
-                return {"error": dedup_stats["error"]}
+            total_articles = 0
+            articles_with_hash = 0
+            url_duplicate_groups = 0
+            content_duplicate_groups = 0
             
-            # Get recent duplicate detection (async method, but we'll skip for now in sync context)
-            # Note: detect_duplicates is async, but this method is sync
-            # For now, just use stats
-            recent_detection = {"duplicates_found": 0, "message": "Async detection skipped in sync context"}
+            # Query across all domain schemas (same pattern as article_deduplication route)
+            from shared.services.domain_aware_service import get_domain_data_schemas
+            for sch in get_domain_data_schemas():
+                cursor.execute(f"SELECT COUNT(*) FROM {sch}.articles")
+                total_articles += cursor.fetchone()[0] or 0
+                
+                cursor.execute(
+                    f"SELECT COUNT(*) FROM {sch}.articles WHERE content_hash IS NOT NULL"
+                )
+                articles_with_hash += cursor.fetchone()[0] or 0
+                
+                cursor.execute(f"""
+                    SELECT COUNT(*) FROM (
+                        SELECT url, COUNT(*) as cnt
+                        FROM {sch}.articles
+                        GROUP BY url
+                        HAVING COUNT(*) > 1
+                    ) d
+                """)
+                url_duplicate_groups += cursor.fetchone()[0] or 0
+                
+                cursor.execute(f"""
+                    SELECT COUNT(*) FROM (
+                        SELECT content_hash, COUNT(*) as cnt
+                        FROM {sch}.articles
+                        WHERE content_hash IS NOT NULL
+                        GROUP BY content_hash
+                        HAVING COUNT(*) > 1
+                    ) d
+                """)
+                content_duplicate_groups += cursor.fetchone()[0] or 0
+            
+            conn.close()
+            
+            dedup_coverage = (
+                (articles_with_hash / total_articles * 100) if total_articles > 0 else 0
+            )
             
             return {
-                "statistics": dedup_stats,
-                "recent_detection": recent_detection if "error" not in recent_detection else {},
-                "recommendations": self._generate_deduplication_recommendations(dedup_stats)
+                "total_articles_scanned": total_articles,
+                "articles_with_content_hash": articles_with_hash,
+                "dedup_coverage_pct": round(dedup_coverage, 2),
+                "url_duplicate_groups": url_duplicate_groups,
+                "content_duplicate_groups": content_duplicate_groups,
+                "recent_detection": {
+                    "duplicates_found": 0,
+                    "message": "Async detection skipped in sync context"
+                },
+                "recommendations": self._generate_deduplication_recommendations({
+                    "dedup_coverage_pct": dedup_coverage,
+                    "url_duplicate_groups": url_duplicate_groups,
+                    "content_duplicate_groups": content_duplicate_groups
+                })
             }
             
         except Exception as e:
@@ -292,7 +340,7 @@ class DailyBriefingService:
     def _generate_quality_metrics(self, briefing_date: datetime) -> dict[str, any]:
         """Generate quality metrics section"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cursor = conn.cursor()
             
             # Get quality distribution for the day

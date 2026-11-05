@@ -150,17 +150,17 @@ def main() -> int:
     from services.pipeline_schedule_service import db_adjacent_sync_allowed, rss_collection_allowed
 
     if args.rss:
-        if rss_collection_allowed():
+        if rss_collection_allowed() or os.environ.get("FORCE_RSS"):
             _run_rss()
         else:
             logging.info("RSS skipped (pipeline quiet window)")
     if args.context_sync:
-        if db_adjacent_sync_allowed():
+        if db_adjacent_sync_allowed() or os.environ.get("FORCE_DB_SYNC"):
             _run_context_sync()
         else:
             logging.info("context_sync skipped (pipeline quiet window)")
     if args.entity_profile_sync:
-        if db_adjacent_sync_allowed():
+        if db_adjacent_sync_allowed() or os.environ.get("FORCE_DB_SYNC"):
             _run_entity_profile_sync()
         else:
             logging.info("entity_profile_sync skipped (pipeline quiet window)")

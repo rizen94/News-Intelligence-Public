@@ -26,7 +26,7 @@ class QualityScorer:
             "language_quality": 0.20
         }
     
-    def score_content(self, content: str, title: str = None, metadata: dict = None) -> dict[str, any]:
+    def score_content(self, content: str, title: str = None, metadata: dict = None, fallback_content: str = None) -> dict[str, any]:
         """
         Score content quality across multiple dimensions
         
@@ -34,13 +34,69 @@ class QualityScorer:
             content: The content to score
             title: Optional title for context
             metadata: Optional metadata from content analysis
+            fallback_content: Fallback text (e.g. RSS description/summary) used when main
+                              content is too short or empty, preventing zero-score articles
             
         Returns:
             Dictionary containing quality scores and analysis
         """
         try:
             if not content:
+                if fallback_content:
+                    logger.info("Content empty; scoring with fallback (%d chars)", len(fallback_content))
+                    return self._score_with_fallback(fallback_content, title)
                 return self._create_empty_score("empty_content")
+            
+            # If content is very short (<100 words), try scoring with fallback too and use better score
+            if fallback_content and len(content.split()) < 100:
+                fallback_score = self._score_with_fallback(fallback_content, title)
+                if fallback_score["overall_score"] > 0.0:
+                    # Score main content (cap length to avoid dominating)
+                    overall = sum(
+                        min(self._score_content_length(content), 0.5) * self.weights["content_length"],
+                        self._score_readability(content) * self.weights["readability"],
+                        self._score_structure(content) * self.weights["structure"],
+                        self._score_uniqueness(content) * self.weights["uniqueness"],
+                        self._score_completeness(content, title) * self.weights["completeness"],
+                        self._score_language_quality(content) * self.weights["language_quality"]
+                    )
+                    fallback_overall = sum(
+                        self._score_content_length(fallback_content) * self.weights["content_length"],
+                        self._score_readability(fallback_content) * self.weights["readability"],
+                        self._score_structure(fallback_content) * self.weights["structure"],
+                        self._score_uniqueness(fallback_content) * self.weights["uniqueness"],
+                        self._score_completeness(fallback_content, title) * self.weights["completeness"],
+                        self._score_language_quality(fallback_content) * self.weights["language_quality"]
+                    )
+                    blended = overall * 0.6 + fallback_overall * 0.4
+                    effective_score = max(blended, fallback_score["overall_score"])
+                    grade = self._determine_grade(effective_score)
+                    
+                    dim_scores = {
+                        "content_length": min(self._score_content_length(content), 0.5),
+                        "readability": self._score_readability(content),
+                        "structure": self._score_structure(content),
+                        "uniqueness": self._score_uniqueness(content),
+                        "completeness": self._score_completeness(content, title),
+                        "language_quality": self._score_language_quality(content),
+                    }
+                    return {
+                        "overall_score": round(effective_score, 3),
+                        "grade": grade,
+                        "dimensions": {k: {"score": v, "weight": w} for k, (v, w) in zip(
+                            dim_scores.keys(),
+                            [("content_length", self.weights["content_length"]),
+                             ("readability", self.weights["readability"]),
+                             ("structure", self.weights["structure"]),
+                             ("uniqueness", self.weights["uniqueness"]),
+                             ("completeness", self.weights["completeness"]),
+                             ("language_quality", self.weights["language_quality"])]
+                        )},
+                        "recommendations": self._generate_recommendations(effective_score, dim_scores),
+                        "fallback_used": True,
+                        "fallback_score": fallback_score["overall_score"],
+                        "content_word_count": len(content.split()),
+                    }
             
             # Calculate individual scores
             length_score = self._score_content_length(content)
@@ -393,6 +449,39 @@ class QualityScorer:
             "vocabulary_size": len(set(word.lower() for word in words if len(word) > 3))
         }
     
+    def _score_with_fallback(self, fallback_content: str, title: str = None) -> dict:
+        """Score using only fallback content (RSS description/summary)."""
+        length_score = self._score_content_length(fallback_content)
+        readability_score = self._score_readability(fallback_content)
+        structure_score = self._score_structure(fallback_content)
+        uniqueness_score = self._score_uniqueness(fallback_content)
+        completeness_score = self._score_completeness(fallback_content, title)
+        language_score = self._score_language_quality(fallback_content)
+        
+        overall_score = (
+            length_score * self.weights["content_length"] +
+            readability_score * self.weights["readability"] +
+            structure_score * self.weights["structure"] +
+            uniqueness_score * self.weights["uniqueness"] +
+            completeness_score * self.weights["completeness"] +
+            language_score * self.weights["language_quality"]
+        )
+        
+        grade = self._determine_grade(overall_score)
+        
+        return {
+            "overall_score": round(overall_score, 3),
+            "grade": grade,
+            "dimensions": {
+                "content_length": {"score": length_score, "weight": self.weights["content_length"]},
+                "readability": {"score": readability_score, "weight": self.weights["readability"]},
+                "structure": {"score": structure_score, "weight": self.weights["structure"]},
+                "uniqueness": {"score": uniqueness_score, "weight": self.weights["uniqueness"]},
+                "completeness": {"score": completeness_score, "weight": self.weights["completeness"]},
+                "language_quality": {"score": language_score, "weight": self.weights["language_quality"]},
+            },
+        }
+
     def _generate_recommendations(self, overall_score: float, dimension_scores: dict) -> list[str]:
         """Generate improvement recommendations"""
         recommendations = []

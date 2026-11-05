@@ -13,7 +13,7 @@ from shared.database import get_db_connection
 from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
 from shared.services.domain_aware_service import validate_domain
 
-from ..routes.storyline_management import trigger_storyline_evolution
+from ..services.rag_analysis_service import trigger_storyline_evolution
 from ..schemas.storyline_schemas import AddArticleRequest, PaginationInfo
 
 logger = logging.getLogger(__name__)

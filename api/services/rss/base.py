@@ -66,8 +66,9 @@ class BaseRSSService:
     - URL validation
     """
 
-    def __init__(self):
+    def __init__(self, schema_name: str = "public"):
         self.logger = logging.getLogger(__name__)
+        self.schema_name = schema_name
         self.filtering_config = None
         self._load_filtering_config()
 

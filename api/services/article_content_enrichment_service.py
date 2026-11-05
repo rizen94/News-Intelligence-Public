@@ -641,6 +641,7 @@ def demote_false_enriched_batch(*, limit_per_schema: int = 40) -> int:
                             f"""
                             UPDATE {schema_name}.articles
                             SET enrichment_status = 'failed',
+                                processing_status = 'ml_processed',
                                 enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1,
                                 updated_at = NOW()
                             WHERE id = %s AND enrichment_status = 'enriched'
@@ -762,7 +763,7 @@ def _enrich_articles_batch_parallel(*, batch_size: int, parallel: int) -> int:
                     f"""
                     SELECT id, url, content, created_at, enrichment_status
                     FROM {schema_name}.articles
-                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
+                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed', 'pull_deferred'))
                       AND COALESCE(enrichment_attempts, 0) < 3
                       AND url IS NOT NULL AND url != ''
                     ORDER BY COALESCE(enrichment_attempts, 0) ASC, created_at {_ca_ord}
@@ -790,10 +791,11 @@ def _enrich_articles_batch_parallel(*, batch_size: int, parallel: int) -> int:
                                 f"""
                                 UPDATE {schema_name}.articles
                                 SET enrichment_status = 'failed',
+                                processing_status = 'ml_processed',
                                 enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1,
                                 updated_at = NOW()
                                 WHERE id = %s
-                                  AND (enrichment_status IS NULL OR enrichment_status = 'pending')
+                                  AND (enrichment_status IS NULL OR enrichment_status IN ('pending', 'pull_deferred'))
                                 """,
                                 (article_id,),
                             )
@@ -804,9 +806,9 @@ def _enrich_articles_batch_parallel(*, batch_size: int, parallel: int) -> int:
                         cur.execute(
                             f"""
                             UPDATE {schema_name}.articles
-                            SET enrichment_status = 'enriched', updated_at = NOW()
+                            SET enrichment_status = 'enriched', processing_status = 'ml_processed', status = 'completed', updated_at = NOW()
                             WHERE id = %s
-                              AND (enrichment_status IS NULL OR enrichment_status = 'pending')
+                              AND (enrichment_status IS NULL OR enrichment_status IN ('pending', 'pull_deferred'))
                             """,
                             (article_id,),
                         )
@@ -872,7 +874,7 @@ def _enrich_articles_batch_parallel(*, batch_size: int, parallel: int) -> int:
                 if text and is_false_enriched_body(text):
                     cur.execute(
                         f"""UPDATE {schema_name}.articles
-                           SET content = %s, enrichment_status = 'failed', updated_at = NOW()
+                           SET content = %s, processing_status = 'ml_processed', enrichment_status = 'failed', enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1, updated_at = NOW()
                            WHERE id = %s""",
                         (text[:2000], article_id),
                     )
@@ -881,7 +883,7 @@ def _enrich_articles_batch_parallel(*, batch_size: int, parallel: int) -> int:
                 if text:
                     cur.execute(
                         f"""UPDATE {schema_name}.articles
-                           SET content = %s, enrichment_status = 'enriched', updated_at = NOW()
+                           SET content = %s, enrichment_status = 'enriched', processing_status = 'ml_processed', status = 'completed', updated_at = NOW()
                            WHERE id = %s""",
                         (text, article_id),
                     )
@@ -1057,7 +1059,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                     f"""
                     SELECT id, url, content, created_at, enrichment_status
                     FROM {schema_name}.articles
-                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
+                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed', 'pull_deferred'))
                       AND COALESCE(enrichment_attempts, 0) < 3
                       AND url IS NOT NULL AND url != ''
                     ORDER BY COALESCE(enrichment_attempts, 0) ASC, created_at {_ca_ord}
@@ -1090,10 +1092,11 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                                 f"""
                                 UPDATE {schema_name}.articles
                                 SET enrichment_status = 'failed',
+                                    processing_status = 'ml_processed',
                                     enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1,
                                     updated_at = NOW()
                                 WHERE id = %s
-                                  AND (enrichment_status IS NULL OR enrichment_status = 'pending')
+                                  AND (enrichment_status IS NULL OR enrichment_status IN ('pending', 'pull_deferred'))
                                 """,
                                 (article_id,),
                             )
@@ -1107,9 +1110,9 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                         cur.execute(
                             f"""
                             UPDATE {schema_name}.articles
-                            SET enrichment_status = 'enriched', updated_at = NOW()
+                            SET enrichment_status = 'enriched', processing_status = 'ml_processed', status = 'completed', updated_at = NOW()
                             WHERE id = %s
-                              AND (enrichment_status IS NULL OR enrichment_status = 'pending')
+                              AND (enrichment_status IS NULL OR enrichment_status IN ('pending', 'pull_deferred'))
                             """,
                             (article_id,),
                         )
@@ -1143,7 +1146,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                 with conn.cursor() as cur:
                     if text and is_false_enriched_body(text):
                         cur.execute(
-                            f"""UPDATE {schema_name}.articles SET content = %s, enrichment_status = 'failed', updated_at = NOW() WHERE id = %s""",
+                            f"""UPDATE {schema_name}.articles SET content = %s, processing_status = 'ml_processed', enrichment_status = 'failed', enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1, updated_at = NOW() WHERE id = %s""",
                             (text[:2000], article_id),
                         )
                         pending_commits += 1
@@ -1153,7 +1156,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                         continue
                     if text:
                         cur.execute(
-                            f"""UPDATE {schema_name}.articles SET content = %s, enrichment_status = 'enriched', updated_at = NOW() WHERE id = %s""",
+                            f"""UPDATE {schema_name}.articles SET content = %s, enrichment_status = 'enriched', processing_status = 'ml_processed', status = 'completed', updated_at = NOW() WHERE id = %s""",
                             (text, article_id),
                         )
                         cur.execute(
@@ -1386,6 +1389,8 @@ def fetch_full_content_for_article(domain_key: str, article_id: int) -> dict[str
                 with conn.cursor() as cur:
                     cur.execute(
                         f"""UPDATE {schema_name}.articles SET content = %s, enrichment_status = 'failed',
+                            processing_status = 'ml_processed',
+                            enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1,
                             updated_at = NOW() WHERE id = %s""",
                         (text[:2000], article_id),
                     )
@@ -1398,7 +1403,7 @@ def fetch_full_content_for_article(domain_key: str, article_id: int) -> dict[str
                 }
             with conn.cursor() as cur:
                 cur.execute(
-                    f"""UPDATE {schema_name}.articles SET content = %s, enrichment_status = 'enriched',
+                    f"""UPDATE {schema_name}.articles SET content = %s, enrichment_status = 'enriched', processing_status = 'ml_processed', status = 'completed',
                         updated_at = NOW() WHERE id = %s""",
                     (text, article_id),
                 )

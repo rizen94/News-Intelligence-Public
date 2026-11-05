@@ -15,6 +15,7 @@ from typing import Optional, Any, Callable
 from dataclasses import dataclass, field
 from queue import PriorityQueue, Empty
 import psycopg2
+from shared.database.connection import get_db_connect_kwargs
 import json
 
 logger = logging.getLogger(__name__)
@@ -354,7 +355,7 @@ class MLQueueManager:
     def _store_task(self, task: MLTask):
         """Store task in database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cur = conn.cursor()
             
             cur.execute("""
@@ -388,7 +389,7 @@ class MLQueueManager:
     def _load_pending_tasks(self):
         """Load pending tasks from database on startup"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cur = conn.cursor()
             
             cur.execute("""
@@ -428,7 +429,7 @@ class MLQueueManager:
     def _load_task_from_db(self, task_id: str) -> Optional[MLTask]:
         """Load a specific task from database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cur = conn.cursor()
             
             cur.execute("""
@@ -471,7 +472,7 @@ class MLQueueManager:
     def _update_task_status(self, task_id: str, status: TaskStatus):
         """Update task status in database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cur = conn.cursor()
             
             cur.execute("""
@@ -490,7 +491,7 @@ class MLQueueManager:
     def _update_task_completion(self, task: MLTask):
         """Update task completion in database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cur = conn.cursor()
             
             cur.execute("""

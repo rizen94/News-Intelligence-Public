@@ -5,9 +5,10 @@ Global concurrency limit so async Ollama callers share one cap.
 """
 
 import asyncio
-import os
 import json
 import logging
+import os
+import random
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime

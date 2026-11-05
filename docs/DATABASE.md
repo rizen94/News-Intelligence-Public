@@ -12,7 +12,7 @@
 | Port | `5432` |
 | Database | `news_intel` |
 | User | `newsapp` |
-| Password | Widow `configs/.env` (`DB_PASSWORD`) or `.db_password_widow` |
+| Password | `DB_PASSWORD` from project-root `.env` or `configs/.env` |
 
 **Code single source of truth:** `api/shared/database/connection.py`  
 **Env vars:** `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` (project-root `.env` or `configs/.env`)
@@ -29,20 +29,23 @@ News Intelligence **owns** the `news_intel` database on Widow. HomeLab AI Stack 
 
 ## Schema layout
 
-- **Per-domain schemas:** `politics`, `finance`, `science_tech`, plus YAML-provisioned silos
+- **Per-domain schemas:** `politics`, `finance`, `legal`, `medicine`, `artificial_intelligence`, `neurodiversity`, plus YAML-provisioned silos. See [DATABASE_REFERENCE_CURRENT_STATE.md](DATABASE_REFERENCE_CURRENT_STATE.md) for full table inventory.
 - **Global schemas:** `public`, `intelligence`, `pipeline` (and others per migrations)
 - **Migrations:** `api/database/migrations/` — see `api/database/migrations/README.md`
 - **Verification:** `PYTHONPATH=api uv run python api/scripts/verify_migrations_160_167.py`
 
-Key tables (non-exhaustive):
+### Consolidated table inventory (non-exhaustive)
 
 | Area | Tables |
 |------|--------|
-| Domains | `public.domains` |
-| Per-domain | `{schema}.articles`, `{schema}.storylines`, `{schema}.rss_feeds`, `{schema}.events` |
-| Intelligence | `intelligence.entity_profiles`, `intelligence.versioned_facts`, `intelligence.content_refinement_queue` |
-| Automation | `public.automation_run_history` |
-| Pipeline | `pipeline_traces`, `pipeline_checkpoints` |
+| **Domains** | `public.domains`, `public.domain_metadata`, `public.ml_processing_queue` |
+| **Per-domain core** | `{schema}.articles`, `{schema}.storylines`, `{schema}.entity_index`, `{schema}.story_entity_index`, `{schema}.rss_feeds`, `{schema}.events`, `{schema}.tracked_events` |
+| **Per-domain extensions** | Varies by silo — see each silo's migration; finance has `market_patterns`, `corporate_announcements`; legal may have domain-specific tables |
+| **Intelligence core** | `intelligence.contexts`, `intelligence.entity_profiles`, `intelligence.versioned_facts`, `intelligence.content_refinement_queue` |
+| **Intelligence longitudinal** | `intelligence.reference_events`, `intelligence.macro_series_observations`, `intelligence.sanctions_actions`, `intelligence.arc_definitions`, `intelligence.arc_reports` |
+| **Intelligence cross-domain** | `intelligence.tracked_events`, `intelligence.graph_connection_links`, `intelligence.graph_connection_proposals` |
+| **Automation** | `public.automation_run_history` |
+| **Pipeline** | `pipeline_traces`, `pipeline_checkpoints`, `public.doc_index` |
 
 ---
 

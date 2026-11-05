@@ -109,6 +109,16 @@ BACKLOG_SELECTION_CONTRACTS: tuple[BacklogSelectionContract, ...] = (
         ),
         value_tiers=("actionable",),
     ),
+    BacklogSelectionContract(
+        phase="content_enrichment",
+        selection_predicate="services.article_content_enrichment_service._enrich_articles_batch (enrichment_status + attempts gate)",
+        pending_counter="services.backlog_metrics._count_content_enrichment_backlog",
+        required_source_markers=(
+            "enrichment_attempts",
+            "COALESCE",
+        ),
+        value_tiers=("actionable",),
+    ),
 )
 
 

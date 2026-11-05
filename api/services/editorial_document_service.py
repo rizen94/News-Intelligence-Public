@@ -479,7 +479,10 @@ def _parse_editorial_json(
         result = {**EDITORIAL_DOC_TEMPLATE}
         result.update(
             {
-                "lede": sanitize_on_persist(parsed.get("lede", ""), "lede"),
+                "lede": (
+                sanitize_on_persist(parsed.get("lede", ""), "lede")
+                or sanitize_on_persist(title, "title")
+            ),
                 "who": parsed.get("who", []),
                 "what": parsed.get("what", []),
                 "when": parsed.get("when", []),

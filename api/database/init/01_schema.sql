@@ -30,6 +30,8 @@ CREATE TABLE articles (
     source varchar(200),
     category varchar(100),
     status varchar(50) NOT NULL DEFAULT 'pending',
+    enrichment_status varchar(50) DEFAULT NULL,
+    processing_status varchar(50) DEFAULT 'pending',
     tags json,
     created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -58,6 +60,8 @@ CREATE TABLE storylines (
 CREATE INDEX idx_articles_published_at ON articles (published_at);
 CREATE INDEX idx_articles_source ON articles (source);
 CREATE INDEX idx_articles_status ON articles (status);
+CREATE INDEX idx_articles_enrichment_status ON articles (enrichment_status) WHERE enrichment_status IS NOT NULL;
+CREATE INDEX idx_articles_processing_status ON articles (processing_status) WHERE processing_status IS NOT NULL;
 CREATE INDEX idx_articles_category ON articles (category);
 CREATE INDEX idx_articles_created_at ON articles (created_at);
 CREATE INDEX idx_rss_feeds_active ON rss_feeds (is_active);

@@ -253,7 +253,7 @@ _compute_heavy_inflight_counts: dict[str, int] = {}
 
 def _mark_compute_heavy_inflight(phase_name: str, delta: int) -> None:
     if phase_name not in COMPUTE_HEAVY_INFLIGHT_PHASES:
-        return
+        return None
     with _compute_heavy_inflight_lock:
         cur = int(_compute_heavy_inflight_counts.get(phase_name, 0) or 0) + int(delta)
         if cur <= 0:
@@ -535,6 +535,42 @@ def _collection_throttle_pending_total(pending: dict[str, int] | None) -> tuple[
     keys = [k for k in keys if k not in exclude]
     breakdown = {k: int(p.get(k, 0) or 0) for k in keys}
     return sum(breakdown.values()), breakdown
+
+
+def collection_cycle_has_pending_work(
+    pending: dict[str, int] | None,
+    *,
+    pending_collection_queue_len: int = 0,
+) -> bool:
+    """Return **True** when downstream queues / backlog signal that a new collection cycle should be allowed.
+
+    Called by ``pipeline_controller._collection_allowed`` and
+    ``pipeline_admission.admit_phase`` as the first gate in the pipeline admission path:
+
+    * ``pending_collection_queue_len > 0`` — collection is actively enqueuing items; allow it to continue.
+    * Downstream pending (enrichment + context_sync [+ extra phases]) **≥ half** of the throttle threshold
+      — substantial backlog exists, so permit a new cycle to drain it.
+
+    Returns ``False`` when backpressure should block collection: no items enqueued
+    **and** downstream queues are empty or below the half-threshold.
+
+    See also ``_collection_throttle_pending_total``, ``COLLECTION_THROTTLE_PENDING_THRESHOLD``.
+    """
+    p = pending or {}
+
+    # Rule 1 — active collection cycle is in-flight (queue has items). Allow to continue.
+    if pending_collection_queue_len > 0:
+        return True
+
+    # Compute downstream total using the same phase list as _collection_throttle_pending_total.
+    downstream, _ = _collection_throttle_pending_total(p)
+    half_threshold = COLLECTION_THROTTLE_PENDING_THRESHOLD // 2 or 1
+    if downstream >= half_threshold:
+        return True
+
+    return False
+
+
 # When True, scheduler ignores analysis-window step lock; workload + pipeline order determine what runs.
 USE_WORKLOAD_DRIVEN_ORDER = True
 
@@ -764,6 +800,7 @@ class TaskStatus(Enum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
+    SKIPPED = "skipped"
     FAILED = "failed"
     RETRYING = "retrying"
 
@@ -1622,8 +1659,8 @@ class AutomationManager:
             bfs = pipeline_backfill_status_line()
             if bfs:
                 logger.warning("%s", bfs)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Startup pipeline health report failed: %s", e)
 
     def get_disabled_schedule_names(self) -> list[str]:
         """Phases disabled via AUTOMATION_DISABLED_SCHEDULES and remote worker ownership."""
@@ -1644,7 +1681,7 @@ class AutomationManager:
         """Disable named schedules and strip them from depends_on so dependents still run."""
         disabled = set(self.get_disabled_schedule_names())
         if not disabled:
-            return
+            return None
         remote_owned: set[str] = set()
         try:
             from shared.remote_phase_worker import remote_owned_phases
@@ -1772,7 +1809,7 @@ class AutomationManager:
         if (task.metadata or {}).get("requested_activity_id") or task.name in MUST_RUN_SCHEDULE_PHASES:
             await self._requested_task_queue.put(task)
             self._requested_queue_depth_by_phase[task.name] += 1
-            return
+            return None
         await self._enqueue_scheduled_task(
             task,
             bypass_nightly_cap=True,
@@ -2133,7 +2170,7 @@ class AutomationManager:
         try:
             conn = self._get_db_connection_sync()
             if not conn:
-                return
+                return None
             try:
                 with conn.cursor() as cur:
                     cur.execute(
@@ -2163,7 +2200,7 @@ class AutomationManager:
         try:
             conn = self._get_db_connection_sync()
             if not conn:
-                return
+                return None
             try:
                 with conn.cursor() as cur:
                     cur.execute(
@@ -2205,7 +2242,7 @@ class AutomationManager:
             logger.warning(
                 "AUTOMATION_SKIP_STARTUP_PREFLIGHT set — skipping startup DB preflight"
             )
-            return
+            return None
 
         from shared.database import (
             get_db_connection_context,
@@ -2241,7 +2278,7 @@ class AutomationManager:
                     attempt + 1,
                     attempts,
                 )
-                return
+                return None
             except Exception as e:
                 last_err = e
                 logger.warning(
@@ -2267,7 +2304,7 @@ class AutomationManager:
         Call after changing max_concurrent_tasks (dynamic allocation or scale up/down).
         """
         if not self.is_running:
-            return
+            return None
         target = max(1, int(self.max_concurrent_tasks))
         while len(self._phase_worker_tasks) < target:
             wid = f"worker-{self._worker_id_seq}"
@@ -2287,7 +2324,7 @@ class AutomationManager:
     def _hydrate_must_run_last_run_from_history(self) -> None:
         """Seed must-run schedule last_run from DB so restarts do not re-fire every daily phase."""
         if not MUST_RUN_SCHEDULE_PHASES:
-            return
+            return None
         try:
             from shared.database import get_db_connection_context
 
@@ -3161,8 +3198,11 @@ class AutomationManager:
 
             if not automation_phase_allowed(task_name):
                 return False
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(
+                "Failed to query pipeline schedule gate for task %s; defaulting to allow: %s",
+                task_name, e,
+            )
 
         # When PostgreSQL is down, do not schedule new phases (avoids LLM/CPU waste). Flush runs when DB is back.
         try:
@@ -3171,8 +3211,11 @@ class AutomationManager:
 
                 if not is_automation_db_ready():
                     return False
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(
+                "DB availability check failed for task %s; defaulting to allow (db_down_pause=true): %s",
+                task_name, e,
+            )
 
         # Workload-driven: don't run collection_cycle when downstream backlog is high — complete
         # collection → processing → synthesis sequence before adding more RSS.
@@ -3212,12 +3255,13 @@ class AutomationManager:
 
         # Nightly unified pipeline [NIGHTLY_PIPELINE_START, END): nightly_enrichment_context owns the long drain;
         # NIGHTLY_PIPELINE_EXCLUSIVE (default on) blocks other scheduled phases until 07:00 local.
+        _nightly_pipe = False
         try:
             from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
 
             _nightly_pipe = in_nightly_pipeline_window_est()
-        except Exception:
-            _nightly_pipe = False
+        except Exception as e:
+            logger.debug("Nightly pipeline window check; defaulting to False: %s", e)
         if task_name == "context_sync" and _nightly_pipe:
             return False
         if task_name == "content_refinement_queue" and _nightly_pipe:
@@ -3233,8 +3277,8 @@ class AutomationManager:
 
             if should_block_phase_for_nightly_pipeline_exclusive(task_name):
                 return False
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Nightly pipeline exclusive block query failed; defaulting to allow: %s", e)
 
         # SKIP_WHEN_EMPTY: skip when no work (so we don't run empty cycles).
         pending = (
@@ -3279,8 +3323,8 @@ class AutomationManager:
                         base_cooldown=WORKLOAD_MIN_COOLDOWN,
                         batch_size=int(_bs),
                     )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Workload cooldown calc for %s: %s", task_name, e)
             mult, _ = self._dynamic_cooldown_multiplier(resource_class)
             cooldown_sec = max(3, int(round(float(cooldown_sec) * float(mult))))
             # Slow claim ticks when spine/research peers need workers for continuous drains
@@ -3329,9 +3373,9 @@ class AutomationManager:
     ):
         """Create and queue a task"""
         if task_name == "health_check":
-            return
+            return None
         if self._should_skip_redundant_phase_request(task_name):
-            return
+            return None
         if self._scheduled_enqueue_paused() and task_name not in QUEUE_PAUSE_ALLOW_SCHEDULED:
             logger.info(
                 "Queue soft cap: skipping scheduled enqueue for %s (depth=%s cap=%s)",
@@ -3339,13 +3383,13 @@ class AutomationManager:
                 self._automation_queue_depth(),
                 AUTOMATION_QUEUE_SOFT_CAP,
             )
-            return
+            return None
         if automation_should_defer_new_scheduled_work(task_name):
             logger.debug(
                 "DB worker pool pressure — skip scheduled create/queue for %s",
                 task_name,
             )
-            return
+            return None
         # Create task
         task = Task(
             id=f"{task_name}_{int(current_time.timestamp())}",
@@ -3558,10 +3602,10 @@ class AutomationManager:
                         "Skipping hard-retired phase %s (schedules suppressed; use package projection)",
                         task.name,
                     )
-                    task.status = TaskStatus.COMPLETED
+                    task.status = TaskStatus.SKIPPED
                     task.completed_at = datetime.now(timezone.utc)
                     task.metadata["skipped_hard_retired"] = True
-                    return
+                    return None
         except Exception as e:
             logger.debug("hard-retired phase gate: %s", e)
 
@@ -3590,10 +3634,10 @@ class AutomationManager:
                     "(not in NIGHTLY_PIPELINE_ALLOWED_SCHEDULED_PHASES)",
                     task.name,
                 )
-                task.status = TaskStatus.COMPLETED
+                task.status = TaskStatus.SKIPPED
                 task.completed_at = datetime.now(timezone.utc)
                 task.metadata["skipped_pipeline_exclusive"] = True
-                return
+                return None
         except Exception as e:
             logger.warning("nightly pipeline exclusive dispatch gate: %s", e)
 
@@ -3629,7 +3673,7 @@ class AutomationManager:
                 logger.debug("Nightly ingest exclusive window — deferring %s", task.name)
                 await self._requeue_deferred_task(task)
                 await asyncio.sleep(3)
-                return
+                return None
         except Exception as e:
             logger.debug("Nightly ingest exclusive gate: %s", e)
 
@@ -3647,17 +3691,17 @@ class AutomationManager:
                     exec_cap,
                 )
                 if self._discard_redundant_claim_extraction_when_at_cap(task, exec_cap):
-                    task.status = TaskStatus.COMPLETED
+                    task.status = TaskStatus.SKIPPED
                     task.completed_at = datetime.now(timezone.utc)
                     logger.info(
                         "Discarded redundant %s (drain mode, cap=%s already satisfied; not re-queued)",
                         task.name,
                         exec_cap,
                     )
-                    return
+                    return None
                 await self._requeue_deferred_task(task)
                 await asyncio.sleep(1.5)
-                return
+                return None
             per_phase_slot_held = True
 
         def _release_per_phase_slot_if_held() -> None:
@@ -3683,7 +3727,7 @@ class AutomationManager:
                     _release_per_phase_slot_if_held()
                     await self._requeue_deferred_task(task)
                     await asyncio.sleep(5)  # Avoid tight loop — wait before worker picks next task
-                    return
+                    return None
             except ImportError:
                 pass
             # GPU temperature throttle: pause Ollama work if GPU is too hot
@@ -3708,7 +3752,7 @@ class AutomationManager:
                         logger.warning("GPU still hot after pause — deferring %s", task.name)
                         _release_per_phase_slot_if_held()
                         await self._requeue_deferred_task(task)
-                        return
+                        return None
             except ImportError:
                 pass
             try:
@@ -3738,7 +3782,7 @@ class AutomationManager:
                         _release_per_phase_slot_if_held()
                         await self._requeue_deferred_task(task)
                         await asyncio.sleep(5)
-                        return
+                        return None
             except Exception as e:
                 logger.debug("Nightly GPU exclusive Ollama gate: %s", e)
             # With MAX_CONCURRENT_OLLAMA_TASKS=1, do not park every worker on acquire().
@@ -3754,7 +3798,7 @@ class AutomationManager:
                 _release_per_phase_slot_if_held()
                 await self._requeue_deferred_task(task)
                 await asyncio.sleep(2)
-                return
+                return None
             # Circuit OPEN (hard shed window) = pause + requeue, not skip-and-burn inside the phase.
             # When recovery_timeout has elapsed, is_open() is False and we admit a trickle/probe.
             # Monitor-requested (requested_activity_id) may proceed; must-run cadence still defers
@@ -3774,7 +3818,7 @@ class AutomationManager:
                 except ValueError:
                     _shed_sleep = 15.0
                 await asyncio.sleep(max(2.0, min(_shed_sleep, 120.0)))
-                return
+                return None
             await self.ollama_semaphore.acquire()
 
         logger.info(
@@ -3950,10 +3994,20 @@ class AutomationManager:
                 if not await dispatch_phase(task):
                     raise ValueError(f"Unknown task type: {task.name}")
 
-            # Mark as completed
-            task.status = TaskStatus.COMPLETED
-            task.completed_at = datetime.now(timezone.utc)
-            self.metrics["tasks_completed"] += 1
+            # Mark as completed (or skipped if phase returned early with _was_skipped flag)
+            _skipped = task.metadata.get("_was_skipped")
+            if _skipped:
+                task.status = TaskStatus.SKIPPED
+                task.completed_at = datetime.now(timezone.utc)
+                self.metrics["tasks_skipped"] = self.metrics.get("tasks_skipped", 0) + 1
+                logger.debug(
+                    "Phase skipped for %s — not counting as successful completion",
+                    task.name,
+                )
+            else:
+                task.status = TaskStatus.COMPLETED
+                task.completed_at = datetime.now(timezone.utc)
+                self.metrics["tasks_completed"] += 1
             if task.name in self.schedules:
                 self.schedules[task.name]["last_run"] = task.completed_at
             self._last_completed_at_by_phase[task.name] = task.completed_at
@@ -4374,7 +4428,8 @@ class AutomationManager:
                 logger.debug(
                     "Content enrichment: nightly pipeline window — handled by nightly_enrichment_context"
                 )
-                return
+                task.metadata.setdefault("_was_skipped", True)
+                return None
         except Exception:
             pass
 
@@ -4729,14 +4784,16 @@ class AutomationManager:
                 logger.debug(
                     "Context sync: nightly pipeline window — handled by nightly_enrichment_context"
                 )
-                return
+                task.metadata.setdefault("_was_skipped", True)
+                return None
         except Exception:
             pass
         try:
             from config.context_centric_config import is_context_centric_task_enabled
 
             if not is_context_centric_task_enabled("context_sync"):
-                return
+                task.metadata.setdefault("_was_skipped", True)
+                return None
         except Exception:
             pass
         import asyncio
@@ -4760,7 +4817,8 @@ class AutomationManager:
             from config.context_centric_config import is_context_centric_task_enabled
 
             if not is_context_centric_task_enabled("entity_profile_sync"):
-                return
+                task.metadata.setdefault("_was_skipped", True)
+                return None
         except Exception:
             pass
         import asyncio
@@ -4783,7 +4841,8 @@ class AutomationManager:
             from config.context_centric_config import is_context_centric_task_enabled
 
             if not is_context_centric_task_enabled("claim_extraction"):
-                return
+                task.metadata.setdefault("_was_skipped", True)
+                return None
         except Exception:
             pass
         from services.claim_extraction_service import (
@@ -4827,7 +4886,8 @@ class AutomationManager:
             from config.context_centric_config import is_context_centric_task_enabled
 
             if not is_context_centric_task_enabled("legislative_references"):
-                return
+                task.metadata.setdefault("_was_skipped", True)
+                return None
         except Exception:
             pass
         try:
@@ -4880,7 +4940,7 @@ class AutomationManager:
                 else:
                     stats = await asyncio.to_thread(promote_claims_to_versioned_facts)
                 if not isinstance(stats, dict):
-                    return
+                    return None
                 if stats.get("candidates", 0) == 0:
                     logger.debug("Claims to facts: no promotable claims in batch")
         except Exception as e:
@@ -4892,7 +4952,8 @@ class AutomationManager:
             from config.context_centric_config import is_context_centric_task_enabled
 
             if not is_context_centric_task_enabled("claim_subject_gap_refresh"):
-                return
+                task.metadata.setdefault("_was_skipped", True)
+                return None
         except Exception:
             pass
         try:
@@ -4914,7 +4975,8 @@ class AutomationManager:
             from config.context_centric_config import is_context_centric_task_enabled
 
             if not is_context_centric_task_enabled("extracted_claims_dedupe"):
-                return
+                task.metadata.setdefault("_was_skipped", True)
+                return None
         except Exception:
             pass
         try:
@@ -4936,7 +4998,8 @@ class AutomationManager:
             from config.context_centric_config import is_context_centric_task_enabled
 
             if not is_context_centric_task_enabled("event_tracking"):
-                return
+                task.metadata.setdefault("_was_skipped", True)
+                return None
         except Exception:
             pass
         try:
@@ -4955,7 +5018,8 @@ class AutomationManager:
             from config.context_centric_config import is_context_centric_task_enabled
 
             if not is_context_centric_task_enabled("investigation_report_refresh"):
-                return
+                task.metadata.setdefault("_was_skipped", True)
+                return None
         except Exception:
             pass
         from services.investigation_report_service import (
@@ -4996,7 +5060,8 @@ class AutomationManager:
             from config.context_centric_config import is_context_centric_task_enabled
 
             if not is_context_centric_task_enabled("event_coherence_review"):
-                return
+                task.metadata.setdefault("_was_skipped", True)
+                return None
         except Exception:
             pass
         from services.event_coherence_reviewer import review_all_open_events
@@ -5020,15 +5085,16 @@ class AutomationManager:
             from config.context_centric_config import is_context_centric_task_enabled
 
             if not is_context_centric_task_enabled("entity_profile_build"):
-                return
+                task.metadata.setdefault("_was_skipped", True)
+                return None
         except Exception:
             pass
         from services.entity_profile_builder_service import run_profile_builder_batch
 
         try:
-            updated = await run_profile_builder_batch(limit=25)  # v8
-            if updated > 0:
-                logger.info(f"Entity profile build: {updated} profiles updated")
+            result = await run_profile_builder_batch(limit=25)  # v8
+            if result.updated > 0:
+                logger.info(f"Entity profile build: {result.updated} profiles updated")
         except Exception as e:
             logger.warning(f"Entity profile build failed: {e}")
 
@@ -5038,7 +5104,8 @@ class AutomationManager:
             from config.context_centric_config import is_context_centric_task_enabled
 
             if not is_context_centric_task_enabled("entity_dossier_compile"):
-                return
+                task.metadata.setdefault("_was_skipped", True)
+                return None
         except Exception:
             pass
         import asyncio
@@ -5077,7 +5144,8 @@ class AutomationManager:
             from config.context_centric_config import is_context_centric_task_enabled
 
             if not is_context_centric_task_enabled("entity_position_tracker"):
-                return
+                task.metadata.setdefault("_was_skipped", True)
+                return None
         except Exception:
             pass
         from services.entity_position_tracker_service import run_position_tracker_batch
@@ -5162,7 +5230,7 @@ class AutomationManager:
             logger.debug(
                 "Content refinement queue: nightly pipeline active — handled by nightly_enrichment_context"
             )
-            return
+            return None
 
         try:
             auto_enqueue_comprehensive_rag_for_automation()
@@ -5187,7 +5255,7 @@ class AutomationManager:
 
         force = bool((task.metadata or {}).get("force_nightly_unified_pipeline"))
         if not in_nightly_pipeline_window_est() and not force:
-            return
+            return None
         if force and not in_nightly_pipeline_window_est():
             logger.info(
                 "nightly_enrichment_context: manual force — running unified pipeline outside local window"
@@ -5323,15 +5391,15 @@ class AutomationManager:
         getter = getattr(self, "_get_finance_orchestrator", None)
         if not getter or not callable(getter):
             logger.debug("Research topic refinement: no finance orchestrator getter")
-            return
+            return None
         orch = getter()
         if not orch:
             logger.debug("Research topic refinement: finance orchestrator not available")
-            return
+            return None
         conn = await self._get_db_connection()
         if not conn:
             logger.warning("Research topic refinement: no DB connection")
-            return
+            return None
         try:
             from config.settings import finance_postgres_content_domain_key
 
@@ -5348,7 +5416,7 @@ class AutomationManager:
                 )
                 if not cur.fetchone()[0]:
                     logger.debug("Research topic refinement: no research_topics in %s", fin_schema)
-                    return
+                    return None
                 cur.execute(
                     f"""
                     SELECT id, query, topic, date_range_start, date_range_end
@@ -5360,7 +5428,7 @@ class AutomationManager:
                 row = cur.fetchone()
             if not row:
                 logger.debug("Research topic refinement: no topics to refine")
-                return
+                return None
             topic_id = row["id"]
             query = row["query"]
             topic = row["topic"] or "gold"
@@ -5612,7 +5680,7 @@ class AutomationManager:
             from config.context_centric_config import is_context_centric_task_enabled
 
             if not is_context_centric_task_enabled("pattern_recognition"):
-                return
+                return None
         except Exception:
             pass
         import asyncio
@@ -5710,14 +5778,14 @@ class AutomationManager:
 
         if not (os.environ.get("QUIVER_API_KEY") or "").strip():
             logger.info("Quiver collector skipped — QUIVER_API_KEY unset")
-            return
+            return None
         if os.environ.get("QUIVER_COLLECTOR_ENABLED", "true").lower() not in (
             "1",
             "true",
             "yes",
         ):
             logger.info("Quiver collector skipped — QUIVER_COLLECTOR_ENABLED off")
-            return
+            return None
         try:
             from collectors.quiver_collector import collect_all
 
@@ -5739,7 +5807,7 @@ class AutomationManager:
         anytime = os.environ.get("ARC_REPORT_ANYTIME", "false").lower() in ("1", "true", "yes")
         if not anytime and not in_nightly_pipeline_window_est():
             logger.info("Arc report generation skipped outside nightly pipeline window")
-            return
+            return None
 
         try:
             await asyncio.get_event_loop().run_in_executor(None, sync_arc_definitions_from_yaml)
@@ -6238,7 +6306,7 @@ class AutomationManager:
 
         conn = await self._get_db_connection()
         if not conn:
-            return
+            return None
         terminal_skip = False
         try:
             with conn.cursor() as cur:
@@ -6248,7 +6316,7 @@ class AutomationManager:
                 )
                 row = cur.fetchone()
                 if not row:
-                    return
+                    return None
                 md = row[0] or {}
                 if isinstance(md, str):
                     try:
@@ -6261,7 +6329,7 @@ class AutomationManager:
                 if not isinstance(p, dict):
                     p = {}
                 if bool(p.get(skip_key)):
-                    return
+                    return None
                 failures = int(p.get(fail_key, 0) or 0) + 1
                 p[fail_key] = failures
                 p[last_err_key] = err_text
@@ -7158,7 +7226,7 @@ class AutomationManager:
                 "Story continuation skipped (disk IO pressure): defer_new_work=%s",
                 disk_meta.get("defer_new_work"),
             )
-            return
+            return None
 
         total = {"checked": 0, "linked": 0, "flagged": 0}
         for schema in get_pipeline_schema_names_active():
@@ -7727,9 +7795,9 @@ class AutomationManager:
         try:
             await asyncio.sleep(WATCHDOG_SECONDS)
         except asyncio.CancelledError:
-            return
+            return None
         if not self.is_running:
-            return
+            return None
         required = self._watchdog_required_phases()
         pending_counts: dict[str, int] = {}
         if get_all_pending_counts:
@@ -7796,7 +7864,7 @@ class AutomationManager:
                     for schema in get_pipeline_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.articles
-                                WHERE (enrichment_status IS NULL OR enrichment_status IN ({ARTICLE_PENDING!r}, {ARTICLE_FAILED!r}))
+                                WHERE (enrichment_status IS NULL OR enrichment_status IN ({ARTICLE_PENDING!r}, {ARTICLE_FAILED!r}, 'pull_deferred'))
                                   AND COALESCE(enrichment_attempts, 0) < 3
                                   AND url IS NOT NULL AND url != ''
                                 LIMIT 1"""

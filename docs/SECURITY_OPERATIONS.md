@@ -61,7 +61,7 @@ Copy examples into project-root `.env` from [configs/env.example](../configs/env
 
 ## 4. Secrets and supply chain
 
-- **Never commit** `.env`, `.db_password_widow`, or API keys. Root `.gitignore` already excludes common patterns; add new secret filenames to `.gitignore` if you introduce them.
+- **Never commit** `.env`, `api/config/.secrets`, or API keys. Root `.gitignore` already excludes common patterns; add new secret filenames to `.gitignore` if you introduce them.
 - **Rotate** DB passwords and API keys if a laptop or repo clone leaks.
 - **Dependency audit:** Periodically run `uv sync` / review `uv.lock`; consider `pip-audit` on the resolved environment for CVEs.
 - **Historical code** may still mention old default passwords in comments or archived docs — treat as **documentation only**, not runtime config ([DATABASE_CONNECTION_AUDIT.md](DATABASE_CONNECTION_AUDIT.md)).

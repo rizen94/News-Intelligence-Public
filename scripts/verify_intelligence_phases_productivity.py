@@ -28,12 +28,7 @@ try:
 except ImportError:
     pass
 
-if not os.environ.get("DB_PASSWORD") and os.path.exists(os.path.join(ROOT, ".db_password_widow")):
-    try:
-        with open(os.path.join(ROOT, ".db_password_widow")) as f:
-            os.environ.setdefault("DB_PASSWORD", f.read().strip())
-    except OSError:
-        pass
+# DB credentials are sourced from .env at script entry. The legacy .db_password_widow file was removed in the credential-sourcing migration.
 
 # Typical workflow output first; optional phases are cost/latency audits if you do not use those features.
 PHASE_OUTPUT_ORDER_CORE = (

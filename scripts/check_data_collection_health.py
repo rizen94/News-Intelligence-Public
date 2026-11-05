@@ -33,9 +33,7 @@ if os.path.isfile(env_path):
                     os.environ.setdefault(key, val.strip().strip('"').strip("'"))
 
 # Widow password file fallback
-if not os.environ.get("DB_PASSWORD") and os.path.isfile(os.path.join(ROOT, ".db_password_widow")):
-    with open(os.path.join(ROOT, ".db_password_widow")) as f:
-        os.environ.setdefault("DB_PASSWORD", f.read().splitlines()[0].strip())
+    # DB credentials are sourced from .env at script entry. The legacy .db_password_widow file was removed in the credential-sourcing migration.
 
 def get_conn():
     try:
@@ -156,8 +154,7 @@ def run_checks(conn):
 def main():
     conn = get_conn()
     if not conn:
-        print("Cannot connect to database. Set DB_* or .db_password_widow.")
-        return 1
+    # DB credentials are sourced from .env at script entry. The legacy .db_password_widow file was removed in the credential-sourcing migration.
 
     print("=" * 60)
     print("Data collection / pipeline health (as of now)")

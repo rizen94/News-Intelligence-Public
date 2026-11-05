@@ -193,6 +193,23 @@ This is **not** a failure — intake resumes in the active window.
 
 ---
 
+## Domain silos (active inventory)
+
+There are **six active domain silos**, each with its own PostgreSQL schema containing topic-specific tables. Silo definitions are YAML-driven and loaded via [domain_silo_contract.py](../api/shared/domain_silo_contract.py).
+
+| Silo | Migration | Key extension tables | Notes |
+|------|-----------|---------------------|-------|
+| `politics` | #179/#183/#192 | *(none)* | Default clone template (`DEFAULT_CLONE_FROM_SCHEMA`) |
+| `finance` | #179/#183/#192/#206 | `market_patterns`, `corporate_announcements`, `financial_indicators`, `research_topics` | Consolidated from finance + finance_2 |
+| `legal` | #177/#180 | *(none)* | Full entity extraction |
+| `medicine` | #187/#192 | *(none)* | RSS-enabled |
+| `artificial_intelligence` | #188/#192 | *(none)* | RSS-enabled |
+| `neurodiversity` | #254 | *(none)* | Newest — YAML-driven creation |
+
+**Deep reference:** [DATABASE_REFERENCE_CURRENT_STATE.md](DATABASE_REFERENCE_CURRENT_STATE.md) for full table schemas, FK caveats, and migration history.
+
+---
+
 ## Orchestrator
 
 - **Config:** `api/config/orchestrator_governance.yaml`

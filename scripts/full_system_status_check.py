@@ -25,9 +25,7 @@ if os.path.isfile(env_path):
                 key = key.strip()
                 if key in ("DB_PASSWORD", "DB_HOST", "DB_PORT", "DB_NAME", "DB_USER"):
                     os.environ.setdefault(key, val.strip().strip('"').strip("'"))
-if not os.environ.get("DB_PASSWORD") and os.path.isfile(os.path.join(ROOT, ".db_password_widow")):
-    with open(os.path.join(ROOT, ".db_password_widow")) as f:
-        os.environ.setdefault("DB_PASSWORD", f.read().splitlines()[0].strip())
+    # DB credentials are sourced from .env at script entry. The legacy .db_password_widow file was removed in the credential-sourcing migration.
 
 try:
     import psutil
@@ -109,7 +107,7 @@ def main():
     if not conn:
         print("")
         print("--- Data quality ---")
-        print("  Database: not connected (set DB_* or .db_password_widow)")
+    # DB credentials are sourced from .env at script entry. The legacy .db_password_widow file was removed in the credential-sourcing migration.
     else:
         print("")
         print("--- Data quality ---")

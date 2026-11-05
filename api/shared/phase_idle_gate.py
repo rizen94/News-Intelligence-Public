@@ -176,7 +176,7 @@ def _probe_content_enrichment() -> bool:
                 cur.execute(
                     f"""
                     SELECT 1 FROM {schema}.articles
-                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
+                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed', 'pull_deferred'))
                       AND COALESCE(enrichment_attempts, 0) < 3
                       AND url IS NOT NULL AND url != ''
                     LIMIT 1

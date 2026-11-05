@@ -386,7 +386,7 @@ class TemporalNLPService:
                     "day": normalized_date.day,
                 }
                 confidence = 0.9
-            except:
+            except (ValueError, TypeError, AttributeError):
                 normalized_date = None
                 expression_type = "unknown"
                 confidence = 0.0

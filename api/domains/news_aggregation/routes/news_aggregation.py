@@ -40,19 +40,15 @@ async def health_check():
     """Health check for News Aggregation domain"""
     try:
         # Check database connection (UI pool — same lane as page loads)
-        conn = get_ui_db_connection()
-        if not conn:
-            return {
-                "success": False,
-                "domain": "news_aggregation",
-                "status": "unhealthy",
-                "error": "Database connection failed",
-            }
+        from shared.database import get_ui_db_connection_context
+
+        with get_ui_db_connection_context() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT 1")
+            cur.fetchone()
 
         # Check LLM service (1s timeout — don't block health when Ollama is busy)
         llm_status = await llm_service.get_model_status(timeout_seconds=1.0)
-
-        conn.close()
 
         return {
             "success": True,

@@ -2,7 +2,7 @@
 """
 Validate claims → versioned_facts after resolver / pg_trgm work.
 
-Loads DB env like diagnose_claims_to_facts.py (api/.env, .env, .db_password_widow).
+# DB credentials are sourced from .env at script entry. The legacy .db_password_widow file was removed in the credential-sourcing migration.
 
   PYTHONPATH=api uv run python scripts/validate_claims_to_facts.py
   PYTHONPATH=api uv run python scripts/validate_claims_to_facts.py --limit 1000 --dry-run
@@ -31,11 +31,8 @@ except ImportError:
     pass
 
 if not os.environ.get("DB_PASSWORD") and os.path.exists(
-    os.path.join(ROOT, ".db_password_widow")
-):
-    try:
-        with open(os.path.join(ROOT, ".db_password_widow")) as f:
-            os.environ.setdefault("DB_PASSWORD", f.read().strip())
+
+    # DB credentials are sourced from .env at script entry. The legacy .db_password_widow file was removed in the credential-sourcing migration.
     except OSError:
         pass
 
@@ -65,8 +62,7 @@ def main() -> int:
 
     conn = get_db_connection()
     if not conn:
-        print("ERROR: no DB connection (check DB_* env / .db_password_widow)")
-        return 1
+    # DB credentials are sourced from .env at script entry. The legacy .db_password_widow file was removed in the credential-sourcing migration.
 
     try:
         with conn.cursor() as cur:

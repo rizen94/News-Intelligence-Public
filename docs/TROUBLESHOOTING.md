@@ -27,19 +27,21 @@ If the backlog of profiles missing a Wikipedia section exceeds the old **1000-ro
 ```bash
 # API process and health
 pgrep -fa "uvicorn.*main:app"
+# Production (on Widow): sudo systemctl restart newsplatform-secondary
+# Dev only: ./stop_system.sh && ./start_system.sh
 curl -s --max-time 5 http://localhost:8000/api/system_monitoring/health
 
-# Frontend (Vite dev server)
+# Frontend (Vite dev server — dev only, not production on Widow)
 curl -s --max-time 3 http://localhost:3000 | head -1
 ```
 
-Legacy Docker commands (if you restore Compose) live in [`archive/docker_stack/TROUBLESHOOTING_DOCKER_LEGACY.md`](archive/docker_stack/TROUBLESHOOTING_DOCKER_LEGACY.md).
+Production services run via systemd (`news-intelligence.target`). For development-only local start/stop commands see [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md).
 
 ### **Common Issues & Solutions**
 
 ## 🔧 Service Issues
 
-### **API Not Responding (current — v8, no Docker)**
+### **API Not Responding (production — systemd managed)**
 
 **Symptoms**: `curl` to `localhost:8000` times out; TCP connects but no HTTP response; frontend shows "Cannot connect to API".
 
@@ -47,6 +49,8 @@ Legacy Docker commands (if you restore Compose) live in [`archive/docker_stack/T
 ```bash
 # 1. Is the process running?
 pgrep -fa "uvicorn.*main:app"
+# Production (on Widow): sudo systemctl restart newsplatform-secondary
+# Dev only: ./stop_system.sh && ./start_system.sh
 
 # 2. Is the port open?
 ss -tlnp | grep 8000
@@ -71,7 +75,7 @@ tail -80 logs/api_server.log
 
 **Restart:**
 ```bash
-./stop_system.sh && ./start_system.sh
+sudo systemctl restart news-intelligence.target
 ```
 
 ---
@@ -217,12 +221,18 @@ If this is 0, no storylines have been created for finance yet; run discovery or 
 
 ---
 
-### **Monitoring page down after CLI restart**
-**Symptoms**: After running `./start_system.sh` or `start-news-intelligence`, the Monitoring page shows errors or "down"; startup log may say "API server already running" then "❌ API Server: Not responding".
+### **Monitoring page down after manual process restart**
+**Symptoms**: After manually stopping the API (e.g., `pkill -f "uvicorn"`), the Monitoring page shows errors or "down"; startup log may say "API server already running" then "❌ API Server: Not responding".
 
-**Cause**: The script had previously skipped starting the API when it saw a leftover uvicorn process (e.g. still shutting down after `pkill`), so no healthy API was running.
+**Cause**: A leftover uvicorn process was still shutting down, so no healthy API was running. On production systems, services are managed by systemd — use `sudo systemctl restart newsplatform-secondary` instead of manual process killing.
 
-**Fix (in script)**: `start_system.sh` now (1) waits for the API process to exit after `pkill` (and uses SIGKILL if needed), and (2) if it thinks the API is already running, it checks `GET /api/system_monitoring/health`; if that fails, it force-kills and starts a new API. After updating the script, run `./start_system.sh` again. If the Monitoring page is still down, run: `curl -s http://localhost:8000/api/system_monitoring/health` to confirm the API is up.
+**Fix (production):**
+```bash
+sudo systemctl restart newsplatform-secondary
+curl -s http://localhost:8000/api/system_monitoring/health
+```
+
+**Fix (dev only):** If you must manually restart via `start_system.sh`, ensure the previous process has fully exited before starting a new one. Check that the API is actually responding: `curl -s http://localhost:8000/api/system_monitoring/health`.
 
 ### **Database Connection Issues**
 **Symptoms**: Database errors, connection timeouts  
@@ -238,9 +248,9 @@ psql -h "$DB_HOST" -p "$DB_PORT" -U newsapp -d news_intel -c "SELECT 1;"
 **Cause**: Topic clustering writes to `article_topic_assignments`; the table in one or more domain schemas was missing `assignment_context` and `model_version` columns.
 **Fix**: Run migration 166 to add the columns, then restart the API so the server is less overloaded by repeated errors:
 ```bash
-# From project root (uses .env or .db_password_widow for DB)
+# From project root (uses .env for DB)
 PYTHONPATH=api .venv/bin/python3 api/scripts/run_migration_166.py
-./stop_system.sh && ./start_system.sh
+# Dev only: ./stop_system.sh && ./start_system.sh (or: sudo systemctl restart newsplatform-secondary)
 ```
 
 ### **Frontend Not Loading**
@@ -249,7 +259,7 @@ PYTHONPATH=api .venv/bin/python3 api/scripts/run_migration_166.py
 ```bash
 ss -tlnp | grep 3000
 tail -40 logs/frontend.log
-./stop_system.sh && ./start_system.sh
+# Dev only: ./stop_system.sh && ./start_system.sh (or: sudo systemctl restart news-intel-web.service)
 ```
 
 ### **Database not accessible (503, "Save as topic" fails)**
@@ -281,7 +291,7 @@ If `ping` or `pg_isready` fails, fix network or PostgreSQL. If `psql` fails with
 
 | Log message | Cause | What to do |
 |-------------|--------|------------|
-| `fe_sendauth: no password supplied` | API has no `DB_PASSWORD` in env | Set `DB_PASSWORD` in project-root `.env` and **restart the API** (e.g. `./start_system.sh`). |
+| `fe_sendauth: no password supplied` | API has no `DB_PASSWORD` in env | Set `DB_PASSWORD` in project-root `.env` and **restart the API** (`sudo systemctl restart newsplatform-secondary`). |
 | `Error validating domain X: 'NoneType' object has no attribute 'close'` | DB connection was `None`; code tried to close it | Fixed in code (validate_domain now checks for None). Ensure `DB_PASSWORD` is set and restart so DB connects. |
 | `426 Client Error: Upgrade Required` (News API) | News API plan or endpoint requires upgrade | Historic context uses News API; 426 means the API key/plan may need upgrading at newsapi.org. Analysis still runs using other sources (RSS, price data). |
 | `relation "intelligence.historic_context_requests" does not exist` | Migration 149 not applied | Run migration 149 if you want historic context requests persisted. Optional; fetches still run in-memory. |
@@ -396,7 +406,7 @@ grep "Content enrichment failed" logs/api_server.log | tail -20
 
 ### **"generator object has no attribute 'query'"**
 **Cause**: Database connection pattern issue  
-**Solution**: Fixed in current code. Restart the API: `./stop_system.sh && ./start_system.sh`
+**Solution**: Fixed in current code. Restart the API: `sudo systemctl restart newsplatform-secondary` (production) or `./stop_system.sh && ./start_system.sh` (dev only).
 
 ### **"column does not exist"**
 **Cause**: Database schema mismatch  
@@ -408,12 +418,15 @@ grep "Content enrichment failed" logs/api_server.log | tail -20
 ```bash
 ss -tlnp | grep -E ":(3000|8000|5432) "
 pgrep -fa "uvicorn.*main:app"
-./stop_system.sh && ./start_system.sh
+# Production (on Widow): sudo systemctl restart newsplatform-secondary
+# Dev only: ./stop_system.sh && ./start_system.sh
+# Production: sudo systemctl restart newsplatform-secondary
+# Dev only: ./stop_system.sh && ./start_system.sh
 ```
 
 ### **"invalid input syntax for type integer"**
 **Cause**: Route conflict (e.g., /stats being caught by /{id} route)  
-**Solution**: Fixed in current code. Restart the API: `./stop_system.sh && ./start_system.sh`
+**Solution**: Fixed in current code. Restart the API: `sudo systemctl restart newsplatform-secondary` (production) or `./stop_system.sh && ./start_system.sh` (dev only).
 
 ## 🔍 Log Analysis
 
@@ -436,15 +449,16 @@ tail -80 logs/frontend.log
 
 ### **Complete application restart** (API + Vite)
 ```bash
-./stop_system.sh && ./start_system.sh
+# Dev only: ./stop_system.sh && ./start_system.sh
+# Production: sudo systemctl restart news-intelligence.target
 curl -s --max-time 5 http://localhost:8000/api/system_monitoring/health
 ```
 
 ### **Database recovery**
-Use your normal PostgreSQL backup/restore on **Widow** (or NAS). There is no Compose volume reset in the default bare-metal layout.
+Use your normal PostgreSQL backup/restore on **Widow** (or NAS). This is bare-metal — use pg_dump/pg_restore directly, not container volume resets.
 
 ### **Code not reflected after edit**
-You run from the repo checkout; restart the API so uvicorn reloads (or rely on `--reload` only in dev — production-style starts use `start_system.sh` without reload).
+You run from the repo checkout; restart the API so uvicorn reloads (or rely on `--reload` only in dev — production deployments use systemd-managed services, not start_system.sh).
 
 ## 📊 Performance Issues
 
@@ -458,7 +472,7 @@ top -b -n1 | head -20
 ### **High Memory Usage**
 ```bash
 free -h
-./stop_system.sh && ./start_system.sh
+# Dev only: ./stop_system.sh && ./start_system.sh (production: sudo systemctl restart newsplatform-secondary)
 grep -i memory logs/api_server.log | tail -20
 ```
 
@@ -472,7 +486,7 @@ pg_isready -h "${DB_HOST:-192.168.93.101}" -p "${DB_PORT:-5432}" -U newsapp || t
 ```
 
 ### **Log rotation**
-Rotate `logs/*.log` with **logrotate** or your distro defaults; optional Docker log-driver settings are irrelevant when not using containers.
+Rotate `logs/*.log` with **logrotate** (or your distro defaults). No container-specific log settings apply.
 
 ## 📞 Getting Help
 

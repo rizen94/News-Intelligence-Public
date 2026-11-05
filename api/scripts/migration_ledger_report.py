@@ -27,16 +27,6 @@ try:
 except ImportError:
     pass
 
-if not os.environ.get("DB_PASSWORD") and os.path.exists(
-    os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", ".db_password_widow")
-):
-    pw_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", ".db_password_widow")
-    try:
-        with open(pw_path) as f:
-            os.environ["DB_PASSWORD"] = f.read().strip()
-    except Exception:
-        pass
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 

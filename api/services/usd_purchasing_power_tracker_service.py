@@ -242,7 +242,7 @@ class USDPurchasingPowerTrackerService:
         try:
             dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
             formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
-        except:
+        except (ValueError, TypeError):
             formatted_time = last_updated
         
         # Build markdown content

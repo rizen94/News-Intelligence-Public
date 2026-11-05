@@ -73,18 +73,16 @@ async def process_articles_ml():
 
         try:
             with conn.cursor() as cur:
-                # Get unprocessed articles from last 24 hours
-                yesterday = datetime.now() - timedelta(days=1)
+                # Get unprocessed articles — no age filter so stale items can be picked up
                 cur.execute(
                     """
                     SELECT id, title, content, summary, source_domain, published_at
                     FROM articles
-                    WHERE (processing_status IS NULL OR processing_status = 'raw' OR processing_status = 'pending')
-                    AND created_at >= %s
-                    ORDER BY published_at DESC
+                    WHERE processing_status IS NULL OR processing_status = 'raw'
+                       OR processing_status = 'pending' OR processing_status = 'ml_processing'
+                    ORDER BY created_at ASC
                     LIMIT 500
                 """,
-                    (yesterday,),
                 )
 
                 articles = cur.fetchall()
@@ -167,20 +165,18 @@ async def process_topic_clustering():
                     get_db_config(), domain=domain_key
                 )
 
-                # Get articles from this domain schema (last 7 days, not just 24 hours)
+                # Get unclustered articles — no age filter so stale items can be picked up
                 with conn.cursor() as cur:
                     cur.execute(f"SET search_path TO {schema_name}, public")
-                    seven_days_ago = datetime.now() - timedelta(days=7)
                     cur.execute(
                         """
                         SELECT id, title, content, summary, source_domain, published_at
                         FROM articles
-                        WHERE (processing_status IS NULL OR processing_status != 'topic_clustering')
-                        AND created_at >= %s
-                        ORDER BY published_at DESC
+                        WHERE processing_status IS NULL OR processing_status = 'pending'
+                           OR processing_status = 'ml_processing'
+                        ORDER BY created_at ASC
                         LIMIT 200
                     """,
-                        (seven_days_ago,),
                     )
 
                     articles = cur.fetchall()

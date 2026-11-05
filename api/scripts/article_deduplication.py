@@ -17,6 +17,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import psycopg2
+from shared.database.connection import get_db_connect_kwargs
 
 # Add the project root to the Python path
 project_root = Path(__file__).parent.parent
@@ -43,13 +44,10 @@ class ArticleDeduplicationSystem:
     def connect_database(self):
         """Connect to the database"""
         try:
-            self.conn = psycopg2.connect(
-                host=os.getenv("DB_HOST", "localhost"),
-                database=os.getenv("DB_NAME", "news_intelligence"),
-                user=os.getenv("DB_USER", "newsapp"),
-                password=os.getenv("DB_PASSWORD", "newsapp_password"),
-                port=os.getenv("DB_PORT", "5432"),
-            )
+            kwargs = get_db_connect_kwargs()
+            self.conn = psycopg2.connect(**kwargs)
+            logger.info("✅ Database connected successfully")
+            return True
             logger.info("✅ Database connected successfully")
             return True
         except Exception as e:

@@ -104,6 +104,10 @@ class MLState(enum.StrEnum):
 ML_ALL_STATES: FrozenSet[str] = frozenset({ML_PENDING, ML_RUNNING, ML_COMPLETED, ML_FAILED})
 ML_TERMINAL_STATES: FrozenSet[str] = frozenset({ML_COMPLETED, ML_FAILED})
 
+# Maximum number of times an article is retried for ML processing before
+# being permanently marked as failed. Used by background_processor.py.
+ML_MAX_RETRY_COUNT: int = 3
+
 
 LEGACY_QUEUED   = "queued"
 LEGACY_DEAD     = "dead"

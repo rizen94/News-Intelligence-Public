@@ -10,6 +10,7 @@ from typing import Any
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from shared.database.connection import get_db_connect_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -481,13 +482,8 @@ class TopicIntelligenceService:
     def get_intelligent_word_cloud(self, limit: int = 30) -> dict[str, Any]:
         """Generate intelligent word cloud data"""
         try:
-            conn = psycopg2.connect(
-                host="localhost",
-                database="news_intelligence",
-                user="newsapp",
-                password="newsapp_password",
-                port=5432,
-            )
+            kwargs = get_db_connect_kwargs()
+            conn = psycopg2.connect(**kwargs)
 
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # Set search path to domain schema

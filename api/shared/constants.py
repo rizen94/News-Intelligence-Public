@@ -10,7 +10,7 @@ CACHE_TTL_24H = 86400  # 24 hours
 
 # Pipeline state constants — re-exported for backward compatibility.
 # Prefer direct imports from shared.pipeline_state_constants instead.
-from shared.pipeline_state_constants import (
+from .pipeline_state_constants import (
     ARTICLE_PENDING, ARTICLE_ENRICHED, ARTICLE_FAILED, ARTICLE_INACCESSIBLE,
     ARTICLE_CONTENT_SHORT, ARTICLE_TERMINAL_STATES, ARTICLE_NON_TERMINAL_STATES,
     QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED,

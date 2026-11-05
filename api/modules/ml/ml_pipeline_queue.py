@@ -9,6 +9,7 @@ import asyncio
 from typing import Optional, Any
 from datetime import datetime, timedelta
 import psycopg2
+from shared.database.connection import get_db_connect_kwargs
 import json
 
 from .ml_queue_manager import MLQueueManager, MLTask, TaskType, TaskPriority
@@ -265,7 +266,7 @@ class MLPipelineQueue:
     def _get_article(self, article_id: int) -> Optional[dict[str, Any]]:
         """Get article data from database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cur = conn.cursor()
             
             cur.execute("""
@@ -302,7 +303,7 @@ class MLPipelineQueue:
     async def _get_storyline_data(self, storyline_id: str) -> Optional[dict[str, Any]]:
         """Get storyline data from database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cur = conn.cursor()
             
             cur.execute("""
@@ -338,7 +339,7 @@ class MLPipelineQueue:
     def _get_storyline_articles(self, storyline_id: str) -> list[dict[str, Any]]:
         """Get articles related to a storyline"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cur = conn.cursor()
             
             # Get storyline keywords
@@ -421,7 +422,7 @@ class MLPipelineQueue:
     def _update_article_status(self, article_id: int, status: str):
         """Update article processing status"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cur = conn.cursor()
             
             cur.execute("""
@@ -440,7 +441,7 @@ class MLPipelineQueue:
     def _get_processing_statistics(self) -> dict[str, Any]:
         """Get processing statistics from database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cur = conn.cursor()
             
             # Get task statistics

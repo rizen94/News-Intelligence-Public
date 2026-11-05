@@ -663,7 +663,7 @@ class RAGRetrievalModule:
                     recency_score = max(0, 1.0 - (days_ago / 30.0))
                     recency_score = min(1.0, recency_score)
                     scores["recency"] = recency_score * 0.2  # 20% weight
-                except:
+                except Exception:
                     scores["recency"] = 0.1
             else:
                 scores["recency"] = 0.1

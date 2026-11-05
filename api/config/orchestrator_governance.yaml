@@ -30,7 +30,7 @@ entity_tracking:
 # Phase 2 T2.3: quality thresholds for prioritization
 quality_thresholds:
   min_quality_score: 0.5
-  min_importance_for_processing: 0.55
+  min_importance_for_processing: 0.20
 
 # Signal-first article lanes — see docs/SIGNAL_FIRST_OPS.md and shared/article_signal_gate.py
 # Full LLM fan-out (UIE, topic, entity/event extraction, claims, assembly unlinked) uses
@@ -89,7 +89,7 @@ phase_retry_policy:
 # If none match, default_tier is used (should have no patterns, only multiplier/label).
 source_credibility:
   enabled: true
-  apply_to_quality_score: true
+  apply_to_quality_score: false
   disabled_multiplier: 1.0
   default_tier: tier_3
   tier_order:

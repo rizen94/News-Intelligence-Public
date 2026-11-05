@@ -63,10 +63,9 @@ def _load_dotenv_db_keys() -> None:
                 if key.startswith("DB_"):
                     os.environ.setdefault(key, val.strip().strip('"').strip("'"))
     if not os.environ.get("DB_PASSWORD") and os.path.isfile(
-        os.path.join(ROOT, ".db_password_widow")
+    # DB credentials are sourced from .env at script entry. The legacy .db_password_widow file was removed in the credential-sourcing migration.
     ):
-        with open(os.path.join(ROOT, ".db_password_widow"), encoding="utf-8") as f:
-            os.environ.setdefault("DB_PASSWORD", f.read().splitlines()[0].strip())
+    # DB credentials are sourced from .env at script entry. The legacy .db_password_widow file was removed in the credential-sourcing migration.
 
 
 def _db_connect_kwargs_lightweight() -> dict[str, Any]:

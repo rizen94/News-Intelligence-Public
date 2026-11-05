@@ -258,7 +258,11 @@ def finalize_content_enrichment_queue_round(
     schema_name: str,
     article_ids: list[int],
 ) -> None:
-    """Complete or release enrichment queue rows; enqueue unified intake on success."""
+    """Complete or release enrichment queue rows atomically; enqueue unified intake on success.
+
+    Uses a single DB connection with partial-failure isolation so individual UPDATE/INSERT
+    failures don't silently leave articles orphaned in the enrichment queue (stuck "processing" state).
+    """
     if not article_ids:
         return
     try:
@@ -275,32 +279,201 @@ def finalize_content_enrichment_queue_round(
                     (article_ids,),
                 )
                 rows = {int(r[0]): (r[1], int(r[2] or 0)) for r in cur.fetchall()}
+        enriched_ids: list[int] = []
+        completed_failed_ids: list[int] = []
+        released_ids: list[int] = []
+        missing_ids: list[int] = []
+
         for article_id in article_ids:
             status, attempts = rows.get(article_id, (None, 0))
             norm = (status or "").strip().lower()
             if norm == "enriched":
-                complete_queue_item(schema_name, "content_enrichment", article_id, failed=False)
-                enqueue_article(schema_name, article_id, "unified_intake_extraction")
+                enriched_ids.append(article_id)
             elif norm in ("inaccessible", "failed") and attempts >= 3:
-                complete_queue_item(schema_name, "content_enrichment", article_id, failed=True)
+                completed_failed_ids.append(article_id)
             elif article_id not in rows:
-                complete_queue_item(schema_name, "content_enrichment", article_id, failed=True)
+                completed_failed_ids.append(article_id)
+                missing_ids.append(article_id)
             else:
-                release_queue_item(schema_name, "content_enrichment", article_id)
+                released_ids.append(article_id)
+
+        failures: dict[str, list[int]] = {}
+
+        try:
+            with get_db_connection_context() as conn:
+                with conn.cursor() as cur:
+                    if released_ids:
+                        try:
+                            cur.execute(
+                                f"""
+                                SELECT id FROM {schema_name}.content_enrichment_queue
+                                WHERE article_id = ANY(%s) AND status = 'processing'
+                                """,
+                                (released_ids,),
+                            )
+                            live_released = [int(r[0]) for r in cur.fetchall()]
+                            if live_released:
+                                cur.execute(
+                                    f"""
+                                    UPDATE {schema_name}.content_enrichment_queue
+                                    SET status = 'pending',
+                                        started_at = NULL,
+                                        retry_count = retry_count + 1,
+                                        last_attempt_at = NOW(),
+                                        next_retry_at = NOW() + INTERVAL '5 minutes'
+                                    WHERE id = ANY(%s)
+                                    """,
+                                    (live_released,),
+                                )
+                            else:
+                                logger.debug(
+                                    "finalize_content_enrichment_queue_round: no processing rows to release for %d article(s)",
+                                    len(released_ids),
+                                )
+                        except Exception as exc:
+                            failures["released"] = released_ids
+                            logger.warning(
+                                "finalize_content_enrichment_queue_round: failed to release %d enrichment queue item(s) for schema %s",
+                                len(released_ids),
+                                schema_name,
+                            )
+
+                    if completed_failed_ids:
+                        try:
+                            cur.execute(
+                                f"""
+                                SELECT id FROM {schema_name}.content_enrichment_queue
+                                WHERE article_id = ANY(%s) AND status = 'processing'
+                                """,
+                                (completed_failed_ids,),
+                            )
+                            live_completed = [int(r[0]) for r in cur.fetchall()]
+                            if live_completed:
+                                failed_status = "failed" if missing_ids else "completed"
+                                cur.execute(
+                                    f"""
+                                    UPDATE {schema_name}.content_enrichment_queue
+                                    SET status = %s, completed_at = NOW()
+                                    WHERE id = ANY(%s)
+                                    """,
+                                    (failed_status, live_completed),
+                                )
+                            else:
+                                logger.debug(
+                                    "finalize_content_enrichment_queue_round: no processing rows to complete for %d article(s)",
+                                    len(completed_failed_ids),
+                                )
+                        except Exception as exc:
+                            failures["completed"] = completed_failed_ids
+                            logger.warning(
+                                "finalize_content_enrichment_queue_round: failed to complete %d enrichment queue item(s) for schema %s",
+                                len(completed_failed_ids),
+                                schema_name,
+                            )
+
+        finally:
+            if enriched_ids:
+                try:
+                    from shared.database import get_db_connection_context as gdc
+
+                    with gdc() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                f"""
+                                INSERT INTO {schema_name}.unified_intake_queue (article_id, status, priority)
+                                SELECT unnest(%s), 'pending', 2
+                                ON CONFLICT (article_id) DO UPDATE
+                                SET status = CASE WHEN unified_intake_queue.status = 'pending'
+                                    THEN 'pending' ELSE unified_intake_queue.status END
+                                """,
+                                (enriched_ids,),
+                            )
+                except Exception as exc:
+                    logger.warning(
+                        "finalize_content_enrichment_queue_round: failed to enqueue %d enriched article(s) to unified_intake queue for schema %s",
+                        len(enriched_ids),
+                        schema_name,
+                    )
+
+        if failures:
+            total_fails = sum(len(v) for v in failures.values())
+            logger.warning(
+                "finalize_content_enrichment_queue_round: %d failure(s) across groups (%s)",
+                total_fails,
+                ", ".join(f"{k}: {len(v)}" for k, v in failures.items()),
+            )
+
     except Exception as exc:
-        logger.debug("finalize_content_enrichment_queue_round %s: %s", schema_name, exc)
+        logger.warning("finalize_content_enrichment_queue_round %s: %s", schema_name, exc)
 
 
 def finalize_unified_intake_queue_round(
     schema_name: str,
     outcomes: dict[int, bool],
 ) -> None:
-    """Complete or release unified intake queue rows from batch extraction outcomes."""
-    for article_id, ok in outcomes.items():
-        if ok:
-            complete_queue_item(schema_name, "unified_intake_extraction", article_id, failed=False)
-        else:
-            release_queue_item(schema_name, "unified_intake_extraction", article_id, error="extraction_failed")
+    """Complete or release unified intake queue rows atomically from batch extraction outcomes."""
+    if not outcomes:
+        return
+    try:
+        from shared.database import get_db_connection_context
+
+        with get_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                completed_ids = [aid for aid, ok in outcomes.items() if ok]
+                released_ids = [aid for aid, ok in outcomes.items() if not ok]
+                failures: dict[str, list[int]] = {}
+
+                if completed_ids:
+                    try:
+                        cur.execute(
+                            f"""
+                            UPDATE {schema_name}.unified_intake_queue
+                            SET status = 'completed', completed_at = NOW()
+                            WHERE article_id = ANY(%s) AND status = 'processing'
+                            """,
+                            (completed_ids,),
+                        )
+                    except Exception as exc:
+                        failures["completed"] = list(completed_ids)
+                        logger.warning(
+                            "finalize_unified_intake_queue_round: failed to complete %d unified intake item(s) for schema %s",
+                            len(completed_ids),
+                            schema_name,
+                        )
+
+                if released_ids:
+                    try:
+                        cur.execute(
+                            f"""
+                            UPDATE {schema_name}.unified_intake_queue
+                            SET status = 'pending',
+                                started_at = NULL,
+                                retry_count = retry_count + 1,
+                                last_attempt_at = NOW(),
+                                next_retry_at = NOW() + INTERVAL '5 minutes',
+                                error_message = %s
+                            WHERE article_id = ANY(%s) AND status = 'processing'
+                            """,
+                            ("extraction_failed", released_ids),
+                        )
+                    except Exception as exc:
+                        failures["released"] = released_ids
+                        logger.warning(
+                            "finalize_unified_intake_queue_round: failed to release %d unified intake item(s) for schema %s",
+                            len(released_ids),
+                            schema_name,
+                        )
+
+                if failures:
+                    total_fails = sum(len(v) for v in failures.values())
+                    logger.warning(
+                        "finalize_unified_intake_queue_round: %d failure(s) across groups (%s)",
+                        total_fails,
+                        ", ".join(f"{k}: {len(v)}" for k, v in failures.items()),
+                    )
+
+    except Exception as exc:
+        logger.warning("finalize_unified_intake_queue_round %s: %s", schema_name, exc)
 
 
 def count_all_pending(phase: str) -> int:

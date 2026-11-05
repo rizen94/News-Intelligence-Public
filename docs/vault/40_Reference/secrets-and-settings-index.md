@@ -14,13 +14,7 @@ tags: [reference, secrets, settings, env]
 | HomeLab | PopOS | `~/Documents/projects/HomeLab-AI-Stack/.env` |
 | News Intelligence | Widow | `News Intelligence/configs/.env` |
 
-## Password files
-
-| File | Location |
-|------|----------|
-| `.db_password_widow` | Widow NI project root |
-
-## Cross-project DB
+## MCP sync
 
 | Var (Homelab) | Target |
 |---------------|--------|
@@ -28,7 +22,7 @@ tags: [reference, secrets, settings, env]
 
 Homelab `POSTGRES_*` on `:15432` is **not** NI.
 
-## MCP sync
+## Related configs
 
 - `HomeLab-AI-Stack/config/mcp-stack.json`
 - `HomeLab-AI-Stack/scripts/sync-agent-mcp.sh`

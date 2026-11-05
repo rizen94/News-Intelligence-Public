@@ -796,7 +796,7 @@ def _complete_job(
 
 
 async def _run_comprehensive_rag(domain_key: str, storyline_id: int) -> None:
-    from domains.storyline_management.routes.storyline_management import (
+    from domains.storyline_management.services.rag_analysis_service import (
         load_rag_analysis_inputs_for_queue,
         process_storyline_rag_analysis,
     )

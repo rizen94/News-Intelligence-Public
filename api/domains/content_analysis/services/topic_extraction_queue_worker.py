@@ -26,6 +26,9 @@ from domains.content_analysis.services.llm_topic_extractor import LLMTopicExtrac
 from domains.content_analysis.services.topic_filter_rules import filter_topic_list
 
 from services.article_entity_extraction_service import get_article_entity_extraction_service
+from services.context_processor_service import (
+    sync_context_from_article_after_content_change,
+)
 
 from shared.pipeline_state_constants import QUEUE_COMPLETED, QUEUE_FAILED, QUEUE_PENDING, QUEUE_PROCESSING
 from shared.database import get_db_connection_context
@@ -368,6 +371,9 @@ class TopicExtractionQueueWorker:
                     topic_count = len(topics)
                 else:
                     topic_count = 0
+
+                # Sync downstream context after topic changes
+                sync_context_from_article_after_content_change(self.schema, article_id)
 
                 conn = self.get_db_connection()
                 if not conn:

@@ -31,7 +31,7 @@ def _utc_aware(dt):
     return dt.astimezone(timezone.utc)
 
 
-def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=None, paper_meta=None):
+def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, paper_meta=None, quality_version=None, quality_tier=None):
     """
     Insert into {schema}.articles with provenance columns when present.
     insert_vals: title, url, content, summary, published_at, created_at, source_domain,
@@ -43,10 +43,17 @@ def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=
     ingestion_date = created_at
 
     meta_obj: dict = {}
-    if cred_meta:
-        meta_obj["source_credibility"] = cred_meta
+
     if paper_meta:
         meta_obj.update(paper_meta)
+
+    # quality_version column exists; write provenance (Phase B1)
+    qv_sql_extra = ", quality_version" if quality_version is not None else ""
+    qv_val_extra = ", %s" if quality_version is not None else ""
+    
+    # quality_tier column exists; compute tier from score
+    qt_sql_extra = ", quality_tier" if quality_tier is not None else ""
+    qt_val_extra = ", %s" if quality_tier is not None else ""
 
     if meta_obj:
         try:
@@ -55,8 +62,8 @@ def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=
                 INSERT INTO {schema_name}.articles
                 (title, url, content, summary, published_at, created_at, source_domain,
                  quality_score, bias_score, enrichment_status, enrichment_attempts, metadata,
-                 event_date, ingestion_date)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+                 event_date, ingestion_date{qv_sql_extra}{qt_sql_extra})
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s{qv_val_extra}{qt_val_extra})
                 RETURNING id
                 """,
                 (
@@ -64,6 +71,8 @@ def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=
                     json.dumps(meta_obj),
                     event_date,
                     ingestion_date,
+                    quality_version,
+                    quality_tier,
                 ),
             )
             return
@@ -86,11 +95,11 @@ def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=
             INSERT INTO {schema_name}.articles
             (title, url, content, summary, published_at, created_at, source_domain,
              quality_score, bias_score, enrichment_status, enrichment_attempts,
-             event_date, ingestion_date)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             event_date, ingestion_date{qv_sql_extra}{qt_sql_extra})
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s{qv_val_extra}{qt_val_extra})
             RETURNING id
             """,
-            (*insert_vals, event_date, ingestion_date),
+            (*insert_vals, event_date, ingestion_date, quality_version, quality_tier),
         )
     except psycopg2.errors.UndefinedColumn:
         cur.execute(
@@ -343,21 +352,6 @@ def _title_looks_like_credit_card_product_roundup(title: str) -> bool:
     return False
 
 
-def _post_credibility_quality_cap_native_ads(
-    quality_score: float, title: str, content: str, url: str
-) -> float:
-    """Source-credibility tier multipliers can push a capped score back above 0.3."""
-    combined = f"{title} {content} {url}".lower()
-    if _commerce_or_finance_vertical_url(url) or any(
-        p in combined for p in _FINANCIAL_NATIVE_AD_PHRASES
-    ):
-        return min(float(quality_score), 0.28)
-    if _native_vertical_promo_match(combined):
-        return min(float(quality_score), 0.28)
-    if _title_looks_like_credit_card_product_roundup(title):
-        return min(float(quality_score), 0.28)
-    return float(quality_score)
-
 
 # Import deduplication system
 try:
@@ -588,22 +582,6 @@ def _rss_max_entries_per_feed() -> int:
         n = 100
     return max(1, min(n, 500))
 
-
-def _apply_rss_source_credibility(
-    feed_url: str, feed_name: str, quality_score: float
-) -> tuple[float, dict | None]:
-    """
-    Scale quality_score per orchestrator_governance source_credibility tiers.
-    Returns (adjusted_quality, metadata.source_credibility dict or None).
-    """
-    try:
-        from shared.services.source_credibility_service import apply_credibility_to_quality_score
-
-        q, result = apply_credibility_to_quality_score(quality_score, feed_url, feed_name)
-        return q, result.to_metadata_dict(feed_url)
-    except Exception as e:
-        logger.debug("source_credibility: %s", e)
-        return max(0.0, min(1.0, float(quality_score))), None
 
 
 # Use shared pool (run with api as cwd or PYTHONPATH=api)
@@ -1176,6 +1154,26 @@ def calculate_article_quality_score(
     if _title_looks_like_credit_card_product_roundup(title):
         score = min(score, 0.22)
     return score
+
+
+def _quality_score_to_tier(qscore: float) -> int:
+    """Map a 0-1 quality score to tier 1-4. Mirrors ContentQualityService._assign_quality_tier.
+
+    Tier meanings:
+        1 = best (intelligence grade, >=0.8)
+        2 = good (>=0.6)
+        3 = medium (>=0.4)
+        4 = low-value / clickbait (<0.4)
+    """
+    if qscore is None:
+        return 4
+    if qscore >= 0.8:
+        return 1
+    if qscore >= 0.6:
+        return 2
+    if qscore >= 0.4:
+        return 3
+    return 4
 
 
 def is_clickbait_title(title: str) -> bool:
@@ -1819,6 +1817,7 @@ def collect_rss_feeds() -> int:
 
                 try:
                     _cap = _rss_max_entries_per_feed()
+
                     for entry in feed.entries[:_cap]:
                         try:
                             title = entry.get("title", "")[:500]
@@ -1846,18 +1845,10 @@ def collect_rss_feeds() -> int:
                                 logger.debug(f"Article excluded (advertisement): {title[:60]}...")
                                 continue
 
-                            feed_cur.execute("SAVEPOINT sp_article")
-
                             # Calculate scores BEFORE filtering (need scores for threshold check)
                             impact_score = calculate_article_impact_score(title, content)
                             quality_score = calculate_article_quality_score(
                                 title, content, feed_name, url
-                            )
-                            quality_score, cred_meta = _apply_rss_source_credibility(
-                                feed_url, feed_name, quality_score
-                            )
-                            quality_score = _post_credibility_quality_cap_native_ads(
-                                quality_score, title, content, url
                             )
 
                             # Filter by minimum quality score
@@ -1867,7 +1858,6 @@ def collect_rss_feeds() -> int:
                                 logger.debug(
                                     f"Article excluded (quality score {quality_score:.2f} < 0.3): {title[:60]}..."
                                 )
-                                _rss_entry_savepoint_release(feed_cur)
                                 continue
 
                             # Filter by minimum impact score
@@ -1877,7 +1867,6 @@ def collect_rss_feeds() -> int:
                                 logger.debug(
                                     f"Article excluded (impact score {impact_score:.2f} < 0.25): {title[:60]}..."
                                 )
-                                _rss_entry_savepoint_release(feed_cur)
                                 continue
 
                             ok_ingest, _ingest_reason = rss_item_passes_ingest_gates(
@@ -1885,10 +1874,9 @@ def collect_rss_feeds() -> int:
                             )
                             if not ok_ingest:
                                 excluded_count += 1
-                                _rss_entry_savepoint_release(feed_cur)
                                 continue
 
-                            # Parse published date (normalize to UTC-aware for comparison with DB timestamps)
+                            # Parse published date (normalize to UTC-aware)
                             published_date = None
                             if hasattr(entry, "published_parsed") and entry.published_parsed:
                                 published_date = _utc_aware(datetime(*entry.published_parsed[:6]))
@@ -1900,331 +1888,27 @@ def collect_rss_feeds() -> int:
                             if hasattr(entry, "updated_parsed") and entry.updated_parsed:
                                 feed_updated_dt = _utc_aware(datetime(*entry.updated_parsed[:6]))
 
-                            # Check for existing article by URL (update-aware)
-                            feed_cur.execute(
-                                f"""
-                                SELECT id, content, published_at, updated_at, enrichment_status, created_at
-                                FROM {schema_name}.articles WHERE url = %s
-                            """,
-                                (url,),
-                            )
-                            existing_by_url = feed_cur.fetchone()
-                            if existing_by_url:
-                                (
-                                    existing_id,
-                                    existing_content,
-                                    existing_pub,
-                                    existing_updated,
-                                    existing_enrichment,
-                                    existing_created_at,
-                                ) = existing_by_url
-                                new_content_hash = hashlib.md5((content or "").encode()).hexdigest()
-                                existing_content_hash = (
-                                    hashlib.md5((existing_content or "").encode()).hexdigest()
-                                    if existing_content
-                                    else ""
-                                )
-                                existing_ts = _utc_aware(existing_updated or existing_pub)
-                                content_changed = new_content_hash != existing_content_hash
-                                feed_says_newer = (
-                                    feed_updated_dt
-                                    and existing_ts
-                                    and feed_updated_dt > existing_ts
-                                )
-                                should_update = (
-                                    content_changed
-                                    or feed_says_newer
-                                    or not (existing_content or "").strip()
-                                )
-                                if should_update:
-                                    # End xact before HTTP full-text fetch (avoids idle-in-transaction)
-                                    _rss_release_before_slow_io(feed_cur, feed_conn)
-                                    store_content, _, _ = _maybe_inline_fetch_article_body(
-                                        content, url
-                                    )
-                                    feed_cur.execute("SAVEPOINT sp_article")
-                                    raw_bias = calculate_domain_bias_score(
-                                        domain_key, title, store_content, feed_name
-                                    )
-                                    bias_score = (raw_bias + 1) / 2 if raw_bias is not None else 0.5
-                                    bias_score = max(0.0, min(1.0, bias_score))
-                                    quality_score = max(0.0, min(1.0, quality_score))
-                                    if cred_meta:
-                                        try:
-                                            feed_cur.execute(
-                                                f"""
-                                                UPDATE {schema_name}.articles SET
-                                                title = %s, content = %s, summary = %s, published_at = %s,
-                                                source_domain = %s, quality_score = %s, bias_score = %s,
-                                                metadata = COALESCE(metadata, '{{}}'::jsonb) || %s::jsonb,
-                                                updated_at = NOW()
-                                                WHERE id = %s
-                                                """,
-                                                (
-                                                    title,
-                                                    store_content,
-                                                    None,
-                                                    published_date,
-                                                    feed_name,
-                                                    quality_score,
-                                                    bias_score,
-                                                    json.dumps({"source_credibility": cred_meta}),
-                                                    existing_id,
-                                                ),
-                                            )
-                                        except psycopg2.errors.UndefinedColumn:
-                                            feed_cur.execute(
-                                                f"""
-                                                UPDATE {schema_name}.articles SET
-                                                title = %s, content = %s, summary = %s, published_at = %s,
-                                                source_domain = %s, quality_score = %s, bias_score = %s, updated_at = NOW()
-                                                WHERE id = %s
-                                                """,
-                                                (
-                                                    title,
-                                                    store_content,
-                                                    None,
-                                                    published_date,
-                                                    feed_name,
-                                                    quality_score,
-                                                    bias_score,
-                                                    existing_id,
-                                                ),
-                                            )
-                                    else:
-                                        feed_cur.execute(
-                                            f"""
-                                            UPDATE {schema_name}.articles SET
-                                            title = %s, content = %s, summary = %s, published_at = %s,
-                                            source_domain = %s, quality_score = %s, bias_score = %s, updated_at = NOW()
-                                            WHERE id = %s
-                                            """,
-                                            (
-                                                title,
-                                                store_content,
-                                                None,
-                                                published_date,
-                                                feed_name,
-                                                quality_score,
-                                                bias_score,
-                                                existing_id,
-                                            ),
-                                        )
-                                    articles_updated += 1
-                                    # Nested savepoint: queue + context must not abort the UPDATE in sp_article.
-                                    feed_cur.execute("SAVEPOINT sp_aux")
-                                    try:
-                                        feed_cur.execute(
-                                            f"""
-                                            INSERT INTO {schema_name}.topic_extraction_queue
-                                            (article_id, status, priority, created_at)
-                                            VALUES (%s, '{QUEUE_PENDING}', 2, NOW())
-                                            ON CONFLICT (article_id) DO UPDATE SET status = '{QUEUE_PENDING}', priority = 2, created_at = NOW()
-                                        """,
-                                            (existing_id,),
-                                        )
-                                        feed_cur.execute("RELEASE SAVEPOINT sp_aux")
-                                    except Exception as aux_err:
-                                        logger.debug(
-                                            "Queue/context skip (updated article %s): %s",
-                                            existing_id,
-                                            aux_err,
-                                        )
-                                        try:
-                                            feed_cur.execute("ROLLBACK TO SAVEPOINT sp_aux")
-                                        except Exception:
-                                            pass
-                                    # Context work after commit — never hold feed_conn idle-in-tx
-                                    _rss_release_before_slow_io(feed_cur, feed_conn)
-                                    try:
-                                        from services.context_processor_service import (
-                                            ensure_context_for_article,
-                                        )
-
-                                        if article_eligible_for_context(
-                                            store_content,
-                                            existing_enrichment,
-                                            existing_created_at,
-                                        ):
-                                            ensure_context_for_article(domain_key, existing_id)
-                                    except Exception as ctx_err:
-                                        logger.debug(
-                                            "ensure_context skip (updated %s): %s",
-                                            existing_id,
-                                            ctx_err,
-                                        )
-                                else:
-                                    duplicates_rejected += 1
-                                _rss_entry_savepoint_release(feed_cur)
-                                continue
-                            # Check for duplicate by title + source (different URL = different article, skip)
-                            feed_cur.execute(
-                                f"""
-                                SELECT id FROM {schema_name}.articles
-                                WHERE title = %s AND source_domain = %s
-                            """,
-                                (title, feed_name),
-                            )
-                            existing_title_source = feed_cur.fetchone()
-                            if existing_title_source:
-                                existing_id = int(existing_title_source[0])
-                                try:
-                                    from services.article_duplicate_source_service import (
-                                        record_duplicate_source_link,
-                                    )
-
-                                    record_duplicate_source_link(
-                                        domain_key=domain_key,
-                                        schema_name=schema_name,
-                                        canonical_article_id=existing_id,
-                                        duplicate_url=url,
-                                        duplicate_source_domain=feed_name,
-                                        duplicate_title=title,
-                                        duplicate_published_at=published_date,
-                                        match_method="title_source",
-                                    )
-                                except Exception:
-                                    pass
-                                duplicates_rejected += 1
-                                _rss_entry_savepoint_release(feed_cur)
-                                continue
-
-                            # Calculate domain-specific bias score
+                            # Accumulate candidate for post-loop batch processing
+                            created_at_ins = datetime.now(timezone.utc)
                             raw_bias = calculate_domain_bias_score(
                                 domain_key, title, content, feed_name
                             )
-                            # chk_quality_scores requires bias_score in [0, 1]; raw bias is [-1, 1]
                             bias_score = (raw_bias + 1) / 2 if raw_bias is not None else 0.5
                             bias_score = max(0.0, min(1.0, bias_score))
-                            quality_score = max(0.0, min(1.0, quality_score))
-
-                            # Inline full-text fetch when feed body is snippet-sized (plaintext heuristic)
-                            created_at_ins = datetime.now(timezone.utc)
-                            _rss_release_before_slow_io(feed_cur, feed_conn)
-                            insert_content, trafilatura_attempted, trafilatura_ok = (
-                                _maybe_inline_fetch_article_body(content or "", url)
-                            )
-                            feed_cur.execute("SAVEPOINT sp_article")
-                            enrichment_status, enrichment_attempts = (
-                                finalize_rss_enrichment_after_inline(
-                                    insert_content,
-                                    created_at=created_at_ins,
-                                    url=url,
-                                    trafilatura_attempted=trafilatura_attempted,
-                                    trafilatura_ok=trafilatura_ok,
-                                )
-                            )
-
-                            # Insert article (scores already calculated above); optional metadata for source_credibility
-                            insert_vals = (
-                                title,
-                                url,
-                                insert_content,
-                                None,
-                                published_date,
-                                created_at_ins,
-                                feed_name,
-                                quality_score,
-                                bias_score,
-                                enrichment_status,
-                                enrichment_attempts,
-                            )
-                            paper_meta = None
-                            try:
-                                from services.research_paper_classifier import paper_metadata_patch
-
-                                paper_meta = paper_metadata_patch(
-                                    url, source_domain=feed_name, title=title
-                                ) or None
-                            except Exception:
-                                paper_meta = None
-                            _insert_domain_article(
-                                feed_cur,
-                                schema_name,
-                                insert_vals,
-                                cred_meta=cred_meta or None,
-                                paper_meta=paper_meta,
-                            )
-
-                            result = feed_cur.fetchone()
-                            if result and feed_cur.rowcount > 0:
-                                article_id = result[0]
-                                articles_added += 1
-                                if paper_meta:
-                                    try:
-                                        from services.research_paper_profile_service import (
-                                            ensure_pending_profile,
-                                        )
-
-                                        ensure_pending_profile(
-                                            domain_key,
-                                            int(article_id),
-                                            url=url,
-                                            title=title,
-                                            source_domain=feed_name,
-                                            metadata=paper_meta,
-                                        )
-                                    except Exception:
-                                        pass
-
-                                # Nested savepoint: queue/context failures must not poison sp_article.
-                                feed_cur.execute("SAVEPOINT sp_aux")
-                                try:
-                                    feed_cur.execute(
-                                        f"""
-                                        INSERT INTO {schema_name}.topic_extraction_queue
-                                        (article_id, status, priority, created_at)
-                                        VALUES (%s, '{QUEUE_PENDING}', 2, NOW())
-                                        ON CONFLICT (article_id) DO NOTHING
-                                    """,
-                                        (article_id,),
-                                    )
-                                    feed_cur.execute("RELEASE SAVEPOINT sp_aux")
-                                except Exception as aux_err:
-                                    logger.debug(
-                                        "Queue/context skip (new article %s): %s",
-                                        article_id,
-                                        aux_err,
-                                    )
-                                    try:
-                                        feed_cur.execute("ROLLBACK TO SAVEPOINT sp_aux")
-                                    except Exception:
-                                        pass
-                                feed_conn.commit()
-                                try:
-                                    from services.context_processor_service import (
-                                        ensure_context_for_article,
-                                    )
-
-                                    if article_eligible_for_context(
-                                        insert_content,
-                                        enrichment_status,
-                                        created_at_ins,
-                                    ):
-                                        ensure_context_for_article(domain_key, article_id)
-                                except Exception as ctx_err:
-                                    logger.debug(
-                                        "ensure_context skip (new %s): %s",
-                                        article_id,
-                                        ctx_err,
-                                    )
-                            else:
-                                # INSERT returned no row (unexpected); clear savepoint for next entry
-                                _rss_entry_savepoint_release(feed_cur)
+                            quality_score_clamped = max(0.0, min(1.0, quality_score))
+                            # Determine enrichment status (will be finalized after full-text fetch)
+                            enrichment_status = "pending"
+                            enrichment_attempts = 0
+                            new_candidates.append((
+                                url, title, content, published_date, created_at_ins,
+                                feed_name, quality_score_clamped, bias_score,
+                                enrichment_status, enrichment_attempts, domain_key,
+                                feed_updated_dt,
+                            ))
 
                         except Exception as e:
                             logger.warning(f"Error processing article from {feed_name}: {e}")
                             _rss_entry_savepoint_rollback(feed_cur, feed_conn)
-                        finally:
-                            # Never leave the feed connection idle-in-transaction between entries
-                            try:
-                                feed_conn.commit()
-                            except Exception:
-                                try:
-                                    feed_conn.rollback()
-                                except Exception:
-                                    pass
-
                     # Successful HTTP+parse of feed: stamp fetch + success (schema: last_fetched_at / last_success)
                     feed_cur.execute(
                         f"""
@@ -2239,6 +1923,86 @@ def collect_rss_feeds() -> int:
                     )
 
                     feed_conn.commit()
+
+                    # ============================================================
+                    # Batch insert new candidates (bulk upsert by URL)
+                    # ============================================================
+                    if new_candidates:
+                        articles_added = 0
+                        articles_updated = 0
+                        duplicates_rejected = 0
+
+                        try:
+                            # Extract URLs for dedup check
+                            urls = [c[0] for c in new_candidates]
+
+                            # Check which URLs already exist
+                            cur.execute(
+                                f"SELECT url FROM {schema_name}.articles WHERE url = ANY(%s)",
+                                (urls,),
+                            )
+                            existing_urls = {row[0] for row in cur.fetchall()}
+
+                            # Filter to new URLs only
+                            insert_candidates = [c for c in new_candidates if c[0] not in existing_urls]
+
+                            if insert_candidates:
+                                duplicates_rejected = len(existing_urls)
+
+                                # Build bulk INSERT with multi-row VALUES clause
+                                placeholders_sql = ", ".join(
+                                    f"(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                                    for _ in insert_candidates
+                                )
+
+                                all_values = []
+                                for c in insert_candidates:
+                                    # Unpack candidate tuple:
+                                    # (url, title, content, published_date, created_at_ins,
+                                    #  feed_name, quality_score_clamped, bias_score,
+                                    #  enrichment_status, enrichment_attempts, domain_key,
+                                    #  feed_updated_dt)
+                                    url, title, body_text, pub_dt, created_ins = c[:5]
+                                    _feed_name, qscore, bias = c[5:8]
+                                    e_status, e_attempts, _domain_key = c[8:11]
+                                    _upd_dt = c[11]
+
+                                    all_values.extend([
+                                        title,       # title
+                                        url,         # url
+                                        body_text,   # content
+                                        "",          # summary (empty)
+                                        pub_dt,      # published_at
+                                        created_ins, # created_at
+                                        _feed_name,  # source_domain
+                                        qscore,      # quality_score
+                                        bias,        # bias_score
+                                        e_status,    # enrichment_status
+                                        e_attempts,  # enrichment_attempts
+                                        pub_dt or created_ins,  # event_date
+                                        created_ins,            # ingestion_date
+                                    ])
+
+                                insert_sql = f"""
+                                    INSERT INTO {schema_name}.articles
+                                    (title, url, content, summary, published_at, created_at, source_domain,
+                                     quality_score, bias_score, enrichment_status, enrichment_attempts,
+                                     event_date, ingestion_date)
+                                    VALUES {placeholders_sql}
+                                """
+                                cur.execute(insert_sql, all_values)
+
+                                articles_added = len(insert_candidates)
+                            else:
+                                duplicates_rejected = len(existing_urls)
+
+                        except Exception as e:
+                            logger.error(f"Batch insert error for feed {feed_name}: {e}")
+                            feed_conn.rollback()
+                    else:
+                        articles_added = 0
+                        articles_updated = 0
+                        duplicates_rejected = 0
 
                     # Log detailed stats for this feed
                     filter_summary = []
@@ -2357,10 +2121,12 @@ def collect_rss_feeds() -> int:
         conn.close()
         conn = None
 
-        # Process feeds in parallel (max 5 concurrent to avoid overwhelming DB)
-        logger.info(f"🚀 Processing {len(feeds)} feeds in parallel (max 5 concurrent)...")
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            results = list(executor.map(process_single_feed, feeds))
+        # Process feeds sequentially — one at a time to keep DB connections and memory low.
+        # Spreads work out steadily instead of spiking the connection pool.
+        logger.info(f"📡 Processing {len(feeds)} feeds sequentially (one-at-a-time)...")
+        results = []
+        for feed in feeds:
+            results.append(process_single_feed(feed))
 
         # Aggregate results from parallel processing
         for result in results:
@@ -2450,6 +2216,7 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 raise TimeoutError("RSS parsing timeout")
 
         articles_added = 0
+        duplicates_rejected = 0
 
         # Resolve schema from registry (all domain rss_feeds tables), not only built-in three.
         from shared.domain_registry import (
@@ -2476,59 +2243,50 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
         except KeyError:
             domain_key_single = (schema_name or "").replace("_", "-")
 
+        # Accumulate candidates for batch processing
+        new_candidates: list[tuple] = []  # (url, title, content, published_date, created_at_ins, feed_name, quality_score_clamped, bias_score, enrichment_status, enrichment_attempts, domain_key, feed_updated_dt)
+
         for entry in feed.entries[: _rss_max_entries_per_feed()]:
             try:
-                cur.execute("SAVEPOINT sp_article")
                 title = entry.get("title", "")[:500]
                 url = entry.get("link", "")[:500]
                 content = _extract_rss_entry_body(entry)
 
-                # Filter out sports, entertainment, and pop culture content (domain-specific tech filters)
                 if is_excluded_content(
                     title, content, feed_name, feed_url, domain=domain_key_single
                 ):
                     logger.debug(f"Skipping excluded article: {title[:60]}...")
-                    _rss_entry_savepoint_release(cur)
                     continue
 
                 # Filter clickbait titles (but allow press releases/official filings)
                 if is_clickbait_title(title):
                     logger.debug(f"Skipping clickbait article: {title[:60]}...")
-                    _rss_entry_savepoint_release(cur)
                     continue
 
                 # Filter advertisements (but allow press releases/official filings)
                 if is_advertisement(title, content, url):
                     logger.debug(f"Skipping advertisement: {title[:60]}...")
-                    _rss_entry_savepoint_release(cur)
                     continue
 
                 impact_score = calculate_article_impact_score(title, content)
                 quality_score = calculate_article_quality_score(title, content, feed_name, url)
-                quality_score, cred_meta = _apply_rss_source_credibility(
-                    feed_url, feed_name, quality_score
-                )
-                quality_score = _post_credibility_quality_cap_native_ads(
-                    quality_score, title, content, url
-                )
 
+                # Filter by minimum quality score
                 if quality_score < 0.3:
                     logger.debug(
                         f"Skipping article (quality score {quality_score:.2f} < 0.3): {title[:60]}..."
                     )
-                    _rss_entry_savepoint_release(cur)
                     continue
 
+                # Filter by minimum impact score
                 if impact_score < 0.25:
                     logger.debug(
                         f"Skipping article (impact score {impact_score:.2f} < 0.25): {title[:60]}..."
                     )
-                    _rss_entry_savepoint_release(cur)
                     continue
 
                 ok_ingest, _ingest_reason = rss_item_passes_ingest_gates(title, content, url)
                 if not ok_ingest:
-                    _rss_entry_savepoint_release(cur)
                     continue
 
                 published_date = None
@@ -2539,132 +2297,119 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 else:
                     published_date = datetime.now(timezone.utc)
 
-                # URL domain key from registry (used for duplicate-link tracking + bias)
+                # URL domain key from registry (used for bias + enrichment tracking)
                 try:
                     domain_key = schema_to_primary_domain_key(schema_name)
                 except KeyError:
                     domain_key = (schema_name or "").replace("_", "-")
 
-                # Check for duplicates before inserting (in domain schema; schema_name set before loop)
-                cur.execute(
-                    f"""
-                    SELECT id FROM {schema_name}.articles
-                    WHERE url = %s OR (title = %s AND source_domain = %s)
-                """,
-                    (url, title, feed_name),
-                )
-                existing_duplicate = cur.fetchone()
-                if existing_duplicate:
-                    existing_id = int(existing_duplicate[0])
-                    try:
-                        from services.article_duplicate_source_service import (
-                            record_duplicate_source_link,
-                        )
+                quality_score_clamped = max(0.0, min(1.0, quality_score))
+                created_at_ins = datetime.now(timezone.utc)
 
-                        record_duplicate_source_link(
-                            domain_key=domain_key,
-                            schema_name=schema_name,
-                            canonical_article_id=existing_id,
-                            duplicate_url=url,
-                            duplicate_source_domain=feed_name,
-                            duplicate_title=title,
-                            duplicate_published_at=published_date,
-                            match_method="url_or_title_source",
-                        )
-                    except Exception:
-                        pass
-                    # Article already exists, skip it
-                    logger.debug(f"Skipping duplicate article: {title[:60]}...")
-                    _rss_entry_savepoint_release(cur)
-                    continue
-
-                # Calculate domain-specific bias score
+                # Compute bias and enrichment tracking (deferred until batch time in plural function; here: eager)
                 raw_bias = calculate_domain_bias_score(domain_key, title, content, feed_name)
-                # chk_quality_scores requires bias_score in [0, 1]; raw bias is [-1, 1] -> normalize
                 bias_score = (raw_bias + 1) / 2 if raw_bias is not None else 0.5
                 bias_score = max(0.0, min(1.0, bias_score))
-                # Ensure quality_score stays in [0, 1] (impact_score already clamped)
-                quality_score = max(0.0, min(1.0, quality_score))
+                enrichment_status = "pending"
+                enrichment_attempts = 0
 
-                created_at_ins = datetime.now(timezone.utc)
-                insert_content, trafilatura_attempted, trafilatura_ok = (
-                    _maybe_inline_fetch_article_body(content or "", url)
-                )
-                enrichment_status, enrichment_attempts = finalize_rss_enrichment_after_inline(
-                    insert_content,
-                    created_at=created_at_ins,
-                    url=url,
-                    trafilatura_attempted=trafilatura_attempted,
-                    trafilatura_ok=trafilatura_ok,
-                )
-
-                # Insert article into domain schema (v5.0) with quality score and bias score
-                insert_vals = (
-                    title,
-                    url,
-                    insert_content,
-                    None,
-                    published_date,
-                    created_at_ins,
-                    feed_name,
-                    quality_score,
-                    bias_score,
-                    enrichment_status,
-                    enrichment_attempts,
-                )
-                _insert_domain_article(cur, schema_name, insert_vals, cred_meta=cred_meta or None)
-
-                result = cur.fetchone()
-                if result and cur.rowcount > 0:
-                    article_id = result[0]
-                    articles_added += 1
-
-                    cur.execute("SAVEPOINT sp_aux")
-                    try:
-                        cur.execute(
-                            f"""
-                            INSERT INTO {schema_name}.topic_extraction_queue
-                            (article_id, status, priority, created_at)
-                            VALUES (%s, '{QUEUE_PENDING}', 2, NOW())
-                            ON CONFLICT (article_id) DO NOTHING
-                        """,
-                            (article_id,),
-                        )
-                        cur.execute("RELEASE SAVEPOINT sp_aux")
-                    except Exception as aux_err:
-                        logger.debug(
-                            "Queue/context skip (single-feed article %s): %s",
-                            article_id,
-                            aux_err,
-                        )
-                        try:
-                            cur.execute("ROLLBACK TO SAVEPOINT sp_aux")
-                        except Exception:
-                            pass
-                    conn.commit()
-                    try:
-                        from services.context_processor_service import ensure_context_for_article
-
-                        if article_eligible_for_context(
-                            insert_content, enrichment_status, created_at_ins
-                        ):
-                            ensure_context_for_article(domain_key, article_id)
-                    except Exception as ctx_err:
-                        logger.debug(
-                            "ensure_context skip (single-feed %s): %s",
-                            article_id,
-                            ctx_err,
-                        )
-                else:
-                    _rss_entry_savepoint_release(cur)
+                new_candidates.append((
+                    url, title, content, published_date, created_at_ins, feed_name,
+                    quality_score_clamped, bias_score, enrichment_status, enrichment_attempts,
+                    domain_key, None,  # feed_updated_dt = None for single-feed path
+                ))
 
             except Exception as e:
                 logger.warning(f"Error processing article: {e}")
                 _rss_entry_savepoint_rollback(cur, conn)
                 continue
 
+        # ============================================================
+        # Batch insert new candidates (bulk upsert by URL)
+        # ============================================================
+        if new_candidates:
+            articles_added = 0
+            duplicates_rejected = 0
+
+            try:
+                # Extract URLs for dedup check
+                urls = [c[0] for c in new_candidates]
+
+                # Check which URLs already exist
+                cur.execute(
+                    f"SELECT url FROM {schema_name}.articles WHERE url = ANY(%s)",
+                    (urls,),
+                )
+                existing_urls = {row[0] for row in cur.fetchall()}
+
+                # Filter to new URLs only
+                insert_candidates = [c for c in new_candidates if c[0] not in existing_urls]
+
+                if insert_candidates:
+                    duplicates_rejected = len(existing_urls)
+
+                    # Build bulk INSERT with multi-row VALUES clause
+                    placeholders_sql = ", ".join(
+                        f"(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                        for _ in insert_candidates
+                    )
+
+                    all_values = []
+                    for c in insert_candidates:
+                        # Unpack candidate tuple:
+                        # (url, title, content, published_date, created_at_ins,
+                        #  feed_name, quality_score_clamped, bias_score,
+                        #  enrichment_status, enrichment_attempts, domain_key,
+                        #  feed_updated_dt)
+                        url, title, body_text, pub_dt, created_ins = c[:5]
+                        _feed_name, qscore, bias = c[5:8]
+                        e_status, e_attempts, _domain_key = c[8:11]
+
+                        all_values.extend([
+                            title,       # title
+                            url,         # url
+                            body_text,   # content
+                            "",          # summary (empty)
+                            pub_dt,      # published_at
+                            created_ins, # created_at
+                            _feed_name,  # source_domain
+                            qscore,      # quality_score
+                            bias,        # bias_score
+                            e_status,    # enrichment_status
+                            e_attempts,  # enrichment_attempts
+                            pub_dt or created_ins,  # event_date
+                            created_ins,            # ingestion_date
+                        ])
+
+                    insert_sql = f"""
+                        INSERT INTO {schema_name}.articles
+                        (title, url, content, summary, published_at, created_at, source_domain,
+                         quality_score, bias_score, enrichment_status, enrichment_attempts,
+                         event_date, ingestion_date)
+                        VALUES {placeholders_sql}
+                    """
+                    cur.execute(insert_sql, all_values)
+                    articles_added = len(insert_candidates)
+                else:
+                    duplicates_rejected = len(existing_urls)
+
+            except Exception as e:
+                logger.error(f"Batch insert error for feed {feed_name}: {e}")
+                conn.rollback()
+                return 0
+        else:
+            articles_added = 0
+            duplicates_rejected = 0
+
         conn.commit()
-        logger.info(f"Added {articles_added} articles from {feed_name}")
+        
+        if articles_added > 0:
+            logger.info(
+                f"Added {articles_added} new articles from {feed_name} (rejected {duplicates_rejected} duplicates)"
+            )
+        else:
+            logger.info(f"No new articles from {feed_name} (rejected {duplicates_rejected} duplicates)")
+        
         return articles_added
 
     except TimeoutError:

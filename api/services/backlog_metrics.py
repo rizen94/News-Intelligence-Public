@@ -497,7 +497,7 @@ def _count_content_enrichment_backlog() -> int:
                 cur.execute(
                     f"""
                     SELECT COUNT(*) FROM {schema}.articles
-                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
+                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed', 'pull_deferred'))
                       AND COALESCE(enrichment_attempts, 0) < 3
                       AND url IS NOT NULL AND url != ''
                     """

@@ -37,8 +37,8 @@ AI_RESEARCH_ONE_OFF_MAX_ARTICLES = 2
 AI_DOMAIN_KEY = "artificial-intelligence"
 
 # Quality signal constants for home feed ranking and gating
-QUALITY_SCORE_CUTOFF = 0.6          # skip news items below this quality_score
-ANCHOR_WEIGHT_MULTIPLIER = 1.05     # +5% score boost for 'anchor_class' rank stories
+MIN_QUALITY_TIER = 4                    # minimum quality tier to surface (tier_1/tier_2 pass)
+ANCHOR_WEIGHT_MULTIPLIER = 1.05         # +5% score boost for 'anchor_class' rank stories
 NARRATIVE_PHASE_NO_SHOW = ("phase_0",)  # don't surface phase_0 / pre-intake items
 
 
@@ -679,10 +679,14 @@ def _inject_morning_ongoing_into_current(items: list[dict[str, Any]]) -> list[di
 def _fetch_candidate_rows(cur, schema: str, domain_key: str, since: datetime) -> list[dict[str, Any]]:
     """Pull recent non-merged storylines with editorial + hierarchy signals.
 
-    Filter to 200 storylines *before* the LATERAL aggregate. Joining
+    Filter to 1000 storylines *before* the LATERAL aggregate. Joining
     ``storyline_articles`` first forces a per-row nested loop across the
     whole unmerged set (USB IOPS). ``idx_*_sa_storyline_added_at`` then
     covers only the shortlist.
+    
+    Candidate window raised from 200 → 1000 to accommodate sparse recent
+    data in domains like AI, Legal, and Medicine where few storylines update
+    within the last 90 days (see PRISM context summary on empty home feed).
     """
     cur.execute(
         f"""
@@ -720,7 +724,7 @@ def _fetch_candidate_rows(cur, schema: str, domain_key: str, since: datetime) ->
                     )
               )
             ORDER BY s0.updated_at DESC NULLS LAST
-            LIMIT 200
+            LIMIT 1000
         ) s
         LEFT JOIN LATERAL (
             SELECT
@@ -753,9 +757,23 @@ def _batch_open_tracked(
     domains = sorted({dk for dk, _ in pairs})
     ids = sorted({sid for _, sid in pairs})
     id_strs = [str(i) for i in ids]
+
+    # Detect which column exists on tracked_events (arc_state vs status)
     try:
         cur.execute(
-            """
+            "SELECT EXISTS ("
+            "  SELECT FROM information_schema.columns "
+            "  WHERE table_name='tracked_events' AND column_name='arc_state'"
+            ") AS has_arc"
+        )
+        has_arc = cur.fetchone()[0]
+        arc_col = "arc_state" if has_arc else "status"
+    except Exception:
+        arc_col = "arc_state"
+
+    try:
+        cur.execute(
+            f"""
             SELECT
                 te.storyline_id::text,
                 te.domain_keys,
@@ -763,7 +781,7 @@ def _batch_open_tracked(
                 COALESCE(te.event_type, ''),
                 COALESCE(te.editorial_briefing, '')
             FROM intelligence.tracked_events te
-            WHERE te.status IS DISTINCT FROM 'closed'
+            WHERE te.{arc_col} IS DISTINCT FROM 'closed'
               AND (
                     te.storyline_id = ANY(%s)
                  OR (te.domain_keys IS NOT NULL AND te.domain_keys && %s::text[])
@@ -796,6 +814,7 @@ def _batch_open_tracked(
             if text_ok:
                 hits.add((domain, sid))
     return hits
+
 
 
 def classify_and_build_feeds(
@@ -841,6 +860,19 @@ def classify_and_build_feeds(
         # -- Quality signals (Priority 1 + Priority 3) --
         qscore = row.get("quality_score")
         qscore_f: float | None = float(qscore) if qscore is not None else None
+        
+        # Derive quality tier from quality_score (matches rss_collector._quality_score_to_tier)
+        quality_tier_int: int = 4  # default for None / unknown
+        if qscore_f is not None:
+            if qscore_f >= 0.8:
+                quality_tier_int = 1
+            elif qscore_f >= 0.6:
+                quality_tier_int = 2
+            elif qscore_f >= 0.4:
+                quality_tier_int = 3
+            else:
+                quality_tier_int = 4
+        
         narrative_phase = str(row.get("narrative_gate_phase") or "").strip().lower()
 
         # --- News: material update in 48h + non-empty dek ---
@@ -856,7 +888,8 @@ def classify_and_build_feeds(
         rank_weight_val = (anchor_score or 0.0) + density_bonus
         
         # --- Priority 3: Hard quality cutoff (tiered filtering) ---
-        if qscore_f is not None and qscore_f < QUALITY_SCORE_CUTOFF:
+        min_tier = MIN_QUALITY_TIER
+        if qscore_f is not None and quality_tier_int < min_tier:
             skip_news, skip_current, skip_one_off = True, True, (article_count > 0)
         else:
             skip_news = skip_current = skip_one_off = False
@@ -961,7 +994,7 @@ def classify_and_build_feeds(
         if qscore_f is not None:
             if qscore_f >= 0.85:
                 badges.append("High-confidence")
-            elif qscore_f >= QUALITY_SCORE_CUTOFF:
+            elif quality_tier_int >= 2:
                 badges.append("Mid-confidence")
             else:
                 badges.append("Low-confidence")

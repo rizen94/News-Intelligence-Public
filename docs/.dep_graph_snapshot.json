@@ -1,0 +1,4074 @@
+{
+  "timestamp": "2026-10-22T20:41:42.304099+00:00",
+  "project": "News Intelligence",
+  "edges": [
+    {
+      "src": "scripts/run_secondary_worker.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/main.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/main.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/main.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "tests/test_db_endpoint.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "tests/test_rss_deduplication.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "tests/test_article_service.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/archive/rss_automation_manager.py",
+      "dst": "api.modules.ml.summarization_service",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/archive/retired_scripts_2026_03/validate_finance_pipeline.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/archive/retired_scripts_2026_03/validate_finance_pipeline.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/archive/retired_scripts_2026_03/validate_finance_pipeline.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/archive/retired_scripts_2026_03/benchmark_inference.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/archive/test_scripts/test_pipeline_finance_politics.py",
+      "dst": "api.shared.database.connection",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/archive/test_scripts/test_pipeline_finance_politics.py",
+      "dst": "api.shared.database.connection",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/archive/test_scripts/test_pipeline_finance_politics.py",
+      "dst": "api.collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/archive/test_scripts/test_pipeline_finance_politics.py",
+      "dst": "api.shared.database.connection",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/archive/test_scripts/test_pipeline_finance_politics.py",
+      "dst": "api.shared.database.connection",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/archive/test_scripts/test_pipeline_finance_politics.py",
+      "dst": "api.shared.database.connection",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/archive/test_scripts/investigate_table_creation.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/archive/test_scripts/test_production_ml_system.py",
+      "dst": "api.modules.ml.production_ml_manager",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/archive/test_scripts/test_production_ml_system.py",
+      "dst": "api.modules.ml.dynamic_priority_manager",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/archive/obsolete/restore_rss_feeds.py",
+      "dst": "api.shared.database.connection",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/archive/obsolete/start_ml_processor.py",
+      "dst": "api.modules.ml.background_processor",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/archive/obsolete/start_ml_processor.py",
+      "dst": "api.config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/archive/obsolete/rename_legacy_fast.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/archive/obsolete/check_for_duplicates.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/archive/obsolete/create_market_storylines_db.py",
+      "dst": "api.shared.database.connection",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/scripts/run_secondary_worker.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/scripts/archive/rss_automation_manager.py",
+      "dst": "api.modules.ml.summarization_service",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/scripts/archive/retired_scripts_2026_03/validate_finance_pipeline.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/scripts/archive/retired_scripts_2026_03/validate_finance_pipeline.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/scripts/archive/retired_scripts_2026_03/validate_finance_pipeline.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/scripts/archive/test_scripts/test_pipeline_finance_politics.py",
+      "dst": "api.shared.database.connection",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/scripts/archive/test_scripts/test_pipeline_finance_politics.py",
+      "dst": "api.shared.database.connection",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/scripts/archive/test_scripts/test_pipeline_finance_politics.py",
+      "dst": "api.collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/scripts/archive/test_scripts/test_pipeline_finance_politics.py",
+      "dst": "api.shared.database.connection",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/scripts/archive/test_scripts/test_pipeline_finance_politics.py",
+      "dst": "api.shared.database.connection",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/scripts/archive/test_scripts/test_pipeline_finance_politics.py",
+      "dst": "api.shared.database.connection",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/api/services/pipeline_logger.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/api/services/automation_manager.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/api/services/automation_manager.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/api/services/automation_manager.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "scripts/ni_review/entity_files/api/services/pipeline_deduplication_service.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/config/catchup_defaults.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/config/database_targets.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/config/feature_registry.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/config/feature_registry.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/config/orchestrator_governance.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/config/orchestrator_governance.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/config/investigation_tables.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/config/logging_config.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/config/settings.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/config/settings.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/config/context_centric_config.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/config/context_centric_config.py",
+      "dst": "config.feature_registry",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/scripts/analyze_existing_articles.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/scripts/catchup_topic_clustering.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/scripts/validate_pipeline_rss_alignment.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/scripts/run_widow_db_adjacent.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/scripts/automated_cleanup.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/scripts/system_monitor.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/scripts/remove_corrupted_platinum_research_topics.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/scripts/force_rss_collection.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/scripts/force_rss_collection.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/scripts/add_official_feeds.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/scripts/run_rss_and_process_all.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/scripts/automated_collection.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/scripts/process_articles.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/scripts/prune_articles_failing_ingest_filters.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/scripts/fix_imports.py",
+      "dst": "config.import_standards",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/middleware/error_handling.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/collectors/quiver_collector.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/collectors/rss_collector.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/resource_governor.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/resource_governor.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/living_story_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/living_story_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/content_quality_service.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/follow_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/external_research_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/pipeline_logger.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/storyline_hygiene_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/alfred_client.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/causal_edges_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/claim_evidence_appraisal_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/rag_enhancement_runner.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/fact_verification_service.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/fact_verification_service.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/rag_evidence_pull_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/rag_evidence_pull_service.py",
+      "dst": "config.feature_registry",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/editorial_package_research_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/signal_admission_governor_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/signal_admission_governor_service.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/event_tracking_service.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/spine_sql_tail_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/run_major_backlog_catchup.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/run_major_backlog_catchup.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/run_major_backlog_catchup.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/run_major_backlog_catchup.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/run_major_backlog_catchup.py",
+      "dst": "config.catchup_defaults",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/multi_perspective_analyzer.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/discovery_intake_brief_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/embeddings_host_health_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/expert_analysis_service.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/tracking_discovery_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/storyline_membership_ops_lock.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/episode_merge_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/storyline_membership_llm_agent.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/storyline_review_agent_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/dossier_compiler_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/dossier_compiler_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/dossier_compiler_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/dossier_compiler_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/dossier_compiler_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/dossier_compiler_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/distributed_cache_service.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/historical_context_service.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/vault_notes_fanout_service.py",
+      "dst": "config.feature_registry",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/embedding_link_candidate_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/embedding_link_candidate_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/ml_processing_service.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/backlog_trend_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/maintenance_monitor.py",
+      "dst": "api.config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/vault_bridge_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/pipeline_orchestration_harmony.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/pipeline_orchestration_harmony.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/commodity_event_bridge.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/commodity_event_bridge.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/spine_work_queue_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/spine_work_queue_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/phase_work_queue_metrics.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/phase_work_queue_metrics.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/phase_work_queue_metrics.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/phase_work_queue_metrics.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/learning_governor.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/learning_governor.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/congress_trade_signals_service.py",
+      "dst": "config.feature_registry",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/congress_trade_signals_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/historic_context_orchestrator.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/desk_promotion_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/metadata_enrichment_service.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/predictive_scaling_service.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/narrative_first_linking_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/orchestrator_coordinator.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/orchestrator_coordinator.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/expectation_tracking_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/expectation_tracking_service.py",
+      "dst": "config.feature_registry",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/catchup_host_metrics.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/catchup_host_metrics.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/catchup_host_metrics.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/catchup_host_metrics.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/advanced_monitoring_service.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/usd_purchasing_power_tracker_service.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/claim_extraction_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/claim_extraction_service.py",
+      "dst": "config.feature_registry",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/diagnostics_event_collector_service.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/vault_morning_prime_service.py",
+      "dst": "config.feature_registry",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/vault_morning_prime_service.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/pipeline_conductor_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/pipeline_conductor_service.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/pipeline_conductor_service.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/pipeline_conductor_service.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/episode_assembly_maintenance_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/document_acquisition_service.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/link_score_outcomes_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/historic_context_sources.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/historic_context_sources.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/historic_context_sources.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/chronological_events_catchup_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/article_processing_service.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/arc_stage_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/arc_stage_service.py",
+      "dst": "config.feature_registry",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/assembly_conductor_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/assembly_conductor_service.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/assembly_conductor_service.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/vault_mvp_ingest_service.py",
+      "dst": "config.feature_registry",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/storyline_event_split_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/morning_briefing_manager_service.py",
+      "dst": "config.feature_registry",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/topic_clustering_service.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/storyline_lifecycle_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/storyline_lifecycle_service.py",
+      "dst": "config.feature_registry",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/editorial_package_compose_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/editorial_package_compose_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/user_guidance_service.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/phase_retry_silence_service.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/phase_retry_silence_service.py",
+      "dst": "config.feature_registry",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/smart_cache_service.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/entity_profile_builder_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/entity_profile_builder_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/discovery_research_bridge_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/storyline_centroid.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/storyline_centroid.py",
+      "dst": "config.feature_registry",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/linkage_coverage_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/narrative_gap_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/narrative_gap_service.py",
+      "dst": "config.feature_registry",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/capacity_ledger_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/monitor_backlog_snapshot_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/collection_governor.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/collection_governor.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/collection_governor.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/event_core_membership_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/event_core_membership_service.py",
+      "dst": "config.feature_registry",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/fred_client_service.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/link_indexer_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/graph_link_drift_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/impact_assessment_service.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/nightly_ingest_window_service.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/nightly_ingest_window_service.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/nri_loop_summarizer.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/chronological_timeline_service.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/pipeline_schedule_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/pipeline_schedule_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/pipeline_controller.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/pipeline_controller.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/pipeline_controller.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/pipeline_controller.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/pipeline_controller.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/pipeline_controller.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/pipeline_controller.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/storyline_membership_review_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/storyline_membership_review_service.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/protein_harden_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/spine_pipeline_conductor.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/early_quality_service.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/rss_feed_health_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/rss_feed_health_service.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/editorial_package_narrative_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/ai_storyline_discovery.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/processing_governor.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/processing_governor.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/document_collector_service.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/backlog_metrics.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/backlog_metrics.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation_manager.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation_manager.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation_manager.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation_manager.py",
+      "dst": "collectors.quiver_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation_manager.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation_manager.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation_manager.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/vault_cluster_hub_service.py",
+      "dst": "config.feature_registry",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/vault_cluster_hub_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/pulse_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/connection_discovery_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/article_entity_extraction_service.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/pipeline_deduplication_service.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/usd_purchasing_power_tracker_alerts.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/dynamic_resource_service.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/tracking_promotion_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/tracking_promotion_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/editorial_package_evidence_expand_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/predictive_analysis_service.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/story_continuation_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/connection_query_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/editorial_package_reduction_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/unified_intake_extraction_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/unified_intake_extraction_service.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/storyline_core_prune_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/orchestrator_state.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/orchestrator_state.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/scheduler_service.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/scheduler_service.py",
+      "dst": "api.services.usd_purchasing_power_tracker_service",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/entity_relationships_store.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/unified_intake_backlog.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/unified_intake_backlog.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/bulk_catchup_pause.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/ollama_extraction_model_resolver.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/uie_fulltext_chunks.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/uie_fulltext_chunks.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/entity_profile_eligibility.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/rag_enhancement_eligibility.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/domain_processing_mode.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/pipeline_article_selection.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/article_signal_gate.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/article_signal_gate.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/article_signal_gate.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/article_signal_gate.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/chemistry_beaker.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/chemistry_beaker.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/pipeline_handoffs.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/entity_dossier_eligibility.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/unified_intake_extraction_runner.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/unified_intake_extraction_runner.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/unified_intake_extraction_runner.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/catchup_host_metrics.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/catchup_host_metrics.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/catchup_host_metrics.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/catchup_host_metrics.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/catchup_host_metrics.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/phase_idle_gate.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/phase_idle_gate.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/phase_idle_gate.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/pipeline_status_store.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/catchup_bootstrap.py",
+      "dst": "config.catchup_defaults",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/storyline_attach_caps.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/episode_attach_gate.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/episode_attach_gate.py",
+      "dst": "config.feature_registry",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/legacy_editorial_rollback.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/remote_phase_worker.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/article_processing_gates.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/pipeline_pass_marker.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/spine_phase_order.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/spine_phase_order.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/adaptive_batch_policy.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/gpu_metrics.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/gpu_metrics.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/link_scoring.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/pipeline_resource_policy.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/pipeline_resource_policy.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/pipeline_resource_policy.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/pipeline_batch_drain.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/pipeline_batch_drain.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/migration_sql_runner.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/fulltext_pull_gate.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/domain_registry.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/fast_ner_lane.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/backlog_orchestration.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/act_verb_kernel.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/intelligence_phase_gates.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/intelligence_phase_gates.py",
+      "dst": "config.feature_registry",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/phase_drain_dispatch.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/phase_drain_dispatch.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/phase_drain_dispatch.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/phase_drain_dispatch.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/phase_drain_dispatch.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/pipeline_admission.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/pipeline_admission.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/pipeline_admission.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/pipeline_admission.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/pipeline_admission.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/pipeline_admission.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/bulk_catchup_llm_routing.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/intake_catchup_latency.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/chronological_event_domain.py",
+      "dst": "collectors.public_event_upsert",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/legacy_intake_rollback.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/context_chunking.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/assembly_link_funnel.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/assembly_phase_order.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/scripts/utilities/manage_intelligence_database.py",
+      "dst": "api.config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/scripts/utilities/scheduler.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/scripts/utilities/manage_ingestion.py",
+      "dst": "collectors.enhanced_rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/scripts/utilities/manage_ingestion.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/commodity_registry.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/commodity_registry.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/commodity_fetcher.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/stats.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/embedding.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/embedding.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/orchestrator_utils.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/news_orchestrator.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/news_orchestrator.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/news_orchestrator.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/news_orchestrator.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/evidence_collector.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/evidence_collector.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/orchestrator_logger.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/llm.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/llm.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/orchestrator.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/orchestrator.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/credit_spread_service.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/gold_amalgamator.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/gold_amalgamator.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/content_analysis/routes/content_analysis.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/content_analysis/services/topic_clustering_service.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/system_monitoring/routes/resource_dashboard.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/system_monitoring/routes/resource_dashboard.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/system_monitoring/routes/sql_explorer.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/system_monitoring/routes/orchestrator.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/system_monitoring/routes/system_monitoring.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/system_monitoring/routes/system_monitoring.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/intelligence_hub/routes/intelligence_hub.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/intelligence_hub/routes/context_centric.py",
+      "dst": "config.context_centric_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/storyline_management/routes/storyline_management.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/storyline_management/routes/storyline_watchlist.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/routes/finance.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/routes/finance.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/routes/finance.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data_sources/fred.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data_sources/fred.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data_sources/__init__.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data_sources/__init__.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data_sources/fred_commodity.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data_sources/fred_commodity.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data_sources/edgar.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data_sources/edgar.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data_sources/metals_dev.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data_sources/metals_dev.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data_sources/metals_dev.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data_sources/base.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/gold_sources/freegoldapi.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/gold_sources/fred_gold.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/gold_sources/fred_gold.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data/vector_store.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data/vector_store.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data/api_cache.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data/api_cache.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data/market_data_store.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data/market_data_store.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data/schema_version.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data/evidence_ledger.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/finance/data/evidence_ledger.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/news_aggregation/routes/news_aggregation.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/news_aggregation/routes/news_aggregation.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/news_aggregation/routes/news_aggregation.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/domains/public_auth/routes/auth.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/article_content_enrichment_service.py.tmp/article_content_enrichment_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/article_content_enrichment_service.py.tmp/article_processing_gates.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/rss/fetching.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/rss/processing.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/rss/base.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/services/automation/registry.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/modules/ml/entity_extractor.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/auth/public_web_dependencies.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/middleware/public_web_auth.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/middleware/demo_readonly.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/database/connection.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/database/pending_db_writes.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/logging/decision_logger.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/logging/trace_logger.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/logging/activity_logger.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/logging/llm_logger.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/logging/llm_logger.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/services/congress_gov_client.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/services/source_credibility_service.py",
+      "dst": "config.orchestrator_governance",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/services/ollama_model_policy.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/services/ollama_model_policy.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/services/public_web_auth_service.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/services/route_supervisor.py",
+      "dst": "config.logging_config",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/services/optional_llm_redis_cache.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/services/llm_service.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/services/llm_service.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/services/ollama_model_caller.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/services/ollama_model_caller.py",
+      "dst": "config.runtime",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "api/shared/llm/resource_manager.py",
+      "dst": "config.settings",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "tests/unit/test_automation_resource_router.py",
+      "dst": "config.database",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "tests/unit/test_rss_collector_financial_ads.py",
+      "dst": "collectors.rss_collector",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "tests/unit/test_finance_data_source_loader.py",
+      "dst": "config.paths",
+      "lang": "Lang.PYTHON",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/hooks/useTaskPolling.ts",
+      "dst": "web/src/services/apiService",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/hooks/useTaskPolling.ts",
+      "dst": "web/src/types/finance",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/hooks/useDomainRoute.ts",
+      "dst": "web/src/contexts/DomainContext",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/hooks/useDomainRoute.ts",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/hooks/useDomainNavigation.ts",
+      "dst": "web/src/contexts/DomainContext",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/hooks/useDomainNavigation.ts",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/hooks/useDomainNavigation.ts",
+      "dst": "web/src/paths",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/types/utils.ts",
+      "dst": "web/src/types/api",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/types/utils.ts",
+      "dst": "web/src/types/components",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/types/utils.ts",
+      "dst": "web/src/types/api",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "export"
+    },
+    {
+      "src": "web/src/types/utils.ts",
+      "dst": "web/src/types/components",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "export"
+    },
+    {
+      "src": "web/src/types/index.ts",
+      "dst": "web/src/types/editorial",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/types/index.ts",
+      "dst": "web/src/types/api",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/types/index.ts",
+      "dst": "web/src/types/components",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/types/index.ts",
+      "dst": "web/src/types/utils",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/types/index.ts",
+      "dst": "web/src/types/api",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "export"
+    },
+    {
+      "src": "web/src/types/index.ts",
+      "dst": "web/src/types/components",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "export"
+    },
+    {
+      "src": "web/src/types/index.ts",
+      "dst": "web/src/types/utils",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "export"
+    },
+    {
+      "src": "web/src/utils/domainHelper.ts",
+      "dst": "web/src/config/apiConfig",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/utils/domainHelper.ts",
+      "dst": "web/src/paths",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/utils/featureTestHelper.ts",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/apiConnectionManager.ts",
+      "dst": "web/src/config/apiConfig",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/apiConnectionManager.ts",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/apiConnectionManager.ts",
+      "dst": "web/src/services/errorHandler",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/apiService.ts",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/apiService.ts",
+      "dst": "web/src/services/apiConnectionManager",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/apiService.ts",
+      "dst": "web/src/services/api",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/apiService.ts",
+      "dst": "web/src/utils/logger",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/frontendHealthService.ts",
+      "dst": "web/src/config/apiConfig",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/errorHandler.ts",
+      "dst": "web/src/services/loggingService",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/finance/index.ts",
+      "dst": "web/src/finance/layouts/FinanceLayout",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/finance/index.ts",
+      "dst": "web/src/finance/pages/FinanceHomePage",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/finance/index.ts",
+      "dst": "web/src/finance/layouts/FinanceLayout",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "export"
+    },
+    {
+      "src": "web/src/finance/index.ts",
+      "dst": "web/src/finance/pages/FinanceHomePage",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "export"
+    },
+    {
+      "src": "web/src/services/api/intelligence.ts",
+      "dst": "web/src/services/api/client",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/intelligence.ts",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/intelligence.ts",
+      "dst": "web/src/utils/logger",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/monitoring.ts",
+      "dst": "web/src/services/api/client",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/monitoring.ts",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/monitoring.ts",
+      "dst": "web/src/utils/logger",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/articles.ts",
+      "dst": "web/src/services/api/client",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/articles.ts",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/articles.ts",
+      "dst": "web/src/utils/logger",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/contextCentric.ts",
+      "dst": "web/src/services/api/client",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/contextCentric.ts",
+      "dst": "web/src/config/apiConfig",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/contextCentric.ts",
+      "dst": "web/src/utils/logger",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/watchlist.ts",
+      "dst": "web/src/services/api/client",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/watchlist.ts",
+      "dst": "web/src/utils/logger",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/rss.ts",
+      "dst": "web/src/services/api/client",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/rss.ts",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/rss.ts",
+      "dst": "web/src/utils/logger",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/financeAnalysis.ts",
+      "dst": "web/src/services/api/client",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/financeAnalysis.ts",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/financeAnalysis.ts",
+      "dst": "web/src/utils/logger",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/readerResearch.ts",
+      "dst": "web/src/services/api/client",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/readerResearch.ts",
+      "dst": "web/src/utils/logger",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/articles",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/readerResearch",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/readerResearch",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/watchlist",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/storylines",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/topics",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/rss",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/monitoring",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/intelligence",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/financeAnalysis",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/contextCentric",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/contextCentric",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/client",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/articles",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "export"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/readerResearch",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "export"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/watchlist",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "export"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/storylines",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "export"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/topics",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "export"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/rss",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "export"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/monitoring",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "export"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/intelligence",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "export"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/financeAnalysis",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "export"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/contextCentric",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "export"
+    },
+    {
+      "src": "web/src/services/api/index.ts",
+      "dst": "web/src/services/api/client",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "export"
+    },
+    {
+      "src": "web/src/services/api/topics.ts",
+      "dst": "web/src/services/api/client",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/topics.ts",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/topics.ts",
+      "dst": "web/src/utils/logger",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/client.ts",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/client.ts",
+      "dst": "web/src/services/apiConnectionManager",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/storylines.ts",
+      "dst": "web/src/services/api/client",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/storylines.ts",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/storylines.ts",
+      "dst": "web/src/utils/logger",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/services/api/storylines.ts",
+      "dst": "web/src/types",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/hooks/usePagedFeed.ts",
+      "dst": "web/src/v2/hooks/useV2Domain",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/hooks/usePagedFeed.ts",
+      "dst": "web/src/v2/services/readerApi",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/hooks/usePagedFeed.ts",
+      "dst": "web/src/v2/components/PaginationBar",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/hooks/usePagedFeed.ts",
+      "dst": "web/src/v2/hooks/useV2Domain",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/services/readerApi.ts",
+      "dst": "web/src/services/api/client",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/index.tsx",
+      "dst": "web/src/App",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/App.tsx",
+      "dst": "web/src/contexts/DomainContext",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/App.tsx",
+      "dst": "web/src/contexts/PublicDemoContext",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/App.tsx",
+      "dst": "web/src/components/DemoRouteGuard/DemoRouteGuard",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/App.tsx",
+      "dst": "web/src/services/apiConnectionManager",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/App.tsx",
+      "dst": "web/src/services/loggingService",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/App.tsx",
+      "dst": "web/src/services/errorHandler",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/App.tsx",
+      "dst": "web/src/components/ErrorBoundary/ErrorBoundary",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/App.tsx",
+      "dst": "web/src/components/LegacyV2Redirect",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/App.tsx",
+      "dst": "web/src/paths",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/App.tsx",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/shell/ProductRootSwitcher.tsx",
+      "dst": "web/src/config/grafanaConfig",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/shell/ProductRootSwitcher.tsx",
+      "dst": "web/src/paths",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/shell/AppShell.tsx",
+      "dst": "web/src/shell/ProductRootSwitcher",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/components/LegacyV2Redirect.tsx",
+      "dst": "web/src/paths",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/components/LegacyV2Redirect.tsx",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/contexts/DomainContext.tsx",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/contexts/DomainContext.tsx",
+      "dst": "web/src/services/loggingService",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/contexts/ShellStatusContext.tsx",
+      "dst": "web/src/services/api/contextCentric",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/contexts/ShellStatusContext.tsx",
+      "dst": "web/src/services/apiService",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/components/Analytics/SystemAnalytics.tsx",
+      "dst": "web/src/services/apiService",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/components/Analytics/SystemAnalytics.tsx",
+      "dst": "web/src/utils/logger",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/components/ErrorBoundary/ErrorBoundary.tsx",
+      "dst": "web/src/services/loggingService",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/components/EntityCard/EntityCard.tsx",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/components/APIConnectionStatus/APIConnectionStatus.tsx",
+      "dst": "web/src/contexts/ShellStatusContext",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/components/APIConnectionStatus/APIConnectionStatus.tsx",
+      "dst": "web/src/services/apiConnectionManager",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/components/Header/Header.tsx",
+      "dst": "web/src/contexts/DomainContext",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/components/Header/Header.tsx",
+      "dst": "web/src/components/APIConnectionStatus/APIConnectionStatus",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/components/charts/GoldChoropleth.tsx",
+      "dst": "web/src/utils/logger",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/components/Monitoring/RealtimeMonitor.tsx",
+      "dst": "web/src/services/apiService",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/components/Monitoring/RealtimeMonitor.tsx",
+      "dst": "web/src/utils/logger",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/components/DemoRouteGuard/DemoRouteGuard.tsx",
+      "dst": "web/src/contexts/PublicDemoContext",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/components/DemoRouteGuard/DemoRouteGuard.tsx",
+      "dst": "web/src/paths",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/components/shared/LegacyRedirect/LegacyRedirect.tsx",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/domains/Finance/MarketResearch/MarketResearch.tsx",
+      "dst": "web/src/services/apiService",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/domains/Finance/MarketResearch/MarketResearch.tsx",
+      "dst": "web/src/hooks/useDomainRoute",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/domains/Finance/CorporateAnnouncements/CorporateAnnouncements.tsx",
+      "dst": "web/src/services/apiService",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/domains/Finance/CorporateAnnouncements/CorporateAnnouncements.tsx",
+      "dst": "web/src/hooks/useDomainRoute",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/domains/Finance/MarketPatterns/MarketPatterns.tsx",
+      "dst": "web/src/services/apiService",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/domains/Finance/MarketPatterns/MarketPatterns.tsx",
+      "dst": "web/src/hooks/useDomainRoute",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/finance/layouts/FinanceLayout.tsx",
+      "dst": "web/src/contexts/DomainContext",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/finance/layouts/FinanceLayout.tsx",
+      "dst": "web/src/shell/AppShell",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/finance/pages/trackers/CreditSpreadsPage.tsx",
+      "dst": "web/src/services/api/monitoring",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/finance/pages/trackers/CreditSpreadsPage.tsx",
+      "dst": "web/src/utils/logger",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/finance/pages/trackers/UsdPurchasingPowerPage.tsx",
+      "dst": "web/src/services/api/client",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/finance/pages/markets/CommodityMarketsPage.tsx",
+      "dst": "web/src/services/api/monitoring",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/finance/pages/markets/CommodityMarketsPage.tsx",
+      "dst": "web/src/utils/logger",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/finance/pages/markets/MacroMarketsPage.tsx",
+      "dst": "web/src/services/api/monitoring",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/finance/pages/markets/MacroMarketsPage.tsx",
+      "dst": "web/src/utils/logger",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/finance/pages/reporting/ReportingAnalysisPage.tsx",
+      "dst": "web/src/pages/Finance/FinancialAnalysis",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/finance/pages/reporting/ReportingTracesPage.tsx",
+      "dst": "web/src/pages/Finance/TaskTraceViewer",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/finance/pages/reporting/ReportingEvidencePage.tsx",
+      "dst": "web/src/pages/Finance/EvidenceExplorer",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/finance/pages/reporting/ReportingAnalysisResultPage.tsx",
+      "dst": "web/src/pages/Finance/FinancialAnalysisResult",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/components/StoryUnit.tsx",
+      "dst": "web/src/v2/services/readerApi",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/components/StoryUnit.tsx",
+      "dst": "web/src/v2/hooks/useV2Domain",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/components/StoryUnit.tsx",
+      "dst": "web/src/utils/sanitizeSnippet",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/hooks/useV2Domain.tsx",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/layouts/UserLayout.tsx",
+      "dst": "web/src/v2/hooks/useV2Domain",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/layouts/UserLayout.tsx",
+      "dst": "web/src/shell/AppShell",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/layouts/UserLayout.tsx",
+      "dst": "web/src/paths",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/layouts/AdminLayout.tsx",
+      "dst": "web/src/shell/ProductRootSwitcher",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/layouts/AdminLayout.tsx",
+      "dst": "web/src/shell/AppShell",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/Current/CurrentPage.tsx",
+      "dst": "web/src/v2/components/StoryUnit",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/Current/CurrentPage.tsx",
+      "dst": "web/src/v2/components/PaginationBar",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/Current/CurrentPage.tsx",
+      "dst": "web/src/v2/hooks/usePagedFeed",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/Situations/SituationsPage.tsx",
+      "dst": "web/src/v2/hooks/useV2Domain",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/Situations/SituationsPage.tsx",
+      "dst": "web/src/v2/services/readerApi",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/Situations/SituationsPage.tsx",
+      "dst": "web/src/utils/sanitizeSnippet",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/OneOffs/OneOffsPage.tsx",
+      "dst": "web/src/v2/components/StoryUnit",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/OneOffs/OneOffsPage.tsx",
+      "dst": "web/src/v2/components/PaginationBar",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/OneOffs/OneOffsPage.tsx",
+      "dst": "web/src/v2/hooks/usePagedFeed",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/News/NewsPage.tsx",
+      "dst": "web/src/v2/components/StoryUnit",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/News/NewsPage.tsx",
+      "dst": "web/src/v2/components/PaginationBar",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/News/NewsPage.tsx",
+      "dst": "web/src/v2/hooks/usePagedFeed",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/Home/HomePage.tsx",
+      "dst": "web/src/v2/components/StoryUnit",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/Home/HomePage.tsx",
+      "dst": "web/src/v2/components/PaginationBar",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/Home/HomePage.tsx",
+      "dst": "web/src/v2/hooks/useV2Domain",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/Home/HomePage.tsx",
+      "dst": "web/src/v2/services/readerApi",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/Research/ResearchSubjectPage.tsx",
+      "dst": "web/src/services/api/readerResearch",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/Research/ResearchPage.tsx",
+      "dst": "web/src/services/api/readerResearch",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/admin/AdminOverviewPage.tsx",
+      "dst": "web/src/shell/ProductRootSwitcher",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/admin/AdminOverviewPage.tsx",
+      "dst": "web/src/config/grafanaConfig",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/admin/AdminSqlPage.tsx",
+      "dst": "web/src/services/apiService",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/admin/AdminWorkPage.tsx",
+      "dst": "web/src/services/apiService",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/admin/AdminMonitorPage.tsx",
+      "dst": "web/src/pages/Monitor/MonitorPage",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/admin/AdminMonitorPage.tsx",
+      "dst": "web/src/contexts/ShellStatusContext",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/admin/AdminAuditPage.tsx",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/StorylineReader/StorylineReaderPage.tsx",
+      "dst": "web/src/v2/components/PaginationBar",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/StorylineReader/StorylineReaderPage.tsx",
+      "dst": "web/src/v2/hooks/useV2Domain",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/StorylineReader/StorylineReaderPage.tsx",
+      "dst": "web/src/v2/services/readerApi",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/StorylineReader/StorylineReaderPage.tsx",
+      "dst": "web/src/services/api/articles",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/StorylineReader/StorylineReaderPage.tsx",
+      "dst": "web/src/utils/sanitizeSnippet",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/EntityDossier/EntityDossierPage.tsx",
+      "dst": "web/src/services/api/client",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/Hub/HubPage.tsx",
+      "dst": "web/src/v2/hooks/useV2Domain",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/Hub/HubPage.tsx",
+      "dst": "web/src/v2/services/readerApi",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/v2/pages/Hub/HubPage.tsx",
+      "dst": "web/src/utils/sanitizeSnippet",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/pages/Finance/SourceHealth.tsx",
+      "dst": "web/src/hooks/useDomainRoute",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/pages/Finance/SourceHealth.tsx",
+      "dst": "web/src/services/apiService",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/pages/Finance/SourceHealth.tsx",
+      "dst": "web/src/types/finance",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/pages/Finance/TaskTraceViewer.tsx",
+      "dst": "web/src/services/api/financeAnalysis",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/pages/Finance/TaskTraceViewer.tsx",
+      "dst": "web/src/utils/domainHelper",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/pages/Finance/FactCheckViewer.tsx",
+      "dst": "web/src/hooks/useDomainRoute",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/pages/Finance/FactCheckViewer.tsx",
+      "dst": "web/src/services/apiService",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/pages/Finance/FinancialAnalysisResult.tsx",
+      "dst": "web/src/hooks/useDomainRoute",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/pages/Finance/FinancialAnalysisResult.tsx",
+      "dst": "web/src/hooks/useTaskPolling",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/pages/Finance/FinancialAnalysisResult.tsx",
+      "dst": "web/src/services/apiService",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/pages/Finance/FinancialAnalysisResult.tsx",
+      "dst": "web/src/types/finance",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/pages/Finance/EvidenceExplorer.tsx",
+      "dst": "web/src/hooks/useDomainRoute",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/pages/Finance/EvidenceExplorer.tsx",
+      "dst": "web/src/services/apiService",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/pages/Finance/EvidenceExplorer.tsx",
+      "dst": "web/src/types/finance",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/pages/Finance/UsdPurchasingPowerTracker.tsx",
+      "dst": "web/src/services/api/client",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/pages/Finance/FinancialAnalysis.tsx",
+      "dst": "web/src/hooks/useDomainRoute",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/pages/Finance/FinancialAnalysis.tsx",
+      "dst": "web/src/services/apiService",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/pages/Finance/RefreshSchedule.tsx",
+      "dst": "web/src/hooks/useDomainRoute",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "web/src/pages/Finance/RefreshSchedule.tsx",
+      "dst": "web/src/services/apiService",
+      "lang": "Lang.TYPESCRIPT",
+      "kind": "import"
+    },
+    {
+      "src": "compose:archive/News-Intelligence-Archive/pre_migration_20260221/docker-compose.yml",
+      "dst": "postgres",
+      "lang": "Lang.YAML",
+      "kind": "depends_on"
+    },
+    {
+      "src": "compose:archive/News-Intelligence-Archive/pre_migration_20260221/docker-compose.yml",
+      "dst": "api",
+      "lang": "Lang.YAML",
+      "kind": "depends_on"
+    },
+    {
+      "src": "compose:archive/News-Intelligence-Archive/archive_20260221/old_configs/docker-compose-robust-nas.yml",
+      "dst": "api",
+      "lang": "Lang.YAML",
+      "kind": "depends_on"
+    },
+    {
+      "src": "compose:archive/News-Intelligence-Archive/archive_20260221/old_configs/docker-compose-backup.yml",
+      "dst": "api",
+      "lang": "Lang.YAML",
+      "kind": "depends_on"
+    },
+    {
+      "src": "compose:archive/News-Intelligence-Archive/archive_20260221/News_Intelligence_PRE_CONSOLIDATION_BACKUP_20251022_124940/backups/20251003_185529/docker-compose.yml",
+      "dst": "postgres",
+      "lang": "Lang.YAML",
+      "kind": "depends_on"
+    },
+    {
+      "src": "compose:archive/News-Intelligence-Archive/archive_20260221/News_Intelligence_PRE_CONSOLIDATION_BACKUP_20251022_124940/backups/20251003_185529/docker-compose.yml",
+      "dst": "api",
+      "lang": "Lang.YAML",
+      "kind": "depends_on"
+    },
+    {
+      "src": "compose:archive/News-Intelligence-Archive/archive_20260221/News_Intelligence_PRE_CONSOLIDATION_BACKUP_20251022_124940/backups/20250928_201450/docker-compose.yml",
+      "dst": "api",
+      "lang": "Lang.YAML",
+      "kind": "depends_on"
+    }
+  ]
+}

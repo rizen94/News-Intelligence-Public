@@ -2531,7 +2531,7 @@ async def process_new_storyline_comprehensive(domain: str, storyline_id: int, sc
     Generates summary, timeline, and full breakdown.
     """
     try:
-        from domains.storyline_management.routes.storyline_management import (
+        from domains.storyline_management.services.rag_analysis_service import (
             process_storyline_rag_analysis,
         )
         from domains.storyline_management.services.storyline_service import StorylineService

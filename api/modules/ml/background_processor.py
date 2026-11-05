@@ -13,7 +13,8 @@ from queue import Queue, Empty
 import json
 
 from .summarization_service import MLSummarizationService
-from shared.pipeline_state_constants import ML_COMPLETED, ML_FAILED, ML_PENDING, ML_RUNNING
+from shared.pipeline_state_constants import ML_COMPLETED, ML_FAILED, ML_MAX_RETRY_COUNT, ML_PENDING, ML_RUNNING
+from shared.database.connection import get_db_connect_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -195,8 +196,38 @@ class BackgroundMLProcessor:
                 logger.warning(
                     "ML task %s deferred (Ollama pressure): %s", queue_id, e
                 )
-                self._update_article_processing_status(article_id, ML_PENDING, str(e))
-                self._update_queue_status(queue_id, ML_PENDING, error=str(e))
+                
+                # Enforce retry cap: track attempts and permanently fail after N tries
+                with psycopg2.connect(**get_db_connect_kwargs()) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "UPDATE articles SET ml_retry_count = COALESCE(ml_retry_count, 0) + 1 WHERE id = %s RETURNING ml_retry_count",
+                            (article_id,),
+                        )
+                        retry_count = cur.fetchone()[0]
+                
+                if retry_count >= ML_MAX_RETRY_COUNT:
+                    # Permanently failed — stop all processing paths
+                    self._update_article_processing_status(
+                        article_id, "failed", str(e),
+                    )
+                    
+                    with psycopg2.connect(**get_db_connect_kwargs()) as conn:
+                        conn.execute(
+                            "DELETE FROM ml_processing_queue WHERE queue_id = %s AND status = 'queued'",
+                            (queue_id,),
+                        )
+                    logger.warning(
+                        "ML task %s permanently failed after %d Ollama retries",
+                        queue_id, retry_count,
+                    )
+                else:
+                    # Below threshold — reset for re-enqueueing on next cycle
+                    self._update_article_processing_status(article_id, ML_PENDING)
+                    logger.info(
+                        "ML task %s deferred (Ollama pressure), attempt %d/%d",
+                        queue_id, retry_count, ML_MAX_RETRY_COUNT,
+                    )
                 return
 
             logger.error(f"Error processing ML task {queue_id}: {e}")
@@ -258,7 +289,7 @@ class BackgroundMLProcessor:
             model_name = self.ml_service.model_name
         
         try:
-            with psycopg2.connect(**self.db_config) as conn:
+            with psycopg2.connect(**get_db_connect_kwargs()) as conn:
                 with conn.cursor() as cursor:
                     cursor.execute("""
                         INSERT INTO ml_processing_queue 
@@ -280,7 +311,7 @@ class BackgroundMLProcessor:
     def get_processing_status(self, article_id: int = None) -> dict[str, Any]:
         """Get processing status for articles or specific article"""
         try:
-            with psycopg2.connect(**self.db_config) as conn:
+            with psycopg2.connect(**get_db_connect_kwargs()) as conn:
                 with conn.cursor() as cursor:
                     if article_id:
                         cursor.execute("""
@@ -346,7 +377,7 @@ class BackgroundMLProcessor:
     def get_queue_status(self) -> dict[str, Any]:
         """Get current queue status"""
         try:
-            with psycopg2.connect(**self.db_config) as conn:
+            with psycopg2.connect(**get_db_connect_kwargs()) as conn:
                 with conn.cursor() as cursor:
                     cursor.execute("""
                         SELECT 
@@ -389,7 +420,7 @@ class BackgroundMLProcessor:
     def _get_queued_tasks(self) -> list[dict]:
         """Get queued tasks from database"""
         try:
-            with psycopg2.connect(**self.db_config) as conn:
+            with psycopg2.connect(**get_db_connect_kwargs()) as conn:
                 with conn.cursor() as cursor:
                     cursor.execute("""
                         SELECT queue_id, article_id, operation_type, model_name, priority
@@ -423,7 +454,7 @@ class BackgroundMLProcessor:
     def _get_article_data(self, article_id: int) -> Optional[dict]:
         """Get article data from database"""
         try:
-            with psycopg2.connect(**self.db_config) as conn:
+            with psycopg2.connect(**get_db_connect_kwargs()) as conn:
                 with conn.cursor() as cursor:
                     cursor.execute("""
                         SELECT id, title, content, url, source
@@ -449,7 +480,7 @@ class BackgroundMLProcessor:
     def _update_article_processing_status(self, article_id: int, status: str, error: str = None):
         """Update article processing status"""
         try:
-            with psycopg2.connect(**self.db_config) as conn:
+            with psycopg2.connect(**get_db_connect_kwargs()) as conn:
                 with conn.cursor() as cursor:
                     if status == ML_RUNNING:
                         cursor.execute("""
@@ -474,7 +505,7 @@ class BackgroundMLProcessor:
                                    result: dict, duration: float, model_name: str):
         """Update article with ML processing results"""
         try:
-            with psycopg2.connect(**self.db_config) as conn:
+            with psycopg2.connect(**get_db_connect_kwargs()) as conn:
                 with conn.cursor() as cursor:
                     # Update basic processing info
                     cursor.execute("""
@@ -510,7 +541,7 @@ class BackgroundMLProcessor:
                             model_name: str, start_time: float):
         """Log processing start to database"""
         try:
-            with psycopg2.connect(**self.db_config) as conn:
+            with psycopg2.connect(**get_db_connect_kwargs()) as conn:
                 with conn.cursor() as cursor:
                     cursor.execute("""
                         INSERT INTO ml_processing_logs 
@@ -527,7 +558,7 @@ class BackgroundMLProcessor:
                                  duration: float, result: dict):
         """Log processing completion to database"""
         try:
-            with psycopg2.connect(**self.db_config) as conn:
+            with psycopg2.connect(**get_db_connect_kwargs()) as conn:
                 with conn.cursor() as cursor:
                     cursor.execute("""
                         UPDATE ml_processing_logs 
@@ -552,7 +583,7 @@ class BackgroundMLProcessor:
     def _update_queue_status(self, queue_id: int, status: str, result: dict = None, error: str = None):
         """Update queue item status"""
         try:
-            with psycopg2.connect(**self.db_config) as conn:
+            with psycopg2.connect(**get_db_connect_kwargs()) as conn:
                 with conn.cursor() as cursor:
                     if status == ML_RUNNING:
                         cursor.execute("""

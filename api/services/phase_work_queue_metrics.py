@@ -220,6 +220,7 @@ def _queue_entity_extraction() -> PhaseWorkQueue:
         NOT EXISTS (SELECT 1 FROM {schema}.article_entities ae WHERE ae.article_id = a.id)
         AND COALESCE((a.metadata #>> '{{pipeline_skip,entity_extraction_skip}}')::boolean, false) = false
         AND a.content IS NOT NULL AND LENGTH(a.content) > 100
+        AND a.enrichment_status != 'pull_deferred'
         AND (
             LENGTH(a.content) >= 500
             OR a.created_at < NOW() - INTERVAL '2 hours'
@@ -347,6 +348,7 @@ def _queue_unified_intake_extraction() -> PhaseWorkQueue:
             false
         ) = false
         AND a.content IS NOT NULL AND LENGTH(a.content) > 100
+        AND a.enrichment_status != 'pull_deferred'
         AND ({ml_ready})
         AND (
             LENGTH(a.content) >= 500

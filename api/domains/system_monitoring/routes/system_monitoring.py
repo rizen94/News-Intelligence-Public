@@ -695,11 +695,11 @@ def _build_monitoring_overview_sync(request: Request) -> dict[str, Any]:
                 for _domain_key, schema in pairs:
                     parts.append(
                         f"SELECT "
-                        f"  COUNT(*) FILTER (WHERE enrichment_status = 'pending')    AS pending,"
-                        f"  COUNT(*) FILTER (WHERE enrichment_status = 'failed')     AS failed,"
-                        f"  COUNT(*) FILTER (WHERE enrichment_status IN ('enriched','partial')) AS partial,"
-                        f"  COUNT(*) FILTER (WHERE enrichment_status NOT IN ('pending','failed','enriched','partial')) AS other,"
-                        f"  COUNT(*)                                                   AS total "
+                        f"  COUNT(*) FILTER (WHERE enrichment_status IN ('pending','pull_deferred')) AS pending,"
+                        f"  COUNT(*) FILTER (WHERE enrichment_status = 'failed')                 AS failed,"
+                        f"  COUNT(*) FILTER (WHERE enrichment_status IN ('enriched','partial'))    AS partial,"
+                        f"  COUNT(*) FILTER (WHERE enrichment_status NOT IN ('pending','pull_deferred','failed','enriched','partial')) AS other,"
+                        f"  COUNT(*)                                                                 AS total "
                         f"FROM {schema}.articles"
                     )
                 sql = " UNION ALL ".join(parts)
@@ -2177,57 +2177,30 @@ def get_system_status():
                     )
                     recent_errors = cur.fetchone()[0]
 
-                    # Bounded deduplication metrics — enforce statement timeout to prevent the
-                    # UNION-ALL cross-silo GROUP BY queries from hanging when the database is
-                    # under heavy load.  Fallback: leave dedup stats at zero (the catch block
-                    # will set db_status="degraded" but not blow up the whole endpoint).
-                    cur.execute("SET LOCAL statement_timeout = '8s'")
+                    # ── Persistent dedup metrics (no live cross-silo UNION queries) ───────
+                    articles_with_hash = 0
+                    url_duplicates = 0
+                    content_duplicates = 0
 
-                    # Get deduplication metrics from all registry silos
-                    sub_hash = " + ".join(
-                        f"(SELECT COUNT(*) FROM {s}.articles WHERE content_hash IS NOT NULL AND enrichment_status != 'failed')"
-                        for s in sch_list
-                    )
-                    cur.execute(f"SELECT {sub_hash} as articles_with_hash")
-                    hash_result = cur.fetchone()
-                    articles_with_hash = hash_result[0] if hash_result and hash_result[0] else 0
-
-                    union_urls = " UNION ALL ".join(
-                        f"SELECT url FROM {s}.articles WHERE enrichment_status != 'failed'" for s in sch_list
-                    )
-                    cur.execute(
-                        f"""
-                        SELECT COUNT(*) FROM (
-                            SELECT url FROM (
-                                {union_urls}
-                            ) u
-                            GROUP BY url
-                            HAVING COUNT(*) > 1
-                        ) dup_urls
-                    """
-                    )
-                    url_result = cur.fetchone()
-                    url_duplicates = url_result[0] if url_result and url_result[0] else 0
-
-                    union_ch = " UNION ALL ".join(
-                        f"SELECT content_hash FROM {s}.articles WHERE content_hash IS NOT NULL AND enrichment_status != 'failed'"
-                        for s in sch_list
-                    )
-                    cur.execute(
-                        f"""
-                        SELECT COUNT(*) FROM (
-                            SELECT content_hash FROM (
-                                {union_ch}
-                            ) u
-                            GROUP BY content_hash
-                            HAVING COUNT(*) > 1
-                        ) dup_hashes
-                    """
-                    )
-                    content_result = cur.fetchone()
-                    content_duplicates = (
-                        content_result[0] if content_result and content_result[0] else 0
-                    )
+                    try:
+                        cur.execute("SET LOCAL statement_timeout = '3s'")
+                        sub_today_silos = ", ".join(f"'{s}'" for s in sch_list)
+                        cur.execute(
+                            f"""
+                            SELECT
+                                COALESCE(SUM(articles_with_hash), 0),
+                                COALESCE(SUM(url_duplicates), 0),
+                                COALESCE(SUM(content_hash_duplicates), 0)
+                            FROM intelligence.dedup_metrics
+                            WHERE metric_date = CURRENT_DATE
+                              AND silo IN ({sub_today_silos})
+                            """,
+                        )
+                        agg = cur.fetchone()
+                        if agg and agg[0]:
+                            articles_with_hash, url_duplicates, content_duplicates = (int(agg[i]) for i in range(3))
+                    except Exception as svc:
+                        logger.warning("dedup_metrics read degraded: %s", svc)
 
                     cur.execute(
                         """

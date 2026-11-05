@@ -247,7 +247,7 @@ def get_backlog_status() -> dict[str, Any]:
                 cur.execute(
                     f"""
                     SELECT COUNT(*) FROM {schema}.articles
-                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
+                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed', 'pull_deferred'))
                       AND COALESCE(enrichment_attempts, 0) < 3
                       AND url IS NOT NULL AND url != ''
                     """
@@ -256,7 +256,7 @@ def get_backlog_status() -> dict[str, Any]:
                 cur.execute(
                     f"""
                     SELECT COUNT(*),
-                           COUNT(*) FILTER (WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed')) AND COALESCE(enrichment_attempts, 0) < 3 AND url IS NOT NULL AND url != '')
+                           COUNT(*) FILTER (WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed', 'pull_deferred')) AND COALESCE(enrichment_attempts, 0) < 3 AND url IS NOT NULL AND url != '')
                     FROM {schema}.articles
                     WHERE created_at >= NOW() - INTERVAL '24 hours'
                     """

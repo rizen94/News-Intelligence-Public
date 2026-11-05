@@ -18,10 +18,11 @@ See docs/DOMAIN_EXTENSION_TEMPLATE.md and api/config/domains/README.md.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
-from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
+from api.config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 try:
     import yaml
@@ -32,7 +33,11 @@ logger = logging.getLogger(__name__)
 
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "config" / "domains"
 
-from shared.domain_registry_constants import RESERVED_SCHEMA_NAMES  # noqa: E402
+from .domain_registry_constants import RESERVED_SCHEMA_NAMES, PERMITTED_SCHEMA_NAMES  # noqa: E402
+from .domain_registry_constants import validate_schema_name  # noqa: E402
+
+
+_VALID_SCHEMA_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 def _strip_doc_keys(data: dict[str, Any]) -> dict[str, Any]:
@@ -113,6 +118,19 @@ def _load_domain_entries_from_db() -> list[dict[str, Any]] | None:
     return out
 
 
+def _validate_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """Validate a domain entry's schema_name before returning to callers."""
+    sch = str(entry.get("schema_name", "")).strip()
+    try:
+        validated = validate_schema_name(sch)
+        entry["schema_name"] = validated
+    except ValueError as e:
+        logger.error("domain_registry: rejecting domain %r — invalid schema name: %s", entry.get("domain_key"), e)
+        # Do not expose unvalidated schemas — skip this domain entirely.
+        return {}
+    return entry
+
+
 def get_domain_entries() -> list[dict[str, Any]]:
     """
     All domains: **DB first**, merged with YAML for matching ``domain_key``.
@@ -122,10 +140,19 @@ def get_domain_entries() -> list[dict[str, Any]]:
     yaml_docs = _load_yaml_domain_files()
     yaml_by_key = {d["domain_key"]: d for d in yaml_docs if d.get("domain_key")}
 
+    # Validate YAML docs early — reject domains with bad schema names before merge.
+    valid_yaml: list[dict[str, Any]] = []
+    for doc in yaml_docs:
+        v = _validate_entry(doc)
+        if v and v.get("schema_name"):
+            valid_yaml.append(v)
+
     if db_rows is not None and len(db_rows) > 0:
         by_key: dict[str, dict[str, Any]] = {}
         for e in db_rows:
-            by_key[e["domain_key"]] = dict(e)
+            v = _validate_entry(dict(e))
+            if v and v.get("schema_name"):
+                by_key[e["domain_key"]] = v
         for k, y in yaml_by_key.items():
             if k not in by_key:
                 continue
@@ -134,13 +161,13 @@ def get_domain_entries() -> list[dict[str, Any]]:
         return sorted(by_key.values(), key=lambda x: (x.get("display_order", 99), x["domain_key"]))
 
     # Bootstrap: no DB rows — use YAML-only (tests / pre-migration dev).
-    if not yaml_docs:
+    if not valid_yaml:
         logger.warning(
             "domain_registry: public.domains is empty and no active YAML domains; registry is empty"
         )
         return []
     logger.info("domain_registry: using YAML-only domain list (public.domains empty or unreachable)")
-    return sorted(yaml_docs, key=lambda x: (x.get("display_order", 99), x["domain_key"]))
+    return sorted(valid_yaml, key=lambda x: (x.get("display_order", 99), x["domain_key"]))
 
 
 def first_active_domain_key(fallback: str = "politics") -> str:
@@ -175,12 +202,22 @@ def resolve_domain_schema(domain_key: str) -> str:
 
     Prefer registry YAML / ``public.domains`` (``domain_key`` and ``schema_name`` normally align).
     Fallback: ``hyphen → underscore`` for hyphenated URL keys.
+    Returns a validated schema name or the domain key if no match found in the registry.
     """
     key = str(domain_key).strip()
     for e in get_domain_entries():
         if e["domain_key"] == key:
             return str(e["schema_name"])
-    return key.replace("-", "_")
+    # Fallback: hyphen-to-underscore — validate before returning.
+    fallback = key.replace("-", "_")
+    try:
+        return validate_schema_name(fallback)
+    except ValueError:
+        logger.warning(
+            "resolve_domain_schema: %r is not a permitted schema name; returning as-is (will fail on SQL)",
+            fallback,
+        )
+        return fallback
 
 
 def get_active_domain_keys() -> tuple[str, ...]:

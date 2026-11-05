@@ -8,6 +8,7 @@ import json
 from typing import Optional
 from datetime import datetime
 import psycopg2
+from shared.database.connection import get_db_connect_kwargs
 
 from .summarization_service import MLSummarizationService
 from .content_analyzer import ContentAnalyzer
@@ -171,11 +172,11 @@ class MLPipeline:
     def _get_article(self, article_id: int) -> Optional[dict]:
         """Get article from database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cursor = conn.cursor()
             
             cursor.execute("""
-                SELECT id, title, content, url, source, published_at, category, language
+                SELECT id, title, content, url, source, published_at, category, language, summary
                 FROM articles 
                 WHERE id = %s
             """, (article_id,))
@@ -190,7 +191,8 @@ class MLPipeline:
                     "source": row[4],
                     "published_at": row[5],
                     "category": row[6],
-                    "language": row[7]
+                    "language": row[7],
+                    "summary": row[8],  # RSS description/summary for fallback scoring
                 }
             
             conn.close()
@@ -233,10 +235,14 @@ class MLPipeline:
         try:
             cleaned_content = content_analysis.get("cleaning_result", {}).get("cleaned_content", article["content"])
             
+            # Use RSS summary as fallback when main content is too short or empty
+            fallback = article.get("summary") or None
+            
             quality_score = self.quality_scorer.score_content(
                 cleaned_content, 
                 article["title"], 
-                content_analysis.get("metadata", {})
+                content_analysis.get("metadata", {}),
+                fallback_content=fallback
             )
             
             return quality_score
@@ -283,7 +289,7 @@ class MLPipeline:
     def _store_ml_results(self, article_id: int, content_analysis: dict, quality_score: dict, ml_results: dict) -> dict:
         """Store ML results in database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cursor = conn.cursor()
             
             # Prepare ML data for storage
@@ -355,7 +361,7 @@ class MLPipeline:
     def get_processing_status(self) -> dict:
         """Get overall processing status"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cursor = conn.cursor()
             
             # Get processing statistics

@@ -446,7 +446,7 @@ Create a narrative that shows how these individual story elements combine to tel
                 return min_date.strftime("%B %d, %Y")
             else:
                 return f"{min_date.strftime('%B %d, %Y')} - {max_date.strftime('%B %d, %Y')}"
-        except:
+        except Exception:
             return "Unknown"
 
     def _mark_storyline_ml_skipped(self, storyline_id: int, *, schema: str = "public") -> None:

@@ -50,12 +50,13 @@ class AutomatedCollection:
         logger.info("Triggering ML processing...")
 
         try:
-            # Get count of raw articles using direct database connection
+            # Get count of raw articles using standard DB connection
             import psycopg2
-
-            conn = psycopg2.connect(
-                host="postgres", database="news_system", user="newsapp", password="newsapp_password"
-            )
+            from shared.database.connection import get_db_connect_kwargs
+            
+            kwargs = get_db_connect_kwargs()
+            conn = psycopg2.connect(**kwargs)
+            cursor = conn.cursor()
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM articles WHERE processing_status = 'raw'")
             raw_count = cursor.fetchone()[0]

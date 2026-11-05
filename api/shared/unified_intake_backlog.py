@@ -59,6 +59,7 @@ def sql_unified_intake_base_eligible(alias: str = "a") -> str:
         ) = false
         AND {alias}.content IS NOT NULL
         AND LENGTH({alias}.content) > 100
+        AND {alias}.enrichment_status != 'pull_deferred'
         AND ({ml_ready})
         AND (
             LENGTH({alias}.content) >= 500

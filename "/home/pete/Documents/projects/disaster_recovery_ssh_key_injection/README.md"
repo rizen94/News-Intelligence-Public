@@ -1,0 +1,172 @@
+# Disaster Recovery — Cloud-Init SSH Key Injection
+
+## Purpose
+
+Standalone recovery script that generates a cloud-init ISO with SSH public key injection and attaches it to a Libvirt VM. Used to restore access when password-based auth is lost or SSH keys are compromised.
+
+**Independent of News Intelligence.** Designed for homelab VM recovery workflows.
+
+## Prerequisites (PopOS)
+
+```bash
+# Install once
+sudo apt-get update && sudo apt-get install -y \
+  qemu-utils genisoimage cloud-image-utils libvirt-clients bridge-utils \
+  python3-pexpect sshpass
+
+# Verify
+which cloud-localds virsh cloud-img qemu-img pexpect
+```
+
+## Directory Layout
+
+```
+disaster_recovery_ssh_key_injection/
+├── recovery_ssh_key_injection.sh   # Main recovery script
+├── templates/
+│   ├── user-data                   # Cloud-init config template
+│   └── meta-data                   # Instance metadata
+├── artifacts/                      # Generated ISOs (git-ignored)
+├── README.md                       # This file
+└── test_recovery.sh                # End-to-end smoke test
+```
+
+## Quick Start
+
+### 1. Generate key pair (if missing)
+
+```bash
+ssh-keygen -t ed25519 -C "disaster-recovery" -f ~/.ssh/id_dr_recovery \
+  -N "" -q
+```
+
+### 2. Run the recovery script
+
+```bash
+chmod +x recovery_ssh_key_injection.sh
+
+./recovery_ssh_key_injection.sh \
+  --vm-name ni-dev-vm1 \
+  --iso-path /tmp/cloud-init-recovery.iso \
+  --ssh-key ~/.ssh/id_dr_recovery.pub \
+  --user ubuntu \
+  --attach-later          # Skip auto-inject; just generate ISO
+```
+
+### 3. (Optional) Auto-inject and verify
+
+```bash
+./recovery_ssh_key_injection.sh \
+  --vm-name ni-dev-vm1 \
+  --iso-path /tmp/cloud-init-recovery.iso \
+  --ssh-key ~/.ssh/id_dr_recovery.pub \
+  --user ubuntu \
+  --auto-inject \
+  --verify-delay 60       # seconds to wait before SSH test
+```
+
+## How It Works
+
+```
+┌─────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────┐
+│ 1. Locate   │     │ 2. Generate  │     │ 3. Build ISO │     │ 4. Inject│
+│ SSH key     │────▶│ user-data    │────▶│ (cidata.vmdk)│────▶│ to VM    │
+│             │     │ + meta-data  │     │              │     │          │
+└─────────────┘     └──────────────┘     └──────────────┘     └──────────┘
+                                                       │
+                                                       ▼
+                                               ┌──────────────┐
+                                               │ 5. Verify    │
+                                               │ SSH access   │
+                                               └──────────────┘
+```
+
+### Step-by-step detail:
+
+1. **Locate SSH key** — Uses `~/.ssh/id_ed25519.pub` or user-provided key
+2. **Generate cloud-init files** — Creates `user-data` (cloud-config v2) with the public key injected into `ssh_authorized_keys`
+3. **Build ISO** — Uses `cloud-localds` (preferred) or `genisoimage` to create a valid cidata ISO
+4. **Inject into VM** — Runs `virsh attach-device --config <vm> <device.xml>` to mount the ISO as a secondary CD-ROM
+5. **Verify SSH** — Waits for port 22 to open, then tests key-based login
+
+## Cloud-Init Format
+
+The `user-data` uses **cloud-config v2** format (Ubuntu 22.04+):
+
+```yaml
+#cloud-config
+password: ubuntu              # fallback password (keep if needed)
+chpasswd:
+  expire: false
+ssh_pw_auth: true
+hostname: ni-dev
+users:
+  - name: ubuntu
+    groups: [sudo, wheel, docker]
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    # SSH KEY INJECTED HERE
+    ssh_authorized_keys:
+      - <ssh-public-key-content>
+runcmd:
+  - systemctl enable --now ssh
+  - apt-get update -qq && apt-get install -y -qq qemu-guest-agent
+network:
+  version: 2
+  ethernets:
+    ens3:
+      dhcp4: true
+```
+
+## Troubleshooting
+
+### VM doesn't pick up cloud-init ISO
+
+1. Check the ISO is attached at boot:
+   ```bash
+   virsh dumpxml <vm> | grep -i cdrom
+   # Should show the cidata ISO as a CD-ROM device
+   ```
+
+2. For live guests (running), use `--live` instead of `--config`:
+   ```bash
+   sudo virsh attach-device --live <vm> <device.xml>
+   ```
+
+3. Check cloud-init logs inside the VM:
+   ```bash
+   ssh ubuntu@<vm-ip> "cat /var/log/cloud-init-output.log"
+   ```
+
+### SSH port not opening after injection
+
+```bash
+# Wait for SSH (up to 5 minutes)
+for i in $(seq 1 30); do
+  if nc -z -w2 <vm-ip> 22; then echo "SSH UP"; break; fi
+  sleep 10
+done
+```
+
+### ISO not recognized by cloud-init
+
+- Ensure volume ID is `cidata` (case-sensitive for some guests)
+- ISO must be **FAT32** or contain a file named `CIDATA` or `cidata` in root
+
+## Storing on Widow (Safe Storage)
+
+Once the script works, push to safe storage:
+
+```bash
+# On PopOS after testing
+rsync -avz \
+  disaster_recovery_ssh_key_injection/ \
+  pete@192.168.93.101:/opt/disaster-recovery/
+```
+
+## Notes
+
+- The script uses `ssh-keygen` for key generation and `cloud-localds` for ISO creation
+- Generated artifacts are in the `artifacts/` directory (gitignored)
+- For production use, add signing/verification of the script itself
+- Test regularly against a non-production VM before relying on it in emergencies

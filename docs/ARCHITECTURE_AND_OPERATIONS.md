@@ -3,7 +3,7 @@
 **Version:** v8.0 (stable)  
 **Last updated:** 2026-06-06
 
-**Related:** [PROJECT_STATUS.md](../PROJECT_STATUS.md) · [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md) · [PIPELINE_AND_AUTOMATION.md](PIPELINE_AND_AUTOMATION.md) · [SETUP_ENV_AND_RUNTIME.md](SETUP_ENV_AND_RUNTIME.md) · [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md)
+**Related:** [PROJECT_STATUS.md](../PROJECT_STATUS.md) · [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md) · [PIPELINE_AND_AUTOMATION.md](PIPELINE_AND_AUTOMATION.md) · [SETUP_ENV_AND_RUNTIME.md](SETUP_ENV_AND_RUNTIME.md) · [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md) · [TROUBLESHOOTING.md](TROUBLESHOOTING.md) · [WIDOW_DISASTER_RECOVERY.md](WIDOW_DISASTER_RECOVERY.md)
 
 ---
 
@@ -75,17 +75,19 @@ cd /home/pete/Documents/projects/News\ Intelligence
 | Port | `5432` |
 | Database | `news_intel` |
 | User | `newsapp` |
-| Password | Widow `configs/.env` (`DB_PASSWORD`) or `.db_password_widow` |
+| Password | `DB_PASSWORD` from project-root `.env` or `configs/.env` |
 
 **Code single source of truth:** `api/shared/database/connection.py`  
 **Schema:** `api/database/migrations/` — see [DATABASE.md](DATABASE.md)
 
-**Legacy emergency rollback (NAS tunnel only — do not use for normal ops):**
+### **Legacy emergency rollback (NAS tunnel only — do not use for normal ops)**
 
 1. Start PostgreSQL on NAS
 2. In `.env`: `DB_HOST=localhost`, `DB_PORT=5433`, `DB_NAME=news_intelligence` (legacy name)
 3. Run `./scripts/setup_nas_ssh_tunnel.sh`
 4. Restart app
+
+> **Note:** This is an emergency-only path. Normal ops use local Postgres on Widow. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#database-connection-issues) for connection diagnostics.
 
 ---
 
@@ -184,7 +186,7 @@ When the API is running (via systemd on Widow or PopOS), the following run **wit
 
 **API won't start**
 
-- Check `.env` has `DB_PASSWORD` or `.db_password_widow` exists
+- Check `.env` has `DB_PASSWORD` set
 - Confirm production tree at `/opt/news-intelligence` vs dev tree drift
 
 **Widow RSS worker stopped**
@@ -192,3 +194,11 @@ When the API is running (via systemd on Widow or PopOS), the following run **wit
 ```bash
 ssh widow "sudo systemctl restart newsplatform-secondary"
 ```
+
+---
+
+## Disaster Recovery
+
+For full-host catastrophic failure (hardware loss, OS corruption), see [WIDOW_DISASTER_RECOVERY.md](WIDOW_DISASTER_RECOVERY.md) — a step-by-step runbook covering diagnosis, rebuild, backup restore, and post-recovery verification. This section is intentionally omitted here to keep ARCHITECTURE_AND_OPERATIONS focused on normal operations.
+
+---

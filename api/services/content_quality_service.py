@@ -107,6 +107,7 @@ class ContentQualityService:
         return {
             "quality_score": round(quality_score, 4),
             "quality_tier": tier,
+            "quality_version": "deep_analysis",
             "scores": {k: round(v, 4) for k, v in scores.items()},
             "flags": flags,
             "recommendation": recommendation,
@@ -329,13 +330,15 @@ def update_article_quality_in_db(
         conn = get_db_connection()
         if not conn:
             return False
+        quality_version = result.get("quality_version")
         with conn.cursor() as cur:
             cur.execute(
                 f"""
                 UPDATE {schema}.articles
                 SET quality_tier = %s, quality_scores = %s,
                     clickbait_probability = %s, fact_density = %s,
-                    source_reliability = %s, quality_flags = %s
+                    source_reliability = %s, quality_flags = %s,
+                    quality_version = %s
                 WHERE id = %s
                 """,
                 (
@@ -345,6 +348,7 @@ def update_article_quality_in_db(
                     (result.get("scores") or {}).get("fact_density"),
                     (result.get("scores") or {}).get("source_quality"),
                     (result.get("flags") or []),
+                    quality_version,
                     article_id,
                 ),
             )

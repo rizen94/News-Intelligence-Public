@@ -50,13 +50,9 @@ rsync -avz --progress \
   --exclude='infrastructure/cron.d/' \
   "${PROJECT_DIR}/" "${WIDOW_USER}@${WIDOW_HOST}:${REMOTE_DIR}/"
 
-# Copy DB password if present (for .env and .pgpass on Widow)
-if [ -f "$PROJECT_DIR/.db_password_widow" ]; then
-  scp "$PROJECT_DIR/.db_password_widow" "${WIDOW_USER}@${WIDOW_HOST}:${REMOTE_DIR}/"
-  echo "✅ .db_password_widow copied"
-else
-  echo "⚠️  .db_password_widow not found — run setup manually and set DB_PASSWORD in .env"
-fi
+# DB credentials are now sourced from .env on Widow at runtime.
+# The legacy .db_password_widow file was removed in the credential-sourcing migration.
+echo "DB credentials will be read from .env at runtime."
 
 echo ""
 echo "✅ Code deployed. Running setup on Widow..."
@@ -71,11 +67,18 @@ set -euo pipefail
 cd ${REMOTE_DIR}
 export PYTHONPATH=api
 
-if [ -f .db_password_widow ]; then
-  export PGPASSWORD="\$(cat .db_password_widow | tr -d '\\n')"
-elif [ -f .env.public_demo ]; then
-  export PGPASSWORD="\$(grep -E '^DB_PASSWORD=' .env.public_demo | cut -d= -f2- | tr -d '\"' | tr -d \"'\")"
+# Source .env for DB credentials (credential-sourcing migration).
+if [ ! -f .env ]; then
+  echo "❌ .env not found — cannot set DB_PASSWORD. Add it before retrying."
+  exit 1
 fi
+export $(grep -v '^#' .env | xargs) || true
+DB_PASSWORD="${DB_PASSWORD:-}"
+if [ -z "$DB_PASSWORD" ]; then
+  echo "❌ DB_PASSWORD not set in .env. Add it before retrying."
+  exit 1
+fi
+export PGPASSWORD="$DB_PASSWORD"
 
 echo "Schema audit (politics/finance)..."
 python3 api/scripts/audit_politics_finance_schemas.py --strict || exit 1

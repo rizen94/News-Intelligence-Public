@@ -4,7 +4,7 @@ Run entity consolidation: populate aliases from article mentions, then merge
 duplicate canonicals (e.g. Donald Trump, Donald J Trump, Trump, King Trump)
 into a single primary entity per person/org. Variants become aliases.
 
-From project root (DB credentials in local .env or .db_password_widow):
+# DB credentials are sourced from .env at script entry. The legacy .db_password_widow file was removed in the credential-sourcing migration.
   PYTHONPATH=api uv run python scripts/run_entity_consolidation.py [--domain DOMAIN] [--confidence 0.6] [--dry-run]
 """
 
@@ -13,7 +13,7 @@ import os
 import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-# Load local .env and .db_password_widow so DB credentials work when run locally (DB may be on Widow)
+# Load local .env (credential-sourcing migration) so DB credentials work when run locally (DB may be on Widow)
 if os.path.isfile(os.path.join(ROOT, ".env")):
     with open(os.path.join(ROOT, ".env")) as f:
         for line in f:
@@ -22,9 +22,8 @@ if os.path.isfile(os.path.join(ROOT, ".env")):
                 key, _, val = line.partition("=")
                 if key.strip() in ("DB_PASSWORD", "DB_HOST", "DB_PORT", "DB_NAME", "DB_USER"):
                     os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
-if not os.environ.get("DB_PASSWORD") and os.path.isfile(os.path.join(ROOT, ".db_password_widow")):
-    with open(os.path.join(ROOT, ".db_password_widow")) as f:
-        os.environ.setdefault("DB_PASSWORD", f.read().splitlines()[0].strip())
+
+    # DB credentials are sourced from .env at script entry. The legacy .db_password_widow file was removed in the credential-sourcing migration.
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "api"))
 

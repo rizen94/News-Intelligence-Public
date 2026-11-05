@@ -10,6 +10,7 @@ from typing import Optional
 from datetime import datetime, timedelta
 import psycopg2
 from collections import defaultdict, Counter
+from shared.database.connection import get_db_connect_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class StorylineTracker:
             Dictionary containing topic cloud and breaking news summary
         """
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cursor = conn.cursor()
             
             # Get recent articles with ML processing
@@ -101,7 +102,7 @@ class StorylineTracker:
             Dictionary containing comprehensive story dossier
         """
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cursor = conn.cursor()
             
             # Get all articles related to this story
@@ -159,7 +160,7 @@ class StorylineTracker:
             Dictionary containing story evolution timeline
         """
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cursor = conn.cursor()
             
             cutoff_date = datetime.now() - timedelta(days=days)

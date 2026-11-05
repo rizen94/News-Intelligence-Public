@@ -494,6 +494,9 @@ def context_centric_status(
         raise HTTPException(status_code=503, detail="Database unavailable")
     try:
         with conn.cursor() as cur:
+            # Protect all queries in this cursor from indefinite blocking.
+            cur.execute("SET LOCAL statement_timeout = '3s'")
+
             if domain_key:
                 contexts = _safe_count_params(
                     cur,
@@ -1083,22 +1086,37 @@ def _list_contexts_sync(
     where_frag, base_params = _contexts_list_where_params(domain_key, source_type)
     with get_ui_db_connection_context() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                f"SELECT COUNT(*) FROM intelligence.contexts WHERE {where_frag}",
-                base_params,
-            )
-            total = int(cur.fetchone()[0])
-            cur.execute(
-                f"""
-                SELECT id, source_type, domain_key, title, content, metadata, created_at, updated_at
-                FROM intelligence.contexts
-                WHERE {where_frag}
-                ORDER BY created_at DESC
-                LIMIT %s OFFSET %s
-                """,
-                (*base_params, limit, offset),
-            )
-            rows = cur.fetchall()
+            # Protect COUNT + data queries from indefinite blocking.
+            try:
+                cur.execute("SET LOCAL statement_timeout = '5s'")
+            except Exception:
+                pass  # may fail if already in a transaction or autocommit; handled below
+
+            try:
+                cur.execute(
+                    f"SELECT COUNT(*) FROM intelligence.contexts WHERE {where_frag}",
+                    base_params,
+                )
+                total = int(cur.fetchone()[0])
+            except Exception:
+                # Timeout or error on count — default to 0 so data query still works
+                total = 0
+
+            try:
+                cur.execute(
+                    f"""
+                    SELECT id, source_type, domain_key, title, content, metadata, created_at, updated_at
+                    FROM intelligence.contexts
+                    WHERE {where_frag}
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (*base_params, limit, offset),
+                )
+                rows = cur.fetchall()
+            except Exception:
+                # Timeout or error on data fetch — return empty list so the endpoint survives
+                rows = []
     content_len = 400 if brief else 2000
     return {
         "items": [_row_to_context(r, content_len) for r in rows],

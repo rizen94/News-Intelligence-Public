@@ -6,7 +6,7 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Path, Query
-from services.storyline_assembly_service import (
+from ....services.storyline_assembly_service import (
     count_unlinked_articles,
     run_storyline_assembly_for_domain,
 )
@@ -61,7 +61,7 @@ def storyline_assembly_status(
         return {"success": False, "message": f"Unknown or inactive domain: {domain}"}
     unlinked = count_unlinked_articles(domain)
     try:
-        from services.domain_synthesis_config import get_domain_synthesis_config
+        from ....services.domain_synthesis_config import get_domain_synthesis_config
 
         cfg = get_domain_synthesis_config(domain)
         threshold = cfg.storyline_development.automation.unlinked_article_threshold

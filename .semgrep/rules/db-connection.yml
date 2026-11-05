@@ -1,0 +1,18 @@
+id: no-raw-psycopg2-connect
+message: |
+  Do NOT call psycopg2.connect() directly. Use get_db_connect_kwargs() from shared.database.connection instead.
+
+  Hardcoded or manually-parsed DB credentials break on non-local environments and bypass connection pooling / PgBouncer logic.
+
+  Fix: replace `psycopg2.connect(host=..., database=..., ...)` with:
+      from shared.database.connection import get_db_connect_kwargs
+      conn = psycopg2.connect(**get_db_connect_kwargs())
+patterns:
+  - pattern-either:
+    - pattern: psycopg2.connect(host=
+    - pattern: psycopg2.connect(database=
+    - pattern: psycopg2.connect(port=
+    - pattern: psycopg2.connect(user=
+    - pattern: psycopg2.connect(password=
+languages: [python]
+severity: ERROR

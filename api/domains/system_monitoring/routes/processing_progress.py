@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -104,7 +105,7 @@ def compute_processing_progress_response(
                 cur.execute(
                     f"""
                     SELECT COUNT(*) FROM {schema}.articles
-                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
+                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed', 'pull_deferred'))
                       AND COALESCE(enrichment_attempts, 0) < 3
                       AND url IS NOT NULL AND url != ''
                     """
@@ -491,21 +492,56 @@ def compute_processing_progress_response(
         logger.debug("processing_progress batch size helper: %s", e)
 
     if include_pending_metrics:
+        # Pre-check pool pressure BEFORE acquiring any connections.  The pending/backlog
+        # section fires ~42 COUNT queries per call (two calls × phase keys).  If the UI pool
+        # is already under load, skip this block entirely to avoid adding waiters behind other
+        # blocking requests — dimension/phase data still useful for the Monitor page.
+        _skip_metrics = False
         try:
-            from services.backlog_metrics import (
-                get_all_backlog_counts,
-                get_all_pending_counts,
-            )
+            from shared.database import get_db_pool_snapshot
 
-            pending_m = {k: int(v) for k, v in get_all_pending_counts().items()}
-            # Row-excess counts (for sort keys / parity with automation backlog_counts); not shown as batches.
-            backlog_m = {k: int(v) for k, v in get_all_backlog_counts().items()}
-        except Exception as e:
-            pending_metrics_merge_error = str(e)[:500]
-            logger.warning(
-                "processing_progress: backlog_metrics merge failed (pending_records will be zeros): %s",
-                e,
-            )
+            snap = get_db_pool_snapshot()
+            ui_snap = snap.get("ui") or {}
+            ui_pressure = float(ui_snap.get("pressure", 0.0))
+            ui_waiters = int(ui_snap.get("waiters", 0))
+            if ui_waiters > 0 or ui_pressure >= 0.7:
+                _skip_metrics = True
+        except Exception:
+            # If pre-check fails, allow metrics to try — worst case they timeout
+            pass
+
+        if not _skip_metrics:
+            _metrics_deadline = time.monotonic() + 8.0
+
+            try:
+                from services.backlog_metrics import (
+                    get_all_backlog_counts,
+                    get_all_pending_counts,
+                )
+
+                pending_m: dict[str, int] = {}
+                backlog_m: dict[str, int] = {}
+                if time.monotonic() < _metrics_deadline:
+                    try:
+                        pending_m = {k: int(v) for k, v in get_all_pending_counts().items()}
+                    except Exception as inner_e:
+                        logger.debug("processing_progress pending counts failed: %s", inner_e)
+                        pending_metrics_merge_error = (
+                            pending_metrics_merge_error or ""
+                        ) + f"pending_counts: {inner_e};" if pending_metrics_merge_error else f"pending_counts: {inner_e}"
+
+                if time.monotonic() < _metrics_deadline:
+                    try:
+                        backlog_m = {k: int(v) for k, v in get_all_backlog_counts().items()}
+                    except Exception as inner_e:
+                        logger.debug("processing_progress backlog counts failed: %s", inner_e)
+                        pending_metrics_merge_error = (
+                            pending_metrics_merge_error or ""
+                        ) + f"backlog_counts: {inner_e};" if pending_metrics_merge_error else f"backlog_counts: {inner_e}"
+
+            except ImportError as e:
+                logger.debug("processing_progress backlog_metrics unavailable: %s", e)
+
 
     def _phase_merge_sort_key(n: str) -> tuple:
         # Tie-break with str(n) so keys are never compared across None/str (TypeError in Python 3).

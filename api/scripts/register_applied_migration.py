@@ -20,12 +20,15 @@ except ImportError:
     pass
 
 if not os.environ.get("DB_PASSWORD") and os.path.exists(
-    os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", ".db_password_widow")
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs", ".env")
 ):
-    pw_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", ".db_password_widow")
+    pw_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs", ".env")
     try:
         with open(pw_path) as f:
-            os.environ["DB_PASSWORD"] = f.read().strip()
+            for line in f:
+                if line.startswith("DB_PASSWORD="):
+                    os.environ["DB_PASSWORD"] = line.split("=", 1)[1].strip()
+                    break
     except Exception:
         pass
 

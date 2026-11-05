@@ -228,6 +228,16 @@ class PipelineDeduplicationService:
                     },
                 )
 
+            # Persist per-silo dedup_metrics so /system_monitoring/status can read a single row
+            # instead of running expensive UNION-ALL cross-silo GROUP BY queries.
+            await self._persist_dedup_metrics(
+                silo=feed_id,
+                articles_seen=len(articles),
+                url_duplicates=len(url_duplicates),
+                content_hash_duplicates=len(content_duplicates),
+                articles_with_hash=0,  # will be filled on next run when feed_id is a concrete silo name
+            )
+
             return {
                 "duplicates_found": duplicates_found,
                 "duplicates_merged": duplicates_merged,
@@ -282,6 +292,52 @@ class PipelineDeduplicationService:
         except Exception as e:
             logger.error(f"Error checking recent similarities: {e}")
             return []
+
+    async def _persist_dedup_metrics(
+        self,
+        silo: str,
+        articles_seen: int = 0,
+        url_duplicates: int = 0,
+        content_hash_duplicates: int = 0,
+        articles_with_hash: int = 0,
+    ) -> None:
+        """Persist per-silo dedup metrics into intelligence.dedup_metrics (idempotent upsert)."""
+        if silo in ("all_feeds", "all") or not silo:
+            return  # skip cross-silo summary writes; only concrete silos are persisted
+
+        try:
+            from shared.database import get_db_connection
+
+            conn = get_db_connection()
+            if not conn:
+                logger.warning("dedup_metrics upsert skipped — DB unavailable (silo=%s)", silo)
+                return
+
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO intelligence.dedup_metrics
+                        (silo, metric_date, articles_seen, url_duplicates,
+                         content_hash_duplicates, articles_with_hash, last_run_at)
+                    VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, NOW())
+                    ON CONFLICT (silo, metric_date) DO UPDATE SET
+                        articles_seen             = EXCLUDED.articles_seen,
+                        url_duplicates            = EXCLUDED.url_duplicates,
+                        content_hash_duplicates   = EXCLUDED.content_hash_duplicates,
+                        articles_with_hash        = EXCLUDED.articles_with_hash,
+                        last_run_at               = NOW()
+                    """,
+                    (silo, articles_seen, url_duplicates, content_hash_duplicates, articles_with_hash),
+                )
+            conn.commit()
+
+        except Exception as exc:
+            logger.warning("dedup_metrics upsert failed (silo=%s): %s", silo, exc)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     async def get_deduplication_metrics(self) -> dict[str, Any]:
         """Get deduplication metrics for pipeline monitoring"""

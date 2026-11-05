@@ -501,6 +501,10 @@ class BaseRAGService:
         try:
             with conn.cursor() as cur:
                 cur.execute(f"SET search_path TO {schema}, public")
+
+                # Collect event data for embedding post-insert
+                gdelt_text_rows: list[tuple[str, str]] = []
+
                 for i, ev in enumerate(gdelt_events[:20]):
                     if not isinstance(ev, dict):
                         continue
@@ -515,6 +519,7 @@ class BaseRAGService:
                     except Exception:
                         actual_date = None
                     event_id = f"gdelt_{storyline_id}_{i}_{hash(title + str(actual_date)) % 10**8}"
+                    description = (ev.get("summary") or ev.get("url") or "")[:2000]
                     try:
                         cur.execute(
                             """
@@ -529,7 +534,7 @@ class BaseRAGService:
                                 event_id,
                                 str(storyline_id),
                                 title[:300],
-                                (ev.get("summary") or ev.get("url") or "")[:2000],
+                                description,
                                 ev.get("event_type", "other"),
                                 actual_date,
                                 first_article_id,
@@ -546,7 +551,25 @@ class BaseRAGService:
                             logger.debug("GDELT store chronological_events skip: %s", ins_err)
                             break
                         logger.debug("GDELT event insert skip: %s", ins_err)
+
+                    # Collect for embedding — always add, even if ON CONFLICT absorbed it
+                    gdelt_text_rows.append((event_id, f"{title} {description}".strip()))
+
             conn.commit()
+
+            # Post-commit: generate + store embeddings so dedup picks up GDELT events
+            if gdelt_text_rows:
+                try:
+                    from services.event_embedding_service import (
+                        embed_and_store_chronological_events,
+                    )
+
+                    n = embed_and_store_chronological_events(conn, gdelt_text_rows)
+                    if n > 0:
+                        logger.info(f"Stored embeddings for {n}/{len(gdelt_text_rows)} GDELT events")
+                except Exception as _emb_err:
+                    logger.warning("GDELT event embedding post-save failed: %s", _emb_err)
+
         except Exception as e:
             logger.debug("_store_gdelt_events_to_chronological: %s", e)
             try:

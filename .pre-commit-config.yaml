@@ -25,3 +25,14 @@ repos:
         files: ^(api|tests)/.*\.py$
         args: ["--config", "p/python/lang/correctness/unclosed-resource"]
         additional_dependencies: [semgrep]
+
+  # Block raw psycopg2.connect() calls outside the canonical DB connection module.
+  - repo: https://github.com/returntocorp/semgrep
+    rev: v1.90.0
+    hooks:
+      - id: semgrep
+        files: ^(api|tests)/.*\.py$
+        args: ["--config", ".semgrep/rules/db-connection.yml"]
+        additional_dependencies: [semgrep]
+
+  # Ruff linter for Python style/format enforcement.

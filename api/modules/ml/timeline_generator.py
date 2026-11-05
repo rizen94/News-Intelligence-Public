@@ -7,6 +7,7 @@ Uses ML/LLM to generate intelligent timeline events from articles
 import logging
 import json
 import psycopg2
+from shared.database.connection import get_db_connect_kwargs
 from datetime import datetime, timedelta
 from typing import Any, Optional
 from dataclasses import dataclass
@@ -114,7 +115,7 @@ class TimelineGenerator:
     ) -> list[dict[str, Any]]:
         """Get articles relevant to the storyline using intelligent filtering"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cur = conn.cursor()
             
             # Build intelligent search query
@@ -507,7 +508,7 @@ Return as JSON array with this format:
     def _store_timeline_events(self, storyline_id: str, events: list[TimelineEvent]) -> list[TimelineEvent]:
         """Store timeline events in the database with proper relationships"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg2.connect(**get_db_connect_kwargs())
             cur = conn.cursor()
             
             stored_events = []

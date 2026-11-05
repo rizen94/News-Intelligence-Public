@@ -1,5 +1,5 @@
 """
-Apply a single migration SQL file using pooled DB config (.env, optional .db_password_widow).
+Apply a single migration SQL file using pooled DB config (.env, env vars).
 
 Used by ``api/scripts/run_migration.py`` and thin ``run_migration_NNN.py`` wrappers so
 bootstrap + execute logic lives in one place.
@@ -14,7 +14,7 @@ from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_s
 
 
 def bootstrap_migration_env() -> None:
-    """Load dotenv from api/ and repo root; optional Widow password file."""
+    """Load dotenv from api/ and repo root. DB_PASSWORD must come from caller env."""
     try:
         from dotenv import load_dotenv
 
@@ -23,16 +23,6 @@ def bootstrap_migration_env() -> None:
         load_dotenv(api_dir.parent / ".env", override=False)
     except ImportError:
         pass
-
-    if env_str("DB_PASSWORD"):
-        return
-    repo_root = Path(__file__).resolve().parent.parent.parent
-    pw_path = repo_root / ".db_password_widow"
-    if pw_path.is_file():
-        try:
-            env_set("DB_PASSWORD", pw_path.read_text().strip())
-        except OSError:
-            pass
 
 
 def apply_sql_at_path(sql_path: str) -> int:

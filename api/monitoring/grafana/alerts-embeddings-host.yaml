@@ -1,0 +1,56 @@
+# Homelab Prometheus / Grafana alert rules for Dockside embeddings appliance.
+# Apply on the Homelab Prometheus host (rule_files) or convert to Grafana-managed alerts.
+#
+# Scraped from Widow: GET /api/system_monitoring/prometheus → ni_embeddings_* 
+
+groups:
+  - name: ni-embeddings-dockside
+    interval: 30s
+    rules:
+      - alert: NIEmbeddingsHostDown
+        expr: ni_embeddings_host_configured == 1 and ni_embeddings_host_up == 0
+        for: 3m
+        labels:
+          severity: warning
+          service: news-intelligence
+          component: dockside-embeddings
+        annotations:
+          summary: "NI embeddings host (Dockside) is down"
+          description: >-
+            Dedicated embeddings Ollama host is unreachable for 3m+.
+            embeddings_worker should be paused (ni_embeddings_host_paused=1).
+            Check Dockside SSH/Ollama and Widow tunnel dockside-ollama-tunnel.service.
+
+      - alert: NIEmbeddingsHostPaused
+        expr: ni_embeddings_host_paused == 1
+        for: 2m
+        labels:
+          severity: warning
+          service: news-intelligence
+          component: dockside-embeddings
+        annotations:
+          summary: "NI embeddings work paused (Dockside)"
+          description: >-
+            embeddings_worker is yielding to avoid wasted cycles.
+            Restore Dockside connectivity, then POST
+            /api/system_monitoring/circuit_breakers/reset with
+            {"name":"ollama_embeddings"} if needed.
+
+      - alert: NIEmbeddingsNoProgress
+        # ni_embedding_chunks_ingested is a gauge (rows in window), not a counter.
+        expr: |
+          ni_embeddings_host_configured == 1
+          and ni_embeddings_host_up == 1
+          and ni_embeddings_host_paused == 0
+          and ni_embedding_chunks_ingested{window="15m"} == 0
+        for: 45m
+        labels:
+          severity: info
+          service: news-intelligence
+          component: dockside-embeddings
+        annotations:
+          summary: "NI embeddings host up but no chunk progress"
+          description: >-
+            Dockside looks healthy but no embedding_chunks were ingested in the
+            last 15m for 45m straight. Check AUTOMATION_DISABLED_SCHEDULES and
+            embeddings_worker schedule.

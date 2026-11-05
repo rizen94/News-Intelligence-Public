@@ -195,6 +195,7 @@ async def _drain_enrichment(automation: Any | None, *, budget_seconds: int = 120
         enrich_batch = claim_batch
     except Exception:
         pass
+    pending_q: int | None = None
     while not budget.expired():
         rounds += 1
         round_started = datetime.now(timezone.utc)
@@ -214,17 +215,17 @@ async def _drain_enrichment(automation: Any | None, *, budget_seconds: int = 120
                     )
                     if pending_q > 0:
                         had_pending = True
+                        logger.warning(
+                            "spine enrichment: %s queue items but claim produced none — continuing to enrich from DB directly",
+                            pending_q,
+                        )
                         if stall.record_round(processed=0, had_pending=True):
                             break
                         continue
             n = int(
                 await loop.run_in_executor(
                     None,
-                    lambda c=claimed if use_queue_round else None: enrich_articles_batch(
-                        batch_size=enrich_batch,
-                        scoped_ids_by_schema=c,
-                    )
-                    or 0,
+                    lambda: enrich_articles_batch(batch_size=enrich_batch) or 0,
                 )
             )
             if use_queue_round and claimed:
@@ -243,6 +244,11 @@ async def _drain_enrichment(automation: Any | None, *, budget_seconds: int = 120
                 from services.backlog_metrics import get_all_pending_counts
 
                 had_pending = int(get_all_pending_counts().get("content_enrichment") or 0) > 0
+                if not had_pending and pending_q is not None and pending_q > 0:
+                    logger.warning(
+                        "spine enrichment: count_all_pending=%d but enrich_articles_batch returned 0 — DB may have stale items",
+                        pending_q,
+                    )
             except Exception:
                 pass
         total += n

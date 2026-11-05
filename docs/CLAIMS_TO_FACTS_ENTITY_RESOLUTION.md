@@ -74,7 +74,7 @@ PYTHONPATH=api uv run python scripts/diagnose_claims_to_facts.py --skip-sample
 
 ## Validation (after resolver or `pg_trgm` changes)
 
-Runs a promote batch and reports recent `versioned_facts` from `claim_extraction` (loads `.env` / `.db_password_widow` like the diagnose script):
+Runs a promote batch and reports recent `versioned_facts` from `claim_extraction` (loads `.env` like the diagnose script):
 
 ```bash
 PYTHONPATH=api uv run python scripts/validate_claims_to_facts.py

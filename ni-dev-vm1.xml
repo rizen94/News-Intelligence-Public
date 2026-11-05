@@ -1,0 +1,44 @@
+<domain type="kvm">
+  <name>ni-dev-vm1</name>
+  <memory unit="MiB">4096</memory>
+  <vcpu placement="static">2</vcpu>
+  <cpu mode="host-passthrough" check="partial">
+    <model fallback="allow"/>
+  </cpu>
+  <os>
+    <type arch="x86_64" machine="q35">hvm</type>
+    <bios firmware="uefi">
+      <loader readonly="yes" type="pflash">/usr/share/edk2/x86_64/OVMF_CODE.fd</loader>
+      <nvram template="/usr/share/OVMF/OVMF_VARS.fd">/var/lib/libvirt/qemu/nvram/ni-dev-vm1_VARS.fd</nvram>
+    </bios>
+  </os>
+  <features>
+    <acpi/>
+    <apic/>
+    <hyperv mode="custom"/>
+  </features>
+  <devices>
+    <entropy model="random"/>
+    <rng model="virtio">
+      <backend model="random">/dev/urandom</backend>
+    </rng>
+    <disk type="file" device="disk">
+      <driver name="qemu" type="qcow2"/>
+      <source file="/var/lib/libvirt/images/ni-dev-vm1-disk.qcow2"/>
+      <target dev="vda" bus="virtio"/>
+    </disk>
+    <disk type="file" device="cdrom">
+      <source file="/tmp/cloud-init-new.iso"/>
+      <target dev="sdb" bus="sata"/>
+      <readonly/>
+    </disk>
+    <interface type="network">
+      <source network="ni-dev-net"/>
+      <mac address="52:54:00:a1:b2:c3"/>
+      <model type="virtio"/>
+    </interface>
+    <console type="pty">
+      <target type="serial" port="0"/>
+    </console>
+  </devices>
+</domain>

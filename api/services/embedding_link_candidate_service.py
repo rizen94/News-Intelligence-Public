@@ -8,6 +8,7 @@ associates and optional cross-domain entity associates. No Neo4j / GNN.
 from __future__ import annotations
 
 import logging
+import random
 from typing import Any
 
 from config.runtime import env_float, env_int, env_str

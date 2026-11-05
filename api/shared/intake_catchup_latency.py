@@ -118,7 +118,7 @@ def _scored_cte_sql(schema: str, domain_key_literal: str) -> str:
             a.id,
             a.created_at,
             (
-                (a.enrichment_status IS NULL OR a.enrichment_status IN ('pending', 'failed'))
+                (a.enrichment_status IS NULL OR a.enrichment_status IN ('pending', 'failed', 'pull_deferred'))
                 AND COALESCE(a.enrichment_attempts, 0) < 3
             ) AS enrich_pending,
             ({uie_pending}) AS uie_pending,

@@ -208,7 +208,7 @@ class IntelligenceAnalysisService:
                             ]
                             sim = self.cosine_similarity(query_embedding, emb)
                             scored_articles.append((article, sim))
-                        except:
+                        except Exception:
                             continue
 
                 # Sort by similarity and take top N
@@ -240,7 +240,7 @@ class IntelligenceAnalysisService:
                                 else []
                             )
                             all_entities.extend(entities)
-                        except:
+                        except Exception:
                             pass
                 entity_counts = Counter(all_entities)
                 related_entities = [e for e, _ in entity_counts.most_common(20)]
@@ -452,7 +452,7 @@ Historical context (2-3 sentences):"""
                     emb2 = [float(x) for x in a2["embedding_vector"].strip("[]").split(",")]
                     sim = self.cosine_similarity(emb1, emb2)
                     similarities.append(sim)
-                except:
+                except Exception:
                     continue
 
         if not similarities:

@@ -98,12 +98,17 @@ def sql_article_in_trending_cluster(schema: str, alias: str = "a") -> str:
     )"""
 
 
+def _quality_tier_sql(alias: str) -> str:
+    return f"{alias}.quality_tier"
+
+
 def sql_article_signal_full_lane_filter(
     alias: str = "a",
     schema: str | None = None,
 ) -> str:
     """
     SQL AND fragment: article qualifies for full LLM lane.
+    Uses quality_tier (not credibility tier) since we removed credibility multipliers.
     Empty string when ARTICLE_SIGNAL_ENABLED is false.
     """
     if not article_signal_enabled():
@@ -111,11 +116,12 @@ def sql_article_signal_full_lane_filter(
     if not schema:
         return ""
     min_q = article_signal_full_min_quality()
-    tier = _cred_tier_sql(alias)
+    qt = _quality_tier_sql(alias)
     trending = sql_article_in_trending_cluster(schema, alias)
+    # Tier-based gate: tier_1 always passes; tier_2 needs quality_score >= threshold
     return f"""(
-        {tier} = 'tier_1'
-        OR ({tier} = 'tier_2' AND COALESCE({alias}.quality_score, 0) >= {min_q})
+        {qt} = 'tier_1'
+        OR ({qt} = 'tier_2' AND COALESCE({alias}.quality_score, 0) >= {min_q})
         OR COALESCE({alias}.quality_score, 0) >= {min_q}
         OR ({trending})
     )"""
@@ -294,6 +300,7 @@ def defer_signal_light_unified_intake_batch(
                         ) = false
                           AND a.content IS NOT NULL
                           AND LENGTH(a.content) > 100
+                          AND a.enrichment_status != 'pull_deferred'
                           AND ({ml_ready})
                           AND (
                               LENGTH(a.content) >= 500
