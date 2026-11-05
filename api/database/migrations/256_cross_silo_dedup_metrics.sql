@@ -75,7 +75,7 @@ BEGIN
             $$
             SELECT
                 COALESCE(COUNT(*),0),
-                COALESCE(SUM(cases->>'articles_with_hash')::BIGINT,0),
+                COALESCE(SUM(CASE WHEN content_hash IS NOT NULL THEN 1::BIGINT ELSE 0 END),0),
                 COALESCE((
                     SELECT COUNT(*) FROM (
                         SELECT url FROM %I.articles WHERE enrichment_status != 'failed'
