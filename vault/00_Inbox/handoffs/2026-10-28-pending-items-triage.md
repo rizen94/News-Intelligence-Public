@@ -96,3 +96,112 @@ else:
 1. **Consider removing the kill-switch entirely** if auto-approval is the desired default behavior
 2. **Implement a two-stage approval system** (auto-approve with grace period → manual review fallback)
 3. **Document pipeline states explicitly**: `pending` → `processing` → `approved`/`rejected`/`expired`
+
+---
+
+## Pending Items Enrichment Investigation — Root Causes & Fix Deployment
+
+### Three Root Causes of Article Enrichment Failure
+
+#### Root Cause 1: Fast-Path Bypass in Content Enrichment
+
+**Location:** `api/services/article_content_enrichment_service.py`
+
+Articles with existing content ≥500 characters are fast-tracked to `enriched`/`ml_processed` without triggering downstream entity extraction, topic clustering, or context synchronization.
+
+**Evidence:** The enrichment loop checks article content length before calling downstream processors. When content is already present, `ensure_context_for_article()` either silently fails or is bypassed entirely — no exceptions propagate. Articles end up in a corrupted state: `enrichment_status='enriched'` but missing all entities/topics/contexts.
+
+**Detection pattern:**
+```sql
+SELECT COUNT(*) FROM {schema}.articles
+WHERE enrichment_status = 'enriched'
+  AND COALESCE(LENGTH(content), 0) >= 500
+  AND (processing_status IS NULL OR processing_status = '')
+  AND updated_at < NOW() - INTERVAL '7 days';
+```
+
+#### Root Cause 2: Nightly Pipeline Skip
+
+**Location:** `api/services/automation_manager.py`
+
+The enrichment batch process (`nightly_enrichment_context` phase) returns early during nightly processing windows unless specific flags are set. This causes pending backlog to accumulate across multiple nights without correction.
+
+**Impact:** Items stuck in `pending` cannot be processed because the nightly window that would normally drive pipeline phases skips them. Over time this creates thousands of stale pending items.
+
+#### Root Cause 3: Missing `enrichment_status` on Ingest
+
+**Location:** `api/collectors/enhanced_rss_collector.py` (line ~212+) and `api/services/article_service.py`
+
+During ingestion, the INSERT statement does not explicitly set `enrichment_status`, leaving it NULL. When combined with content already present in the article body, this triggers the fast-path bypass (RC1) because:
+- NULL enrichment_status → content length check passes → treated as enriched
+- The article never goes through entity/topic extraction pipeline
+
+### Compound Failure Mode
+
+```
+Ingest (NULL enrichment_status + existing content)
+  → Fast-path bypasses context processing (RC1 + RC3)
+    → Article stuck: enriched=TRUE, entities=0, topics=0
+      → Nightly window skips corrective action (RC2)
+        → Pending backlog accumulates indefinitely
+```
+
+### Fix Deployment: pending_cleanup_service.py
+
+**File:** `api/services/pending_cleanup_service.py` (259 lines) — already written, now deploying.
+
+The cleanup service handles both failure modes:
+
+| Mode | What it does | Detection query |
+|------|-------------|-----------------|
+| **Stale pending** | Marks items stuck in `pending` beyond TTL as `inaccessible` (resets enrichment_status for fresh retry) | Pending + ≥3 attempts + URL present + updated_at > TTL |
+| **Fast-path incomplete** | Resets articles marked `enriched` with content ≥500 chars but missing downstream state (entities < 2 or topics < 1) back to `pending` for reprocessing | Enriched + content≥500 + processing_status=NULL + updated_at > 7 days |
+
+**Deployment steps:**
+1. Phase registered in `automation_manager.py` as `"pending_cleanup"`
+2. Execution handler `_execute_pending_cleanup()` added
+3. Run via cron or scheduler:
+   ```bash
+   # Dry-run (diagnostic)
+   PYTHONPATH=api python3 api/services/pending_cleanup_service.py --dry-run
+   
+   # Apply fixes
+   PYTHONPATH=api python3 api/services/pending_cleanup_service.py --apply
+   ```
+
+**Configurable thresholds (env vars):**
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `PENDING_CLEANUP_PENDING_TTL_HOURS` | 24 | TTL for stale pending items in hours |
+| `PENDING_CLEANUP_FASTPATH_REPROCESS_DAYS` | 7 | Age threshold for fast-path reprocessing check |
+| `PENDING_CLEANUP_MIN_ENTITY_COUNT` | 2 | Min entities for "complete" enriched article |
+| `PENDING_CLEANUP_MIN_TOPIC_COUNT` | 1 | Min topics for "complete" enriched article |
+
+### Remaining Work (Post-Deployment)
+
+1. **Fix ingest to always set `enrichment_status='pending'`** — Regardless of content length, new articles should enter the pipeline with pending status
+2. **Remove or gate the fast-path bypass** — Articles should not skip entity/topic extraction even if they have existing content
+3. **Adjust nightly window logic** — Ensure nightly pipeline doesn't skip enrichment phases that could self-correct stale items
+4. **Add monitoring dashboards** — Track `% of enriched articles with zero entities` as a health metric
+
+### Verification Queries (Post-Deploy)
+
+```sql
+-- Check fast-path bypass artifacts
+SELECT COUNT(*) AS fast_path_bypassed
+FROM {schema}.articles
+WHERE enrichment_status = 'enriched'
+  AND entity_count IS NOT NULL
+  AND entity_count < 2
+  AND COALESCE(LENGTH(content), 0) >= 500;
+
+-- Check pending items by domain
+SELECT pipeline_domain, COUNT(*) AS pending_count
+FROM {schema}.articles
+WHERE enrichment_status IN ('pending', NULL)
+GROUP BY pipeline_domain
+ORDER BY pending_count DESC;
+
+-- Run the cleanup service to confirm detection counts match
+PYTHONPATH=api python3 api/services/pending_cleanup_service.py --dry-run
+```

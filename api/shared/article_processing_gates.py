@@ -28,6 +28,12 @@ _ART = ARTICLE_ENRICHED   # alias for SQL queries (same string value)
 _AF = ARTICLE_FAILED
 _AI = ARTICLE_INACCESSIBLE
 
+# SQL-safe quoted string literals for use in generated SQL fragments
+_SQL_ENRICHED = f"'{_ART}'"   # 'enriched'
+_SQL_FAILED   = f"'{_AF}'"    # 'failed'
+_SQL_INACCESS = f"'{_AI}'"    # 'inaccessible'
+_SQL_ANY_TERM = f"({_SQL_ENRICHED}, {_SQL_FAILED}, {_SQL_INACCESS})"  # ('enriched', 'failed', 'inaccessible')
+
 # Match RSS inline rule: substantial body without a separate fetch (legacy path)
 SUBSTANTIAL_CONTENT_LENGTH = 500
 MIN_CONTENT_LENGTH_ML = 100
@@ -74,7 +80,7 @@ def _legacy_ml_inner(table_alias: str) -> str:
     return f"""{a}content IS NOT NULL
       AND LENGTH({a}content) > {MIN_CONTENT_LENGTH_ML}
       AND (
-        {a}enrichment_status = _ART
+        {a}enrichment_status = {_SQL_ENRICHED}
         OR ({a}enrichment_status IS NULL AND LENGTH({a}content) >= {SUBSTANTIAL_CONTENT_LENGTH})
       )"""
 
@@ -83,20 +89,20 @@ def _strict_ml_inner(table_alias: str) -> str:
     a = f"{table_alias}." if table_alias else ""
     return f"""{a}content IS NOT NULL
       AND LENGTH({a}content) > {MIN_CONTENT_LENGTH_ML}
-      AND {a}enrichment_status = _ART"""
+      AND {a}enrichment_status = {_SQL_ENRICHED}"""
 
 
 def _legacy_context_inner(alias: str) -> str:
     return f"""LENGTH(COALESCE({alias}.content, '')) > {MIN_CONTENT_LENGTH_CONTEXT}
       AND (
         LENGTH(COALESCE({alias}.content, '')) >= {SUBSTANTIAL_CONTENT_LENGTH}
-        OR COALESCE({alias}.enrichment_status, '') IN (_ART, _AF, _AI)
+        OR COALESCE({alias}.enrichment_status, '') IN {_SQL_ANY_TERM}
       )"""
 
 
 def _strict_context_inner(alias: str) -> str:
     return f"""LENGTH(COALESCE({alias}.content, '')) > {MIN_CONTENT_LENGTH_CONTEXT}
-      AND COALESCE({alias}.enrichment_status, '') IN (_ART, _AF, _AI)"""
+      AND COALESCE({alias}.enrichment_status, '') IN {_SQL_ANY_TERM}"""
 
 
 def sql_ml_ready_and_content_bounds(table_alias: str = "") -> str:

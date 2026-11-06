@@ -99,15 +99,15 @@ class RAGAnalysisService(DomainAwareService):
                             analysis_result.get("analysis", ""), storyline_id
                         )
 
-                        # Update storyline with analysis
+                        # Update storyline with analysis — both columns for pipeline compatibility
                         cur.execute(
                             f"""
                             UPDATE {self.schema}.storylines
-                            SET analysis_summary = %s,
+                            SET analysis_summary = %s, master_summary = %s,
                                 updated_at = %s
                             WHERE id = %s
                         """,
-                            (analysis_result.get("analysis", ""), datetime.now(), storyline_id),
+                            (analysis_result.get("analysis", ""), analysis_result.get("analysis", ""), datetime.now(), storyline_id),
                         )
 
                         conn.commit()
@@ -573,6 +573,44 @@ async def process_storyline_rag_analysis(
                 storyline_id,
                 analysis_result.get("error", "empty response"),
             )
+            # Track retry count; mark terminal failure after MAX retries.
+            max_retries = 3
+            try:
+                db_conn = get_db_connection()
+                if db_conn:
+                    try:
+                        with db_conn.cursor() as cur:
+                            cur.execute(f"SET search_path TO {schema}, public")
+                            # Check current retry count
+                            cur.execute(
+                                f"SELECT COALESCE(ml_retry_count, 0) FROM {schema}.storylines WHERE id = %s",
+                                (storyline_id,),
+                            )
+                            row = cur.fetchone()
+                            if row:
+                                current_retries = int(row[0]) if row[0] else 0
+                                new_retries = current_retries + 1
+                                if new_retries >= max_retries:
+                                    # Terminal failure — stop re-enqueueing
+                                    cur.execute(
+                                        f"UPDATE {schema}.storylines SET ml_processing_status = %s, ml_retry_count = %s WHERE id = %s",
+                                        ("failed", new_retries, storyline_id),
+                                    )
+                                else:
+                                    # Allow retry — bump counter, keep pending for re-enqueue
+                                    cur.execute(
+                                        f"UPDATE {schema}.storylines SET ml_retry_count = %s WHERE id = %s",
+                                        (new_retries, storyline_id),
+                                    )
+                            db_conn.commit()
+                    except Exception as retry_err:
+                        logger.error("Failed to update retry count for storyline %s: %s", storyline_id, retry_err)
+                    finally:
+                        db_conn.close()
+            except Exception:
+                # Best-effort only — don't let retry tracking block the caller
+                pass
+
             return {"success": False, "error": analysis_result.get("error", "Empty response")}
 
         conn = get_db_connection()
@@ -597,7 +635,7 @@ async def process_storyline_rag_analysis(
                     cur.execute(
                         f"""
                         UPDATE {schema}.storylines
-                        SET analysis_summary = %s,
+                        SET analysis_summary = %s, master_summary = %s,
                             quality_score = %s,
                             ml_processing_status = 'completed',
                             editorial_document = %s,
@@ -607,6 +645,7 @@ async def process_storyline_rag_analysis(
                         WHERE id = %s
                     """,
                         (
+                            analysis_text,
                             analysis_text,
                             0.90,
                             json.dumps(editorial_doc),

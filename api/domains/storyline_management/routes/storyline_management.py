@@ -620,7 +620,7 @@ async def get_domain_storyline(
                 cur.execute(
                     f"""
                     SELECT id, title, description, created_at, updated_at,
-                           status, analysis_summary, quality_score, article_count,
+                           status, analysis_summary, master_summary, quality_score, article_count,
                            ml_processing_status, priority,
                            editorial_document, document_version, document_status
                     FROM {schema}.storylines
@@ -687,13 +687,14 @@ async def get_domain_storyline(
                             else None,
                             "status": storyline[5],
                             "analysis_summary": storyline[6],
-                            "quality_score": float(storyline[7]) if storyline[7] else None,
-                            "article_count": storyline[8] or 0,
-                            "ml_processing_status": storyline[9] if len(storyline) > 9 else None,
-                            "priority": storyline[10] if len(storyline) > 10 else None,
-                            "editorial_document": storyline[11] if len(storyline) > 11 else None,
-                            "document_version": storyline[12] if len(storyline) > 12 else None,
-                            "document_status": storyline[13] if len(storyline) > 13 else None,
+                            "master_summary": storyline[7],
+                            "quality_score": float(storyline[8]) if storyline[8] else None,
+                            "article_count": storyline[9] or 0,
+                            "ml_processing_status": storyline[10] if len(storyline) > 10 else None,
+                            "priority": storyline[11] if len(storyline) > 11 else None,
+                            "editorial_document": storyline[12] if len(storyline) > 12 else None,
+                            "document_version": storyline[13] if len(storyline) > 13 else None,
+                            "document_status": storyline[14] if len(storyline) > 14 else None,
                         },
                         "articles": articles,
                     },

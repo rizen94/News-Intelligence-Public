@@ -36,6 +36,7 @@ from typing import Any
 
 from api.shared.database import get_db_connection
 from api.shared.domain_registry import get_active_domain_keys
+from api.shared.pipeline_state_constants import ML_MAX_RETRY_COUNT
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +213,11 @@ def list_pending_job_types(domain_key: str, storyline_id: int) -> list[str]:
 
 
 def storyline_needs_initial_master_narrative(domain_key: str, storyline_id: int) -> bool:
-    """True if ~70B canonical narrative has never been stored (first finisher pass)."""
+    """True if master_summary has never been populated (narrative_finisher should run).
+    
+    Uses master_summary instead of canonical_narrative because the ML pipeline
+    writes to master_summary and canonical_narrative is legacy/dead code.
+    """
     if domain_key not in get_active_domain_keys():
         return True
     schema = domain_key.replace("-", "_")
@@ -223,7 +228,7 @@ def storyline_needs_initial_master_narrative(domain_key: str, storyline_id: int)
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT (canonical_narrative IS NULL OR btrim(canonical_narrative) = '')
+                SELECT (master_summary IS NULL OR btrim(master_summary) = '')
                 FROM {schema}.storylines
                 WHERE id = %s
                 """,
@@ -415,15 +420,16 @@ def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
                               OR s.document_status <> 'rag_analyzed'
                             )
                           )
+                          AND COALESCE(s.ml_retry_count, 0) < %(max_retries)s
                         ORDER BY
                           CASE
                             WHEN s.ml_processing_status IN ('pending', 'processing') THEN 0
                             ELSE 1
                           END,
                           s.updated_at DESC NULLS LAST
-                        LIMIT %s
+                        LIMIT %(enqueue_limit)s
                         """,
-                        (domain_key, JOB_COMPREHENSIVE_RAG, limit),
+                        {"domain_key": domain_key, "job_type": JOB_COMPREHENSIVE_RAG, "limit": limit, "max_retries": ML_MAX_RETRY_COUNT},
                     )
                     rows = [(int(r[0]), str(r[1])) for r in cur.fetchall()]
                 except Exception as e:
@@ -447,10 +453,11 @@ def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
                                 AND q.status IN ('pending', 'processing')
                           )
                           AND s.ml_processing_status IN ('pending', 'processing')
+                          AND COALESCE(s.ml_retry_count, 0) < %(max_retries)s
                         ORDER BY s.updated_at DESC NULLS LAST
-                        LIMIT %s
+                        LIMIT %(enqueue_limit)s
                         """,
-                        (domain_key, JOB_COMPREHENSIVE_RAG, limit),
+                        {"domain_key": domain_key, "job_type": JOB_COMPREHENSIVE_RAG, "limit": limit, "max_retries": ML_MAX_RETRY_COUNT},
                     )
                     rows = [(int(r[0]), str(r[1])) for r in cur.fetchall()]
         except Exception as e:

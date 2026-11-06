@@ -473,24 +473,46 @@ Create a narrative that shows how these individual story elements combine to tel
             logger.error(f"Error marking storyline {storyline_id} skipped_empty: {e}")
 
     def _update_storyline_ml_results(
-        self, storyline_id: int, master_summary: str, *, schema: str = "public"
+        self,
+        storyline_id: int,
+        master_summary: str,
+        *,
+        schema: str = "public",
+        analysis_summary: str | None = None,
     ):
-        """Update storyline with ML results"""
+        """Update storyline with ML results.
+
+        Writes to both ``master_summary`` (ML pipeline source-of-truth) and
+        ``analysis_summary`` (RAG-analysis column) so that COALESCE chains
+        across readers never skip past ML-generated content.
+        """
         if not schema.replace("_", "").isalnum():
             return
+        # Default: treat ML narrative as analysis text too — avoids
+        # duplicate RAG re-processing for items already covered by ML output.
+        if analysis_summary is None:
+            analysis_summary = master_summary
         try:
             db_gen = get_db()
             db = next(db_gen)
             try:
                 query = text(f"""
                     UPDATE {schema}.storylines
-                    SET master_summary = :summary,
+                    SET master_summary = :master,
+                        analysis_summary = :analysis,
                         ml_processing_status = 'completed',
                         ml_last_processed = CURRENT_TIMESTAMP
                     WHERE id = :storyline_id
                 """)
 
-                db.execute(query, {"summary": master_summary, "storyline_id": storyline_id})
+                db.execute(
+                    query,
+                    {
+                        "master": master_summary,
+                        "analysis": analysis_summary,
+                        "storyline_id": storyline_id,
+                    },
+                )
                 db.commit()
 
                 logger.info(f"Updated storyline {storyline_id} with narrative summary")

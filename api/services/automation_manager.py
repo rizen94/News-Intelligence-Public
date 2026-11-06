@@ -196,6 +196,7 @@ OLLAMA_AUTOMATION_PHASES = frozenset(
         "entity_enrichment",
         "storyline_enrichment",
         "vault_morning_prime",
+        "pending_cleanup",
     }
 )
 # Phases whose main LLM path uses ``OllamaModelCaller`` with ``STRUCTURED_EXTRACTION`` → ``_call_ollama(..., execution_lane="cpu")``.
@@ -8354,6 +8355,25 @@ class AutomationManager:
                 ),
             },
         }
+
+
+    async def _execute_pending_cleanup(self, task: Task):
+        """Execute pending item cleanup — stale pending + fast-path bypass recovery."""
+        try:
+            from services.pending_cleanup_service import run_cleanup
+
+            results = run_cleanup(dry_run=False)
+
+            total_marked = results["summary"]["total_marked_inaccessible"]
+            total_reset = results["summary"]["total_reset_for_reprocess"]
+            logger.info(
+                "pending_cleanup completed: %d marked inaccessible, %d reset for reprocessing",
+                total_marked,
+                total_reset,
+            )
+
+        except Exception as e:
+            logger.error("Error during pending cleanup: %s", e, exc_info=True)
 
 
 # Global instance

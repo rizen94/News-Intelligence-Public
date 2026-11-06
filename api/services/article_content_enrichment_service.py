@@ -806,7 +806,7 @@ def _enrich_articles_batch_parallel(*, batch_size: int, parallel: int) -> int:
                         cur.execute(
                             f"""
                             UPDATE {schema_name}.articles
-                            SET enrichment_status = 'enriched', processing_status = 'ml_processed', status = 'completed', updated_at = NOW()
+                            SET enrichment_status = 'enriched', processing_status = 'ml_processed', updated_at = NOW()
                             WHERE id = %s
                               AND (enrichment_status IS NULL OR enrichment_status IN ('pending', 'pull_deferred'))
                             """,
@@ -883,7 +883,7 @@ def _enrich_articles_batch_parallel(*, batch_size: int, parallel: int) -> int:
                 if text:
                     cur.execute(
                         f"""UPDATE {schema_name}.articles
-                           SET content = %s, enrichment_status = 'enriched', processing_status = 'ml_processed', status = 'completed', updated_at = NOW()
+                           SET content = %s, enrichment_status = 'enriched', processing_status = 'ml_processed', updated_at = NOW()
                            WHERE id = %s""",
                         (text, article_id),
                     )
@@ -1110,7 +1110,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                         cur.execute(
                             f"""
                             UPDATE {schema_name}.articles
-                            SET enrichment_status = 'enriched', processing_status = 'ml_processed', status = 'completed', updated_at = NOW()
+                            SET enrichment_status = 'enriched', processing_status = 'ml_processed', updated_at = NOW()
                             WHERE id = %s
                               AND (enrichment_status IS NULL OR enrichment_status IN ('pending', 'pull_deferred'))
                             """,
@@ -1156,7 +1156,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                         continue
                     if text:
                         cur.execute(
-                            f"""UPDATE {schema_name}.articles SET content = %s, enrichment_status = 'enriched', processing_status = 'ml_processed', status = 'completed', updated_at = NOW() WHERE id = %s""",
+                            f"""UPDATE {schema_name}.articles SET content = %s, enrichment_status = 'enriched', processing_status = 'ml_processed', updated_at = NOW() WHERE id = %s""",
                             (text, article_id),
                         )
                         cur.execute(
@@ -1403,8 +1403,8 @@ def fetch_full_content_for_article(domain_key: str, article_id: int) -> dict[str
                 }
             with conn.cursor() as cur:
                 cur.execute(
-                    f"""UPDATE {schema_name}.articles SET content = %s, enrichment_status = 'enriched', processing_status = 'ml_processed', status = 'completed',
-                        updated_at = NOW() WHERE id = %s""",
+                    f"""UPDATE {schema_name}.articles SET content = %s, enrichment_status = 'enriched', processing_status = 'ml_processed',
+                    updated_at = NOW() WHERE id = %s""",
                     (text, article_id),
                 )
                 cur.execute(
