@@ -203,7 +203,7 @@ def _collect_checkpoint_failures(
 def _collect_pending_db_spill() -> list[DiagnosticEvent]:
     out: list[DiagnosticEvent] = []
     try:
-        from shared.database.pending_db_writes import pending_line_count
+        api.shared.database.pending_db_writes import pending_line_count
 
         n = pending_line_count()
         if n <= 0:
@@ -368,7 +368,7 @@ def collect_diagnostic_events(
 
     if log_dir is None:
         try:
-            from config.paths import LOG_DIR
+            from api.config.paths import LOG_DIR
 
             log_dir = Path(LOG_DIR)
         except Exception:
@@ -377,7 +377,7 @@ def collect_diagnostic_events(
     events: list[DiagnosticEvent] = []
 
     try:
-        from shared.database import get_ui_db_connection
+        api.shared.database import get_ui_db_connection
 
         conn = get_ui_db_connection()
         if conn:

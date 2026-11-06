@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 from psycopg2.extras import RealDictCursor
-from shared.services.domain_aware_service import DomainAwareService
+api.shared.services.domain_aware_service import DomainAwareService
 
 logger = logging.getLogger(__name__)
 

@@ -21,7 +21,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from typing import Any
-from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
+from api.config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -260,7 +260,7 @@ def record_article_phase_pass(
     p = _norm_phase(phase)
     iso = datetime.now(timezone.utc).isoformat()
     ts = terminal_state or TERMINAL_PROCESSED_WITH_OUTPUT
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -316,7 +316,7 @@ def bulk_record_article_phase_pass(
     p = _norm_phase(phase)
     iso = datetime.now(timezone.utc).isoformat()
     ts = terminal_state or TERMINAL_PROCESSED_WITH_OUTPUT
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -347,7 +347,7 @@ def bulk_record_article_phase_pass(
             )
         conn.commit()
         try:
-            from shared.pipeline_status_store import upsert_pipeline_status
+            api.shared.pipeline_status_store import upsert_pipeline_status
 
             for aid in article_ids:
                 upsert_pipeline_status(
@@ -371,7 +371,7 @@ def bulk_record_article_phase_pass(
 def clear_article_phase_pass(schema: str, article_id: int, phase: str) -> None:
     """Remove pass marker so article re-enters backlog (reconciliation)."""
     p = _norm_phase(phase)
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -410,7 +410,7 @@ def record_context_phase_pass(
     p = _norm_phase(phase)
     iso = datetime.now(timezone.utc).isoformat()
     ts = terminal_state or TERMINAL_PROCESSED_WITH_OUTPUT
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -470,7 +470,7 @@ def record_context_phase_pass(
 def clear_context_phase_pass(context_id: int, phase: str) -> None:
     """Remove pass marker from context (reconciliation)."""
     p = _norm_phase(phase)
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

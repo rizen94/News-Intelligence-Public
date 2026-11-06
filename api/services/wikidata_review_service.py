@@ -6,8 +6,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from shared.database import get_ui_db_connection_context
-from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
+api.shared.database import get_ui_db_connection_context
+api.shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 
 
 def list_entities_missing_wikidata_qid(

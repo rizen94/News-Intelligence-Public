@@ -10,7 +10,7 @@ from typing import Any
 
 import psutil
 from psycopg2.extras import RealDictCursor
-from shared.database import get_db_connection
+api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -531,7 +531,7 @@ def get_dynamic_resource_service() -> DynamicResourceService:
     """Get global dynamic resource service instance"""
     global _dynamic_resource_service
     if _dynamic_resource_service is None:
-        from config.database import get_db_config
+        from api.config.database import get_db_config
 
         _dynamic_resource_service = DynamicResourceService(get_db_config())
     return _dynamic_resource_service

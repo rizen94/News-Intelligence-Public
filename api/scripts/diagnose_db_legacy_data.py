@@ -31,7 +31,7 @@ if not os.environ.get("DB_PASSWORD") and os.path.exists(
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from shared.domain_registry import get_schema_names_active
+api.shared.domain_registry import get_schema_names_active
 
 
 def run(conn, sql, params=None):
@@ -96,7 +96,7 @@ def scan_runtime_sql_alignment():
 
 
 def main():
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

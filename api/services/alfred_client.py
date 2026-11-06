@@ -15,7 +15,7 @@ from typing import Any
 
 import requests
 
-from config.settings import FRED_API_KEY, FRED_RATE_LIMIT_PER_MINUTE
+from api.config.settings import FRED_API_KEY, FRED_RATE_LIMIT_PER_MINUTE
 
 logger = logging.getLogger(__name__)
 

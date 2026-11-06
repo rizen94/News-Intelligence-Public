@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Path, Query
 
-from shared.services.congress_gov_client import (
+api.shared.services.congress_gov_client import (
     fetch_bill,
     fetch_bill_summaries,
     fetch_bill_text_versions,

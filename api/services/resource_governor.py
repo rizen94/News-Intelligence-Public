@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("orchestrator")
 except Exception:
@@ -27,7 +27,7 @@ class ResourceGovernor:
     def __init__(self, config: dict[str, Any] | None = None):
         if config is None:
             try:
-                from config.orchestrator_governance import get_orchestrator_governance_config
+                from api.config.orchestrator_governance import get_orchestrator_governance_config
 
                 config = get_orchestrator_governance_config()
             except Exception as e:

@@ -7,8 +7,8 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Path, Query
-from shared.database import get_db_connection
-from shared.domain_registry import (
+api.shared.database import get_db_connection
+api.shared.domain_registry import (
     domain_key_to_schema,
     pipeline_url_schema_pairs,
     schema_to_domain_key,
@@ -39,7 +39,7 @@ def _domain_keys_matching_path(path_domain: str) -> list[str]:
 
 def _path_segment_for_db_domain_key(db_key: str) -> str:
     """Route segment for links (registry URL key preferred)."""
-    from shared.domain_registry import get_domain_entries
+    api.shared.domain_registry import get_domain_entries
 
     for e in get_domain_entries():
         if e["domain_key"] == db_key:
@@ -60,7 +60,7 @@ def _get_schema_for_domain(domain: str) -> str | None:
 
 def _sanitize_storyline_title(title: str | None) -> str:
     try:
-        from shared.llm_text_sanitize import sanitize_briefing_title
+        api.shared.llm_text_sanitize import sanitize_briefing_title
 
         return sanitize_briefing_title(title)
     except Exception:
@@ -72,7 +72,7 @@ def _sanitize_editorial_document_for_api(ed: dict | None) -> dict | None:
     if not ed or not isinstance(ed, dict):
         return ed
     try:
-        from shared.llm_text_sanitize import sanitize_briefing_lede, strip_llm_wrapping_artifacts
+        api.shared.llm_text_sanitize import sanitize_briefing_lede, strip_llm_wrapping_artifacts
 
         out = dict(ed)
         if out.get("lede"):
@@ -294,7 +294,7 @@ def _resolve_event_briefing_text(
     narrative_lenses: Any,
 ) -> str:
     """Domain-aware briefing: lens → global excerpt → legacy editorial_briefing."""
-    from shared.llm_text_sanitize import sanitize_briefing_lede
+    api.shared.llm_text_sanitize import sanitize_briefing_lede
 
     lenses = narrative_lenses if isinstance(narrative_lenses, dict) else {}
     for key in _domain_keys_matching_path(path_domain):

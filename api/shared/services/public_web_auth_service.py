@@ -13,7 +13,7 @@ from typing import Any
 import bcrypt
 import jwt
 
-from config.settings import (
+from api.config.settings import (
     news_intel_auth_cookie_max_age_seconds,
     news_intel_auth_jwt_secret,
 )

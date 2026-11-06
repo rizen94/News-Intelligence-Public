@@ -15,8 +15,8 @@ _SPECS = _DOMAINS / "specs"
 if str(_API) not in sys.path:
     sys.path.insert(0, str(_API))
 
-from shared.domain_spec import DomainSpec  # noqa: E402
-from shared.services.domain_rss_seed import extract_seed_feed_category, extract_seed_feed_urls  # noqa: E402
+api.shared.domain_spec import DomainSpec  # noqa: E402
+api.shared.services.domain_rss_seed import extract_seed_feed_category, extract_seed_feed_urls  # noqa: E402
 
 
 def _norm_urls(cfg: dict[str, Any]) -> set[str]:

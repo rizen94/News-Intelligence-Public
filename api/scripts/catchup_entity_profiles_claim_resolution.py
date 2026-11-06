@@ -36,8 +36,8 @@ from services.entity_profile_sync_service import (  # noqa: E402
 
 
 def _profile_counts(domain_key: str) -> dict[str, int]:
-    from shared.database import get_db_connection_context
-    from shared.domain_registry import resolve_domain_schema
+    api.shared.database import get_db_connection_context
+    api.shared.domain_registry import resolve_domain_schema
 
     schema = resolve_domain_schema(domain_key)
     out = {"entity_canonical": 0, "entity_profiles": 0, "old_entity_to_new": 0}

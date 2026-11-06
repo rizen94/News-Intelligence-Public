@@ -374,7 +374,7 @@ _logger_instance = None
 def _get_defaults():
     """Use settings when available; avoid circular import."""
     try:
-        from config.settings import LOG_DIR, LOG_LEVEL
+        from api.config.settings import LOG_DIR, LOG_LEVEL
 
         return str(LOG_LEVEL), str(LOG_DIR)
     except Exception:

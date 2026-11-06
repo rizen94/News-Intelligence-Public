@@ -20,9 +20,9 @@ if env_file.exists():
 
 
 def main() -> int:
-    from shared.database import get_db_connection_context
-    from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
-    from shared.membership_store import reconcile_derived_bag_from_eel
+    api.shared.database import get_db_connection_context
+    api.shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
+    api.shared.membership_store import reconcile_derived_bag_from_eel
 
     limit = int(sys.argv[1]) if len(sys.argv) > 1 else 500
     with get_db_connection_context() as conn:

@@ -10,11 +10,11 @@ from typing import Optional
 from datetime import datetime, timedelta
 import psycopg2
 from .storyline_tracker import StorylineTracker
-from modules.deduplication.advanced_deduplication_service import (
+from api.modules.deduplication.advanced_deduplication_service import (
     AdvancedDeduplicationService,
     get_deduplication_service
 )
-from shared.database.connection import get_db_connect_kwargs
+api.shared.database.connection import get_db_connect_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -279,7 +279,7 @@ class DailyBriefingService:
             content_duplicate_groups = 0
             
             # Query across all domain schemas (same pattern as article_deduplication route)
-            from shared.services.domain_aware_service import get_domain_data_schemas
+            api.shared.services.domain_aware_service import get_domain_data_schemas
             for sch in get_domain_data_schemas():
                 cursor.execute(f"SELECT COUNT(*) FROM {sch}.articles")
                 total_articles += cursor.fetchone()[0] or 0

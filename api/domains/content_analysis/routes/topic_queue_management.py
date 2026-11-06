@@ -11,10 +11,10 @@ from domains.content_analysis.services.topic_extraction_queue_worker import (
     TopicExtractionQueueWorker,
 )
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Path, Query
-from shared.database import get_db_connection
-from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
-from shared.services.domain_aware_service import validate_domain
-from shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED
+api.shared.database import get_db_connection
+api.shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
+api.shared.services.domain_aware_service import validate_domain
+api.shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED
 
 logger = logging.getLogger(__name__)
 

@@ -31,7 +31,7 @@ def _ensure_init() -> Path:
         if _INITIALIZED and _LOG_DIR:
             return _LOG_DIR
         try:
-            from config.paths import LOG_DIR
+            from api.config.paths import LOG_DIR
 
             _LOG_DIR = Path(LOG_DIR)
         except Exception:
@@ -49,7 +49,7 @@ def _hash_text(text: str) -> str:
 def _log_full_text() -> bool:
     """Whether to log full prompt/response (dev: true, prod: false)."""
     try:
-        from config.settings import LOG_LLM_FULL_TEXT
+        from api.config.settings import LOG_LLM_FULL_TEXT
 
         return bool(LOG_LLM_FULL_TEXT)
     except Exception:
@@ -148,7 +148,7 @@ def log_llm_interaction(
         pass
 
     try:
-        from shared.logging.activity_logger import log_activity
+        api.shared.logging.activity_logger import log_activity
 
         simple = {
             k: v

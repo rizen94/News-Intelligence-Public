@@ -12,12 +12,12 @@ from datetime import datetime, timezone
 from typing import Any
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
-from config.settings import FINANCE_CACHE_DB
+from api.config.settings import FINANCE_CACHE_DB
 from domains.finance.data.schema_version import ensure_schema_version, SCHEMA_VERSION
 
 DEFAULT_TTL_SECONDS = 3600  # 1 hour for FRED

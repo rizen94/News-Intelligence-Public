@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 
-from config.runtime import env_bool
-from shared.database import get_db_connection_context
+from api.config.runtime import env_bool
+api.shared.database import get_db_connection_context
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ def invalidate_intelligence_phase_gate_cache() -> None:
 def should_skip_automation_phase(phase: str) -> bool:
     """Return True when the phase should not run (empty unwired targets)."""
     try:
-        from config.feature_registry import feature_lifecycle, is_feature_enabled
+        from api.config.feature_registry import feature_lifecycle, is_feature_enabled
 
         lc = feature_lifecycle(phase)
         if lc in ("under_developed", "archived", "deprecated"):

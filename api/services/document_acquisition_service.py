@@ -10,7 +10,7 @@ import logging
 from datetime import date
 from typing import Any
 
-from shared.database import get_db_connection
+api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ def ingest_from_config(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """
     if config is None:
         try:
-            from config.orchestrator_governance import get_orchestrator_governance_config
+            from api.config.orchestrator_governance import get_orchestrator_governance_config
 
             config = get_orchestrator_governance_config()
         except Exception as e:

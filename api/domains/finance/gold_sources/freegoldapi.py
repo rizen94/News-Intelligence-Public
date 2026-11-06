@@ -8,13 +8,13 @@ import logging
 import time
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
-from shared.data_result import DataResult
+api.shared.data_result import DataResult
 
 SOURCE_ID = "freegoldapi"
 UNIT = "USD/oz"
@@ -33,7 +33,7 @@ def fetch(start: str | None = None, end: str | None = None) -> DataResult[list[d
         r = requests.get(URL, timeout=30)
         duration_ms = (time.perf_counter() - t0) * 1000
         try:
-            from shared.logging.activity_logger import log_external_call
+            api.shared.logging.activity_logger import log_external_call
 
             log_external_call(
                 url=URL,
@@ -76,7 +76,7 @@ def fetch(start: str | None = None, end: str | None = None) -> DataResult[list[d
     except Exception as e:
         duration_ms = (time.perf_counter() - t0) * 1000
         try:
-            from shared.logging.activity_logger import log_external_call
+            api.shared.logging.activity_logger import log_external_call
 
             log_external_call(
                 url=URL,

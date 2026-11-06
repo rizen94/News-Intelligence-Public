@@ -5,7 +5,7 @@ Trend and predictions API backend (P3). Thin layer over context/event data; exte
 import logging
 from typing import Any
 
-from shared.database import get_db_connection
+api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 

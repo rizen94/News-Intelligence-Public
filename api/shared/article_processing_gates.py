@@ -18,12 +18,12 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
-from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
-from shared.pipeline_state_constants import (
+from api.config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
+api.shared.pipeline_state_constants import (
     ARTICLE_ENRICHED, ARTICLE_FAILED, ARTICLE_INACCESSIBLE,
 )
 
-# Canonical status values — imported from shared.pipeline_state_constants
+# Canonical status values — imported api.shared.pipeline_state_constants
 _ART = ARTICLE_ENRICHED   # alias for SQL queries (same string value)
 _AF = ARTICLE_FAILED
 _AI = ARTICLE_INACCESSIBLE

@@ -7,13 +7,13 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 
-from modules.deduplication.advanced_deduplication_service import (
+from api.modules.deduplication.advanced_deduplication_service import (
     AdvancedDeduplicationService,
     ArticleMetadata,
     ClusterResult,
 )
 from psycopg2.extras import RealDictCursor
-from shared.database import get_db_connection
+api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 

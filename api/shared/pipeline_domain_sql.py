@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from shared.domain_registry import get_pipeline_active_domain_keys
-from shared.domain_registry_constants import RETIRED_DOMAIN_KEY_ALIASES
+api.shared.domain_registry import get_pipeline_active_domain_keys
+api.shared.domain_registry_constants import RETIRED_DOMAIN_KEY_ALIASES
 
 
 def pipeline_domain_keys() -> tuple[str, ...]:
@@ -40,13 +40,13 @@ def pipeline_url_schema_pairs_for_phase(
     A processing-mode lookup failure also falls back to the full pipeline set: the band gate is an
     efficiency filter, not an authorisation boundary.
     """
-    from shared.domain_registry import pipeline_url_schema_pairs
+    api.shared.domain_registry import pipeline_url_schema_pairs
 
     pairs = [(str(dk), str(sch)) for dk, sch in pipeline_url_schema_pairs()]
     if not phase:
         return pairs
     try:
-        from shared.domain_processing_mode import domain_runs_phase
+        api.shared.domain_processing_mode import domain_runs_phase
 
         return [(dk, sch) for dk, sch in pairs if domain_runs_phase(dk, phase)]
     except Exception:

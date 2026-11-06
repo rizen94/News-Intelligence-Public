@@ -17,8 +17,8 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from shared.database import get_db_connection
-from shared.services.llm_service import LLMService, ModelType
+api.shared.database import get_db_connection
+api.shared.services.llm_service import LLMService, ModelType
 
 logger = logging.getLogger(__name__)
 

@@ -8,14 +8,14 @@ import logging
 import time
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
-from config.settings import FRED_API_KEY, FRED_RATE_LIMIT_PER_MINUTE
-from shared.data_result import DataResult
+from api.config.settings import FRED_API_KEY, FRED_RATE_LIMIT_PER_MINUTE
+api.shared.data_result import DataResult
 
 from domains.finance.data.api_cache import FRED_TTL
 from domains.finance.data.api_cache import get as cache_get
@@ -57,7 +57,7 @@ def _fetch_fred(
         r = requests.get(FRED_BASE, params=params, timeout=30)
         duration_ms = (time.perf_counter() - t0) * 1000
         try:
-            from shared.logging.activity_logger import log_external_call
+            api.shared.logging.activity_logger import log_external_call
 
             log_external_call(
                 url=FRED_BASE,
@@ -81,7 +81,7 @@ def _fetch_fred(
     except Exception as e:
         duration_ms = (time.perf_counter() - t0) * 1000
         try:
-            from shared.logging.activity_logger import log_external_call
+            api.shared.logging.activity_logger import log_external_call
 
             log_external_call(
                 url=FRED_BASE,

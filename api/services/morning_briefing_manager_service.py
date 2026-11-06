@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from typing import Any
 
-from shared.vault_note_contract import (
+api.shared.vault_note_contract import (
     MAX_MORNING_NEWS_EXPANSIONS,
     MAX_MORNING_SCIENCE_EXPANSIONS,
     MORNING_NEW_OF_NOTE_CAP,
@@ -37,7 +37,7 @@ def briefing_manager_enabled() -> bool:
     if raw in ("1", "true", "yes"):
         return True
     try:
-        from config.feature_registry import is_feature_enabled
+        from api.config.feature_registry import is_feature_enabled
 
         return is_feature_enabled("vault_morning_briefing_manager", default=True)
     except Exception:
@@ -56,8 +56,8 @@ def _run_async(coro):
 
 
 async def _llm_manager(prompt: str) -> str:
-    from shared.services.ollama_model_caller import get_ollama_model_caller
-    from shared.services.ollama_model_policy import InvocationKind
+    api.shared.services.ollama_model_caller import get_ollama_model_caller
+    api.shared.services.ollama_model_policy import InvocationKind
 
     caller = get_ollama_model_caller()
     result = await caller.generate(

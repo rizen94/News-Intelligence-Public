@@ -16,7 +16,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
+from api.config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,7 @@ def flush_pending_writes() -> dict[str, Any]:
         flushed = failed = skipped = discarded = 0
 
         try:
-            from shared.database import get_db_connection
+            api.shared.database import get_db_connection
         except Exception as e:
             logger.warning("pending_db_writes: no DB module: %s", e)
             return {"flushed": 0, "failed": 0, "skipped": len(lines), "error": str(e)}
@@ -210,7 +210,7 @@ def flush_pending_writes() -> dict[str, Any]:
             logger.error("pending_db_writes: could not rewrite queue file: %s", e)
 
         try:
-            from shared.database.db_availability import invalidate_db_health_cache
+            api.shared.database.db_availability import invalidate_db_health_cache
 
             if flushed:
                 invalidate_db_health_cache()

@@ -19,7 +19,7 @@ import psutil
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 # Import centralized path configuration
-from config.paths import LOGS_DIR
+from api.config.paths import LOGS_DIR
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

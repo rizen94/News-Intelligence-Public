@@ -17,7 +17,7 @@ import logging
 import time
 from typing import Callable
 
-from config.runtime import env_float, env_str
+from api.config.runtime import env_float, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +62,11 @@ def _probe_claim_extraction() -> bool:
 
 
 def _probe_unified_intake_extraction() -> bool:
-    from config.settings import unified_intake_extraction_enabled
-    from shared.database import get_db_connection_context
-    from shared.domain_registry import get_pipeline_schema_names_active
-    from shared.pipeline_resource_policy import intake_extraction_suppressed
-    from shared.unified_intake_backlog import (
+    from api.config.settings import unified_intake_extraction_enabled
+    api.shared.database import get_db_connection_context
+    api.shared.domain_registry import get_pipeline_schema_names_active
+    api.shared.pipeline_resource_policy import intake_extraction_suppressed
+    api.shared.unified_intake_backlog import (
         sql_actionable_unified_intake,
         sql_unified_intake_base_eligible,
         unified_intake_legacy_aware_backlog_enabled,
@@ -104,11 +104,11 @@ def _probe_unified_intake_extraction() -> bool:
 
 
 def _probe_topic_clustering() -> bool:
-    from shared.database import get_db_connection_context
-    from shared.domain_registry import get_pipeline_schema_names_active
+    api.shared.database import get_db_connection_context
+    api.shared.domain_registry import get_pipeline_schema_names_active
 
     try:
-        from config.settings import topic_clustering_backlog_uses_pass_marker
+        from api.config.settings import topic_clustering_backlog_uses_pass_marker
         from domains.content_analysis.services.topic_clustering_service import (
             TopicClusteringService,
         )
@@ -158,8 +158,8 @@ def _probe_storyline_assembly() -> bool:
 
 
 def _probe_content_enrichment() -> bool:
-    from shared.database import get_db_connection_context
-    from shared.domain_registry import get_pipeline_schema_names_active
+    api.shared.database import get_db_connection_context
+    api.shared.domain_registry import get_pipeline_schema_names_active
 
     try:
         from services.spine_work_queue_service import count_all_pending, spine_work_queues_enabled
@@ -192,9 +192,9 @@ def _probe_entity_profile_build() -> bool:
         _entity_profile_upstream_gate_for_select,
         sql_entity_profile_upstream_cleared_exists,
     )
-    from shared.database import get_db_connection_context
-    from shared.entity_profile_eligibility import sql_entity_profile_needs_build
-    from shared.pipeline_domain_sql import pipeline_domain_any_sql
+    api.shared.database import get_db_connection_context
+    api.shared.entity_profile_eligibility import sql_entity_profile_needs_build
+    api.shared.pipeline_domain_sql import pipeline_domain_any_sql
 
     domain_sql, domain_keys = pipeline_domain_any_sql(
         "ep.domain_key", phase="entity_profile_build"
@@ -235,7 +235,7 @@ def _probe_spine_sql_tail() -> bool:
     except Exception:
         pass
     try:
-        from shared.pipeline_queue_counts import get_phase_queue_depth
+        api.shared.pipeline_queue_counts import get_phase_queue_depth
 
         return int(get_phase_queue_depth("spine_sql_tail") or 0) > 0
     except Exception:
@@ -273,9 +273,9 @@ def _probe_chronological_events_catchup() -> bool:
 
 
 def _probe_story_continuation() -> bool:
-    from shared.database import get_db_connection
-    from shared.domain_processing_mode import domain_runs_phase
-    from shared.domain_registry import pipeline_url_schema_pairs
+    api.shared.database import get_db_connection
+    api.shared.domain_processing_mode import domain_runs_phase
+    api.shared.domain_registry import pipeline_url_schema_pairs
 
     schemas = [
         sch
@@ -325,7 +325,7 @@ def _probe_story_continuation() -> bool:
 
 
 def _probe_content_refinement_queue() -> bool:
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

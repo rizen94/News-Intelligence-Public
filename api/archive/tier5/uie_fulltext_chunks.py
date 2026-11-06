@@ -10,10 +10,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from config.runtime import env_str
-from config.settings import unified_intake_max_article_chars
-from shared.context_chunking import _split_by_paragraphs
-from shared.services.ollama_model_policy import InvocationKind, num_ctx_for_invocation
+from api.config.runtime import env_str
+from api.config.settings import unified_intake_max_article_chars
+api.shared.context_chunking import _split_by_paragraphs
+api.shared.services.ollama_model_policy import InvocationKind, num_ctx_for_invocation
 
 
 # Leave headroom for schema instructions + JSON output inside the model window.

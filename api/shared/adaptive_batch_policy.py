@@ -6,8 +6,8 @@ import json
 import logging
 from typing import Any
 
-from config.runtime import env_bool, env_float, env_int, env_str
-from shared.catchup_host_metrics import (
+from api.config.runtime import env_bool, env_float, env_int, env_str
+api.shared.catchup_host_metrics import (
     TRACK_BUILD,
     TRACK_CHEMISTRY_LOCAL,
     TRACK_DOSSIER_FAST,
@@ -21,7 +21,7 @@ from shared.catchup_host_metrics import (
     tune_batch_size,
     tune_batch_track,
 )
-from shared.phase_spec import overlay_adaptive_bounds
+api.shared.phase_spec import overlay_adaptive_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -431,7 +431,7 @@ def resolve_phase_batch_limit(
     env_suffix: str = "ARTICLES_PER_DOMAIN",
 ) -> int:
     """Env default via ``phase_batch_limit``, then headroom auto-tune when enabled."""
-    from shared.pipeline_batch_drain import phase_batch_limit
+    api.shared.pipeline_batch_drain import phase_batch_limit
 
     base = phase_batch_limit(phase, default, env_suffix=env_suffix)
     tuned, _meta = resolve_adaptive_batch(phase, base)
@@ -499,7 +499,7 @@ def _state_key(phase: str) -> str:
 
 def _load_persisted_state(phase: str) -> dict[str, Any]:
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -531,7 +531,7 @@ def _load_persisted_batch(phase: str) -> int | None:
 
 def _persist_batch(phase: str, batch: int, meta: dict[str, Any]) -> None:
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         # Preserve last_yield across tune writes so yield-gate can see prior run.
         existing = _load_persisted_state(phase)
@@ -586,7 +586,7 @@ def record_adaptive_batch_yield(
         "batch_limit": int(batch_limit) if batch_limit is not None else None,
     }
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         existing = _load_persisted_state(phase_key)
         payload = {**existing, "last_yield": yield_info}
@@ -731,7 +731,7 @@ def apply_adaptive_batch_yield_gate(phase: str) -> tuple[int, dict[str, Any]]:
         state = _load_persisted_state(phase_key)
         payload = {**state, **meta, "batch": int(new_batch)}
         try:
-            from shared.database import get_db_connection_context
+            api.shared.database import get_db_connection_context
 
             with get_db_connection_context() as conn:
                 with conn.cursor() as cur:

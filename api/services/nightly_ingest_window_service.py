@@ -43,7 +43,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from shared.domain_registry import get_active_domain_keys
+api.shared.domain_registry import get_active_domain_keys
 
 logger = logging.getLogger(__name__)
 
@@ -402,7 +402,7 @@ async def _maybe_nightly_kickoff_rss(
     ):
         return
     try:
-        from shared.pipeline_article_selection import pipeline_backfill_collection_should_pause
+        api.shared.pipeline_article_selection import pipeline_backfill_collection_should_pause
 
         if pipeline_backfill_collection_should_pause():
             return
@@ -415,7 +415,7 @@ async def _maybe_nightly_kickoff_rss(
     if not window_active():
         return
     try:
-        from collectors.rss_collector import collect_rss_feeds
+        from api.collectors.rss_collector import collect_rss_feeds
 
         activity = int(await loop.run_in_executor(None, collect_rss_feeds) or 0)
         _nightly_kickoff_rss_local_date = today
@@ -526,7 +526,7 @@ async def run_nightly_unified_pipeline_drain(
         return stats
 
     try:
-        from config.context_centric_config import is_context_centric_task_enabled
+        from api.config.context_centric_config import is_context_centric_task_enabled
 
         context_sync_enabled = is_context_centric_task_enabled("context_sync")
     except Exception:

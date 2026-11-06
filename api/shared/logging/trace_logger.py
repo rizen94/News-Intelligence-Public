@@ -25,7 +25,7 @@ def _ensure_init() -> Path:
         if _INITIALIZED and _LOG_DIR:
             return _LOG_DIR
         try:
-            from config.paths import LOG_DIR
+            from api.config.paths import LOG_DIR
 
             _LOG_DIR = Path(LOG_DIR)
         except Exception:
@@ -44,7 +44,7 @@ def _write_span(span: dict) -> None:
         pass
 
     try:
-        from shared.logging.activity_logger import log_activity
+        api.shared.logging.activity_logger import log_activity
 
         log_activity(
             component="trace",

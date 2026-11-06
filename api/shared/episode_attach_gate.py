@@ -14,7 +14,7 @@ import logging
 import re
 from typing import Any
 
-from config.runtime import env_bool
+from api.config.runtime import env_bool
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ def episode_container_assembly_enabled() -> bool:
     if env_bool("EPISODE_CONTAINER_ASSEMBLY_ENABLED", False):
         return True
     try:
-        from config.feature_registry import is_feature_enabled
+        from api.config.feature_registry import is_feature_enabled
 
         return bool(is_feature_enabled("episode_container_assembly", default=False))
     except Exception:
@@ -187,7 +187,7 @@ def classify_event_anchors(
     pairs: list[tuple[Any, Any, Any]] = []  # cid, type, name
 
     try:
-        from shared.assembly_link_funnel import is_durable_entity_type
+        api.shared.assembly_link_funnel import is_durable_entity_type
     except Exception:
 
         def is_durable_entity_type(_et: str | None) -> bool:  # type: ignore
@@ -277,7 +277,7 @@ def classify_event_anchors(
         if not name_l:
             return False
         try:
-            from shared.hub_denylist import is_blocked_hub_name
+            api.shared.hub_denylist import is_blocked_hub_name
 
             if is_blocked_hub_name(name_l):
                 return True
@@ -671,7 +671,7 @@ def seed_signature_from_entity_names(
         if name_l in hub_names:
             return True
         try:
-            from shared.hub_denylist import is_blocked_hub_name
+            api.shared.hub_denylist import is_blocked_hub_name
 
             if is_blocked_hub_name(name_l):
                 return True
@@ -747,7 +747,7 @@ def attach_article_events_to_episode(
         return 0, "feature_off"
     if derive_storyline_article is None:
         try:
-            from shared.assembly_link_funnel import storyline_articles_dual_write_enabled
+            api.shared.assembly_link_funnel import storyline_articles_dual_write_enabled
 
             derive_storyline_article = storyline_articles_dual_write_enabled()
         except Exception:
@@ -808,7 +808,7 @@ def attach_article_events_to_episode(
                     (str(int(episode_id)), int(eid)),
                 )
         if linked and derive_storyline_article:
-            from shared.membership_store import insert_derived_bag_row
+            api.shared.membership_store import insert_derived_bag_row
 
             insert_derived_bag_row(
                 cur,
@@ -862,7 +862,7 @@ def admit_article_to_episode_or_storyline(
 
     Prefer importing membership_store directly in new code.
     """
-    from shared.membership_store import MembershipIntent, admit
+    api.shared.membership_store import MembershipIntent, admit
 
     return admit(
         conn,

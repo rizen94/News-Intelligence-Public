@@ -9,11 +9,11 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
-from config.settings import MODELS
-from shared.database import get_db_connection
-from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
-from shared.services.domain_aware_service import validate_domain
-from shared.services.llm_service import llm_service
+from api.config.settings import MODELS
+api.shared.database import get_db_connection
+api.shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
+api.shared.services.domain_aware_service import validate_domain
+api.shared.services.llm_service import llm_service
 
 from ..services.proactive_detection_service import ProactiveDetectionService
 from ..services.quality_assessment_service import QualityAssessmentService

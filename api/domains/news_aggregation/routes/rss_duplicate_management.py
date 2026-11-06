@@ -9,8 +9,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from shared.database import get_db_connection
-from shared.services.domain_aware_service import get_domain_data_schemas
+api.shared.database import get_db_connection
+api.shared.services.domain_aware_service import get_domain_data_schemas
 
 
 def _find_rss_feed_schema(conn, feed_id: int) -> str | None:

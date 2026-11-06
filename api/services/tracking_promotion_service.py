@@ -10,7 +10,7 @@ import asyncio
 import logging
 from typing import Any
 
-from config.runtime import env_int
+from api.config.runtime import env_int
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ _DEFAULT_THRESHOLDS: dict[str, int] = {
 
 def _threshold(candidate_type: str) -> int:
     env_key = f"TRACKING_PROMOTE_{candidate_type.upper()}_MIN_SCORE"
-    from config.runtime import env_int as _ei
+    from api.config.runtime import env_int as _ei
 
     return _ei(env_key, _DEFAULT_THRESHOLDS.get(candidate_type, 99))
 

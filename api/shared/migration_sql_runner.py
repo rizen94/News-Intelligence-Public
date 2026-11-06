@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
+from api.config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 
 def bootstrap_migration_env() -> None:
@@ -35,7 +35,7 @@ def apply_sql_at_path(sql_path: str) -> int:
     if api_root not in sys.path:
         sys.path.insert(0, api_root)
 
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -66,7 +66,7 @@ def run_by_basename(filename: str) -> int:
     if api_root not in sys.path:
         sys.path.insert(0, api_root)
 
-    from shared.migration_sql_paths import resolve_migration_sql_file
+    api.shared.migration_sql_paths import resolve_migration_sql_file
 
     try:
         path = resolve_migration_sql_file(filename)
@@ -85,7 +85,7 @@ def run_by_migration_number(migration_id: str) -> int:
     if api_root not in sys.path:
         sys.path.insert(0, api_root)
 
-    from shared.migration_sql_paths import find_migration_sql_by_prefix
+    api.shared.migration_sql_paths import find_migration_sql_by_prefix
 
     try:
         path = find_migration_sql_by_prefix(migration_id)

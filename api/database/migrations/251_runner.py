@@ -22,7 +22,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 import psycopg2
-from config.runtime import env_str
+from api.config.runtime import env_str
 
 
 def get_db_params():

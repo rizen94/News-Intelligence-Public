@@ -109,7 +109,7 @@ _MODE_BRANCH = {
 
 def flat_scheduler_enabled() -> bool:
     """Kill-switch; default on so flat mode is the scheduling SSOT."""
-    from config.runtime import env_str
+    from api.config.runtime import env_str
 
     return env_str("PIPELINE_FLAT_SCHEDULER", "true").lower() not in (
         "0",
@@ -121,7 +121,7 @@ def flat_scheduler_enabled() -> bool:
 
 def _controller_config() -> dict[str, Any]:
     try:
-        from config.orchestrator_governance import get_orchestrator_governance_config
+        from api.config.orchestrator_governance import get_orchestrator_governance_config
 
         raw = get_orchestrator_governance_config().get("pipeline_controller") or {}
         return raw if isinstance(raw, dict) else {}
@@ -135,7 +135,7 @@ def _mode_cfg() -> dict[str, Any]:
 
 
 def _mode_int(key: str, default: int, *, env: str | None = None) -> int:
-    from config.runtime import env_str
+    from api.config.runtime import env_str
 
     modes = _mode_cfg()
     if modes.get(key) is not None:
@@ -244,7 +244,7 @@ def compute_mode(
     pressure: bool = False,
 ) -> SchedulerMode:
     """Pick exactly one scheduling mode for this replan."""
-    from shared.pipeline_resource_policy import (
+    api.shared.pipeline_resource_policy import (
         intake_preprocess_pending,
         post_process_preferred_enabled,
         preprocess_stable_pending,
@@ -329,7 +329,7 @@ def admit_phase(
         return "stall_hold"
 
     try:
-        from shared.remote_phase_worker import phase_owned_by_remote_worker
+        api.shared.remote_phase_worker import phase_owned_by_remote_worker
 
         if not ignore_remote_ownership and phase_owned_by_remote_worker(name):
             return "remote_owned"
@@ -337,8 +337,8 @@ def admit_phase(
         pass
 
     try:
-        from config.runtime import env_str
-        from shared.process_memory import AUTOMATION_RSS_PAUSE_EXEMPT_PHASES, process_rss_mb
+        from api.config.runtime import env_str
+        api.shared.process_memory import AUTOMATION_RSS_PAUSE_EXEMPT_PHASES, process_rss_mb
 
         raw_block = (env_str("AUTOMATION_BLOCK_PHASES", "") or "").strip()
         if raw_block and name in {x.strip() for x in raw_block.split(",") if x.strip()}:
@@ -357,7 +357,7 @@ def admit_phase(
         if not ignore_remote_ownership:
             return "disabled"
         try:
-            from shared.remote_phase_worker import phase_owned_by_remote_worker
+            api.shared.remote_phase_worker import phase_owned_by_remote_worker
 
             if not phase_owned_by_remote_worker(name):
                 return "disabled"
@@ -398,7 +398,7 @@ def admit_phase(
         pass
 
     try:
-        from shared.assembly_phase_order import post_spine_scheduling_suppressed
+        api.shared.assembly_phase_order import post_spine_scheduling_suppressed
 
         if post_spine_scheduling_suppressed(name):
             return "post_spine_suppressed"
@@ -406,7 +406,7 @@ def admit_phase(
         pass
 
     try:
-        from shared.pipeline_resource_policy import (
+        api.shared.pipeline_resource_policy import (
             entity_profile_build_allowed,
             intake_extraction_suppressed,
             intake_first_gpu_defer_threshold,
@@ -415,8 +415,8 @@ def admit_phase(
             refinement_phase_allowed,
             unified_superseded_automation_phases,
         )
-        from shared.pipeline_resource_policy import INTAKE_PREPROCESS_PHASES
-        from shared.spine_phase_order import spine_pipeline_ordered_active
+        api.shared.pipeline_resource_policy import INTAKE_PREPROCESS_PHASES
+        api.shared.spine_phase_order import spine_pipeline_ordered_active
 
         if intake_extraction_suppressed() and name in legacy_intake_extraction_phases():
             return "legacy_intake_suppressed"
@@ -458,8 +458,8 @@ def admit_phase(
         pass
 
     try:
-        from config.runtime import env_str
-        from shared.database.db_availability import is_automation_db_ready
+        from api.config.runtime import env_str
+        api.shared.database.db_availability import is_automation_db_ready
 
         if env_str("AUTOMATION_PAUSE_WHEN_DB_DOWN", "true").lower() in ("1", "true", "yes"):
             if not is_automation_db_ready():
@@ -490,7 +490,7 @@ def admit_phase(
 def _collection_allowed_flat(pending: dict[str, int], automation: Any, *, mode: SchedulerMode) -> bool:
     from datetime import datetime, timezone
 
-    from config.runtime import env_str
+    from api.config.runtime import env_str
 
     # Avoid importing services.automation_manager (pulls DB via services/__init__).
     try:

@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Import working modules
 try:
-    from collectors.rss_collector import collect_rss_feeds
+    from api.collectors.rss_collector import collect_rss_feeds
 
     RSS_AVAILABLE = True
 except ImportError as e:
@@ -25,7 +25,7 @@ except ImportError as e:
     RSS_AVAILABLE = False
 
 try:
-    from modules.ingestion.article_pruner import ArticlePruner
+    from api.modules.ingestion.article_pruner import ArticlePruner
 
     PRUNER_AVAILABLE = True
 except ImportError as e:
@@ -34,12 +34,12 @@ except ImportError as e:
 
 try:
     # Pipeline stale-pending purge (mirror of /{domain}/storylines/review-queue/cron-purge)
-    from shared.domain_registry import (  # noqa: F401
+    api.shared.domain_registry import (  # noqa: F401
         get_active_domain_keys,
         get_pipeline_schema_names_active,
         resolve_domain_schema,
     )
-    from shared.services.domain_aware_service import validate_domain as _validate_domain
+    api.shared.services.domain_aware_service import validate_domain as _validate_domain
 
     PURGE_AVAILABLE = True
 except ImportError as e:
@@ -54,7 +54,7 @@ def _get_db_config() -> dict[str, str]:
     _api = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     if _api not in sys.path:
         sys.path.insert(0, _api)
-    from shared.database import get_db_config
+    api.shared.database import get_db_config
 
     return get_db_config()
 
@@ -262,7 +262,7 @@ def show_status():
 
     # Check database connection
     try:
-        from shared.database import get_db_connection
+        api.shared.database import get_db_connection
 
         conn = get_db_connection()
         cur = conn.cursor()

@@ -11,15 +11,15 @@ import logging
 from datetime import date
 from typing import Any
 
-from shared.database import get_db_connection, get_db_connection_context
-from shared.domain_registry import is_valid_domain_key, resolve_domain_schema
+api.shared.database import get_db_connection, get_db_connection_context
+api.shared.domain_registry import is_valid_domain_key, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
 
 def _dossier_skip_narrative_enabled() -> bool:
     """Skip per-dossier LLM narrative during bulk catch-up (much higher throughput)."""
-    from config.runtime import env_bool, env_str
+    from api.config.runtime import env_bool, env_str
 
     explicit = env_str("DOSSIER_CATCHUP_SKIP_NARRATIVE", "").strip().lower()
     if explicit in ("1", "true", "yes"):
@@ -30,7 +30,7 @@ def _dossier_skip_narrative_enabled() -> bool:
 
 
 def _dossier_compile_parallel_workers() -> int:
-    from config.runtime import env_int, env_str
+    from api.config.runtime import env_int, env_str
 
     raw = env_str("DOSSIER_COMPILE_PARALLEL", "").strip()
     if raw:
@@ -45,7 +45,7 @@ def _dossier_compile_parallel_workers() -> int:
 
 def _dossier_narrative_execution_lane() -> str | None:
     """PopOS GPU during catch-up narrative backfill; Widow CPU for normal bulk otherwise."""
-    from config.runtime import env_bool, env_str
+    from api.config.runtime import env_bool, env_str
 
     if env_bool("DOSSIER_CATCHUP_GPU_NARRATIVE", False):
         return "gpu"
@@ -59,7 +59,7 @@ def _dossier_narrative_execution_lane() -> str | None:
 
 
 def _dossier_narrative_parallel_workers() -> int:
-    from config.runtime import env_int, env_str
+    from api.config.runtime import env_int, env_str
 
     raw = env_str("DOSSIER_NARRATIVE_PARALLEL", "").strip()
     if raw:
@@ -71,7 +71,7 @@ def _dossier_narrative_parallel_workers() -> int:
 
 
 def _dossier_narrative_cpu_parallel_workers() -> int:
-    from config.runtime import env_int, env_str
+    from api.config.runtime import env_int, env_str
 
     raw = env_str("DOSSIER_NARRATIVE_CPU_PARALLEL", "").strip()
     if raw:
@@ -83,7 +83,7 @@ def _dossier_narrative_cpu_parallel_workers() -> int:
 
 
 def _dossier_narrative_model() -> str:
-    from config.runtime import env_str
+    from api.config.runtime import env_str
 
     return env_str("DOSSIER_NARRATIVE_MODEL", "qwen3.6:latest")
 
@@ -153,7 +153,7 @@ def _generate_dossier_narrative(
     )
 
     try:
-        from shared.services.llm_service import TaskType, llm_service
+        api.shared.services.llm_service import TaskType, llm_service
 
         narrative_lane = execution_lane if execution_lane is not None else _dossier_narrative_execution_lane()
         text = llm_service.generate(
@@ -183,7 +183,7 @@ def compile_dossier(
     """
     if not is_valid_domain_key(domain_key):
         return {"success": False, "error": f"Unknown domain_key: {domain_key}"}
-    from shared.pipeline_domain_sql import is_retired_domain_key
+    api.shared.pipeline_domain_sql import is_retired_domain_key
 
     if is_retired_domain_key(domain_key):
         return {"success": False, "error": f"Retired domain_key: {domain_key}"}
@@ -474,9 +474,9 @@ def _run_scheduled_dossier_compiles(
 
     ``stale_days`` is deprecated; set ``ENTITY_DOSSIER_STALE_DAYS`` in env instead.
     """
-    from shared.database import get_db_connection
-    from shared.entity_dossier_eligibility import sql_entity_dossier_needs_compile
-    from shared.pipeline_domain_sql import pipeline_domain_any_sql
+    api.shared.database import get_db_connection
+    api.shared.entity_dossier_eligibility import sql_entity_dossier_needs_compile
+    api.shared.pipeline_domain_sql import pipeline_domain_any_sql
 
     if stale_days is not None and stale_days >= 0:
         import logging as _logging

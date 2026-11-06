@@ -16,10 +16,10 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from config.runtime import env_int, env_str
-from shared.database import get_db_connection
-from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
-from shared.storyline_article_counts import sync_counts_update_sql, sync_storyline_derived_metrics
+from api.config.runtime import env_int, env_str
+api.shared.database import get_db_connection
+api.shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
+api.shared.storyline_article_counts import sync_counts_update_sql, sync_storyline_derived_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +176,7 @@ def compute_article_fit_score(
         and article_id is not None
     ):
         try:
-            from shared.membership_scoring import score_article_storyline_membership
+            api.shared.membership_scoring import score_article_storyline_membership
 
             ms = score_article_storyline_membership(
                 conn,
@@ -543,8 +543,8 @@ def count_storylines_needing_membership_review(
     """Count megas matching ``_pick_storylines`` eligibility (automation drain SSOT)."""
     if not membership_review_enabled():
         return 0
-    from shared.domain_processing_mode import filter_domains_for_phase
-    from shared.domain_registry import get_pipeline_active_domain_keys
+    api.shared.domain_processing_mode import filter_domains_for_phase
+    api.shared.domain_registry import get_pipeline_active_domain_keys
 
     domains = [domain_key] if domain_key else filter_domains_for_phase(
         get_pipeline_active_domain_keys(), "storyline_membership_review"
@@ -1047,7 +1047,7 @@ def review_storyline_membership(
             # Tracked events weakly linked to this storyline
             storyline_ref = f"{schema}:{storyline_id}"
             try:
-                from config.settings import event_tracking_storyline_min_entity_overlap
+                from api.config.settings import event_tracking_storyline_min_entity_overlap
 
                 min_ov = event_tracking_storyline_min_entity_overlap()
             except Exception:
@@ -1270,7 +1270,7 @@ def run_storyline_membership_review_all_domains(
         "skipped_chemistry_kind": 0,
     }
     from services.domain_synthesis_config import get_domain_synthesis_config
-    from shared.domain_processing_mode import filter_domains_for_phase
+    api.shared.domain_processing_mode import filter_domains_for_phase
 
     for dk in filter_domains_for_phase(
         get_pipeline_active_domain_keys(), "storyline_membership_review"
@@ -1283,8 +1283,8 @@ def run_storyline_membership_review_all_domains(
         )
         if skip_chemistry:
             try:
-                from shared.domain_registry import resolve_domain_schema
-                from shared.database import get_db_connection
+                api.shared.domain_registry import resolve_domain_schema
+                api.shared.database import get_db_connection
 
                 schema = resolve_domain_schema(dk)
                 conn = get_db_connection()
@@ -1456,7 +1456,7 @@ def apply_membership_action(action_id: int, *, approve: bool) -> dict[str, Any]:
 
                     parts: dict[str, Any] = {"action": action, "fit_score": None}
                     if article_id is not None:
-                        from shared.membership_scoring import (
+                        api.shared.membership_scoring import (
                             score_article_storyline_membership,
                         )
 
@@ -1487,7 +1487,7 @@ def apply_membership_action(action_id: int, *, approve: bool) -> dict[str, Any]:
             score_parts_for_log: dict[str, Any] | None = None
             if action == "unlink" and article_id is not None:
                 try:
-                    from shared.membership_scoring import score_article_storyline_membership
+                    api.shared.membership_scoring import score_article_storyline_membership
 
                     score_parts_for_log = score_article_storyline_membership(
                         conn,
@@ -1501,7 +1501,7 @@ def apply_membership_action(action_id: int, *, approve: bool) -> dict[str, Any]:
                 applied = _unlink_article(cur, schema, int(storyline_id), int(article_id))
             elif action == "demote_relevance" and article_id is not None:
                 try:
-                    from shared.membership_scoring import score_article_storyline_membership
+                    api.shared.membership_scoring import score_article_storyline_membership
 
                     score_parts_for_log = score_article_storyline_membership(
                         conn,

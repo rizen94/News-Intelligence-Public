@@ -11,7 +11,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services.commodity_event_bridge import text_suggests_macro_commodity_link  # noqa: E402
-from shared.database import get_db_connection  # noqa: E402
+api.shared.database import get_db_connection  # noqa: E402
 
 
 def main(limit: int = 500) -> None:

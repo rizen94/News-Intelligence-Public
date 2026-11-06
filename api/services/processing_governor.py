@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("orchestrator")
 except Exception:
@@ -116,7 +116,7 @@ class ProcessingGovernor:
         if not resource_ok:
             return None
         try:
-            from config.orchestrator_governance import get_orchestrator_governance_config
+            from api.config.orchestrator_governance import get_orchestrator_governance_config
 
             config = get_orchestrator_governance_config()
             phases_cfg = (config.get("processing") or {}).get("phases") or {}
@@ -148,7 +148,7 @@ class ProcessingGovernor:
             interval = int(phase_spec.get("interval_seconds") or 1200)
             scope = phase_spec.get("scope")
             if scope == "domain":
-                from shared.domain_registry import get_pipeline_schema_names_active
+                api.shared.domain_registry import get_pipeline_schema_names_active
 
                 for domain in get_pipeline_schema_names_active():
                     key = _processing_state_key(phase_name, domain=domain)

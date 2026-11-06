@@ -20,7 +20,7 @@ def _is_finance_silo_domain_key(dk: str) -> bool:
     if key == "finance":
         return True
     try:
-        from config.settings import finance_postgres_content_domain_key
+        from api.config.settings import finance_postgres_content_domain_key
 
         return key == finance_postgres_content_domain_key().strip().lower()
     except Exception:
@@ -29,7 +29,7 @@ def _is_finance_silo_domain_key(dk: str) -> bool:
 
 def _non_finance_domain_tokens() -> frozenset[str]:
     """Lowercased URL keys and schema names for active silos except finance (cross-domain map provenance)."""
-    from shared.domain_registry import domain_key_to_schema, get_active_domain_keys
+    api.shared.domain_registry import domain_key_to_schema, get_active_domain_keys
 
     out: set[str] = set()
     for dk in get_active_domain_keys():
@@ -117,7 +117,7 @@ _LOGISTICS_MARKERS: frozenset[str] = frozenset(
 
 def cross_domain_sql_domains_array() -> list[str]:
     """URL keys and schema-style tokens for active silos except finance (tracked_events.domain_keys)."""
-    from shared.domain_registry import domain_key_to_schema, get_active_domain_keys
+    api.shared.domain_registry import domain_key_to_schema, get_active_domain_keys
 
     ordered: list[str] = []
     seen: set[str] = set()
@@ -144,7 +144,7 @@ def maybe_append_finance_domain_key(
         return
     lowered = [str(k).lower() for k in (current_keys or [])]
     try:
-        from config.settings import finance_postgres_content_domain_key
+        from api.config.settings import finance_postgres_content_domain_key
 
         fin_dk = finance_postgres_content_domain_key().strip()
     except Exception:

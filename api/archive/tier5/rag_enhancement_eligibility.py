@@ -11,8 +11,8 @@ Uses ``storyline_rag_context.updated_at`` — not the legacy ``storylines.rag_en
 
 from __future__ import annotations
 
-from config.runtime import env_str
-from shared.domain_registry import iter_pipeline_url_schema_pairs
+from api.config.runtime import env_str
+api.shared.domain_registry import iter_pipeline_url_schema_pairs
 
 
 def rag_enhancement_stale_hours() -> int:
@@ -102,7 +102,7 @@ def count_rag_enhancement_pending() -> int:
     """Count storylines due for RAG across pipeline-active domains."""
     total = 0
     try:
-        from shared.database import get_db_connection
+        api.shared.database import get_db_connection
 
         conn = get_db_connection()
         if not conn:

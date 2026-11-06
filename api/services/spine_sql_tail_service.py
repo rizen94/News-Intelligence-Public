@@ -9,11 +9,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from config.runtime import env_str
-from shared.database import get_db_connection, get_db_connection_context
-from shared.domain_registry import pipeline_url_schema_pairs
-from shared.pipeline_batch_drain import DrainStallTracker, RunBudget, phase_run_budget_seconds
-from shared.pipeline_pass_marker import (
+from api.config.runtime import env_str
+api.shared.database import get_db_connection, get_db_connection_context
+api.shared.domain_registry import pipeline_url_schema_pairs
+api.shared.pipeline_batch_drain import DrainStallTracker, RunBudget, phase_run_budget_seconds
+api.shared.pipeline_pass_marker import (
     TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
     TERMINAL_PROCESSED_WITH_OUTPUT,
     phase_backlog_uses_pass_marker,
@@ -116,7 +116,7 @@ def _bulk_link_profiles() -> int:
     limit = _spine_tail_batch_limit()
     linked = 0
     try:
-        from shared.pipeline_resource_policy import intake_extraction_suppressed
+        api.shared.pipeline_resource_policy import intake_extraction_suppressed
 
         entity_phase = (
             "unified_intake_extraction" if intake_extraction_suppressed() else "entity_extraction"

@@ -72,7 +72,7 @@ def _load_domain_entries_from_db() -> list[dict[str, Any]] | None:
     try:
         from psycopg2.extras import RealDictCursor
 
-        from shared.database import get_ui_db_connection
+        api.shared.database import get_ui_db_connection
     except Exception as e:  # pragma: no cover
         logger.debug("domain_registry DB load skipped: %s", e)
         return None

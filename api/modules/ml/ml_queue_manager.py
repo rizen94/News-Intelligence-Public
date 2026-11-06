@@ -15,7 +15,7 @@ from typing import Optional, Any, Callable
 from dataclasses import dataclass, field
 from queue import PriorityQueue, Empty
 import psycopg2
-from shared.database.connection import get_db_connect_kwargs
+api.shared.database.connection import get_db_connect_kwargs
 import json
 
 logger = logging.getLogger(__name__)

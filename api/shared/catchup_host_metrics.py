@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def _phase_uses_gpu_llm(phase: str) -> bool:
-    from shared.pipeline_resource_policy import get_phase_policy
+    api.shared.pipeline_resource_policy import get_phase_policy
 
     pol = get_phase_policy(phase)
     return bool(pol and pol.requires_llm and pol.execution_lane == "gpu")
@@ -64,7 +64,7 @@ class ResourceSnapshot:
     cpu_llm_headroom: float
 
     def phase_headroom(self, phase: str) -> float:
-        from shared.pipeline_resource_policy import phase_resource_class
+        api.shared.pipeline_resource_policy import phase_resource_class
 
         parts: list[float] = [self.local_memory_headroom, self.db_headroom]
         if _phase_uses_gpu_llm(phase):
@@ -133,7 +133,7 @@ def _probe_nvidia_smi_local() -> dict[str, Any] | None:
 
 
 def _probe_nvidia_smi_ssh(host: str, user: str) -> dict[str, Any] | None:
-    from config.runtime import env_str
+    from api.config.runtime import env_str
 
     target = env_str("MAJOR_CATCHUP_GPU_METRICS_SSH", "").strip()
     if not target:
@@ -181,7 +181,7 @@ def _ollama_ps_vram_headroom(vram_pct: float | None, models_loaded: int) -> floa
     VRAM reported there is mostly static model weights, not batch/compute pressure.
     Treat VRAM below ~78% as healthy so auto-tune can ramp build batch during catchup.
     """
-    from config.runtime import env_str
+    from api.config.runtime import env_str
 
     if models_loaded == 0:
         return 0.95
@@ -206,7 +206,7 @@ def _ollama_ps_vram_headroom(vram_pct: float | None, models_loaded: int) -> floa
 
 def _probe_gpu_via_ollama(ollama_url: str) -> dict[str, Any] | None:
     """VRAM / load proxy when nvidia-smi on the GPU host is unreachable."""
-    from config.runtime import env_str
+    from api.config.runtime import env_str
 
     base = (ollama_url or "").rstrip("/")
     if not base:
@@ -247,7 +247,7 @@ def _probe_gpu_via_ollama(ollama_url: str) -> dict[str, Any] | None:
 
 def _probe_gpu_llm_host(gpu_ollama_url: str, *, use_remote: bool) -> dict[str, Any]:
     host, _ = _parse_ollama_host(gpu_ollama_url)
-    from config.runtime import env_str
+    from api.config.runtime import env_str
 
     user = env_str("MAJOR_CATCHUP_GPU_METRICS_SSH_USER", "pete")
 
@@ -298,7 +298,7 @@ def sample_resources() -> ResourceSnapshot:
 
     db_worker_util = 0.0
     try:
-        from shared.database import get_db_pool_snapshot
+        api.shared.database import get_db_pool_snapshot
 
         snap = get_db_pool_snapshot()
         db_worker_util = float((snap.get("worker") or {}).get("utilization") or 0.0)
@@ -504,7 +504,7 @@ def tune_batch_track(
 
 def _dossier_fast_tune_enabled() -> bool:
     try:
-        from config.runtime import env_bool
+        from api.config.runtime import env_bool
 
         return bool(
             env_bool("DOSSIER_CATCHUP_SKIP_NARRATIVE", False)

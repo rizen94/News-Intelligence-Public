@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("finance")
 except Exception:
@@ -67,7 +67,7 @@ def collect(
                 )
                 result["rss_snippets"] = shortlist_to_rss_snippets(shortlist)
             else:
-                from config.settings import finance_postgres_content_domain_key
+                from api.config.settings import finance_postgres_content_domain_key
                 from domains.news_aggregation.services.article_service import ArticleService
 
                 article_svc = ArticleService(domain=finance_postgres_content_domain_key())

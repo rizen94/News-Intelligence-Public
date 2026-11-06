@@ -34,8 +34,8 @@ def _load_env() -> None:
 
 
 def _run_rss() -> int:
-    from collectors.rss_collector import collect_rss_feeds
-    from shared.domain_registry import url_schema_pairs
+    from api.collectors.rss_collector import collect_rss_feeds
+    api.shared.domain_registry import url_schema_pairs
 
     pairs = url_schema_pairs()
     logging.info(
@@ -50,7 +50,7 @@ def _run_rss() -> int:
 
 def _run_context_sync() -> None:
     from services.context_processor_service import sync_domain_articles_to_contexts
-    from shared.domain_registry import get_active_domain_keys
+    api.shared.domain_registry import get_active_domain_keys
 
     for domain_key in get_active_domain_keys():
         try:
@@ -63,7 +63,7 @@ def _run_context_sync() -> None:
 
 def _run_entity_profile_sync() -> None:
     from services.entity_profile_sync_service import sync_domain_entity_profiles
-    from shared.domain_registry import get_active_domain_keys
+    api.shared.domain_registry import get_active_domain_keys
 
     for domain_key in get_active_domain_keys():
         try:
@@ -75,7 +75,7 @@ def _run_entity_profile_sync() -> None:
 
 
 def _run_pending_db_flush() -> None:
-    from shared.database.pending_db_writes import flush_pending_writes
+    api.shared.database.pending_db_writes import flush_pending_writes
 
     stats = flush_pending_writes()
     logging.info("pending_db_flush: %s", stats)
@@ -83,7 +83,7 @@ def _run_pending_db_flush() -> None:
 
 def _run_terminate_idle_in_transaction(minutes: int = 5) -> int:
     """Terminate stale idle-in-transaction sessions (pool leak recovery)."""
-    from shared.database import ephemeral_db_connection_context
+    api.shared.database import ephemeral_db_connection_context
 
     terminated = 0
     with ephemeral_db_connection_context() as conn:

@@ -9,8 +9,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from shared.database import get_db_connection
-from shared.domain_registry import resolve_domain_schema
+api.shared.database import get_db_connection
+api.shared.domain_registry import resolve_domain_schema
 
 from services.embeddings_worker_service import search_embedding_chunks
 from services.slow_report_service import _build_structured_citations as _build_arc_structured_citations

@@ -7,14 +7,14 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
-from config.settings import FRED_API_KEY
-from shared.data_result import DataResult
+from api.config.settings import FRED_API_KEY
+api.shared.data_result import DataResult
 
 from domains.finance.commodity_registry import get_fred_series_id as registry_get_fred_series_id
 from domains.finance.commodity_registry import get_unit as registry_get_unit

@@ -43,8 +43,8 @@ def main() -> int:
         upsert_vault_note,
     )
     from services.vault_tag_link_sync_service import sync_vault_file
-    from shared.database import get_db_connection_context
-    from shared.vault_note_contract import (
+    api.shared.database import get_db_connection_context
+    api.shared.vault_note_contract import (
         entity_vault_rel_path,
         structural_tags_for_note,
     )

@@ -10,7 +10,7 @@ import re
 from typing import Any
 
 from psycopg2.extras import RealDictCursor
-from shared.database import get_db_connection, get_ui_db_connection
+api.shared.database import get_db_connection, get_ui_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ def resolve_active_domain_schema(
             if row and row[2]:
                 return str(row[1]), int(row[0])
 
-            from shared.domain_registry import is_valid_domain_key, resolve_domain_schema
+            api.shared.domain_registry import is_valid_domain_key, resolve_domain_schema
 
             if not is_valid_domain_key(domain):
                 return None, None
@@ -104,7 +104,7 @@ class DomainAwareService:
         """
         Convert domain key to schema name via registry (e.g. environment-climate → environment_climate).
         """
-        from shared.domain_registry import resolve_domain_schema
+        api.shared.domain_registry import resolve_domain_schema
 
         return resolve_domain_schema(domain)
 
@@ -240,7 +240,7 @@ def resolve_domain_token_to_schema(token: str) -> str:
     Used by scripts and monitoring filters so callers can pass ``science-tech`` or ``science_tech``
     interchangeably. Unknown tokens fall back to ``resolve_domain_schema`` (hyphen → underscore).
     """
-    from shared.domain_registry import get_domain_entries, resolve_domain_schema
+    api.shared.domain_registry import get_domain_entries, resolve_domain_schema
 
     tok = (token or "").strip()
     if not tok:
@@ -262,7 +262,7 @@ def get_all_domains() -> list[dict[str, Any]]:
     (``url_schema_pairs()``). ``public.domains`` supplies ``name`` / ``display_order`` when present.
     To disable a silo end-to-end, set ``is_active = false`` on its ``public.domains`` row (and/or YAML).
     """
-    from shared.domain_registry import get_domain_entries
+    api.shared.domain_registry import get_domain_entries
 
     conn = get_ui_db_connection()
     if not conn:
@@ -303,7 +303,7 @@ def get_all_domains() -> list[dict[str, Any]]:
 
 def get_domain_data_schemas() -> tuple[str, ...]:
     """Postgres schema names for all active domains (``public.domains`` + YAML). Single source: domain_registry."""
-    from shared.domain_registry import get_schema_names_active
+    api.shared.domain_registry import get_schema_names_active
 
     return get_schema_names_active()
 

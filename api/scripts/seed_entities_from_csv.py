@@ -68,7 +68,7 @@ def main() -> int:
                 {"name": name, "entity_type": et, "aliases": aliases},
             )
 
-    from shared.domain_registry import is_valid_domain_key
+    api.shared.domain_registry import is_valid_domain_key
 
     from services.entity_seed_catalog_service import bulk_seed_canonical_entries
 

@@ -4,7 +4,7 @@ Database connection targets — news_intel pool vs identity_spine vs maintenance
 
 from __future__ import annotations
 
-from config.runtime import get_runtime_config
+from api.config.runtime import get_runtime_config
 
 
 def news_intel_connect_kwargs() -> dict[str, str | int]:

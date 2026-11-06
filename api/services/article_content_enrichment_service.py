@@ -17,7 +17,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
-from shared.pipeline_state_constants import (
+api.shared.pipeline_state_constants import (
     ARTICLE_PENDING, ARTICLE_ENRICHED, ARTICLE_INACCESSIBLE,
     QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED,
     ML_PENDING, ML_RUNNING, ML_COMPLETED, ML_FAILED,
@@ -588,8 +588,8 @@ def _remove_article(conn, schema_name: str, article_id: int) -> None:
 
 def demote_false_enriched_batch(*, limit_per_schema: int = 40) -> int:
     """Demote existing enrichment_status=enriched rows whose body fails the F9 yieldable check."""
-    from shared.database import get_db_connection_context
-    from shared.domain_registry import pipeline_url_schema_pairs
+    api.shared.database import get_db_connection_context
+    api.shared.domain_registry import pipeline_url_schema_pairs
 
     demoted = 0
     pairs = list(pipeline_url_schema_pairs())
@@ -722,13 +722,13 @@ def _enrich_articles_batch_parallel(*, batch_size: int, parallel: int) -> int:
         logger.warning("trafilatura not installed; skipping content enrichment")
         return 0
 
-    from shared.database import get_db_config, get_db_connection
-    from shared.domain_registry import pipeline_url_schema_pairs
-    from shared.article_processing_gates import (
+    api.shared.database import get_db_config, get_db_connection
+    api.shared.domain_registry import pipeline_url_schema_pairs
+    api.shared.article_processing_gates import (
         strict_enrichment_applies,
         strict_enrichment_cutoff_utc,
     )
-    from shared.pipeline_article_selection import sql_order_created_at
+    api.shared.pipeline_article_selection import sql_order_created_at
     from services.context_processor_service import (
         ensure_context_for_article,
         update_context_content_for_article,
@@ -1009,14 +1009,14 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
         logger.warning("trafilatura not installed; skipping content enrichment")
         return 0
 
-    from shared.database import get_db_config, get_db_connection
-    from shared.domain_registry import pipeline_url_schema_pairs
+    api.shared.database import get_db_config, get_db_connection
+    api.shared.domain_registry import pipeline_url_schema_pairs
 
-    from shared.article_processing_gates import (
+    api.shared.article_processing_gates import (
         strict_enrichment_applies,
         strict_enrichment_cutoff_utc,
     )
-    from shared.pipeline_article_selection import sql_order_created_at
+    api.shared.pipeline_article_selection import sql_order_created_at
 
     from services.context_processor_service import (
         ensure_context_for_article,
@@ -1326,13 +1326,13 @@ def fetch_full_content_for_article(domain_key: str, article_id: int) -> dict[str
             "content": None,
         }
 
-    from shared.database import get_ui_db_connection_context
+    api.shared.database import get_ui_db_connection_context
 
     from services.context_processor_service import (
         sync_context_from_article_after_content_change,
     )
 
-    from shared.domain_registry import resolve_domain_schema
+    api.shared.domain_registry import resolve_domain_schema
 
     schema_name = resolve_domain_schema(domain_key)
 

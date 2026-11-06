@@ -28,10 +28,10 @@ from domains.content_analysis.services.topic_clustering_service import (
     TopicClusteringService,
     default_batch_ollama_url,
 )
-from modules.ml.entity_extractor import LocalEntityExtractor
-from shared.services.llm_service import LLMService
-from shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED
-from shared.database import get_db_connection_context
+from api.modules.ml.entity_extractor import LocalEntityExtractor
+api.shared.services.llm_service import LLMService
+api.shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED
+api.shared.database import get_db_connection_context
 
 logger = logging.getLogger(__name__)
 

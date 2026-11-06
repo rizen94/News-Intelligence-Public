@@ -72,7 +72,7 @@ class MLSummarizationService:
             Generated text response
         """
         try:
-            from shared.services.llm_service import ollama_generate_sync
+            api.shared.services.llm_service import ollama_generate_sync
 
             full_prompt = prompt
             if system_prompt:
@@ -89,7 +89,7 @@ class MLSummarizationService:
             logger.info(f"✅ Ollama response received in {generation_time:.2f}s")
             return response_text or ""
         except Exception as e:
-            from shared.services.llm_service import is_ollama_pressure_error
+            api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -156,7 +156,7 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 }
                 
         except Exception as e:
-            from shared.services.llm_service import is_ollama_pressure_error
+            api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -227,7 +227,7 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 }
                 
         except Exception as e:
-            from shared.services.llm_service import is_ollama_pressure_error
+            api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -287,7 +287,7 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 }
                 
         except Exception as e:
-            from shared.services.llm_service import is_ollama_pressure_error
+            api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -363,7 +363,7 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 }
                 
         except Exception as e:
-            from shared.services.llm_service import is_ollama_pressure_error
+            api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -494,7 +494,7 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
             }
             
         except Exception as e:
-            from shared.services.llm_service import is_ollama_pressure_error
+            api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise

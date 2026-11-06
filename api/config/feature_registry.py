@@ -14,7 +14,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
-from config.runtime import env_bool, env_str
+from api.config.runtime import env_bool, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ _OVERRIDE_RE = re.compile(r"^FEATURE_OVERRIDE_([A-Z0-9_]+)$", re.I)
 
 @lru_cache(maxsize=1)
 def _features_yaml_path() -> Path:
-    from config.paths import CONFIG_DIR
+    from api.config.paths import CONFIG_DIR
 
     return CONFIG_DIR / "features.yaml"
 
@@ -63,7 +63,7 @@ def _load_yaml_registry() -> dict[str, dict[str, Any]]:
 
 def _db_overrides() -> dict[str, dict[str, Any]]:
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -174,7 +174,7 @@ def _staged_runtime_allowed() -> bool:
     if env_bool("FEATURE_STAGED_RUNTIME_ENABLED", False):
         return True
     try:
-        from shared.pipeline_resource_policy import (
+        api.shared.pipeline_resource_policy import (
             assembly_pipeline_shadow_active,
             spine_pipeline_shadow_active,
         )

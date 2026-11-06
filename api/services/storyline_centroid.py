@@ -11,14 +11,14 @@ import json
 import logging
 from typing import Any
 
-from config.runtime import env_bool, env_int
+from api.config.runtime import env_bool, env_int
 
 logger = logging.getLogger(__name__)
 
 
 def dual_centroid_enabled() -> bool:
     try:
-        from config.feature_registry import is_feature_enabled
+        from api.config.feature_registry import is_feature_enabled
 
         if is_feature_enabled("storyline_dual_centroid", default=False):
             return True
@@ -47,7 +47,7 @@ def get_storyline_centroid(
     """
     owns_conn = False
     if conn is None:
-        from shared.database import get_db_connection
+        api.shared.database import get_db_connection
 
         conn = get_db_connection()
         owns_conn = True

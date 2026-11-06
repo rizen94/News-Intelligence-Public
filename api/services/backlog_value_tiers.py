@@ -17,8 +17,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from shared.backlog_selection_contracts import BACKLOG_SELECTION_CONTRACTS, assert_backlog_contracts
-from shared.database import get_db_connection
+api.shared.backlog_selection_contracts import BACKLOG_SELECTION_CONTRACTS, assert_backlog_contracts
+api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +32,12 @@ def _conn():
 
 def _tiers_entity_profile_build() -> dict[str, int]:
     from services.backlog_metrics import _count_entity_profile_build_backlog
-    from shared.entity_profile_eligibility import (
+    api.shared.entity_profile_eligibility import (
         entity_profile_build_min_mentions,
         sql_entity_profile_needs_build,
         sql_entity_profile_sections_empty,
     )
-    from shared.pipeline_domain_sql import pipeline_domain_any_sql
+    api.shared.pipeline_domain_sql import pipeline_domain_any_sql
 
     actionable = int(_count_entity_profile_build_backlog() or 0)
     out = {

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("orchestrator")
 except Exception:
@@ -56,7 +56,7 @@ def get_collection_source_ids(config: dict[str, Any] | None = None) -> list[str]
     """Return ordered list of collection source ids from config or defaults."""
     if config is None:
         try:
-            from config.orchestrator_governance import get_orchestrator_governance_config
+            from api.config.orchestrator_governance import get_orchestrator_governance_config
 
             config = get_orchestrator_governance_config()
         except Exception:
@@ -81,7 +81,7 @@ class CollectionGovernor:
     ):
         if config is None:
             try:
-                from config.orchestrator_governance import get_orchestrator_governance_config
+                from api.config.orchestrator_governance import get_orchestrator_governance_config
 
                 config = get_orchestrator_governance_config()
             except Exception as e:

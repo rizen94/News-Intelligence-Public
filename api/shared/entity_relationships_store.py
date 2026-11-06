@@ -35,11 +35,11 @@ RETURNING id
 
 def entity_relationships_at_cap() -> bool:
     """True when table is at ENTITY_RELATIONSHIPS_MAX_ROWS — reject new edges."""
-    from config.runtime import env_int
+    from api.config.runtime import env_int
 
     cap = env_int("ENTITY_RELATIONSHIPS_MAX_ROWS", 5_000_000)
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:

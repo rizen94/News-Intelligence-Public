@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from config.runtime import env_int, env_str
-from shared.domain_registry import iter_pipeline_url_schema_pairs
+from api.config.runtime import env_int, env_str
+api.shared.domain_registry import iter_pipeline_url_schema_pairs
 
 
 def entity_dossier_stale_days() -> int:

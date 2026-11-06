@@ -12,21 +12,21 @@ from typing import Any
 
 from domains.news_aggregation.services.article_service import ArticleService
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
-from shared.database import get_db_connection, get_ui_db_connection
-from shared.domain_registry import (
+api.shared.database import get_db_connection, get_ui_db_connection
+api.shared.domain_registry import (
     DOMAIN_PATH_PATTERN,
     first_active_domain_key,
     get_active_domain_keys,
     is_valid_domain_key,
     resolve_domain_schema,
 )
-from shared.services.domain_aware_service import (
+api.shared.services.domain_aware_service import (
     get_domain_data_schemas,
     resolve_active_domain_schema,
     resolve_article_id_to_schema,
     validate_domain,
 )
-from shared.services.llm_service import TaskType, llm_service
+api.shared.services.llm_service import TaskType, llm_service
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ async def health_check():
     """Health check for News Aggregation domain"""
     try:
         # Check database connection (UI pool — same lane as page loads)
-        from shared.database import get_ui_db_connection_context
+        api.shared.database import get_ui_db_connection_context
 
         with get_ui_db_connection_context() as conn:
             cur = conn.cursor()
@@ -362,7 +362,7 @@ async def collect_rss_feeds_now(domain: str = Path(..., pattern=DOMAIN_PATH_PATT
         import sys
 
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-        from collectors.rss_collector import collect_rss_feeds
+        from api.collectors.rss_collector import collect_rss_feeds
 
         logger.info(f"Starting RSS feed collection via API for domain: {domain}")
 
@@ -394,7 +394,7 @@ async def fetch_articles_from_feeds(background_tasks: BackgroundTasks):
 
     def _run_collect():
         try:
-            from collectors.rss_collector import collect_rss_feeds
+            from api.collectors.rss_collector import collect_rss_feeds
 
             return collect_rss_feeds()
         except Exception as e:
@@ -821,7 +821,7 @@ async def get_aggregation_statistics():
 def _log_rss_pull(feed_id, feed_name, status, fetched, saved, start_time, error=None):
     """Standardized RSS pull logging."""
     try:
-        from shared.logging.activity_logger import log_rss_pull
+        api.shared.logging.activity_logger import log_rss_pull
 
         duration_ms = (time.time() - start_time) * 1000
         log_rss_pull(
@@ -845,7 +845,7 @@ async def process_rss_feeds(feeds: list[tuple]):
         len(feeds) if feeds else 0,
     )
     try:
-        from collectors.rss_collector import collect_rss_feeds
+        from api.collectors.rss_collector import collect_rss_feeds
 
         collect_rss_feeds()
     except Exception as e:

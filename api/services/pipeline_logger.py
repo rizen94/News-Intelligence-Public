@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 
-from config.database import get_db
+from api.config.database import get_db
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)

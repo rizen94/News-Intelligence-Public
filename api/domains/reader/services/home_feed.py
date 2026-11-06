@@ -18,8 +18,8 @@ from typing import Any
 
 from cachetools import TTLCache
 
-from shared.database import get_ui_db_connection_context
-from shared.domain_registry import (
+api.shared.database import get_ui_db_connection_context
+api.shared.domain_registry import (
     get_active_domain_keys,
     pipeline_url_schema_pairs,
     resolve_domain_schema,
@@ -29,7 +29,7 @@ from .expected_dates import extract_expected_dates
 
 logger = logging.getLogger(__name__)
 
-NEWS_WINDOW_HOURS = 48
+NEWS_WINDOW_HOURS = 72
 READ_WPM = 220
 # Artificial Intelligence: one paper (or a thin 1–2 article cluster) is an explainer
 # one-off, not an evolving storyline. Multi-source arcs stay on News/Current.
@@ -37,7 +37,12 @@ AI_RESEARCH_ONE_OFF_MAX_ARTICLES = 2
 AI_DOMAIN_KEY = "artificial-intelligence"
 
 # Quality signal constants for home feed ranking and gating
-MIN_QUALITY_TIER = 4                    # minimum quality tier to surface (tier_1/tier_2 pass)
+# Note: tier numbering is INVERTED — tier 1 = best (score ≥ 0.8), tier 4 = worst (< 0.4).
+# HIGH_QUALITY_ONLY = True means this filter keeps only tiers 1–3 (scores ≥ 0.4)
+# and drops tier 4 (the "min tier" in the code skips tiers numbered < the threshold,
+# which are the better-quality ones due to inverted numbering).
+MIN_QUALITY_TIER = 4                    # keep tiers below this number → tiers 1-3 pass, tier 4 skipped
+HIGH_QUALITY_ONLY = True                # when True, only high-quality storylines appear on home feed
 ANCHOR_WEIGHT_MULTIPLIER = 1.05         # +5% score boost for 'anchor_class' rank stories
 NARRATIVE_PHASE_NO_SHOW = ("phase_0",)  # don't surface phase_0 / pre-intake items
 
@@ -183,7 +188,7 @@ def _dek_from_row(
     *,
     document_status: str | None = None,
 ) -> str:
-    from shared.llm_text_sanitize import sanitize_reader_dek
+    api.shared.llm_text_sanitize import sanitize_reader_dek
 
     def _as_text(raw: Any) -> str:
         if raw is None:
@@ -452,7 +457,7 @@ def _apply_vault_hub_feed_hygiene(
                 updated = _as_aware(datetime.fromisoformat(str(h["updated_at"])))
             except Exception:
                 updated = None
-        from shared.llm_text_sanitize import sanitize_reader_dek, sanitize_reader_prose
+        api.shared.llm_text_sanitize import sanitize_reader_dek, sanitize_reader_prose
 
         brief = (h.get("current_brief") or "").strip()
         headline = h.get("title") or ck
@@ -538,7 +543,7 @@ def _morning_expansion_units(*, lane_filter: str | None = None) -> list[dict[str
                 updated_at = datetime.fromisoformat(raw_u.replace("Z", "+00:00"))
             except ValueError:
                 updated_at = None
-        from shared.llm_text_sanitize import sanitize_reader_dek
+        api.shared.llm_text_sanitize import sanitize_reader_dek
 
         headline = ex.get("title") or f"Storyline {sid}"
         dek = (
@@ -613,7 +618,7 @@ def _priority_current_event_units(*, limit: int = 40) -> list[dict[str, Any]]:
                 updated_at = datetime.fromisoformat(raw_u.replace("Z", "+00:00"))
             except ValueError:
                 updated_at = None
-        from shared.llm_text_sanitize import sanitize_reader_dek
+        api.shared.llm_text_sanitize import sanitize_reader_dek
 
         age_days = int(arc.get("age_days") or 0)
         note_chars = int(arc.get("note_chars") or 0)
@@ -684,9 +689,10 @@ def _fetch_candidate_rows(cur, schema: str, domain_key: str, since: datetime) ->
     whole unmerged set (USB IOPS). ``idx_*_sa_storyline_added_at`` then
     covers only the shortlist.
     
-    Candidate window raised from 200 → 1000 to accommodate sparse recent
-    data in domains like AI, Legal, and Medicine where few storylines update
-    within the last 90 days (see PRISM context summary on empty home feed).
+    Candidate window raised from 200 → 1000 (row count) and recency from
+    90 → 365 days to accommodate sparse update cadences. Domains like AI,
+    Legal, Medicine cluster infrequently; most storylines remain valid long
+    after their last refinement timestamp.
     """
     cur.execute(
         f"""
@@ -714,13 +720,13 @@ def _fetch_candidate_rows(cur, schema: str, domain_key: str, since: datetime) ->
             WHERE s0.merged_into_id IS NULL
               AND COALESCE(s0.status, 'active') NOT IN ('archived', 'merged', 'deleted')
               AND (
-                    s0.updated_at >= %s - INTERVAL '90 days'
-                 OR s0.last_refinement >= %s - INTERVAL '90 days'
+                    s0.updated_at >= %s - INTERVAL '365 days'
+                 OR s0.last_refinement >= %s - INTERVAL '365 days'
                  OR EXISTS (
                         SELECT 1
                         FROM {schema}.storyline_articles sa0
                         WHERE sa0.storyline_id = s0.id
-                          AND sa0.added_at >= %s - INTERVAL '90 days'
+                          AND sa0.added_at >= %s - INTERVAL '365 days'
                     )
               )
             ORDER BY s0.updated_at DESC NULLS LAST
@@ -744,6 +750,117 @@ def _fetch_candidate_rows(cur, schema: str, domain_key: str, since: datetime) ->
         row = dict(zip(cols, tup))
         row["domain"] = domain_key
         rows.append(row)
+    return rows
+
+
+def _fetch_raw_article_candidates(cur, schema: str, domain_key: str, since: datetime) -> list[dict[str, Any]]:
+    """Fallback for silos without storylines infrastructure.
+
+    When a domain has no ``storyline_articles`` bridge ,
+    the storyline-only query in ``_fetch_candidate_rows`` returns nothing.
+    This method queries raw ``{schema}.articles`` directly and wraps each row
+    into the same dict format so ``classify_and_build_feeds`` can process it.
+
+    Only returns articles that are NOT already linked to an existing storyline
+    (to avoid duplicates).  The returned dicts contain all keys expected by
+    ``classify_and_build_feeds``, with storyline-specific fields set to sensible
+    defaults (no parent, no mega tag, article_count=1).
+    """
+    # Skip silos that actually have a storylines table with active data.
+    try:
+        cur.execute(
+            "SELECT EXISTS ("
+            "  SELECT FROM information_schema.tables "
+            "  WHERE table_schema = %s AND table_name = 'storylines'"
+            ") AS has_table",
+            (schema,),
+        )
+        if not int(cur.fetchone()[0]):
+            pass  # no storylines table — proceed to raw fetch
+        else:
+            # Silo has a storylines table; check if it has active articles
+            cur.execute(
+                f"""SELECT COALESCE(MAX(updated_at), MIN(created_at))
+                    FROM {schema}.storylines s0
+                    WHERE s0.merged_into_id IS NULL
+                      AND COALESCE(s0.status, 'active') NOT IN ('archived', 'merged', 'deleted')
+                      AND (s0.updated_at >= %s - INTERVAL '180 days'
+                           OR EXISTS (
+                               SELECT 1 FROM {schema}.storyline_articles sa2
+                               WHERE sa2.storyline_id = s0.id
+                                 AND sa2.added_at >= %s - INTERVAL '365 days'
+                           ))
+                """,
+                (since, since),
+            )
+            has_active = cur.fetchone()[0]
+            if has_active:
+                return []  # silo is already served by storylines
+    except Exception:
+        pass  # fall through to raw fetch regardless
+
+    # Fetch recent articles not yet bridged to any storyline.
+    try:
+        cur.execute(
+            f"""
+            SELECT a.id, a.title, COALESCE(a.summary, '') AS description,
+                   COALESCE(COALESCE(a.published_at, a.created_at), %s) AS updated_at,
+                   1 AS article_count,
+                   NULL::text AS parent_storyline_id,
+                   TRUE AS is_mega_storyline,
+                   %s AS created_at,
+                   '' AS story_kind,
+                   NULL::float AS quality_score,
+                   '' AS narrative_gate_phase
+            FROM {schema}.articles a
+            WHERE COALESCE(a.published_at, a.created_at) >= %s - INTERVAL '180 days'
+              AND NOT EXISTS (
+                  SELECT 1 FROM {schema}.storyline_articles sa
+                  WHERE sa.article_id = a.id
+                    AND sa.added_at >= %s - INTERVAL '365 days'
+              )
+              AND (a.title IS NOT NULL AND LENGTH(a.title) > 3)
+            ORDER BY COALESCE(a.published_at, a.created_at) DESC NULLS LAST
+            LIMIT 200
+            """,
+            (since, since, since, since),
+        )
+    except Exception as e:
+        logger.debug("raw article candidates query failed for %s: %s", schema, e)
+        return []
+
+    cols = [d[0] for d in cur.description]
+    rows: list[dict[str, Any]] = []
+    now_utc = datetime.now(timezone.utc)
+    for tup in cur.fetchall():
+        art_id = int(tup[0])
+        title = (tup[1] or "Untitled").strip()
+        if not title or len(title) < 5:
+            continue
+        row = dict(zip(cols, tup))
+        # Normalize to the keys expected by classify_and_build_feeds.
+        # Map raw-article columns → storyline-equivalent keys.
+        mapped = {
+            "id": art_id,
+            "title": title,
+            "description": str(tup[2] or ""),
+            "status": "active",
+            "updated_at": _as_aware(tup[3]),
+            "last_refinement": None,
+            "editorial_document": None,
+            "document_status": None,
+            "article_count": int(tup[4]) if tup[4] else 1,
+            "parent_storyline_id": int(tup[5]) if tup[5] else None,
+            "is_mega_storyline": False,
+            "created_at": _as_aware(tup[6]) or now_utc,
+            "story_kind": str(tup[7] or "").strip() or "",
+            "quality_score": None,
+            "narrative_gate_phase": "",
+            "domain": domain_key,
+            # Raw-article extras for dedup / display.
+            "_is_raw_article": True,
+        }
+        rows.append(mapped)
     return rows
 
 
@@ -898,7 +1015,7 @@ def classify_and_build_feeds(
             material_at
             and material_at >= news_cutoff
             and dek
-            and len(dek) >= 12
+            and len(dek) >= 6
             and not is_mega
             and status not in ("dormant", "watching", "concluded", "completed", "failed")
             and not is_phase_blocked
@@ -1295,6 +1412,14 @@ def build_reader_home(
                         all_rows.extend(_fetch_candidate_rows(cur, schema, domain_key, now))
                     except Exception as exc:
                         logger.warning("reader home skip domain %s: %s", domain_key, exc)
+                        conn.rollback()
+
+                # -- Raw-article fallback for silos without storyline_articles bridges --
+                for domain_key, schema in pairs:
+                    try:
+                        all_rows.extend(_fetch_raw_article_candidates(cur, schema, domain_key, now))
+                    except Exception as exc:
+                        logger.warning("reader home raw-fallback skip %s: %s", domain_key, exc)
                         conn.rollback()
 
                 tracked_hits: set[tuple[str, int]] = set()

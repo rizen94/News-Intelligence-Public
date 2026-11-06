@@ -54,8 +54,8 @@ def main() -> int:
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
 
-    from shared.database import get_db_connection
-    from shared.domain_registry import is_valid_domain_key, resolve_domain_schema
+    api.shared.database import get_db_connection
+    api.shared.domain_registry import is_valid_domain_key, resolve_domain_schema
 
     for k in (args.deactivate, args.activate):
         if not is_valid_domain_key(k):

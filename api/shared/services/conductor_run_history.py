@@ -7,7 +7,7 @@ import logging
 from datetime import datetime
 from typing import Any, Awaitable, Callable
 
-from shared.monitor_run_vocabulary import (
+api.shared.monitor_run_vocabulary import (
     RunHistoryStatus,
     is_measurable_run_history_row,
     normalize_phase_run_event,
@@ -100,7 +100,7 @@ def persist_conductor_phase_run(
     if is_measurable_run_history_row(meta, started_at=started_at, finished_at=finished_at):
         return persist_phase_run_event(event, allow_empty=allow_empty)
     # Instant markers (phase_started, drain_started) — traceability only, excluded from runs_1h.
-    from shared.services.automation_run_history_writer import persist_automation_run_history
+    api.shared.services.automation_run_history_writer import persist_automation_run_history
 
     persist_automation_run_history(
         phase_name,

@@ -11,8 +11,8 @@ import logging
 import re
 from typing import Any
 
-from config.settings import fast_ner_backend, fast_ner_enabled, fast_ner_gliner_labels, fast_ner_max_chars
-from shared.services.spacy_ner_service import get_spacy_ner_service, is_garbage_entity_name
+from api.config.settings import fast_ner_backend, fast_ner_enabled, fast_ner_gliner_labels, fast_ner_max_chars
+api.shared.services.spacy_ner_service import get_spacy_ner_service, is_garbage_entity_name
 
 logger = logging.getLogger(__name__)
 

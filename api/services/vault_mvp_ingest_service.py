@@ -21,8 +21,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from typing import Any
 
-from shared.database import get_db_connection_context
-from shared.vault_note_contract import (
+api.shared.database import get_db_connection_context
+api.shared.vault_note_contract import (
     AUTO_TIMELINE_END,
     AUTO_TIMELINE_START,
     MAX_MVP_WIKI_TARGETS,
@@ -49,7 +49,7 @@ def vault_mvp_spine_enabled() -> bool:
     if raw in ("1", "true", "yes"):
         return True
     try:
-        from config.feature_registry import is_feature_enabled
+        from api.config.feature_registry import is_feature_enabled
 
         return is_feature_enabled("vault_mvp_spine", default=True)
     except Exception:
@@ -375,8 +375,8 @@ Text:
 """
 
     async def _gen() -> str:
-        from shared.services.ollama_model_caller import get_ollama_model_caller
-        from shared.services.ollama_model_policy import InvocationKind
+        api.shared.services.ollama_model_caller import get_ollama_model_caller
+        api.shared.services.ollama_model_policy import InvocationKind
 
         caller = get_ollama_model_caller()
         result = await caller.generate(

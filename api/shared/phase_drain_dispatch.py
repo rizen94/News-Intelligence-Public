@@ -46,11 +46,11 @@ async def drain_phase(
     per = articles_per_domain if articles_per_domain is not None else 40
 
     if name == "unified_intake_extraction":
-        from shared.unified_intake_extraction_runner import run_unified_intake_extraction_batch_drain
+        api.shared.unified_intake_extraction_runner import run_unified_intake_extraction_batch_drain
 
         if articles_per_domain is None:
             try:
-                from shared.adaptive_batch_policy import resolve_phase_batch_limit
+                api.shared.adaptive_batch_policy import resolve_phase_batch_limit
 
                 per = resolve_phase_batch_limit(
                     "unified_intake_extraction", 40, env_suffix="ARTICLES_PER_DOMAIN"
@@ -70,8 +70,8 @@ async def drain_phase(
         return {"claims_inserted": inserted, "batches": batches}
 
     if name == "topic_clustering":
-        from config.settings import topic_clustering_batch_size, topic_clustering_concurrency
-        from shared.domain_registry import get_pipeline_active_domain_keys
+        from api.config.settings import topic_clustering_batch_size, topic_clustering_concurrency
+        api.shared.domain_registry import get_pipeline_active_domain_keys
 
         scripts = str(_API / "scripts")
         if scripts not in sys.path:
@@ -96,10 +96,10 @@ async def drain_phase(
         return await run_storyline_assembly_all_domains()
 
     if name == "content_enrichment":
-        from shared.content_enrichment_drain import run_content_enrichment_batch
+        api.shared.content_enrichment_drain import run_content_enrichment_batch
 
         try:
-            from shared.adaptive_batch_policy import resolve_adaptive_batch
+            api.shared.adaptive_batch_policy import resolve_adaptive_batch
 
             per, _meta = resolve_adaptive_batch("content_enrichment", per)
         except Exception:
@@ -135,7 +135,7 @@ async def drain_phase(
         return await run_spine_sql_tail_drain(budget_seconds=budget_seconds)
 
     if name == "editorial_research_pass":
-        from config.runtime import env_int
+        from api.config.runtime import env_int
         from services.editorial_package_research_service import (
             is_enabled,
             list_research_due,
@@ -165,7 +165,7 @@ async def drain_phase(
         }
 
     if name == "editorial_narrative_pass":
-        from config.runtime import env_int
+        from api.config.runtime import env_int
         from services.editorial_package_narrative_service import (
             is_enabled,
             list_narrative_due,
@@ -195,7 +195,7 @@ async def drain_phase(
         }
 
     if name == "editorial_evidence_expand_pass":
-        from config.runtime import env_int
+        from api.config.runtime import env_int
         from services.editorial_package_evidence_expand_service import (
             is_enabled,
             run_evidence_expand_batch,
@@ -215,7 +215,7 @@ async def drain_phase(
         return await asyncio.to_thread(run_evidence_expand_batch, limit=batch)
 
     if name == "editorial_reduction_pass":
-        from config.runtime import env_int
+        from api.config.runtime import env_int
         from services.editorial_package_reduction_service import (
             is_enabled,
             list_reduction_due,
@@ -262,15 +262,15 @@ async def drain_phase(
         return await asyncio.to_thread(run_catchup_batch_sync, limit=limit)
 
     if name == "story_continuation":
-        from shared.domain_processing_mode import domain_runs_phase
-        from shared.domain_registry import pipeline_url_schema_pairs
-        from shared.database import get_db_connection
-        from shared.services.llm_service import llm_service
+        api.shared.domain_processing_mode import domain_runs_phase
+        api.shared.domain_registry import pipeline_url_schema_pairs
+        api.shared.database import get_db_connection
+        api.shared.services.llm_service import llm_service
         from services.story_continuation_service import StoryContinuationService
 
         cont_limit = articles_per_domain if articles_per_domain is not None else 30
         try:
-            from shared.adaptive_batch_policy import resolve_adaptive_batch
+            api.shared.adaptive_batch_policy import resolve_adaptive_batch
 
             cont_limit, _meta = resolve_adaptive_batch("story_continuation", cont_limit)
         except Exception:
@@ -319,7 +319,7 @@ async def drain_phase(
                     svc.conn = None
         total["processed"] = total["linked"] + total["flagged"] + total["inherited"]
         try:
-            from shared.pipeline_handoffs import after_story_continuation
+            api.shared.pipeline_handoffs import after_story_continuation
 
             after_story_continuation(None, linked=int(total.get("linked") or 0))
         except Exception as handoff_e:
@@ -343,7 +343,7 @@ async def drain_phase(
 
     if name == "story_enhancement":
         from services.enhancement_orchestrator_service import run_enhancement_cycle
-        from shared.pipeline_resource_policy import (
+        api.shared.pipeline_resource_policy import (
             story_enhancement_facts_only,
             story_enhancement_run_limits,
         )

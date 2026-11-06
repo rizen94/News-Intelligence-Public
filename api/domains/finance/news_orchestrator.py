@@ -9,10 +9,10 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from config.settings import finance_intelligence_context_domain_key
+from api.config.settings import finance_intelligence_context_domain_key
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("finance")
 except Exception:
@@ -243,7 +243,7 @@ def get_shortlist(
 
         # 1) Finance-domain articles (RSS-derived) — FINANCE_PG_CONTENT_DOMAIN_KEY selects silo (default finance)
     try:
-        from config.settings import finance_postgres_content_domain_key
+        from api.config.settings import finance_postgres_content_domain_key
         from domains.news_aggregation.services.article_service import ArticleService
 
         fin_dk = finance_postgres_content_domain_key()
@@ -293,7 +293,7 @@ def get_shortlist(
     # 2) Intelligence contexts (finance domain) — reporting/disclosures summarized as contexts
     if include_contexts and terms:
         try:
-            from shared.database import get_db_connection
+            api.shared.database import get_db_connection
 
             conn = get_db_connection()
             if conn:
@@ -387,8 +387,8 @@ def get_supply_chain_items(
         is_registry_commodity = False
     shortlist: list[tuple[float, dict[str, Any]]] = []
     try:
-        from config.settings import finance_intelligence_context_domain_key
-        from shared.database import get_db_connection
+        from api.config.settings import finance_intelligence_context_domain_key
+        api.shared.database import get_db_connection
 
         ctx_dk = finance_intelligence_context_domain_key()
         conn = get_db_connection()

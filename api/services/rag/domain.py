@@ -5,7 +5,7 @@ Extracted from enhanced_rag_service.py
 """
 
 import logging
-from shared.domain_registry import resolve_domain_schema
+api.shared.domain_registry import resolve_domain_schema
 from typing import Any
 
 from psycopg2.extras import RealDictCursor
@@ -63,7 +63,7 @@ class RAGDomainModule:
 
     def get_db_connection(self):
         """Get database connection from shared pool."""
-        from shared.database import get_db_connection as _get_conn
+        api.shared.database import get_db_connection as _get_conn
 
         return _get_conn()
 

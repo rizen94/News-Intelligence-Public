@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("finance")
 except Exception:
@@ -51,7 +51,7 @@ def fetch_commodity(
     start_str = start_dt.strftime("%Y-%m-%d")
     end_str = end_dt.strftime("%Y-%m-%d")
 
-    from shared.data_result import DataResult
+    api.shared.data_result import DataResult
 
     from domains.finance.data.evidence_ledger import record as ledger_record
 

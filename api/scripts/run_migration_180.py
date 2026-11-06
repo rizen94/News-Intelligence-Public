@@ -70,14 +70,14 @@ def main():
     )
     args = parser.parse_args()
 
-    from shared.database import get_db_connection
-    from shared.services.domain_silo_post_migration import (
+    api.shared.database import get_db_connection
+    api.shared.services.domain_silo_post_migration import (
         apply_domain_silo_post_sql,
         load_domain_onboarding_yaml,
     )
 
     try:
-        from shared.migration_sql_paths import resolve_migration_sql_file
+        api.shared.migration_sql_paths import resolve_migration_sql_file
 
         path = resolve_migration_sql_file("180_legal_domain_silo.sql")
     except FileNotFoundError as e:

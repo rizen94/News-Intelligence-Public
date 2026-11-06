@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("historic_context")
 except Exception:
@@ -197,7 +197,7 @@ def _build_search_query(
 
 def _get_db():
     try:
-        from shared.database import get_db_connection
+        api.shared.database import get_db_connection
 
         return get_db_connection()
     except Exception as e:

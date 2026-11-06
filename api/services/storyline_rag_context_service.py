@@ -9,8 +9,8 @@ import asyncio
 import logging
 from typing import Any
 
-from shared.database import get_db_connection
-from shared.domain_registry import resolve_domain_schema
+api.shared.database import get_db_connection
+api.shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 

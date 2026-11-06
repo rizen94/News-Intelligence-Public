@@ -24,9 +24,9 @@ sys.path.insert(0, _API_ROOT)
 
 from datetime import datetime
 
-from shared.database import get_db_connection
-from shared.migration_sql_runner import bootstrap_migration_env
-from shared.services.public_web_auth_service import hash_password
+api.shared.database import get_db_connection
+api.shared.migration_sql_runner import bootstrap_migration_env
+api.shared.services.public_web_auth_service import hash_password
 
 
 def upsert_user(cur, *, username: str, email: str, password: str, roles: list[str], full_name: str) -> None:

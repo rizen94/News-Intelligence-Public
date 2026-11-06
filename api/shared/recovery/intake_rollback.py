@@ -18,7 +18,7 @@ _ARCHIVED_INTAKE = Path(__file__).resolve().parents[1] / "_archived" / "intake"
 
 
 def legacy_intake_rollback_active() -> bool:
-    from config.settings import legacy_intake_extraction_enabled
+    from api.config.settings import legacy_intake_extraction_enabled
 
     return legacy_intake_extraction_enabled()
 

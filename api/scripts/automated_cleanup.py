@@ -21,7 +21,7 @@ import docker
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 # Import centralized path configuration
-from config.paths import LOGS_DIR, PROJECT_ROOT, SCRIPTS_DIR
+from api.config.paths import LOGS_DIR, PROJECT_ROOT, SCRIPTS_DIR
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"

@@ -13,8 +13,8 @@ import logging
 from datetime import date, datetime
 from typing import Any
 
-from shared.database import get_db_connection_context
-from shared.domain_registry import domain_key_to_schema, resolve_domain_schema
+api.shared.database import get_db_connection_context
+api.shared.domain_registry import domain_key_to_schema, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 

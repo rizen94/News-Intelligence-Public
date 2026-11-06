@@ -18,11 +18,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from config.runtime import env_bool, env_int, env_str
-from shared.database import get_db_connection_context
-from shared.domain_processing_mode import corpus_domain_keys, is_corpus_domain
-from shared.domain_registry import resolve_domain_schema
-from shared.evidence_grade import assert_valid_appraisal_payload
+from api.config.runtime import env_bool, env_int, env_str
+api.shared.database import get_db_connection_context
+api.shared.domain_processing_mode import corpus_domain_keys, is_corpus_domain
+api.shared.domain_registry import resolve_domain_schema
+api.shared.evidence_grade import assert_valid_appraisal_payload
 
 logger = logging.getLogger(__name__)
 
@@ -245,8 +245,8 @@ async def _appraise_document(row: dict[str, Any], *, domain_key: str) -> dict[st
     )
 
     try:
-        from shared.services.ollama_model_caller import get_ollama_model_caller
-        from shared.services.ollama_model_policy import InvocationKind
+        api.shared.services.ollama_model_caller import get_ollama_model_caller
+        api.shared.services.ollama_model_policy import InvocationKind
 
         caller = get_ollama_model_caller()
         result = await caller.generate(
@@ -274,7 +274,7 @@ async def _appraise_document(row: dict[str, Any], *, domain_key: str) -> dict[st
     except Exception as e:
         # Detect pressure errors via canonical helper — do not write terminal fallbacks.
         try:
-            from shared.services.llm_service import is_ollama_pressure_error
+            api.shared.services.llm_service import is_ollama_pressure_error
         except ImportError:
             is_ollama_pressure_error = lambda exc: False  # type: ignore[misc,assignment]
         if is_ollama_pressure_error(e):
@@ -456,7 +456,7 @@ def run_claim_evidence_appraisal_batch(
         except Exception as e:
             # Detect pressure errors via canonical helper.
             try:
-                from shared.services.llm_service import is_ollama_pressure_error
+                api.shared.services.llm_service import is_ollama_pressure_error
             except ImportError:
                 is_ollama_pressure_error = lambda exc: False  # type: ignore[misc,assignment]
             if is_ollama_pressure_error(e):

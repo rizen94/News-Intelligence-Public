@@ -17,7 +17,7 @@ async def list_vault_hubs(
     limit: int = Query(40, ge=1, le=100),
 ):
     from services.vault_cluster_hub_service import list_cluster_hubs
-    from shared.llm_text_sanitize import sanitize_reader_prose
+    api.shared.llm_text_sanitize import sanitize_reader_prose
 
     try:
         hubs = list_cluster_hubs(domain_key=domain, limit=limit)

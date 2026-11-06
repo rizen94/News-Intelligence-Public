@@ -180,7 +180,7 @@ def compute_readiness(
     cleared = bool(reduction_cleared) or status == "ready_for_editor"
     membership_drift = False
     if status == "published":
-        from shared.editorial_package_attach_gate import membership_drifted_since_prune
+        api.shared.editorial_package_attach_gate import membership_drifted_since_prune
 
         membership_drift = membership_drifted_since_prune(
             {

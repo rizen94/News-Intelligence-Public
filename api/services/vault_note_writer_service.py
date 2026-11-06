@@ -45,7 +45,7 @@ from services.vault_update_queue_service import (
     complete_vault_update_job,
     count_vault_update_pending,
 )
-from shared.vault_note_contract import (
+api.shared.vault_note_contract import (
     AUTO_POSTURE_END,
     AUTO_POSTURE_START,
     AUTO_SIGNIFICANCE_END,
@@ -188,8 +188,8 @@ Rules:
 {evidence[:2000]}
 """
     try:
-        from shared.services.ollama_model_caller import get_ollama_model_caller
-        from shared.services.ollama_model_policy import InvocationKind
+        api.shared.services.ollama_model_caller import get_ollama_model_caller
+        api.shared.services.ollama_model_policy import InvocationKind
 
         caller = get_ollama_model_caller()
         result = await caller.generate(

@@ -13,9 +13,9 @@ import re
 from datetime import date, datetime, timezone
 from typing import Any
 
-from shared.database import get_db_connection_context
-from shared.domain_registry import resolve_domain_schema
-from shared.vault_note_contract import (
+api.shared.database import get_db_connection_context
+api.shared.domain_registry import resolve_domain_schema
+api.shared.vault_note_contract import (
     AUTO_BRIEF_END,
     AUTO_BRIEF_START,
     AUTO_SIGNIFICANCE_END,
@@ -51,13 +51,13 @@ IRAN_WAR_PRIORITY_STORYLINES = (
 
 def vault_cluster_hubs_enabled() -> bool:
     try:
-        from config.feature_registry import is_feature_enabled
+        from api.config.feature_registry import is_feature_enabled
 
         if is_feature_enabled("vault_cluster_hubs", default=True):
             return True
     except Exception:
         pass
-    from config.runtime import env_bool
+    from api.config.runtime import env_bool
 
     return env_bool("NI_VAULT_CLUSTER_HUBS_ENABLED", True)
 

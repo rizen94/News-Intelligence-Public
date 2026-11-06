@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Database compatibility shim - re-exports from shared.database.
+Database compatibility shim - re-exports api.shared.database.
 All DB access uses the single pooled connection in shared.
 """
 
-from shared.database import (
+api.shared.database import (
     check_database_health,
     get_database_config,
     get_database_url,

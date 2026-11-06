@@ -31,7 +31,7 @@ def get_context_centric_config() -> dict[str, Any]:
     Missing file or key => task enabled (True).
     """
     try:
-        from config.paths import CONFIG_DIR
+        from api.config.paths import CONFIG_DIR
 
         yaml_path = CONFIG_DIR / "context_centric.yaml"
     except Exception as e:
@@ -61,7 +61,7 @@ def get_context_centric_config() -> dict[str, Any]:
 def is_context_centric_task_enabled(task_name: str) -> bool:
     """Return True if the given context-centric task is enabled."""
     try:
-        from config.feature_registry import get_feature, is_feature_enabled
+        from api.config.feature_registry import get_feature, is_feature_enabled
 
         if get_feature(task_name) is not None:
             return is_feature_enabled(task_name, default=True)

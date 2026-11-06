@@ -8,11 +8,11 @@ import json
 import logging
 from typing import Any
 
-from shared.article_processing_gates import (
+api.shared.article_processing_gates import (
     article_eligible_for_context,
     sql_context_sync_article_ready,
 )
-from shared.domain_registry import resolve_domain_schema
+api.shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ def ensure_context_for_article(domain_key: str, article_id: int) -> int | None:
     Ensure a context exists for the given domain article. Creates one if missing.
     Returns context_id if created or already present, else None on error.
     """
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -151,7 +151,7 @@ def update_context_content_for_article(domain_key: str, article_id: int) -> bool
     Update the content of the context linked to this article (e.g. after full-text enrichment).
     Returns True if a context was found and updated, False otherwise.
     """
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -230,7 +230,7 @@ def link_context_to_article_entities(context_id: int, domain_key: str, article_i
     Link a context to entity_profiles using article_entities (canonical_entity_id) and old_entity_to_new.
     Returns number of context_entity_mentions inserted. No-op if table 145 not applied or no entities.
     """
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -306,8 +306,8 @@ def sync_domain_articles_to_contexts(domain_key: str, limit: int = 100) -> int:
     Production: 100 contexts/batch completes in ~5-10s; full sync (10k) ~15-20 min.
     Returns number of new contexts created.
     """
-    from shared.database import get_db_connection
-    from shared.pipeline_article_selection import sql_order_created_at
+    api.shared.database import get_db_connection
+    api.shared.pipeline_article_selection import sql_order_created_at
 
     conn = get_db_connection()
     if not conn:
@@ -411,7 +411,7 @@ def get_context_entity_mentions_coverage() -> dict[str, Any]:
     Use to verify coverage after entity_profile_sync + backfill_context_entity_mentions.
     Returns dict with total_contexts, contexts_with_mentions, contexts_without_mentions, coverage_pct.
     """
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -461,7 +461,7 @@ def backfill_context_entity_mentions_for_domain(domain_key: str, limit: int = 50
     Call after entity_profile_sync so old_entity_to_new is up to date.
     Returns number of contexts that got at least one new mention.
     """
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

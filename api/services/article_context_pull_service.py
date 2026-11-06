@@ -10,8 +10,8 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from shared.database import get_db_connection_context
-from shared.domain_registry import resolve_domain_schema
+api.shared.database import get_db_connection_context
+api.shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ def reader_brief_from_expansion(expansion: dict[str, Any]) -> str:
     Prefers cleaned body_md prose; strips vault RAG dumps and HTML. Falls back to
     summary_md (dek) when the body is empty or still stub-like after sanitize.
     """
-    from shared.llm_text_sanitize import (
+    api.shared.llm_text_sanitize import (
         html_to_visible_text,
         sanitize_reader_prose,
         strip_trailing_llm_json,
@@ -400,8 +400,8 @@ async def run_context_pull_job(pull_id: int) -> dict[str, Any]:
 
         prompt = _build_prompt(article, vault_block, "\n\n".join(rag_parts))
 
-        from shared.services.ollama_model_caller import get_ollama_model_caller
-        from shared.services.ollama_model_policy import InvocationKind
+        api.shared.services.ollama_model_caller import get_ollama_model_caller
+        api.shared.services.ollama_model_policy import InvocationKind
 
         caller = get_ollama_model_caller()
 
@@ -423,7 +423,7 @@ async def run_context_pull_job(pull_id: int) -> dict[str, Any]:
             logger.exception("context pull %s failed (LLM): %s", pull_id, e)
             # Detect pressure errors via canonical helper so we don't invent fallbacks.
             try:
-                from shared.services.llm_service import is_ollama_pressure_error
+                api.shared.services.llm_service import is_ollama_pressure_error
             except ImportError:
                 is_ollama_pressure_error = lambda exc: False  # type: ignore[misc,assignment]
             if is_ollama_pressure_error(e):

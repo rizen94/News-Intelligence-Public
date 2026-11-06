@@ -13,8 +13,8 @@ import re
 from collections import defaultdict
 from typing import Any
 
-from config.runtime import env_str
-from shared.database import get_db_connection
+from api.config.runtime import env_str
+api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,7 @@ def _fetch_pending_article_actions(
 
 
 def _storyline_context(domain_key: str, storyline_id: int) -> tuple[str, str]:
-    from shared.domain_registry import resolve_domain_schema
+    api.shared.domain_registry import resolve_domain_schema
 
     schema = resolve_domain_schema(domain_key)
     conn = get_db_connection()
@@ -163,8 +163,8 @@ async def _llm_review_group(
     *,
     dry_run: bool = False,
 ) -> dict[str, int]:
-    from shared.services.llm_service import LLMService, ModelType
-    from shared.services.ollama_model_policy import InvocationKind
+    api.shared.services.llm_service import LLMService, ModelType
+    api.shared.services.ollama_model_policy import InvocationKind
     from services.storyline_membership_review_service import apply_membership_action
 
     stats = {"approved": 0, "rejected": 0, "skipped": 0, "errors": 0}

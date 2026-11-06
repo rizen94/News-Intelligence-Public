@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Use same DB config as RSS collector
 try:
-    from config.database import get_db_config
+    from api.config.database import get_db_config
 
     DB_CONFIG = get_db_config()
     # Add timeouts/options
@@ -37,7 +37,7 @@ except Exception as e:
 
 def get_db_connection():
     """Get database connection from shared pool. Raises if DB unreachable."""
-    from shared.database import get_db_connection as _get_conn
+    api.shared.database import get_db_connection as _get_conn
 
     return _get_conn()
 

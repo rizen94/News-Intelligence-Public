@@ -60,8 +60,8 @@ EVENT_EXTRACTION_V5_PHASE = "event_extraction_v5"
 
 async def execute_mention_resolution(task: Any) -> PhaseResult:
     """Drain CEM mention resolver (replaces nri-mention-resolver.timer)."""
-    from nri_core.resolver_runner import run_mention_resolution_drain
-    from shared.pipeline_batch_drain import phase_run_budget_seconds
+    from api.nri_core.resolver_runner import run_mention_resolution_drain
+    api.shared.pipeline_batch_drain import phase_run_budget_seconds
 
     budget = phase_run_budget_seconds(MENTION_RESOLUTION_PHASE, 900)
     loop = asyncio.get_event_loop()
@@ -165,7 +165,7 @@ async def execute_rss_feed_health(task: Any) -> PhaseResult:
 async def execute_entity_profile_build(task: Any) -> PhaseResult:
     """Build Wikipedia-style sections for entity_profiles from contexts (Phase 1.3)."""
     try:
-        from config.context_centric_config import is_context_centric_task_enabled
+        from api.config.context_centric_config import is_context_centric_task_enabled
 
         if not is_context_centric_task_enabled(ENTITY_PROFILE_BUILD_PHASE):
             return _ok({"skipped": "task disabled by context_centric_config"})
@@ -187,7 +187,7 @@ async def execute_entity_profile_build(task: Any) -> PhaseResult:
 async def execute_entity_dossier_compile(task: Any) -> PhaseResult:
     """Compile entity dossiers (chronicle_data, relationships, positions) for entities missing or stale (Phase 2.6)."""
     try:
-        from config.context_centric_config import is_context_centric_task_enabled
+        from api.config.context_centric_config import is_context_centric_task_enabled
 
         if not is_context_centric_task_enabled(ENTITY_DOSSIER_COMPILE_PHASE):
             return _ok({"skipped": "task disabled by context_centric_config"})
@@ -225,7 +225,7 @@ async def execute_story_enhancement(task: Any) -> PhaseResult:
     """Phase 3 RAG: story state triggers; enrich/build only when facts_only policy allows."""
     try:
         from services.enhancement_orchestrator_service import run_enhancement_cycle
-        from shared.pipeline_resource_policy import (
+        api.shared.pipeline_resource_policy import (
             story_enhancement_facts_only,
             story_enhancement_run_limits,
         )
@@ -264,7 +264,7 @@ async def execute_story_enhancement(task: Any) -> PhaseResult:
 async def execute_event_extraction_v5(task: Any) -> PhaseResult:
     """v5.0 -- Extract structured events with temporal grounding from domain articles."""
     try:
-        from config.context_centric_config import is_context_centric_task_enabled
+        from api.config.context_centric_config import is_context_centric_task_enabled
         if not is_context_centric_task_enabled(EVENT_EXTRACTION_V5_PHASE):
             return _ok({"skipped": "task disabled by context_centric_config"})
     except Exception:
@@ -308,7 +308,7 @@ async def execute_event_extraction_v5(task: Any) -> PhaseResult:
             )
             conn.commit()
             try:
-                from shared.pipeline_pass_marker import record_article_phase_pass
+                api.shared.pipeline_pass_marker import record_article_phase_pass
                 record_article_phase_pass(schema_, article_id, "event_extraction", "timeline_saved")
             except Exception:
                 pass

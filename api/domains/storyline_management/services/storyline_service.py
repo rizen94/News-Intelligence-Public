@@ -12,9 +12,9 @@ from collections import defaultdict
 import psycopg2
 from psycopg2.extras import Json
 
-from shared.database import get_db_connection
-from shared.domain_registry import resolve_domain_schema
-from shared.services.domain_aware_service import validate_domain
+api.shared.database import get_db_connection
+api.shared.domain_registry import resolve_domain_schema
+api.shared.services.domain_aware_service import validate_domain
 
 from ..models.storyline_models import Storyline, StorylineArticle
 from ..schemas.storyline_schemas import StorylineCreateRequest, StorylineUpdateRequest

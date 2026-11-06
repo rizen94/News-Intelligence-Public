@@ -24,7 +24,7 @@ class AIProcessingAdapter:
     """Adapts LLMService to the interface expected by automation_manager."""
 
     def __init__(self):
-        from shared.services.llm_service import LLMService
+        api.shared.services.llm_service import LLMService
 
         self._llm = LLMService()
 

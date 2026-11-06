@@ -9,7 +9,7 @@ import json
 import logging
 import os
 
-from shared.domain_registry import resolve_domain_schema
+api.shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ def backfill_entity_canonical(domain_key: str) -> int:
     {schema}.article_entities that don't yet have a canonical row.
     Returns number of new canonical entities created.
     """
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -101,7 +101,7 @@ def sync_domain_entity_profiles(domain_key: str) -> int:
     Uses two bulk SQL statements (no per-row round trips). Returns the number of **new**
     ``old_entity_to_new`` rows inserted.
     """
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

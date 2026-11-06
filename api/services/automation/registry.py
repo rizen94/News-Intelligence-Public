@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-from config.paths import CONFIG_DIR
+from api.config.paths import CONFIG_DIR
 
 _SCHEDULERS_PATH = CONFIG_DIR / "schedulers.yaml"
 

@@ -58,7 +58,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 # Configure logging from centralized config (uses settings.LOG_LEVEL, LOG_DIR)
 try:
-    from config.logging_config import setup_logging
+    from api.config.logging_config import setup_logging
 
     setup_logging()
     logger = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ except Exception as e:
 
 # Import pipeline monitoring
 # from routes.pipeline_monitoring import router as pipeline_monitoring_router
-from config.settings import (
+from api.config.settings import (
     MODELS,
     news_intel_api_docs_enabled,
     news_intel_auth_jwt_secret,
@@ -97,7 +97,7 @@ from domains.system_monitoring.routes import router as system_monitoring_router
 from domains.user_management.routes.user_management import router as user_management_router
 
 # Import shared services
-from shared.services.llm_service import llm_service
+api.shared.services.llm_service import llm_service
 
 # Import database configuration
 
@@ -113,7 +113,7 @@ async def lifespan(app: FastAPI):
             "NEWS_INTEL_ENV=production — see docs/SECURITY_OPERATIONS.md for CORS, hosts, and OpenAPI"
         )
         try:
-            from shared.middleware import demo_readonly as _demo_ro
+            api.shared.middleware import demo_readonly as _demo_ro
 
             if _demo_ro.news_intel_demo_readonly_enabled():
                 logger.info(
@@ -144,7 +144,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize database connection pool early (persistent connection)
     try:
-        from shared.database import _init_pool, get_db_config, get_db_connection
+        api.shared.database import _init_pool, get_db_config, get_db_connection
 
         # get_db_config enforces NAS tunnel rules and logs host/port
         db_config = get_db_config()
@@ -170,7 +170,7 @@ async def lifespan(app: FastAPI):
             conn.close()
             logger.info("✅ Database connection test successful")
             try:
-                from shared.domain_registry import pipeline_url_schema_pairs, url_schema_pairs
+                api.shared.domain_registry import pipeline_url_schema_pairs, url_schema_pairs
 
                 _all = url_schema_pairs()
                 _pipe = pipeline_url_schema_pairs()
@@ -345,7 +345,7 @@ async def lifespan(app: FastAPI):
                 from domains.content_analysis.services.topic_extraction_queue_worker import (
                     TopicExtractionQueueWorker,
                 )
-                from shared.database import get_db_connection
+                api.shared.database import get_db_connection
 
                 def start_queue_workers_background():
                     import asyncio
@@ -354,7 +354,7 @@ async def lifespan(app: FastAPI):
                     asyncio.set_event_loop(loop)
 
                     async def start_workers():
-                        from shared.domain_registry import pipeline_url_schema_pairs
+                        api.shared.domain_registry import pipeline_url_schema_pairs
 
                         from domains.content_analysis.services.topic_clustering_service import (
                             default_batch_ollama_url,
@@ -406,9 +406,9 @@ async def lifespan(app: FastAPI):
 
     # Orchestrator coordinator — after automation so get_automation() is populated on boot
     try:
-        from collectors.rss_collector import collect_rss_feeds
+        from api.collectors.rss_collector import collect_rss_feeds
         from services.orchestrator_coordinator import OrchestratorCoordinator
-        from shared.database import get_db_connection as get_db
+        api.shared.database import get_db_connection as get_db
 
         coordinator = OrchestratorCoordinator(
             get_finance_orchestrator=lambda: getattr(app.state, "finance_orchestrator", None),
@@ -457,7 +457,7 @@ async def lifespan(app: FastAPI):
 
     # Start Route Supervisor
     try:
-        from shared.services.route_supervisor import get_route_supervisor
+        api.shared.services.route_supervisor import get_route_supervisor
 
         supervisor = get_route_supervisor()
 
@@ -582,7 +582,7 @@ async def lifespan(app: FastAPI):
         else:
             from orchestration.base import NewsroomOrchestrator
             from orchestration.config import load_newsroom_config
-            from shared.database import get_db_connection
+            api.shared.database import get_db_connection
 
             newsroom_config = load_newsroom_config()
             if newsroom_config.get("enabled"):
@@ -677,7 +677,7 @@ async def lifespan(app: FastAPI):
     try:
         import traceback
 
-        from shared.debug_session_log import agent_dbg
+        api.shared.debug_session_log import agent_dbg
 
         agent_dbg(
             "D",
@@ -785,7 +785,7 @@ async def lifespan(app: FastAPI):
 
     # Close DB pools last (releases server-side sessions for this process)
     try:
-        from shared.database import close_pool
+        api.shared.database import close_pool
 
         close_pool()
         logger.info("Database connection pools closed")
@@ -909,8 +909,8 @@ async def request_tracker_middleware(request: Request, call_next):
     """Record API activity and enforce a per-request timeout to prevent runaway queries."""
     import uuid
 
-    from shared.logging.activity_logger import log_api_request
-    from shared.services.api_request_tracker import begin_request, end_request
+    api.shared.logging.activity_logger import log_api_request
+    api.shared.services.api_request_tracker import begin_request, end_request
 
     request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
     request.state.request_id = request_id
@@ -979,7 +979,7 @@ app.add_middleware(
 )
 
 if news_intel_security_middleware_enabled():
-    from middleware.security import SecurityMiddleware
+    from api.middleware.security import SecurityMiddleware
 
     app.add_middleware(
         SecurityMiddleware,
@@ -987,12 +987,12 @@ if news_intel_security_middleware_enabled():
     )
 
 # Guest vs admin RBAC (demo middleware is outermost — runs first; auth sits inside read-only demo layer).
-from shared.middleware.public_web_auth import PublicWebAuthRbacMiddleware  # noqa: E402
+api.shared.middleware.public_web_auth import PublicWebAuthRbacMiddleware  # noqa: E402
 
 app.add_middleware(PublicWebAuthRbacMiddleware)
 
 # Public demo read-only (outermost): block mutations when Host matches NEWS_INTEL_DEMO_HOSTS
-from shared.middleware.demo_readonly import DemoReadOnlyMiddleware  # noqa: E402
+api.shared.middleware.demo_readonly import DemoReadOnlyMiddleware  # noqa: E402
 
 app.add_middleware(DemoReadOnlyMiddleware)
 
@@ -1035,8 +1035,8 @@ app.include_router(system_monitoring_router)
 @app.get("/api/public/demo_config")
 async def public_demo_config(request: Request):
     """Expose demo read-only host flag + optional public web auth shape (for SPA UX)."""
-    from shared.middleware.demo_readonly import should_apply_demo_readonly
-    from shared.middleware.public_web_auth import attach_public_web_auth_state
+    api.shared.middleware.demo_readonly import should_apply_demo_readonly
+    api.shared.middleware.public_web_auth import attach_public_web_auth_state
 
     attach_public_web_auth_state(request)
     readonly = should_apply_demo_readonly(request)

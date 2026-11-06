@@ -12,7 +12,7 @@ All functionality is now available through a single RAGService class.
 
 import logging
 from typing import Any
-from shared.domain_registry import resolve_domain_schema
+api.shared.domain_registry import resolve_domain_schema
 import os
 
 from .base import BaseRAGService
@@ -245,7 +245,7 @@ class RAGService(BaseRAGService):
 
     def get_db_connection(self):
         """Get database connection from shared pool."""
-        from shared.database import get_db_connection as _get_conn
+        api.shared.database import get_db_connection as _get_conn
 
         return _get_conn()
 

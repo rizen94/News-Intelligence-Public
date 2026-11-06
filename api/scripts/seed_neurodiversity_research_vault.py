@@ -647,8 +647,8 @@ def _write_historic_dsm_notes(*, dry_run: bool) -> list[dict[str, Any]]:
     """Write/refresh historic DSM label notes under 50_Science/40_Topics/."""
     from services.vault_bridge_service import vault_root
     from services.vault_notes_registry_service import upsert_vault_note
-    from shared.database import get_db_connection_context
-    from shared.vault_note_contract import slugify_entity_name
+    api.shared.database import get_db_connection_context
+    api.shared.vault_note_contract import slugify_entity_name
 
     out: list[dict[str, Any]] = []
     root = vault_root()
@@ -754,7 +754,7 @@ def _patch_section(body: str, pattern: re.Pattern[str], section_md: str) -> str:
 
 
 def _list_profiled_papers(limit: int = 40) -> list[dict[str, Any]]:
-    from shared.database import get_db_connection_context
+    api.shared.database import get_db_connection_context
 
     rows: list[dict[str, Any]] = []
     with get_db_connection_context() as conn:
@@ -848,14 +848,14 @@ def _enrich_topic_note(
         patch_wiki_section,
         retrieve_wiki_hits,
     )
-    from shared.vault_note_contract import entity_vault_rel_path
+    api.shared.vault_note_contract import entity_vault_rel_path
 
     cfg = load_research_subject_topics().get(DOMAIN) or {}
     keywords = list(cfg.get("keywords") or [])
     subjects = list(cfg.get("subjects") or list(SUBJECTS.keys()))
     rel = entity_vault_rel_path(title, domain_key=DOMAIN, entity_type="subject")
     # Prefer registry path
-    from shared.database import get_db_connection_context
+    api.shared.database import get_db_connection_context
 
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
@@ -1004,7 +1004,7 @@ papers in the research pathway — not news headlines.
 def _write_paper_clipping(article: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
     from services.vault_bridge_service import _render_frontmatter, vault_root
     from services.vault_notes_registry_service import upsert_vault_note
-    from shared.vault_note_contract import clipping_vault_rel_path, structural_tags_for_note
+    api.shared.vault_note_contract import clipping_vault_rel_path, structural_tags_for_note
 
     boards = _match_board_subjects(
         article.get("subjects_studied") or [], article.get("title") or ""

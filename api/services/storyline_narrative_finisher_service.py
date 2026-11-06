@@ -18,10 +18,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from shared.database import ephemeral_db_connection_context
-from shared.domain_registry import domain_key_to_schema, is_valid_domain_key
-from shared.services.ollama_model_caller import get_ollama_model_caller
-from shared.services.ollama_model_policy import InvocationKind
+api.shared.database import ephemeral_db_connection_context
+api.shared.domain_registry import domain_key_to_schema, is_valid_domain_key
+api.shared.services.ollama_model_caller import get_ollama_model_caller
+api.shared.services.ollama_model_policy import InvocationKind
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +190,7 @@ def parse_finisher_response(raw_text: str) -> tuple[dict[str, Any] | None, str |
                         break
                 data["canonical_narrative"] = cut.strip()[:12000]
             # Never persist machine trailer inside canonical_narrative.
-            from shared.llm_text_sanitize import strip_trailing_llm_json
+            api.shared.llm_text_sanitize import strip_trailing_llm_json
 
             canon = strip_trailing_llm_json(str(data.get("canonical_narrative") or ""))
             if canon:
@@ -227,7 +227,7 @@ def parse_finisher_response(raw_text: str) -> tuple[dict[str, Any] | None, str |
         lede_idx = text.lower().find("## lede")
     if lede_idx >= 0:
         text = text[lede_idx:]
-    from shared.llm_text_sanitize import strip_trailing_llm_json
+    api.shared.llm_text_sanitize import strip_trailing_llm_json
 
     body = strip_trailing_llm_json(text.strip())
     if "## " in body and ("lede" in body.lower() or "background" in body.lower()):
@@ -693,7 +693,7 @@ async def refine_storyline_headline_with_70b(
     parsed, err = parse_headline_refiner_response(result.text)
     out["parse_error"] = err
     if isinstance(parsed, dict):
-        from shared.llm_text_sanitize import sanitize_briefing_title, strip_llm_wrapping_artifacts
+        api.shared.llm_text_sanitize import sanitize_briefing_title, strip_llm_wrapping_artifacts
 
         out["title"] = sanitize_briefing_title((parsed.get("title") or "").strip())
         out["description"] = strip_llm_wrapping_artifacts(
@@ -799,7 +799,7 @@ def persist_narrative_finish_to_db(
     parsed = run_result.get("parsed")
     if not isinstance(parsed, dict):
         parsed = {}
-    from shared.llm_text_sanitize import (
+    api.shared.llm_text_sanitize import (
         strip_json_fence,
         strip_llm_wrapping_artifacts,
         strip_trailing_llm_json,

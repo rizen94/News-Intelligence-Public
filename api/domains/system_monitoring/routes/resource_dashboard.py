@@ -17,9 +17,9 @@ import psutil
 import requests
 import yaml
 from fastapi import APIRouter, HTTPException, Query
-from shared.gpu_metrics import fetch_gpu_metric_hourly_buckets
-from shared.database import get_ui_db_connection as get_db_connection
-from shared.services.response_cache import cached_response, cached_response_sync
+api.shared.gpu_metrics import fetch_gpu_metric_hourly_buckets
+api.shared.database import get_ui_db_connection as get_db_connection
+api.shared.services.response_cache import cached_response, cached_response_sync
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +137,7 @@ async def get_database_stats():
 
                 # Record counts for domain silos — use domain_registry (same as pipeline), not only public.domains,
                 # so monitor counts stay aligned when DB catalog and YAML drift.
-                from shared.domain_registry import get_schema_names_active
+                api.shared.domain_registry import get_schema_names_active
 
                 domain_schemas = list(get_schema_names_active())
 
@@ -240,7 +240,7 @@ def get_backlog_status() -> dict[str, Any]:
         enriched_last_1h = 0
         enriched_last_24h = 0
         enriched_last_4d = 0
-        from shared.domain_registry import get_schema_names_active, pipeline_url_schema_pairs
+        api.shared.domain_registry import get_schema_names_active, pipeline_url_schema_pairs
 
         for schema in get_schema_names_active():
             try:
@@ -881,7 +881,7 @@ def get_backlog_status() -> dict[str, Any]:
         )
 
     try:
-        from config.settings import MODELS as _MODELS
+        from api.config.settings import MODELS as _MODELS
 
         ollama_models_payload = {"primary": _MODELS["primary"], "secondary": _MODELS["secondary"]}
     except Exception:
@@ -1029,7 +1029,7 @@ def get_document_sources_health(window_days: int = 30) -> dict[str, Any]:
 
     automated: list[str] = []
     try:
-        from config.orchestrator_governance import get_orchestrator_governance_config
+        from api.config.orchestrator_governance import get_orchestrator_governance_config
 
         cfg = get_orchestrator_governance_config() or {}
         ds = cfg.get("document_sources") or {}

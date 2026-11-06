@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from config.runtime import env_bool, env_set, env_setdefault, env_str
+from api.config.runtime import env_bool, env_set, env_setdefault, env_str
 
 logger = __import__("logging").getLogger(__name__)
 
@@ -536,13 +536,13 @@ _INTAKE_PREPROCESS_DEFER_EXEMPT: frozenset[str] = frozenset(
 def intake_preprocess_clear_threshold() -> int:
     """Pending sum on core preprocess phases above this → intake-first hard gate."""
     try:
-        from shared.pipeline_admission import mode_intake_clear
+        api.shared.pipeline_admission import mode_intake_clear
 
         return mode_intake_clear()
     except Exception:
         pass
     try:
-        from config.orchestrator_governance import get_orchestrator_governance_config
+        from api.config.orchestrator_governance import get_orchestrator_governance_config
 
         cfg = get_orchestrator_governance_config().get("pipeline_controller") or {}
         if isinstance(cfg, dict):
@@ -584,7 +584,7 @@ _PREPROCESS_STABLE_PHASES: frozenset[str] = frozenset(
 def preprocess_stable_threshold() -> int:
     """Max sum on preprocess-stable phases before post-process preferred can engage."""
     try:
-        from shared.pipeline_admission import mode_preprocess_stable
+        api.shared.pipeline_admission import mode_preprocess_stable
 
         return mode_preprocess_stable()
     except Exception:
@@ -616,7 +616,7 @@ def post_process_preferred_enabled() -> bool:
 
 def intake_first_gpu_defer_threshold() -> int:
     try:
-        from shared.pipeline_admission import mode_intake_clear
+        api.shared.pipeline_admission import mode_intake_clear
 
         return mode_intake_clear()
     except Exception:
@@ -642,7 +642,7 @@ def bulk_extract_compete_defer_phase(
     intake_thresh = intake_first_gpu_defer_threshold()
 
     try:
-        from shared.spine_phase_order import spine_pipeline_ordered_active
+        api.shared.spine_phase_order import spine_pipeline_ordered_active
 
         if not spine_pipeline_ordered_active():
             return False
@@ -673,7 +673,7 @@ def unified_superseded_automation_phases() -> frozenset[str]:
 
 def intake_extraction_suppressed() -> bool:
     """When true, automation schedules unified intake extract instead of legacy per-phase LLM."""
-    from config.settings import legacy_intake_extraction_enabled, unified_intake_extraction_enabled
+    from api.config.settings import legacy_intake_extraction_enabled, unified_intake_extraction_enabled
 
     if legacy_intake_extraction_enabled():
         return False
@@ -706,7 +706,7 @@ def apply_intake_mode_pending_mask(counts: dict[str, int]) -> dict[str, int]:
     else:
         out["unified_intake_extraction"] = 0
     try:
-        from shared.assembly_phase_order import (
+        api.shared.assembly_phase_order import (
             POST_SPINE_RETIRED_PHASES,
             assembly_pipeline_mode,
         )
@@ -788,7 +788,7 @@ _STRUCTURE_BAND_REFINEMENT_EXEMPT: frozenset[str] = frozenset(
 def structure_catchup_refinement_defer_threshold() -> int:
     """Defer Tier.REFINEMENT filler when structure pending sum is at/above this."""
     try:
-        from shared.pipeline_admission import mode_structure_hot
+        api.shared.pipeline_admission import mode_structure_hot
 
         return mode_structure_hot()
     except Exception:
@@ -836,7 +836,7 @@ def post_intake_work_band(phase_name: str) -> int:
 def entity_profile_build_allowed(pending: dict[str, int] | None = None) -> bool:
     """Profile LLM build only when extract backlog is clear or nightly window."""
     try:
-        from shared.spine_phase_order import spine_pipeline_ordered_active
+        api.shared.spine_phase_order import spine_pipeline_ordered_active
 
         if spine_pipeline_ordered_active():
             return True
@@ -885,7 +885,7 @@ def refinement_phase_allowed(
         return True
     if phase_name == "entity_profile_build":
         try:
-            from shared.spine_phase_order import spine_pipeline_ordered_active
+            api.shared.spine_phase_order import spine_pipeline_ordered_active
 
             if spine_pipeline_ordered_active():
                 return True
@@ -1070,14 +1070,14 @@ def configure_pipeline_resources() -> None:
     env_setdefault("PIPELINE_REPLAN_DEBOUNCE_SECONDS", "3")
 
     try:
-        from shared.ollama_extraction_model_resolver import resolve_extraction_models_at_startup
+        api.shared.ollama_extraction_model_resolver import resolve_extraction_models_at_startup
 
         resolve_extraction_models_at_startup()
     except Exception as e:
         logger.warning("pipeline_resource_policy: extraction model resolve failed: %s", e)
 
     try:
-        from shared.services.ollama_model_caller import reset_ollama_model_caller
+        api.shared.services.ollama_model_caller import reset_ollama_model_caller
 
         reset_ollama_model_caller()
     except Exception:

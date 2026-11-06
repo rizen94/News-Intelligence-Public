@@ -6,13 +6,13 @@ import logging
 from collections import Counter
 from typing import Any
 
-from config.runtime import env_bool, env_float, env_int
+from api.config.runtime import env_bool, env_float, env_int
 from services.discovery_finding_quality import (
     bridge_sort_key,
     finding_skip_reason,
 )
-from shared.database import get_db_connection_context, get_ui_db_connection_context
-from shared.post_processing_modals import allowed_domains_for_modal, modals_for_domain
+api.shared.database import get_db_connection_context, get_ui_db_connection_context
+api.shared.post_processing_modals import allowed_domains_for_modal, modals_for_domain
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ def _resolve_finding_domain(
     Prefer research when the lead is cross-domain / entity-seedable so we land
     claimish packages instead of narrative same-day bags.
     """
-    from shared.domain_registry import get_pipeline_active_domain_keys
+    api.shared.domain_registry import get_pipeline_active_domain_keys
 
     counts: Counter[str] = Counter()
     for dk in finding.get("domain_keys") or []:
@@ -137,7 +137,7 @@ def _count_active_members(package_id: int) -> int:
 
 def _canonical_from_entity_profile(profile_id: int) -> tuple[str | None, int | None]:
     try:
-        from shared.entity_identity import profile_id_to_canonical_entity_id
+        api.shared.entity_identity import profile_id_to_canonical_entity_id
 
         dk, cid = profile_id_to_canonical_entity_id(int(profile_id))
         return (str(dk).strip() or None) if dk else None, cid

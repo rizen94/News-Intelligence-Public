@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from shared.pipeline_queue_vocabulary import (
+api.shared.pipeline_queue_vocabulary import (
     ACTIONABLE_UNIFIED_INTAKE,
     INVENTORY_MISSING_PASS,
     LEGACY_BACKFILL_ELIGIBLE,
@@ -25,7 +25,7 @@ def build_queue_audit(pending: dict[str, int]) -> dict[str, Any]:
     phases: dict[str, Any] = {}
 
     try:
-        from shared.pipeline_queue_counts import get_unified_intake_breakdown, verify_unified_intake_alignment
+        api.shared.pipeline_queue_counts import get_unified_intake_breakdown, verify_unified_intake_alignment
 
         breakdown = get_unified_intake_breakdown()
         alignment = verify_unified_intake_alignment(pending)
@@ -104,8 +104,8 @@ def build_queue_audit(pending: dict[str, int]) -> dict[str, Any]:
         "embedding_link_candidates",
     ):
         try:
-            from shared.pipeline_queue_counts import verify_phase_ssot_alignment
-            from shared.pipeline_queue_vocabulary import monitor_queue_kind
+            api.shared.pipeline_queue_counts import verify_phase_ssot_alignment
+            api.shared.pipeline_queue_vocabulary import monitor_queue_kind
 
             monitor = int(pending.get(phase) or 0)
             alignment = verify_phase_ssot_alignment(phase, pending)

@@ -11,9 +11,9 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from config.runtime import env_bool, env_float, env_int
-from shared.domain_registry import resolve_domain_schema
-from shared.episode_title_match import episode_title_similarity, normalize_episode_title
+from api.config.runtime import env_bool, env_float, env_int
+api.shared.domain_registry import resolve_domain_schema
+api.shared.episode_title_match import episode_title_similarity, normalize_episode_title
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ def find_episodes_by_signature_match(
     event_id: int,
     article_id: int | None,
 ) -> list[int]:
-    from shared.episode_attach_gate import (
+    api.shared.episode_attach_gate import (
         classify_event_anchors,
         parse_anchor_signature,
         signature_match,
@@ -398,7 +398,7 @@ def merge_episodes_eel_aware(
         )
         eel_rows = cur.fetchall() or []
 
-        from shared.episode_attach_gate import (
+        api.shared.episode_attach_gate import (
             insert_event_episode_link,
             lock_episode_signature,
             parse_anchor_signature,
@@ -459,10 +459,10 @@ def merge_episodes_eel_aware(
             lock_episode_signature(cur, schema, primary_id, merged_sig)
 
         try:
-            from shared.assembly_link_funnel import storyline_articles_write_allowed
+            api.shared.assembly_link_funnel import storyline_articles_write_allowed
 
             if storyline_articles_write_allowed():
-                from shared.membership_store import copy_bag_rows
+                api.shared.membership_store import copy_bag_rows
 
                 copy_bag_rows(
                     cur,
@@ -500,7 +500,7 @@ def merge_episodes_eel_aware(
             ),
         )
 
-        from shared.storyline_article_counts import sync_counts_update_sql
+        api.shared.storyline_article_counts import sync_counts_update_sql
 
         cur.execute(
             f"""

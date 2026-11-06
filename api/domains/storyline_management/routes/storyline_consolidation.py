@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Path, Query
-from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
+api.shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 

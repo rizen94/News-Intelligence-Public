@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from psycopg2.extras import RealDictCursor
-from shared.database import get_db_connection
+api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class SmartCacheService:
         self.max_memory_entries = 1000
         self.max_memory_size_mb = 100
         try:
-            from shared.constants import DEFAULT_CACHE_TTL_SECONDS
+            api.shared.constants import DEFAULT_CACHE_TTL_SECONDS
 
             self.default_ttl_seconds = DEFAULT_CACHE_TTL_SECONDS
         except ImportError:
@@ -482,7 +482,7 @@ def get_smart_cache_service() -> SmartCacheService:
     """Get global smart cache service instance"""
     global _smart_cache_service
     if _smart_cache_service is None:
-        from config.database import get_db_config
+        from api.config.database import get_db_config
 
         _smart_cache_service = SmartCacheService(get_db_config())
     return _smart_cache_service

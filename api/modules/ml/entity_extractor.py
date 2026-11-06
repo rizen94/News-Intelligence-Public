@@ -23,7 +23,7 @@ def _default_ollama_url() -> str:
         if raw:
             return raw.rstrip("/")
     try:
-        from config.settings import OLLAMA_HOST as _settings_host
+        from api.config.settings import OLLAMA_HOST as _settings_host
 
         if _settings_host:
             return str(_settings_host).rstrip("/")
@@ -210,7 +210,7 @@ class LocalEntityExtractor:
             return result
             
         except Exception as e:
-            from shared.services.llm_service import is_ollama_pressure_error
+            api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -358,7 +358,7 @@ Guidelines:
 
     def _call_ollama(self, prompt: str, model: str) -> str:
         """Call Ollama via shared CB hub (no direct HTTP)."""
-        from shared.services.llm_service import ollama_generate_sync
+        api.shared.services.llm_service import ollama_generate_sync
 
         try:
             return ollama_generate_sync(

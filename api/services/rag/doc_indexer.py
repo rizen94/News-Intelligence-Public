@@ -142,7 +142,7 @@ def _vector_to_pgarray(vec: list[float]) -> str:
 
 def _upsert_doc_index(file_map: dict[str, Any], db_config: dict[str, str]) -> dict[str, int]:
     """Upsert doc_index rows and clean stale entries. Returns counts."""
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     stats = {"upserted": 0, "deleted_stale": 0}
     conn = None
@@ -223,7 +223,7 @@ async def reindex_docs(db_config: dict[str, str] = None) -> dict[str, Any]:
     start = _time.monotonic()
 
     if db_config is None:
-        from shared.database import get_db_config
+        api.shared.database import get_db_config
         db_config = get_db_config()
 
     markdown_files = _collect_markdown_files()
@@ -234,7 +234,7 @@ async def reindex_docs(db_config: dict[str, str] = None) -> dict[str, Any]:
     logger.info("Doc indexer: parsed %d chunks from %d files", total_chunks, len(markdown_files))
 
     # Embed all unique chunk texts via Ollama (sequentially for CB compliance)
-    from shared.services.ollama_model_caller import get_ollama_model_caller
+    api.shared.services.ollama_model_caller import get_ollama_model_caller
 
     caller = get_ollama_model_caller()
     embed_count = 0

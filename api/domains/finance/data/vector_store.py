@@ -6,12 +6,12 @@ Collection name embeds model (bge_large vs nomic_embed) to avoid dimension misma
 import logging
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
-from config.settings import (
+from api.config.settings import (
     FINANCE_CHROMA_DIR,
     EMBEDDING_DIMENSION,
     FINANCE_MODELS,

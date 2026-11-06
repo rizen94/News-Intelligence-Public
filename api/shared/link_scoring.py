@@ -6,7 +6,7 @@ Admit path is ``episode_attach_gate.allow_event_episode_attach``.
 
 from __future__ import annotations
 
-from config.runtime import env_bool
+from api.config.runtime import env_bool
 
 # Small additive boost when a typed causal edge exists between the pair.
 _CAUSAL_BOOST_CAP = 0.06

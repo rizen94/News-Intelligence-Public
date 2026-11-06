@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 
-from config.settings import MODELS
+from api.config.settings import MODELS
 
 logger = logging.getLogger(__name__)
 

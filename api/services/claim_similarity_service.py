@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
-from shared.database import get_db_connection_context
+api.shared.database import get_db_connection_context
 
 logger = logging.getLogger(__name__)
 
@@ -343,7 +343,7 @@ def classify_replication_status(
     - matches without author overlap → replicated_independent
     - explicit contradiction flag on a match → contradicted
     """
-    from shared.evidence_grade import normalize_replication_status
+    api.shared.evidence_grade import normalize_replication_status
 
     if not matching_findings:
         return normalize_replication_status("single_study")

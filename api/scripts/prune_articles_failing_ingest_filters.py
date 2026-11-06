@@ -58,14 +58,14 @@ _API_ROOT = Path(__file__).resolve().parent.parent
 if str(_API_ROOT) not in sys.path:
     sys.path.insert(0, str(_API_ROOT))
 
-from collectors.rss_collector import (  # noqa: E402
+from api.collectors.rss_collector import (  # noqa: E402
     calculate_article_quality_score,
     is_advertisement,
     is_clickbait_title,
     is_excluded_content,
 )
-from shared.database import get_db_connection  # noqa: E402
-from shared.domain_registry import url_schema_pairs  # noqa: E402
+api.shared.database import get_db_connection  # noqa: E402
+api.shared.domain_registry import url_schema_pairs  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

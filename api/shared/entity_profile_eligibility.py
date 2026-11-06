@@ -17,7 +17,7 @@ evidence is unchanged (see entity_profile_builder_service).
 
 from __future__ import annotations
 
-from config.runtime import env_str
+from api.config.runtime import env_str
 
 
 def entity_profile_stale_days() -> int:

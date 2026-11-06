@@ -9,8 +9,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from shared.database import get_db_connection
-from shared.services.domain_aware_service import DomainAwareService
+api.shared.database import get_db_connection
+api.shared.services.domain_aware_service import DomainAwareService
 
 from services.domain_synthesis_config import get_domain_synthesis_config
 from services.quality_monitoring_service import get_quality_monitoring_service
@@ -1440,8 +1440,8 @@ class StorylineAutomationService(DomainAwareService):
     ) -> int:
         """Auto-add articles that meet threshold criteria via membership_store."""
         try:
-            from shared.membership_scoring import score_article_storyline_membership
-            from shared.membership_store import MembershipIntent, admit
+            api.shared.membership_scoring import score_article_storyline_membership
+            api.shared.membership_store import MembershipIntent, admit
 
             added_count = 0
             min_score = settings.get("min_relevance_score", 0.7)

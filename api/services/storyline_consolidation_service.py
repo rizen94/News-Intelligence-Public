@@ -28,7 +28,7 @@ from services.storyline_coherence_guardrails import (
     assess_mega_group_coherence,
     is_overly_generic_storyline_title,
 )
-from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
+api.shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -282,7 +282,7 @@ class StorylineConsolidationService:
 
     def get_db_connection(self):
         """Get database connection from shared pool."""
-        from shared.database import get_db_connection as _get_conn
+        api.shared.database import get_db_connection as _get_conn
 
         return _get_conn()
 
@@ -1275,7 +1275,7 @@ def get_consolidation_service(db_config: dict[str, Any] = None) -> StorylineCons
 
     if _consolidation_service is None:
         if db_config is None:
-            from shared.database import get_db_config
+            api.shared.database import get_db_config
 
             db_config = get_db_config()
         _consolidation_service = StorylineConsolidationService(db_config)

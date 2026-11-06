@@ -341,7 +341,7 @@ def score_article_storyline_membership(
     schema: str | None = None,
 ) -> MembershipScore:
     """Load article + storyline signals and return content-aware membership score."""
-    from shared.domain_registry import resolve_domain_schema
+    api.shared.domain_registry import resolve_domain_schema
     from services.storyline_centroid import get_storyline_centroid, matching_centroid
 
     sch = schema or resolve_domain_schema(domain_key)

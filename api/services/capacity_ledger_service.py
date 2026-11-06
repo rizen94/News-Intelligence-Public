@@ -14,7 +14,7 @@ import logging
 import math
 from typing import Any
 
-from config.runtime import env_float, env_str
+from api.config.runtime import env_float, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +59,8 @@ def _ledger_phases() -> list[str]:
 
 def _articles_created_24h() -> int:
     try:
-        from shared.database import get_db_connection
-        from shared.domain_registry import get_pipeline_schema_names_active
+        api.shared.database import get_db_connection
+        api.shared.domain_registry import get_pipeline_schema_names_active
 
         conn = get_db_connection()
         if not conn:

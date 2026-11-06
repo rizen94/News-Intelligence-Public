@@ -11,7 +11,7 @@ from domains.finance.data_sources.fred import get_client, FREDDataSource
 from domains.finance.data.api_cache import FRED_TTL
 from domains.finance.data.api_cache import get as cache_get
 from domains.finance.data.api_cache import set as cache_set
-from config.settings import FRED_API_KEY
+from api.config.settings import FRED_API_KEY
 
 logger = logging.getLogger(__name__)
 

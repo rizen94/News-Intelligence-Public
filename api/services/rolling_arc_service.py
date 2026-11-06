@@ -43,7 +43,7 @@ def list_rolling_arcs(
         LIMIT %s
     """
     try:
-        from shared.database import get_ui_db_connection_context
+        api.shared.database import get_ui_db_connection_context
         from psycopg2.extras import RealDictCursor
 
         with get_ui_db_connection_context() as conn:
@@ -61,7 +61,7 @@ def get_rolling_arc(arc_id: int) -> dict[str, Any] | None:
         if int(r.get("id") or 0) == int(arc_id):
             return r
     try:
-        from shared.database import get_ui_db_connection_context
+        api.shared.database import get_ui_db_connection_context
         from psycopg2.extras import RealDictCursor
 
         with get_ui_db_connection_context() as conn:
@@ -79,7 +79,7 @@ def get_rolling_arc(arc_id: int) -> dict[str, Any] | None:
 
 def _schema_for_domain(domain_key: str) -> str:
     try:
-        from shared.domain_registry import resolve_domain_schema
+        api.shared.domain_registry import resolve_domain_schema
 
         return resolve_domain_schema(domain_key)
     except Exception:
@@ -91,7 +91,7 @@ def _fetch_window_atoms(domain_key: str, window_days: int = 365) -> dict[str, An
     storylines: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
     try:
-        from shared.database import get_ui_db_connection_context
+        api.shared.database import get_ui_db_connection_context
         from psycopg2.extras import RealDictCursor
 
         with get_ui_db_connection_context() as conn:
@@ -197,7 +197,7 @@ def refresh_rolling_arc(
         f"{len(sl_ids)} storylines, {len(ev_ids)} timeline atoms."
     )
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -259,7 +259,7 @@ def propose_latent_co_arc_links(*, limit: int = 20) -> int:
     """Enqueue latent co-arc associate proposals into graph_connection_proposals."""
     written = 0
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
         from psycopg2.extras import RealDictCursor
 
         with get_db_connection_context() as conn:

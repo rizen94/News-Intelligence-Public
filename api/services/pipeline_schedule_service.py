@@ -538,7 +538,7 @@ def automation_phase_allowed(
     # Targeted entity_profile_build burns set ENTITY_PROFILE_BUILD_ANYTIME=true.
     if name == "entity_profile_build":
         try:
-            from config.runtime import env_str
+            from api.config.runtime import env_str
 
             if env_str("ENTITY_PROFILE_BUILD_ANYTIME", "").lower() in ("1", "true", "yes"):
                 return True
@@ -547,7 +547,7 @@ def automation_phase_allowed(
     # Targeted story_continuation burns set STORY_CONTINUATION_ANYTIME=true.
     if name == "story_continuation":
         try:
-            from config.runtime import env_str
+            from api.config.runtime import env_str
 
             if env_str("STORY_CONTINUATION_ANYTIME", "").lower() in ("1", "true", "yes"):
                 return True

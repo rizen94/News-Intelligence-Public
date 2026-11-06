@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from services.content_quality_service import ContentQualityService, get_content_quality_service
-from shared.database import get_db_connection
+api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 

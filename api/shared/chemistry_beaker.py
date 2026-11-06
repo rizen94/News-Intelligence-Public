@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from config.runtime import env_str
+from api.config.runtime import env_str
 
 # Ordered stir sequence after intake preprocess is stable (Widow-local / DB-heavy first).
 # Chemistry kinds (evidence_thread / research_topic / matter_docket) use entity-first
@@ -62,7 +62,7 @@ def embedding_link_candidates_enabled() -> bool:
 def get_post_intake_beaker_phases() -> list[str]:
     """Phases to request when RSS intake preprocess is clear (governance override)."""
     try:
-        from config.orchestrator_governance import get_orchestrator_governance_config
+        from api.config.orchestrator_governance import get_orchestrator_governance_config
 
         raw = (get_orchestrator_governance_config().get("pipeline_controller") or {}).get(
             "post_intake_beaker_phases"

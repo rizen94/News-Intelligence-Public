@@ -11,15 +11,15 @@ import time
 from datetime import datetime, timedelta, timezone
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
-from config.paths import FINANCE_DATA_DIR
-from config.settings import METALS_DEV_API_KEY
-from shared.data_result import DataResult
+from api.config.paths import FINANCE_DATA_DIR
+from api.config.settings import METALS_DEV_API_KEY
+api.shared.data_result import DataResult
 
 from domains.finance.data_sources.base import DataSourceBase
 
@@ -124,7 +124,7 @@ def _request(path: str, params: dict) -> DataResult[dict]:
         r = requests.get(url, params=params, timeout=30)
         duration_ms = (time.perf_counter() - t0) * 1000
         try:
-            from shared.logging.activity_logger import log_external_call
+            api.shared.logging.activity_logger import log_external_call
 
             log_external_call(
                 url=url,

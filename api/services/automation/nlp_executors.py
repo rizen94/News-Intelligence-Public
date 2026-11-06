@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 def _is_context_centric_task_enabled(task_name: str) -> bool:
     """Check if a context-centric task is enabled. Returns True by default."""
     try:
-        from config.context_centric_config import is_context_centric_task_enabled as _icc
+        from api.config.context_centric_config import is_context_centric_task_enabled as _icc
         return _icc(task_name)
     except ImportError:
         return False
@@ -24,7 +24,7 @@ def _is_context_centric_task_enabled(task_name: str) -> bool:
 def _get_pipeline_active_domain_keys():
     """Return list of active domain keys for pipeline tasks."""
     try:
-        from config.pipeline_config import get_pipeline_active_domain_keys as _gpdk
+        from api.config.pipeline_config import get_pipeline_active_domain_keys as _gpdk
         return _gpdk()
     except ImportError:
         return []
@@ -33,7 +33,7 @@ def _get_pipeline_active_domain_keys():
 def _story_enhancement_facts_only() -> bool:
     """Return whether story enhancement is limited to facts-only policy."""
     try:
-        from shared.pipeline_resource_policy import story_enhancement_facts_only as _fef
+        api.shared.pipeline_resource_policy import story_enhancement_facts_only as _fef
         return _fef()
     except ImportError:
         return False
@@ -42,7 +42,7 @@ def _story_enhancement_facts_only() -> bool:
 def _story_enhancement_run_limits(*, fact_batch=20, queue_batch=150, enrich_limit=30, build_limit=4) -> dict:
     """Return run limits for story enhancement based on facts_only policy."""
     try:
-        from shared.pipeline_resource_policy import story_enhancement_run_limits as _srl
+        api.shared.pipeline_resource_policy import story_enhancement_run_limits as _srl
         return _srl(fact_batch=fact_batch, queue_batch=queue_batch, enrich_limit=enrich_limit, build_limit=build_limit)
     except ImportError:
         return {"fact_batch": fact_batch, "queue_batch": queue_batch, "enrich_limit": enrich_limit, "build_limit": build_limit}
@@ -279,7 +279,7 @@ async def execute_metadata_enrichment(task) -> None:
 async def execute_story_enhancement(task) -> None:
     """Phase 3 RAG: story state triggers; enrich/build only when facts_only policy allows."""
     from services.enhancement_orchestrator_service import run_enhancement_cycle
-    from shared.pipeline_resource_policy import (
+    api.shared.pipeline_resource_policy import (
         story_enhancement_facts_only,
         story_enhancement_run_limits,
     )

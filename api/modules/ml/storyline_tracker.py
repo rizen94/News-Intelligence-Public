@@ -10,7 +10,7 @@ from typing import Optional
 from datetime import datetime, timedelta
 import psycopg2
 from collections import defaultdict, Counter
-from shared.database.connection import get_db_connect_kwargs
+api.shared.database.connection import get_db_connect_kwargs
 
 logger = logging.getLogger(__name__)
 

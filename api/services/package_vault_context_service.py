@@ -11,7 +11,7 @@ import logging
 import re
 from typing import Any
 
-from shared.database import get_db_connection_context
+api.shared.database import get_db_connection_context
 
 logger = logging.getLogger(__name__)
 

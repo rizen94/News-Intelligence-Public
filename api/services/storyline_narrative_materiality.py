@@ -14,8 +14,8 @@ import logging
 import os
 from typing import Any
 
-from shared.database import get_db_connection
-from shared.domain_registry import domain_key_to_schema, is_valid_domain_key
+api.shared.database import get_db_connection
+api.shared.domain_registry import domain_key_to_schema, is_valid_domain_key
 
 logger = logging.getLogger(__name__)
 

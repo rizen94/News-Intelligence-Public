@@ -13,7 +13,7 @@ import argparse
 import asyncio
 import logging
 
-from config.settings import (
+from api.config.settings import (
     topic_clustering_backlog_uses_pass_marker,
     topic_clustering_batch_size,
     topic_clustering_concurrency,
@@ -24,8 +24,8 @@ from domains.content_analysis.services.topic_clustering_service import (
     TopicClusteringService,
     process_articles_batch,
 )
-from shared.database import get_db_config, get_db_connection_context
-from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
+api.shared.database import get_db_config, get_db_connection_context
+api.shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -130,7 +130,7 @@ async def catchup_domain(
 
 
 def main() -> int:
-    from shared.catchup_bootstrap import bootstrap_catchup
+    api.shared.catchup_bootstrap import bootstrap_catchup
 
     bootstrap_catchup(bulk_active=True)
     parser = argparse.ArgumentParser(description="Catch up topic_clustering backlog")

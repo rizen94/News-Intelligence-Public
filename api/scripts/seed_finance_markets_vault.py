@@ -163,7 +163,7 @@ def fetch_timeline_for_storylines(
     limit: int = 18,
     title_filter: str | None = None,
 ) -> list[str]:
-    from shared.database import get_db_connection_context
+    api.shared.database import get_db_connection_context
 
     if not storyline_ids:
         return []
@@ -210,7 +210,7 @@ def fetch_recent_theme_articles(
     limit: int = 14,
     schema: str = SCHEMA,
 ) -> list[str]:
-    from shared.database import get_db_connection_context
+    api.shared.database import get_db_connection_context
 
     like_clause = " OR ".join(["a.title ILIKE %s"] * len(patterns))
     params: list[Any] = [int(days)] + [f"%{p}%" for p in patterns] + [int(limit)]
@@ -717,7 +717,7 @@ def main() -> int:
     res_brief = build_resource_brief(
         _dedupe_bullets(theme_res + res_tl, limit=14), pol_x
     )
-    from shared.vault_note_contract import cluster_object_id, cluster_vault_rel_path
+    api.shared.vault_note_contract import cluster_object_id, cluster_vault_rel_path
 
     res_path = cluster_vault_rel_path(RESOURCE_CLUSTER_KEY)
     stats["resource_brief"] = persist_hub_brief(

@@ -39,7 +39,7 @@ def main() -> None:
         except ImportError:
             pass
 
-    from config.settings import (
+    from api.config.settings import (
         get_rss_ingest_excluded_domain_keys,
         rss_ingest_mirror_pipeline_enabled,
     )
@@ -48,7 +48,7 @@ def main() -> None:
         nightly_unified_pipeline_enabled,
     )
     from services.pipeline_schedule_service import pipeline_schedule_info, rss_collection_allowed
-    from shared.domain_registry import (
+    api.shared.domain_registry import (
         get_pipeline_included_domain_keys,
         pipeline_url_schema_pairs,
         url_schema_pairs,
@@ -110,7 +110,7 @@ def main() -> None:
 
     conn = None
     try:
-        from shared.database import get_db_connection
+        api.shared.database import get_db_connection
 
         conn = get_db_connection()
         if conn:

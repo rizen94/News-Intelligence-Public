@@ -38,12 +38,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    from config.settings import (
+    from api.config.settings import (
         get_rss_ingest_excluded_domain_keys,
         rss_ingest_mirror_pipeline_enabled,
     )
-    from shared.database import get_db_connection
-    from shared.domain_registry import pipeline_url_schema_pairs, url_schema_pairs
+    api.shared.database import get_db_connection
+    api.shared.domain_registry import pipeline_url_schema_pairs, url_schema_pairs
 
     from_registry = list(url_schema_pairs())
     mirror = rss_ingest_mirror_pipeline_enabled()
@@ -94,7 +94,7 @@ def main() -> None:
         return
 
     _p("\nRunning collect_rss_feeds() …")
-    from collectors.rss_collector import collect_rss_feeds
+    from api.collectors.rss_collector import collect_rss_feeds
 
     n = collect_rss_feeds()
     _p(f"Done. RSS activity this run (new inserts + same-URL updates): {n}")

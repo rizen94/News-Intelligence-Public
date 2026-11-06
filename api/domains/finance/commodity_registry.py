@@ -14,8 +14,8 @@ except ImportError:
     yaml = None
 
 try:
-    from config.logging_config import get_component_logger
-    from config.paths import CONFIG_DIR
+    from api.config.logging_config import get_component_logger
+    from api.config.paths import CONFIG_DIR
 
     logger = get_component_logger("finance")
 except Exception:

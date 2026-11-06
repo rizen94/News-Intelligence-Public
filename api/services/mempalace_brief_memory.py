@@ -17,7 +17,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from shared.vault_note_contract import (
+api.shared.vault_note_contract import (
     MEMPALACE_BRIEF_AGENT,
     MEMPALACE_BRIEF_WING,
     MEMPALACE_ROOMS,

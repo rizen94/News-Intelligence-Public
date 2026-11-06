@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 from psycopg2.extras import RealDictCursor
-from shared.database import get_db_connection
+api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -513,7 +513,7 @@ def get_predictive_scaling_service() -> PredictiveScalingService:
     """Get global predictive scaling service instance"""
     global _predictive_scaling_service
     if _predictive_scaling_service is None:
-        from config.database import get_db_config
+        from api.config.database import get_db_config
 
         _predictive_scaling_service = PredictiveScalingService(get_db_config())
     return _predictive_scaling_service

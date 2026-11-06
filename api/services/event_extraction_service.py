@@ -27,9 +27,9 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from shared.services.llm_service import LLMService, ModelType
-from shared.services.ollama_model_caller import get_ollama_model_caller
-from shared.services.ollama_model_policy import InvocationKind
+api.shared.services.llm_service import LLMService, ModelType
+api.shared.services.ollama_model_caller import get_ollama_model_caller
+api.shared.services.ollama_model_policy import InvocationKind
 
 from services.domain_synthesis_config import get_domain_synthesis_config
 from services.temporal_parser import extract_temporal_expressions, resolve_date

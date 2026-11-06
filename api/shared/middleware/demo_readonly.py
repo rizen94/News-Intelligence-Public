@@ -16,7 +16,7 @@ from typing import Callable
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
+from api.config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 

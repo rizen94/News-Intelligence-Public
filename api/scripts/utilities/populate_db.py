@@ -17,7 +17,7 @@ def get_db_connection():
         _api = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
         if _api not in sys.path:
             sys.path.insert(0, _api)
-        from shared.database import get_db_connection
+        api.shared.database import get_db_connection
 
         return get_db_connection()
     except Exception as e:

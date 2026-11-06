@@ -4,7 +4,7 @@ Quiver Quantitative API Collector for News Intelligence System
 Collects congressional trades, government contracts, lobbying, and insider trades.
 Maps tickers to entities and triggers intelligence correlation.
 """
-from config.runtime import env_bool, env_int, env_str
+from api.config.runtime import env_bool, env_int, env_str
 
 import json
 import logging
@@ -18,7 +18,7 @@ import psycopg2
 import psycopg2.errors
 import psycopg2.extras
 
-from shared.database import get_db_connection_context
+api.shared.database import get_db_connection_context
 
 logger = logging.getLogger(__name__)
 

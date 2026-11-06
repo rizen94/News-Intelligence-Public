@@ -7,14 +7,14 @@ Returns DataResult for provenance and error diagnosis.
 import logging
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
-from config.settings import FRED_API_KEY, FRED_GOLD_SERIES_ID
-from shared.data_result import DataResult
+from api.config.settings import FRED_API_KEY, FRED_GOLD_SERIES_ID
+api.shared.data_result import DataResult
 
 from domains.finance.data_sources.fred import get_client
 

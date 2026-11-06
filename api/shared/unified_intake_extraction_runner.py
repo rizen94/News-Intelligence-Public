@@ -8,7 +8,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from config.runtime import env_str
+from api.config.runtime import env_str
 
 logger = logging.getLogger(__name__)
 
@@ -22,33 +22,33 @@ except ImportError as _uie_imp_err:
     )
 
 try:
-    from shared.bulk_catchup_llm_routing import (
+    api.shared.bulk_catchup_llm_routing import (
         assign_extraction_lane,
         create_lane_semaphores,
         dual_lane_extraction_active,
     )
-    from shared.domain_registry import pipeline_url_schema_pairs
-    from shared.pipeline_article_selection import (
+    api.shared.domain_registry import pipeline_url_schema_pairs
+    api.shared.pipeline_article_selection import (
         sql_order_coalesce_pub_created,
         sql_order_unified_intake_value_priority,
         unified_intake_newest_first,
         unified_intake_row_value_sort_key,
         unified_intake_value_priority_order_enabled,
     )
-    from shared.pipeline_batch_drain import (
+    api.shared.pipeline_batch_drain import (
         DrainStallTracker,
         RunBudget,
         phase_batch_limit,
         phase_run_budget_seconds,
     )
-    from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
-    from shared.unified_intake_backlog import (
+    api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
+    api.shared.unified_intake_backlog import (
         backfill_unified_pass_from_legacy_batch,
         sql_actionable_unified_intake,
         sql_unified_intake_base_eligible,
         unified_intake_legacy_aware_backlog_enabled,
     )
-    from shared.services.llm_service import pop_llm_execution_lane, push_llm_execution_lane
+    api.shared.services.llm_service import pop_llm_execution_lane, push_llm_execution_lane
 except ImportError as _uie_deps_err:
     logger.error("unified_intake_extraction_runner dependency import failed: %s", _uie_deps_err)
     raise
@@ -82,13 +82,13 @@ async def run_unified_intake_extraction_batch_drain(
 
     llm_batch = batch_size
     if llm_batch is None:
-        from config.runtime import unified_intake_extraction_batch_size
+        from api.config.runtime import unified_intake_extraction_batch_size
 
         llm_batch = unified_intake_extraction_batch_size()
     llm_batch = max(1, min(8, int(llm_batch)))
 
     try:
-        from config.runtime import unified_intake_extraction_parallel
+        from api.config.runtime import unified_intake_extraction_parallel
 
         parallel = unified_intake_extraction_parallel()
     except Exception:
@@ -110,7 +110,7 @@ async def run_unified_intake_extraction_batch_drain(
     pass_clause = ""
     if phase_backlog_uses_pass_marker("unified_intake_extraction"):
         pass_clause = f" AND ({sql_article_pass_null('unified_intake_extraction', 'a')}) "
-    from shared.article_signal_gate import (
+    api.shared.article_signal_gate import (
         article_signal_enabled,
         defer_signal_light_unified_intake_batch,
         sql_article_signal_full_lane_filter,
@@ -118,7 +118,7 @@ async def run_unified_intake_extraction_batch_drain(
 
     if article_signal_enabled():
         defer_signal_light_unified_intake_batch(per_domain_limit=per_domain * 2)
-        from shared.article_signal_gate import (
+        api.shared.article_signal_gate import (
             defer_signal_light_claim_contexts_batch,
             defer_signal_light_phase_batch,
         )
@@ -192,7 +192,7 @@ async def run_unified_intake_extraction_batch_drain(
                 {pass_clause}
             """
         limit_sql = "" if article_ids else f" LIMIT {per_domain}"
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cursor:

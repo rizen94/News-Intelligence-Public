@@ -10,7 +10,7 @@ from typing import Any
 
 import psycopg2
 import sqlalchemy.exc
-from config.logging_config import get_component_logger
+from api.config.logging_config import get_component_logger
 from fastapi import HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError

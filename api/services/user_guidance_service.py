@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("orchestrator")
 except Exception:
@@ -29,7 +29,7 @@ def get_user_guidance(get_db_connection) -> dict[str, Any]:
     if not conn:
         return out
     try:
-        from shared.domain_registry import pipeline_url_schema_pairs
+        api.shared.domain_registry import pipeline_url_schema_pairs
 
         cur = conn.cursor()
         for domain, schema in pipeline_url_schema_pairs():

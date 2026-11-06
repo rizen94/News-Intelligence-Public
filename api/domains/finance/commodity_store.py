@@ -10,7 +10,7 @@ Used to:
 
 from datetime import datetime, timedelta, timezone
 
-from shared.data_result import DataResult
+api.shared.data_result import DataResult
 
 from domains.finance.data.market_data_store import get_series, upsert_observations
 

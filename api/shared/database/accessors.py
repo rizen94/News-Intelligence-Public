@@ -8,23 +8,23 @@ stable interface that won't break when the underlying module is refactored.
 
 Before (bypasses facade, counted as sprawl):
 
-    from shared.database import get_db_connection_context
+    api.shared.database import get_db_connection_context
     with get_db_connection_context() as conn:
         ...
 
 After (goes through facade):
 
-    from shared.database import execute_query, fetch_many
+    api.shared.database import execute_query, fetch_many
 
 Or just use the re-exports already in ``shared.database.__init__``:
 
-    from shared.database import get_db_connection_context
+    api.shared.database import get_db_connection_context
     with get_db_connection_context() as conn:
         ...
 
 The second form works today — the audit tracks whether files go through the
-facade (``from shared.database import ...``) versus directly into the impl
-module (``from shared.database import ...``).
+facade (``api.shared.database import ...``) versus directly into the impl
+module (``api.shared.database import ...``).
 """
 
 from __future__ import annotations

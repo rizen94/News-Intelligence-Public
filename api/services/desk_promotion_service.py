@@ -14,8 +14,8 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from config.runtime import env_bool
-from shared.database import get_db_connection_context
+from api.config.runtime import env_bool
+api.shared.database import get_db_connection_context
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ def patch_storyline_editorial(
     vault_path: str | None = None,
     source: str = "desk_agent",
 ) -> dict[str, Any]:
-    from shared.domain_registry import resolve_domain_schema
+    api.shared.domain_registry import resolve_domain_schema
 
     schema = resolve_domain_schema(domain_key)
     provenance = {

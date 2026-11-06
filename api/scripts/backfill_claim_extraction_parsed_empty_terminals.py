@@ -20,8 +20,8 @@ _API_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _API_ROOT not in sys.path:
     sys.path.insert(0, _API_ROOT)
 
-from shared.database import get_db_connection
-from shared.pipeline_pass_marker import TERMINAL_PROCESSED_EMPTY_LEGITIMATE
+api.shared.database import get_db_connection
+api.shared.pipeline_pass_marker import TERMINAL_PROCESSED_EMPTY_LEGITIMATE
 
 
 def _match_where(alias: str = "c") -> str:

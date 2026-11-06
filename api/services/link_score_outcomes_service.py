@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any
 
-from config.runtime import env_bool
+from api.config.runtime import env_bool
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ def record_link_score_outcome(
         src = "other"
     parts = score_parts if isinstance(score_parts, dict) else {}
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:

@@ -5,7 +5,7 @@ Finance domain — statistical engine for price analysis and validation.
 import logging
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("finance")
 except Exception:

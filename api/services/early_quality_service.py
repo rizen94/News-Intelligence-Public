@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from psycopg2.extras import RealDictCursor
-from shared.database import get_db_connection
+api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -571,7 +571,7 @@ def get_early_quality_service() -> EarlyQualityService:
     """Get global early quality service instance"""
     global _early_quality_service
     if _early_quality_service is None:
-        from config.database import get_db_config
+        from api.config.database import get_db_config
 
         _early_quality_service = EarlyQualityService(get_db_config())
     return _early_quality_service

@@ -7,7 +7,7 @@ import logging
 import urllib.error
 import urllib.request
 
-from config.runtime import env_set, env_str
+from api.config.runtime import env_set, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -192,8 +192,8 @@ def resolve_extraction_models_for_hosts(
                     env_set("BULK_CPU_EXTRACTION_MODEL", cpu_fallback)
 
     try:
-        from shared.services.llm_service import reset_llm_service
-        from shared.services.ollama_model_caller import reset_ollama_model_caller
+        api.shared.services.llm_service import reset_llm_service
+        api.shared.services.ollama_model_caller import reset_ollama_model_caller
 
         reset_llm_service()
         reset_ollama_model_caller()

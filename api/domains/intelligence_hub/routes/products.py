@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 def _sanitize_briefing_line_text(text: str) -> str:
     try:
-        from shared.llm_text_sanitize import strip_llm_wrapping_artifacts
+        api.shared.llm_text_sanitize import strip_llm_wrapping_artifacts
 
         return strip_llm_wrapping_artifacts(text, max_length=2000)
     except Exception:
@@ -24,7 +24,7 @@ def _sanitize_briefing_line_text(text: str) -> str:
 
 def _sanitize_briefing_title_text(text: str) -> str:
     try:
-        from shared.llm_text_sanitize import sanitize_briefing_title
+        api.shared.llm_text_sanitize import sanitize_briefing_title
 
         return sanitize_briefing_title(text)
     except Exception:
@@ -201,8 +201,8 @@ def _brief_to_content(brief: dict[str, Any]) -> str:
 
 def _get_daily_briefing_service():
     """Lazy init DailyBriefingService with shared db_config."""
-    from modules.ml.daily_briefing_service import DailyBriefingService
-    from shared.database import get_db_config
+    from api.modules.ml.daily_briefing_service import DailyBriefingService
+    api.shared.database import get_db_config
 
     return DailyBriefingService(get_db_config())
 
@@ -297,7 +297,7 @@ async def post_domain_daily_briefing(
             context = _build_llm_lead_prompt(kd, domain)
             if context:
                 try:
-                    from shared.services.llm_service import llm_service
+                    api.shared.services.llm_service import llm_service
 
                     result = await llm_service.generate_briefing_lead(context, domain=domain)
                     if result.get("success") and result.get("summary"):
@@ -414,7 +414,7 @@ def get_alert_digest(
 ) -> dict[str, Any]:
     """Alert digest: watchlist alerts (and optionally event alerts) bundled."""
     from services.watchlist_service import WatchlistService
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -497,7 +497,7 @@ def post_content_feedback(
 
 
 def _get_schema_for_domain(domain: str) -> str | None:
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -524,7 +524,7 @@ def get_briefing_feed(
     from psycopg2.extras import RealDictCursor
     from services.briefing_filter_helper import sort_briefing_items_by_priority
     from services.content_feedback_service import get_not_interested_ids
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     schema = _get_schema_for_domain(domain)
     if not schema:

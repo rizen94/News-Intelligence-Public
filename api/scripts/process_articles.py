@@ -10,8 +10,8 @@ import sys
 # Add the API directory to the path
 sys.path.append(os.path.join(os.path.dirname(__file__), "api"))
 
-from config.database import get_db_config, get_db_connection
-from modules.ml.ml_pipeline import MLPipeline
+from api.config.database import get_db_config, get_db_connection
+from api.modules.ml.ml_pipeline import MLPipeline
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

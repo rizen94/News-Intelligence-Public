@@ -30,8 +30,7 @@ PERMITTED_SCHEMA_NAMES: frozenset[str] = frozenset(
         "legal",
         "medicine",
         "neurodiversity",
-        "general_news",
-    }
+            }
 )
 
 # Reserved-but-invalid: schemas that should never be used (excludes PERMITTED ones).

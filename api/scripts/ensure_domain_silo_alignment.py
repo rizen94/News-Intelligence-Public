@@ -51,9 +51,9 @@ def main() -> None:
         except ImportError:
             pass
 
-    from shared.database import get_db_connection
-    from shared.domain_registry import get_domain_entries
-    from shared.services.domain_silo_post_migration import activate_domain_row
+    api.shared.database import get_db_connection
+    api.shared.domain_registry import get_domain_entries
+    api.shared.services.domain_silo_post_migration import activate_domain_row
 
     conn = get_db_connection()
     if not conn:

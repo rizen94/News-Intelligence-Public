@@ -10,14 +10,14 @@ import logging
 import os
 from typing import Any
 
-from shared.database import get_db_connection
+api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 
 
 def _get_wikipedia_service():
     """Lazy import to avoid circular deps."""
-    from modules.ml.rag_external_services import WikipediaService
+    from api.modules.ml.rag_external_services import WikipediaService
 
     return WikipediaService()
 

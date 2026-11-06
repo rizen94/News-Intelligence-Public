@@ -19,9 +19,9 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException, Path, Query, Request
 from fastapi.responses import JSONResponse
 from psycopg2.extras import RealDictCursor
-from shared.database import get_db_connection
-from shared.domain_registry import DOMAIN_PATH_PATTERN, is_valid_domain_key, resolve_domain_schema
-from shared.services.domain_aware_service import validate_domain
+api.shared.database import get_db_connection
+api.shared.domain_registry import DOMAIN_PATH_PATTERN, is_valid_domain_key, resolve_domain_schema
+api.shared.services.domain_aware_service import validate_domain
 
 from domains.finance.orchestrator_types import TaskPriority, TaskType
 
@@ -257,7 +257,7 @@ async def get_finance_trace(
     """Reconstruct task trace: spans, orchestrator decisions, LLM interactions."""
     _check_domain(domain)
     try:
-        from shared.logging.trace_logger import get_traces_for_task
+        api.shared.logging.trace_logger import get_traces_for_task
 
         spans = get_traces_for_task(task_id)
         decisions = []
@@ -266,7 +266,7 @@ async def get_finance_trace(
             import json
             from pathlib import Path
 
-            from config.paths import LOG_DIR
+            from api.config.paths import LOG_DIR
 
             log_dir = Path(LOG_DIR)
             for fname in ("orchestrator_decisions.jsonl", "orchestrator_decisions_outcomes.jsonl"):
@@ -464,7 +464,7 @@ async def get_finance_data_sources(
     _check_domain(domain)
     try:
         import yaml
-        from config.paths import SOURCES_YAML
+        from api.config.paths import SOURCES_YAML
 
         if not SOURCES_YAML.exists():
             return {
@@ -891,7 +891,7 @@ async def get_commodity_history(
 
             obs = get_history(days=days, fetch_if_empty=fetch_if_empty)
         else:
-            from config.settings import FRED_API_KEY
+            from api.config.settings import FRED_API_KEY
             from domains.finance.commodity_fetcher import fetch_commodity
             from domains.finance.data_sources.fred_commodity import (
                 fetch_commodity_history_from_fred,

@@ -16,7 +16,7 @@ import feedparser
 import requests
 from bs4 import BeautifulSoup
 from psycopg2.extras import RealDictCursor
-from shared.database import get_db_connection
+api.shared.database import get_db_connection
 
 # Configure logging before optional imports that may log
 logger = logging.getLogger(__name__)
@@ -924,7 +924,7 @@ def get_article_processor() -> ArticleProcessingService:
     """Get global article processor instance"""
     global _article_processor
     if _article_processor is None:
-        from config.database import get_db_config
+        from api.config.database import get_db_config
 
         db_config = get_db_config()
         _article_processor = ArticleProcessingService(db_config)

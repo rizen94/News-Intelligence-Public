@@ -9,7 +9,7 @@ import statistics
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Literal
 
-from config.settings import FRED_API_KEY
+from api.config.settings import FRED_API_KEY
 from domains.finance.data_sources.fred import get_client
 
 logger = logging.getLogger(__name__)

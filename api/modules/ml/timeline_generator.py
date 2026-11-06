@@ -7,7 +7,7 @@ Uses ML/LLM to generate intelligent timeline events from articles
 import logging
 import json
 import psycopg2
-from shared.database.connection import get_db_connect_kwargs
+api.shared.database.connection import get_db_connect_kwargs
 from datetime import datetime, timedelta
 from typing import Any, Optional
 from dataclasses import dataclass
@@ -98,7 +98,7 @@ class TimelineGenerator:
             return stored_events[:max_events]
             
         except Exception as e:
-            from shared.services.llm_service import is_ollama_pressure_error
+            api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -287,7 +287,7 @@ class TimelineGenerator:
             return events
             
         except Exception as e:
-            from shared.services.llm_service import is_ollama_pressure_error
+            api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -351,7 +351,7 @@ Return as JSON array with this format:
     def _call_llm_for_events(self, context: str) -> list[dict[str, Any]]:
         """Call LLM to generate timeline events"""
         try:
-            from shared.services.llm_service import ollama_generate_sync
+            api.shared.services.llm_service import ollama_generate_sync
 
             response_text = ollama_generate_sync(
                 context,
@@ -378,7 +378,7 @@ Return as JSON array with this format:
             return []
             
         except Exception as e:
-            from shared.services.llm_service import is_ollama_pressure_error
+            api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise

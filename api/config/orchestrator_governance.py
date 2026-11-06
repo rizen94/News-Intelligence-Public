@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("orchestrator")
 except Exception:
@@ -22,7 +22,7 @@ def get_orchestrator_governance_config() -> dict[str, Any]:
     Missing file or key returns defaults for that section.
     """
     try:
-        from config.paths import ORCHESTRATOR_GOVERNANCE_YAML
+        from api.config.paths import ORCHESTRATOR_GOVERNANCE_YAML
 
         yaml_path = Path(ORCHESTRATOR_GOVERNANCE_YAML)
     except Exception as e:

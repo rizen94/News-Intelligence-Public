@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from shared.pipeline_queue_vocabulary import (
+api.shared.pipeline_queue_vocabulary import (
     UnifiedIntakeBreakdown,
     unified_intake_breakdown_from_stats,
 )
@@ -56,7 +56,7 @@ def get_spine_queue_depth(phase: str) -> int:
 
 def get_unified_intake_breakdown() -> UnifiedIntakeBreakdown:
     """Unified intake actionable vs inventory vs spine queue depth."""
-    from shared.unified_intake_backlog import get_unified_intake_backlog_stats
+    api.shared.unified_intake_backlog import get_unified_intake_backlog_stats
 
     stats = get_unified_intake_backlog_stats()
     spine = get_spine_queue_depth("unified_intake_extraction")

@@ -27,17 +27,17 @@ import threading
 import time
 from typing import Optional
 
-from shared.article_processing_gates import (
+api.shared.article_processing_gates import (
     sql_context_sync_article_ready,
     sql_ml_ready_and_content_bounds,
 )
-from shared.domain_registry import get_pipeline_schema_names_active, pipeline_url_schema_pairs
-from shared.pipeline_pass_marker import (
+api.shared.domain_registry import get_pipeline_schema_names_active, pipeline_url_schema_pairs
+api.shared.pipeline_pass_marker import (
     phase_backlog_uses_pass_marker,
     sql_article_pass_null,
     sql_context_pass_null,
 )
-from shared.pipeline_article_selection import sql_order_created_at
+api.shared.pipeline_article_selection import sql_order_created_at
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +199,7 @@ def _get_raw_pending_counts(*, budget_s: Optional[float] = None) -> dict[str, in
             skipped += 1
         else:
             try:
-                from shared.database.pending_db_writes import pending_line_count
+                api.shared.database.pending_db_writes import pending_line_count
 
                 raw["pending_db_flush"] = int(pending_line_count() or 0)
             except Exception:
@@ -304,7 +304,7 @@ def _per_run_batch_size(task: str) -> int:
             pass
     if task == "storyline_automation":
         try:
-            from shared.domain_registry import get_pipeline_active_domain_keys
+            api.shared.domain_registry import get_pipeline_active_domain_keys
 
             doms = len(get_pipeline_active_domain_keys()) or 1
             return 5 * doms
@@ -312,7 +312,7 @@ def _per_run_batch_size(task: str) -> int:
             pass
     if task == "story_enhancement":
         try:
-            from shared.pipeline_resource_policy import story_enhancement_run_limits
+            api.shared.pipeline_resource_policy import story_enhancement_run_limits
 
             limits = story_enhancement_run_limits()
             return (
@@ -446,12 +446,12 @@ def _get_conn():
     its main query block) can still show ``pending_records`` instead of silent all-zeros.
     """
     try:
-        from shared.database import get_db_connection
+        api.shared.database import get_db_connection
 
         return get_db_connection()
     except Exception:
         try:
-            from shared.database import get_ui_db_connection
+            api.shared.database import get_ui_db_connection
 
             conn = get_ui_db_connection()
             logger.debug(
@@ -465,7 +465,7 @@ def _get_conn():
 def _event_tracking_scan_window_params() -> tuple[int, int]:
     """Max age (days) and min content length — must match ``discover_events_from_contexts``."""
     try:
-        from config.settings import event_tracking_max_age_days, event_tracking_min_content_len
+        from api.config.settings import event_tracking_max_age_days, event_tracking_min_content_len
 
         return int(event_tracking_max_age_days()), int(event_tracking_min_content_len())
     except Exception:
@@ -637,8 +637,8 @@ def _count_entity_profile_build_backlog() -> int:
             _entity_profile_upstream_gate_for_select,
             sql_entity_profile_upstream_cleared_exists,
         )
-        from shared.entity_profile_eligibility import sql_entity_profile_selectable_for_build
-        from shared.pipeline_domain_sql import pipeline_domain_any_sql
+        api.shared.entity_profile_eligibility import sql_entity_profile_selectable_for_build
+        api.shared.pipeline_domain_sql import pipeline_domain_any_sql
 
         selectable = sql_entity_profile_selectable_for_build("ep")
         domain_sql, domain_keys = pipeline_domain_any_sql(
@@ -704,7 +704,7 @@ def _count_investigation_report_backlog() -> int:
 
 def _count_content_refinement_queue_pending() -> int:
     """Pending refinement jobs — same predicate as queue claim (status='pending')."""
-    from shared.content_refinement_queue_eligibility import (
+    api.shared.content_refinement_queue_eligibility import (
         sql_content_refinement_queue_pending,
     )
 
@@ -835,7 +835,7 @@ def _count_entity_extraction_pending() -> int:
     if phase_backlog_uses_pass_marker("entity_extraction"):
         pass_sql = f" AND ({sql_article_pass_null('entity_extraction', 'a')}) "
     try:
-        from shared.article_signal_gate import sql_article_signal_full_lane_and
+        api.shared.article_signal_gate import sql_article_signal_full_lane_and
 
         for schema in get_pipeline_schema_names_active():
             sig = sql_article_signal_full_lane_and("a", schema)
@@ -984,7 +984,7 @@ def _count_topic_clustering_pending() -> int:
         return 0
     total = 0
     try:
-        from config.settings import (
+        from api.config.settings import (
             topic_clustering_backlog_uses_pass_marker,
             topic_clustering_graduation_confidence,
         )
@@ -1087,7 +1087,7 @@ def _count_storyline_discovery_pending() -> int:
         pass_sql = f" AND ({sql_article_pass_null('storyline_discovery', 'a')}) "
     _ord = sql_order_created_at()
     try:
-        from shared.article_signal_gate import sql_article_signal_full_lane_and
+        api.shared.article_signal_gate import sql_article_signal_full_lane_and
 
         for schema in get_pipeline_schema_names_active():
             sig = sql_article_signal_full_lane_and("a", schema)
@@ -1128,7 +1128,7 @@ def _count_storyline_assembly_pending() -> int:
     """Unlinked recent full-lane articles — assembly ties detection + discovery + automation."""
     try:
         from services.storyline_assembly_service import count_unlinked_articles
-        from shared.domain_registry import get_pipeline_active_domain_keys
+        api.shared.domain_registry import get_pipeline_active_domain_keys
 
         return sum(count_unlinked_articles(dk) for dk in get_pipeline_active_domain_keys())
     except Exception as e:
@@ -1143,7 +1143,7 @@ def _count_proactive_detection_pending() -> int:
         return 0
     total = 0
     try:
-        from shared.article_signal_gate import sql_article_signal_full_lane_and
+        api.shared.article_signal_gate import sql_article_signal_full_lane_and
 
         for schema in get_pipeline_schema_names_active():
             sig = sql_article_signal_full_lane_and("a", schema)
@@ -1482,7 +1482,7 @@ def _count_event_extraction_pending() -> int:
     if phase_backlog_uses_pass_marker("event_extraction"):
         pass_sql = f" AND ({sql_article_pass_null('event_extraction', 'a')}) "
     try:
-        from shared.article_signal_gate import sql_article_signal_full_lane_and
+        api.shared.article_signal_gate import sql_article_signal_full_lane_and
 
         for schema in get_pipeline_schema_names_active():
             sig = sql_article_signal_full_lane_and("a", schema)
@@ -1635,8 +1635,8 @@ def _count_storyline_synthesis_pending() -> int:
 def _count_legislative_references_backlog() -> int:
     """Politics/legal articles without a legislative_article_scans row (bill-citation pass)."""
     try:
-        from shared.database import get_db_connection_context
-        from shared.domain_registry import is_valid_domain_key, resolve_domain_schema
+        api.shared.database import get_db_connection_context
+        api.shared.domain_registry import is_valid_domain_key, resolve_domain_schema
         from services.legislative_reference_service import (
             LEGISLATIVE_SCAN_DOMAIN_KEYS,
             SCAN_ARTICLE_DAYS,

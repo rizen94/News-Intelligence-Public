@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import quote
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("historic_context")
 except Exception:
@@ -23,7 +23,7 @@ Finding = dict[str, Any]  # title, snippet, url, source_id, source_date (date or
 def fetch_news_api(query: str, start_date: str, end_date: str, limit: int = 20) -> list[Finding]:
     """NewsAPI everything endpoint with date range. Returns list of findings or empty on error."""
     try:
-        from config.settings import NEWS_API_KEY
+        from api.config.settings import NEWS_API_KEY
 
         if not (NEWS_API_KEY and NEWS_API_KEY != "your_newsapi_key_here"):
             logger.debug("NewsAPI key not configured, skipping historic news source")
@@ -174,7 +174,7 @@ def fetch_edgar(query: str, start_date: str, end_date: str, limit: int = 15) -> 
 def fetch_fred(query: str, start_date: str, end_date: str, limit: int = 30) -> list[Finding]:
     """FRED: commodity history in range; format as findings (e.g. platinum price on date)."""
     try:
-        from config.settings import FRED_API_KEY
+        from api.config.settings import FRED_API_KEY
         from domains.finance.data_sources.fred_commodity import (
             FRED_SERIES_BY_METAL,
             fetch_commodity_history_from_fred,

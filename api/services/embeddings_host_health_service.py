@@ -21,7 +21,7 @@ from typing import Any
 
 import httpx
 
-from config.runtime import env_float, env_int, env_str
+from api.config.runtime import env_float, env_int, env_str
 
 logger = logging.getLogger(__name__)
 

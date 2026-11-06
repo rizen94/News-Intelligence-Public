@@ -15,7 +15,7 @@ from typing import Any
 
 import aiohttp
 import feedparser
-from config.database import get_db
+from api.config.database import get_db
 from sqlalchemy import text
 
 from .base import BaseRSSService
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 def _log_rss_if_available(feed_id, feed_name, status, fetched, saved, start_time, error=None):
     try:
-        from shared.logging.activity_logger import log_rss_pull
+        api.shared.logging.activity_logger import log_rss_pull
 
         duration_ms = (time.time() - start_time) * 1000
         log_rss_pull(

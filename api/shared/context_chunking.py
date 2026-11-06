@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import re
 
-from config.settings import (
+from api.config.settings import (
     context_chunk_max_chunks,
     context_chunk_min_chars,
     context_chunk_overlap_tokens,

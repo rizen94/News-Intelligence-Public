@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from config.runtime import env_float
+from api.config.runtime import env_float
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ _STEP = 0.02
 
 def _governance_band() -> tuple[float, float]:
     try:
-        from config.orchestrator_governance import get_orchestrator_governance_config
+        from api.config.orchestrator_governance import get_orchestrator_governance_config
 
         gov = get_orchestrator_governance_config()
         sf = gov.get("signal_first") or {}
@@ -34,7 +34,7 @@ def _governance_band() -> tuple[float, float]:
 
 def get_persisted_full_min_quality() -> float | None:
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -55,8 +55,8 @@ def get_persisted_full_min_quality() -> float | None:
 
 def _intake_net_growth_metrics() -> dict[str, Any]:
     """Reuse intake_processing_ratio domain loop for 7d net growth estimate."""
-    from shared.database import get_db_connection_context
-    from shared.domain_registry import get_schema_names_active
+    api.shared.database import get_db_connection_context
+    api.shared.domain_registry import get_schema_names_active
 
     created_7d = 0
     enriched_7d = 0
@@ -109,7 +109,7 @@ def adjust_admission_threshold(*, dry_run: bool = False) -> dict[str, Any]:
     action = "hold"
 
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:

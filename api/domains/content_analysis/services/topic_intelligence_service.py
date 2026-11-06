@@ -10,7 +10,7 @@ from typing import Any
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from shared.database.connection import get_db_connect_kwargs
+api.shared.database.connection import get_db_connect_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ class TopicIntelligenceService:
 
     def __init__(self, domain: str = "politics"):
         self.domain = domain
-        from shared.domain_registry import resolve_domain_schema
+        api.shared.domain_registry import resolve_domain_schema
 
         self.schema = resolve_domain_schema(domain)
         self.stop_words = self._load_stop_words()

@@ -7,10 +7,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from config.runtime import env_bool, env_float, env_int
+from api.config.runtime import env_bool, env_float, env_int
 from services.discovery_finding_quality import is_bridgeable
-from shared.database import get_db_connection_context
-from shared.domain_registry import get_pipeline_active_domain_keys
+api.shared.database import get_db_connection_context
+api.shared.domain_registry import get_pipeline_active_domain_keys
 
 logger = logging.getLogger(__name__)
 

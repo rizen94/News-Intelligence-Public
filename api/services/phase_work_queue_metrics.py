@@ -12,10 +12,10 @@ from __future__ import annotations
 import logging
 from typing import Any, TypedDict
 
-from config.runtime import env_str
-from shared.article_processing_gates import sql_ml_ready_and_content_bounds
-from shared.domain_registry import get_pipeline_active_domain_keys, get_pipeline_schema_names_active
-from shared.pipeline_pass_marker import (
+from api.config.runtime import env_str
+api.shared.article_processing_gates import sql_ml_ready_and_content_bounds
+api.shared.domain_registry import get_pipeline_active_domain_keys, get_pipeline_schema_names_active
+api.shared.pipeline_pass_marker import (
     phase_backlog_uses_pass_marker,
     sql_article_first_pass_only,
     sql_article_pass_null,
@@ -208,7 +208,7 @@ def _count_context_breakdown(phase: str, *, base_where: str) -> PhaseWorkQueue:
 
 
 def _queue_topic_clustering() -> PhaseWorkQueue:
-    from config.settings import topic_clustering_backlog_uses_pass_marker
+    from api.config.settings import topic_clustering_backlog_uses_pass_marker
 
     use_pass = topic_clustering_backlog_uses_pass_marker()
     base = "a.content IS NOT NULL AND LENGTH(a.content) > 100"
@@ -282,7 +282,7 @@ def _queue_entity_extraction() -> PhaseWorkQueue:
 
 
 def _queue_unified_intake_extraction() -> PhaseWorkQueue:
-    from shared.unified_intake_backlog import (
+    api.shared.unified_intake_backlog import (
         sql_actionable_unified_intake,
         unified_intake_legacy_aware_backlog_enabled,
     )
@@ -436,11 +436,11 @@ def _queue_story_enhancement() -> PhaseWorkQueue:
 
 
 def _queue_entity_profile_build() -> PhaseWorkQueue:
-    from shared.entity_profile_eligibility import (
+    api.shared.entity_profile_eligibility import (
         sql_entity_profile_refresh_since_build,
         sql_entity_profile_sections_empty,
     )
-    from shared.pipeline_domain_sql import pipeline_domain_any_sql
+    api.shared.pipeline_domain_sql import pipeline_domain_any_sql
 
     conn = _get_conn()
     if not conn:
@@ -494,8 +494,8 @@ def _queue_entity_profile_build() -> PhaseWorkQueue:
 
 
 def _queue_entity_dossier_compile() -> PhaseWorkQueue:
-    from shared.entity_dossier_eligibility import sql_entity_dossier_refresh_since_compile
-    from shared.pipeline_domain_sql import pipeline_domain_any_sql
+    api.shared.entity_dossier_eligibility import sql_entity_dossier_refresh_since_compile
+    api.shared.pipeline_domain_sql import pipeline_domain_any_sql
 
     conn = _get_conn()
     if not conn:
@@ -598,8 +598,8 @@ _LEGACY_INTAKE_QUEUE_HANDLERS: dict[str, Any] = {
 
 
 def get_phase_work_queue(phase_name: str, *, pending_total: int | None = None) -> PhaseWorkQueue:
-    from config.settings import legacy_intake_extraction_enabled
-    from shared.pipeline_resource_policy import intake_phase_scheduled
+    from api.config.settings import legacy_intake_extraction_enabled
+    api.shared.pipeline_resource_policy import intake_phase_scheduled
 
     if phase_name in _LEGACY_INTAKE_QUEUE_HANDLERS and not legacy_intake_extraction_enabled():
         return _empty_queue("archived_legacy_intake")
@@ -611,7 +611,7 @@ def get_phase_work_queue(phase_name: str, *, pending_total: int | None = None) -
     if pending_total is not None:
         return _queue_from_pending_total(phase_name, pending_total)
     try:
-        from shared.pipeline_queue_counts import get_all_phase_queue_depths
+        api.shared.pipeline_queue_counts import get_all_phase_queue_depths
 
         total = int(get_all_phase_queue_depths().get(phase_name, 0) or 0)
     except Exception:
@@ -628,7 +628,7 @@ def get_all_phase_work_queues(
     """
     if pending_totals is None:
         try:
-            from shared.pipeline_queue_counts import get_all_phase_queue_depths
+            api.shared.pipeline_queue_counts import get_all_phase_queue_depths
 
             pending_totals = {
                 k: int(v) for k, v in get_all_phase_queue_depths().items()
@@ -643,7 +643,7 @@ def get_all_phase_work_queues(
                 if handler is None:
                     q = _queue_from_pending_total(phase, total)
                 elif phase in _LEGACY_INTAKE_QUEUE_HANDLERS:
-                    from config.settings import legacy_intake_extraction_enabled
+                    from api.config.settings import legacy_intake_extraction_enabled
 
                     q = (
                         handler()
@@ -666,14 +666,14 @@ def get_all_phase_work_queues(
 
 def get_signal_lane_counts_24h(cur=None) -> dict[str, int]:
     """Count unified_intake signal_deferred vs full-lane completions in last 24h."""
-    from shared.domain_registry import get_pipeline_schema_names_active
+    api.shared.domain_registry import get_pipeline_schema_names_active
 
     deferred = 0
     full_lane = 0
     close_conn = False
     conn = None
     if cur is None:
-        from shared.database import get_db_connection
+        api.shared.database import get_db_connection
 
         conn = get_db_connection()
         if not conn:

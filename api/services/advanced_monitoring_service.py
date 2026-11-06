@@ -14,7 +14,7 @@ from enum import Enum
 from typing import Any
 
 from psycopg2.extras import RealDictCursor
-from shared.database import get_db_connection_context
+api.shared.database import get_db_connection_context
 
 # Try to import Prometheus client
 try:
@@ -1070,7 +1070,7 @@ def get_advanced_monitoring_service() -> AdvancedMonitoringService:
     """Get global advanced monitoring service instance"""
     global _advanced_monitoring_service
     if _advanced_monitoring_service is None:
-        from config.database import get_db_config
+        from api.config.database import get_db_config
 
         _advanced_monitoring_service = AdvancedMonitoringService(get_db_config())
     return _advanced_monitoring_service

@@ -23,8 +23,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from shared.act_verb_lexicon import ACT_VERB_RE, text_has_act_verb
-from shared.editorial_package_vocab import provenance_has_citeable_source
+api.shared.act_verb_lexicon import ACT_VERB_RE, text_has_act_verb
+api.shared.editorial_package_vocab import provenance_has_citeable_source
 
 # Canonical headings plus accepted equivalents (briefs, v12 nut-graf/walkaway).
 _WHATS_NEW_RE = re.compile(

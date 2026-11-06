@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from config.runtime import env_bool
+from api.config.runtime import env_bool
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ def enqueue_article(schema_name: str, article_id: int, phase: str, *, priority: 
     if not table or not spine_work_queues_enabled():
         return False
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -55,7 +55,7 @@ def claim_queue_batch(schema_name: str, phase: str, limit: int) -> list[int]:
     if not table or not spine_work_queues_enabled():
         return []
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -92,7 +92,7 @@ def complete_queue_item(schema_name: str, phase: str, article_id: int, *, failed
         return
     status = "failed" if failed else "completed"
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -114,7 +114,7 @@ def count_pending_queue(schema_name: str, phase: str) -> int:
     if not table or not spine_work_queues_enabled():
         return 0
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -135,7 +135,7 @@ def release_queue_item(schema_name: str, phase: str, article_id: int, *, error: 
     if not table:
         return
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -159,7 +159,7 @@ def release_queue_item(schema_name: str, phase: str, article_id: int, *, error: 
 
 def claim_fair_share_batch(phase: str, batch_size: int) -> dict[str, list[int]]:
     """Claim pending queue rows across active domains (fair share)."""
-    from shared.domain_registry import pipeline_url_schema_pairs
+    api.shared.domain_registry import pipeline_url_schema_pairs
 
     pairs = list(pipeline_url_schema_pairs())
     if not pairs or batch_size <= 0:
@@ -189,7 +189,7 @@ def reclaim_stale_content_enrichment_processing(
     start of each content_enrichment drain round.
     """
     try:
-        from config.runtime import env_float
+        from api.config.runtime import env_float
 
         minutes = float(
             older_than_minutes
@@ -204,8 +204,8 @@ def reclaim_stale_content_enrichment_processing(
 
     total = 0
     try:
-        from shared.domain_registry import get_schema_names_active
-        from shared.database import get_db_connection_context
+        api.shared.domain_registry import get_schema_names_active
+        api.shared.database import get_db_connection_context
 
         schemas = list(get_schema_names_active())
     except Exception as exc:
@@ -266,7 +266,7 @@ def finalize_content_enrichment_queue_round(
     if not article_ids:
         return
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -374,7 +374,7 @@ def finalize_content_enrichment_queue_round(
         finally:
             if enriched_ids:
                 try:
-                    from shared.database import get_db_connection_context as gdc
+                    api.shared.database import get_db_connection_context as gdc
 
                     with gdc() as conn:
                         with conn.cursor() as cur:
@@ -415,7 +415,7 @@ def finalize_unified_intake_queue_round(
     if not outcomes:
         return
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -477,6 +477,6 @@ def finalize_unified_intake_queue_round(
 
 
 def count_all_pending(phase: str) -> int:
-    from shared.domain_registry import get_schema_names_active
+    api.shared.domain_registry import get_schema_names_active
 
     return sum(count_pending_queue(s, phase) for s in get_schema_names_active())

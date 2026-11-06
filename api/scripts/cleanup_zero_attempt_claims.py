@@ -138,7 +138,7 @@ def build_age_buckets_query(age_days: int | None = None) -> str:
 
 
 def run(args: argparse.Namespace) -> int:
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

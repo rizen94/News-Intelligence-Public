@@ -9,7 +9,7 @@ of unrelated articles.
 
 from __future__ import annotations
 
-from config.runtime import env_int
+from api.config.runtime import env_int
 
 
 # Default max members for evidence/research/docket proteins.

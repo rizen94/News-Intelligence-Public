@@ -37,7 +37,7 @@ class IntelligenceDatabaseManager:
             _api = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
             if _api not in sys.path:
                 sys.path.insert(0, _api)
-            from shared.database import get_db_config
+            api.shared.database import get_db_config
 
             db_config = get_db_config()
             db_config = {**db_config, "connect_timeout": 10, "statement_timeout": 30000}
@@ -45,7 +45,7 @@ class IntelligenceDatabaseManager:
 
     def get_db_connection(self):
         """Get database connection from shared pool."""
-        from shared.database import get_db_connection as _get_conn
+        api.shared.database import get_db_connection as _get_conn
 
         conn = _get_conn()
         conn.autocommit = False

@@ -11,10 +11,10 @@ _API = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _API not in sys.path:
     sys.path.insert(0, _API)
 
-from modules.intelligence.article_processor import ArticleProcessor
-from modules.intelligence.content_clusterer import ContentClusterer
+from api.modules.intelligence.article_processor import ArticleProcessor
+from api.modules.intelligence.content_clusterer import ContentClusterer
 from services.pattern_entity_extractor import PatternEntityExtractor
-from shared.database import get_db_config
+api.shared.database import get_db_config
 
 
 def process_articles():

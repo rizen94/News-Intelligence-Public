@@ -50,8 +50,8 @@ MIGRATIONS_155_160 = [
 
 
 def main():
-    from shared.database import get_db_connection
-    from shared.migration_sql_paths import resolve_migration_sql_file
+    api.shared.database import get_db_connection
+    api.shared.migration_sql_paths import resolve_migration_sql_file
 
     conn = get_db_connection()
     if not conn:

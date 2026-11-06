@@ -11,7 +11,7 @@ Each domain (politics, finance, artificial-intelligence, …) has:
 """
 
 import logging
-from shared.domain_registry import resolve_domain_schema
+api.shared.domain_registry import resolve_domain_schema
 import os
 from dataclasses import dataclass, field
 from typing import Any
@@ -468,7 +468,7 @@ class DomainKnowledgeService:
         logger.info("Domain Knowledge Service initialized")
 
     def get_db_connection(self):
-        from shared.database import get_db_connection as _get_conn
+        api.shared.database import get_db_connection as _get_conn
 
         return _get_conn()
 

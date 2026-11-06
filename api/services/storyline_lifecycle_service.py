@@ -13,7 +13,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from config.runtime import env_bool, env_float, env_int
+from api.config.runtime import env_bool, env_float, env_int
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ _TRANSITIONS: dict[str, frozenset[str]] = {
 
 def lifecycle_enabled() -> bool:
     try:
-        from config.feature_registry import is_feature_enabled
+        from api.config.feature_registry import is_feature_enabled
 
         if is_feature_enabled("storyline_lifecycle", default=False):
             return True
@@ -123,8 +123,8 @@ def get_storyline_lifecycle(
     domain_key: str,
     storyline_id: int,
 ) -> dict[str, Any]:
-    from shared.database import get_db_connection_context
-    from shared.domain_registry import resolve_domain_schema
+    api.shared.database import get_db_connection_context
+    api.shared.domain_registry import resolve_domain_schema
 
     schema = resolve_domain_schema(domain_key)
     try:
@@ -211,8 +211,8 @@ def apply_lifecycle_transition(
     if not can_transition(cur, nxt):
         return {**info, "ok": False, "error": f"illegal_transition:{cur}->{nxt}"}
     if persist and lifecycle_enabled() and nxt != cur:
-        from shared.database import get_db_connection_context
-        from shared.domain_registry import resolve_domain_schema
+        api.shared.database import get_db_connection_context
+        api.shared.domain_registry import resolve_domain_schema
 
         schema = resolve_domain_schema(domain_key)
         patch = {

@@ -9,13 +9,13 @@ import logging
 from typing import Any
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
-from config.settings import FINANCE_MARKET_DB
-from shared.data_result import DataResult
+from api.config.settings import FINANCE_MARKET_DB
+api.shared.data_result import DataResult
 from domains.finance.data.schema_version import ensure_schema_version, SCHEMA_VERSION
 
 

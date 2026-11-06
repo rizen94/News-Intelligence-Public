@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from config.runtime import env_bool, env_float, env_int, env_str
+from api.config.runtime import env_bool, env_float, env_int, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ class FeedQualityScore:
 
 def _cfg() -> dict[str, Any]:
     try:
-        from config.orchestrator_governance import get_orchestrator_governance_config
+        from api.config.orchestrator_governance import get_orchestrator_governance_config
 
         raw = get_orchestrator_governance_config().get("rss_feed_health") or {}
         return raw if isinstance(raw, dict) else {}
@@ -172,8 +172,8 @@ def evaluate_weekly_cull(domain_key: str | None = None) -> list[FeedHealthVerdic
     if not rss_feed_silence_enabled():
         return []
 
-    from shared.database import get_db_connection_context
-    from shared.domain_registry import pipeline_url_schema_pairs
+    api.shared.database import get_db_connection_context
+    api.shared.domain_registry import pipeline_url_schema_pairs
 
     pairs = pipeline_url_schema_pairs()
     if domain_key:
@@ -260,8 +260,8 @@ def evaluate_feeds(domain_key: str | None = None) -> list[FeedHealthVerdict]:
     if not rss_feed_silence_enabled():
         return []
 
-    from shared.database import get_db_connection_context
-    from shared.domain_registry import pipeline_url_schema_pairs
+    api.shared.database import get_db_connection_context
+    api.shared.domain_registry import pipeline_url_schema_pairs
 
     pairs = pipeline_url_schema_pairs()
     if domain_key:
@@ -406,7 +406,7 @@ def apply_verdicts(
     if not verdicts:
         return counts
 
-    from shared.database import get_db_connection_context
+    api.shared.database import get_db_connection_context
 
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -512,8 +512,8 @@ def run_feed_health_cycle(*, dry_run: bool | None = None) -> dict[str, Any]:
 
 def get_feed_health_monitor_counts() -> dict[str, int]:
     """Active warning feeds and feeds silenced in last 7 days."""
-    from shared.database import get_db_connection_context
-    from shared.domain_registry import get_pipeline_schema_names_active
+    api.shared.database import get_db_connection_context
+    api.shared.domain_registry import get_pipeline_schema_names_active
 
     warning = 0
     silenced_7d = 0

@@ -9,9 +9,9 @@ import logging
 import re
 from typing import Any
 
-from shared.database import get_ui_db_connection_context
-from shared.domain_registry import resolve_domain_schema
-from shared.services.domain_aware_service import validate_domain
+api.shared.database import get_ui_db_connection_context
+api.shared.domain_registry import resolve_domain_schema
+api.shared.services.domain_aware_service import validate_domain
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ def _article_grounded_summary(
     Build a short reader brief from member article body/summary when stored
     narratives are inventory fluff or empty.
     """
-    from shared.llm_text_sanitize import html_to_visible_text
+    api.shared.llm_text_sanitize import html_to_visible_text
 
     chunks: list[str] = []
     # Prefer longest bodies first (substance over thin liveblog stubs)
@@ -127,7 +127,7 @@ def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any
 
     with get_ui_db_connection_context() as conn:
         try:
-            from shared.episode_attach_gate import episode_container_assembly_enabled
+            api.shared.episode_attach_gate import episode_container_assembly_enabled
             from services.episode_container_timeline_service import episode_timeline
 
             if episode_container_assembly_enabled():
@@ -216,8 +216,8 @@ def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any
             citations: list[dict[str, Any]] = []
             use_eel = False
             try:
-                from shared.episode_attach_gate import episode_container_assembly_enabled
-                from shared.episode_membership import list_episode_articles_sql
+                api.shared.episode_attach_gate import episode_container_assembly_enabled
+                api.shared.episode_membership import list_episode_articles_sql
 
                 use_eel = bool(episode_container_assembly_enabled())
             except Exception:
@@ -280,7 +280,7 @@ def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any
             relationships: list[dict[str, Any]] = []
             try:
                 if use_eel:
-                    from shared.episode_membership import list_episode_entities_sql
+                    api.shared.episode_membership import list_episode_entities_sql
 
                     cur.execute(list_episode_entities_sql(schema), (domain, storyline_id))
                 else:
@@ -394,7 +394,7 @@ def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any
             except Exception:
                 conn.rollback()
 
-    from shared.llm_text_sanitize import (
+    api.shared.llm_text_sanitize import (
         is_desk_walkthrough,
         is_inventory_metadata_summary,
         is_multi_topic_excerpt_mash,
@@ -615,7 +615,7 @@ def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any
                 with conn2.cursor() as cur2:
                     use_eel_also = False
                     try:
-                        from shared.episode_attach_gate import episode_container_assembly_enabled
+                        api.shared.episode_attach_gate import episode_container_assembly_enabled
 
                         use_eel_also = bool(episode_container_assembly_enabled())
                     except Exception:

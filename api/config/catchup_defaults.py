@@ -9,7 +9,7 @@ Python catch-up scripts call :func:`apply_catchup_env_defaults` after loading ``
 
 from __future__ import annotations
 
-from config.runtime import env_set, env_setdefault, env_str
+from api.config.runtime import env_set, env_setdefault, env_str
 
 # Defaults apply only when the key is unset (operator / .env wins).
 CATCHUP_ENV_DEFAULTS: dict[str, str] = {

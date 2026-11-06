@@ -12,9 +12,9 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from config.feature_registry import is_feature_enabled
-from shared.database import get_db_connection_context
-from shared.vault_note_contract import (
+from api.config.feature_registry import is_feature_enabled
+api.shared.database import get_db_connection_context
+api.shared.vault_note_contract import (
     DEFAULT_COOLDOWN_HOURS,
     DEFAULT_LIVING_MENTION_TIER,
     DEFAULT_STUB_MENTION_TIER,

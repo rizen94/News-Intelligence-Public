@@ -7,7 +7,7 @@ import logging
 import sqlite3
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)

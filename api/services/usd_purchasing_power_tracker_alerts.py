@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
     logger = get_component_logger("usd_tracker_alerts")
 except Exception:
     logger = logging.getLogger(__name__)

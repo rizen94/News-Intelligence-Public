@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from shared.pipeline_resource_policy import configure_pipeline_resources
+api.shared.pipeline_resource_policy import configure_pipeline_resources
 
 # Re-export for callers that still import automation_llm_routing
 configure_automation_extraction_routing = configure_pipeline_resources

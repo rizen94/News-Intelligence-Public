@@ -20,7 +20,7 @@ class MLSummarizationService:
     async def summarize_content(self, content: str, max_length: int = 200) -> dict[str, Any]:
         """Summarize content using Ollama via CB hub."""
         try:
-            from shared.services.llm_service import ollama_generate_async
+            api.shared.services.llm_service import ollama_generate_async
 
             prompt = f"""Summarize the following content in {max_length} words or less. Focus on key facts and main points:
 
@@ -51,7 +51,7 @@ Summary:"""
             }
 
         except Exception as e:
-            from shared.services.llm_service import is_ollama_pressure_error
+            api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -61,7 +61,7 @@ Summary:"""
     async def analyze_sentiment(self, text: str) -> dict[str, Any]:
         """Analyze sentiment of text using Ollama via CB hub."""
         try:
-            from shared.services.llm_service import ollama_generate_async
+            api.shared.services.llm_service import ollama_generate_async
 
             prompt = f"""Analyze the sentiment of the following text. Respond with only one word: "positive", "negative", or "neutral":
 
@@ -89,7 +89,7 @@ Sentiment:"""
             }
 
         except Exception as e:
-            from shared.services.llm_service import is_ollama_pressure_error
+            api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise

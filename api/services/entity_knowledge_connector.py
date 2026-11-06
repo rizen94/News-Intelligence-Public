@@ -113,7 +113,7 @@ def _resolve_knowledge_graph(name: str) -> dict[str, Any] | None:
     try:
         import os
 
-        from modules.ml.rag_external_services import KnowledgeGraphService
+        from api.modules.ml.rag_external_services import KnowledgeGraphService
 
         api_key = os.environ.get("KG_API_KEY") or os.environ.get("GOOGLE_KNOWLEDGE_GRAPH_API_KEY")
         if not api_key or api_key in ("your_kg_api_key_here", ""):

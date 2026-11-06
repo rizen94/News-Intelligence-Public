@@ -13,8 +13,8 @@ from queue import Queue, Empty
 import json
 
 from .summarization_service import MLSummarizationService
-from shared.pipeline_state_constants import ML_COMPLETED, ML_FAILED, ML_MAX_RETRY_COUNT, ML_PENDING, ML_RUNNING
-from shared.database.connection import get_db_connect_kwargs
+api.shared.pipeline_state_constants import ML_COMPLETED, ML_FAILED, ML_MAX_RETRY_COUNT, ML_PENDING, ML_RUNNING
+api.shared.database.connection import get_db_connect_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +190,7 @@ class BackgroundMLProcessor:
             logger.info(f"Completed ML task {queue_id} in {duration:.2f}s")
             
         except Exception as e:
-            from shared.services.llm_service import is_ollama_pressure_error
+            api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 logger.warning(

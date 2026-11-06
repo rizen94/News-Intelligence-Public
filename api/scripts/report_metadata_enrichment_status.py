@@ -58,8 +58,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    from shared.database import get_db_connection
-    from shared.domain_registry import get_schema_names_active
+    api.shared.database import get_db_connection
+    api.shared.domain_registry import get_schema_names_active
 
     conn = get_db_connection()
     if not conn:

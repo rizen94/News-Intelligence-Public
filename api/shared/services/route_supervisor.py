@@ -14,10 +14,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 
-from shared.database import get_db_connection
-from shared.domain_registry import resolve_domain_schema, get_active_domain_keys
-from config.logging_config import get_component_logger
-from shared.services.domain_aware_service import validate_domain
+api.shared.database import get_db_connection
+api.shared.domain_registry import resolve_domain_schema, get_active_domain_keys
+from api.config.logging_config import get_component_logger
+api.shared.services.domain_aware_service import validate_domain
 
 logger = logging.getLogger(__name__)
 ops_logger = get_component_logger("ops")
@@ -232,7 +232,7 @@ class RouteSupervisor:
         # Substitute path parameters
         test_path = route_path
         if "{domain}" in test_path:
-            from shared.domain_registry import first_active_domain_key
+            api.shared.domain_registry import first_active_domain_key
 
             test_path = test_path.replace("{domain}", domain or first_active_domain_key())
         if "{article_id}" in test_path:

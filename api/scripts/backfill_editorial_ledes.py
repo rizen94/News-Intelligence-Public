@@ -103,7 +103,7 @@ def _pipeline_schema_names(conn) -> list[str]:
 
 
 def main() -> int:
-    from shared.llm_text_sanitize import sanitize_briefing_lede
+    api.shared.llm_text_sanitize import sanitize_briefing_lede
 
     conn = _maintenance_connect()
     updated = 0

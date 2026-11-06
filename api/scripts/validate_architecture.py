@@ -324,9 +324,9 @@ class ArchitectureValidator:
 
                 # Check for old database import patterns
                 old_imports = [
-                    "from config.robust_database import",
-                    "from config.unified_database import",
-                    "from database.connection import",
+                    "from api.config.robust_database import",
+                    "from api.config.unified_database import",
+                    "from api.database.connection import",
                 ]
 
                 for old_import in old_imports:

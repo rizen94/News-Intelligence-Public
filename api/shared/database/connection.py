@@ -40,7 +40,45 @@ from typing import Optional, Any, Generator
 import threading
 from contextlib import contextmanager
 from enum import IntEnum
-from api.config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
+
+# ---------------------------------------------------------------------------
+# env_* helpers: api.config.runtime when available; fallback to os.environ
+# on deployment where WorkingDirectory=/opt/news-intelligence/api breaks the
+# 'api' package import.
+# ---------------------------------------------------------------------------
+try:
+    from api.config.runtime import (
+        env_bool,
+        env_float,
+        env_int,
+        env_pop,
+        env_set,
+        env_setdefault,
+        env_str,
+    )
+except ModuleNotFoundError:
+    _env_fallback: dict[str, str] = {}
+
+    def _get(name: str, default: str | None = None) -> str:
+        val = os.environ.get(name, default) or (default or "")
+        _env_fallback.setdefault(name, val)
+        return val
+
+    env_str = lambda *a, **kw: _get(*a, **kw)  # noqa: E731
+    env_bool = lambda *a, **kw: bool(int(_get(*a, **kw)))  # noqa: E731
+    env_int = lambda *a, **kw: int(_get(*a, **kw))  # noqa: E731
+    env_float = lambda *a, **kw: float(_get(*a, **kw))  # noqa: E731
+
+    def env_pop(name: str, default: str | None = None, /) -> str | None:
+        return os.environ.pop(name, default)  # type: ignore[return-value]
+
+    def env_setdefault(name: str, default: str | None = None, /) -> str | None:
+        return os.environ.setdefault(name, default or "")  # type: ignore[return-value]
+
+    def env_set(name: str, value: str, /) -> None:
+        if name not in os.environ:
+            os.environ[name] = value  # type: ignore[arg-type]
+
 
 logger = logging.getLogger(__name__)
 
@@ -612,7 +650,7 @@ def get_db_connection(use_reserved: bool = False):
                 )
                 # #region agent log
                 try:
-                    from shared.debug_session_log import agent_dbg
+                    api.shared.debug_session_log import agent_dbg
 
                     agent_dbg(
                         "B",

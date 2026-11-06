@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 from typing import Any
 
-from config.database import get_db
+from api.config.database import get_db
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
@@ -77,7 +77,7 @@ class MLProcessingService:
     def _process_storylines(self):
         """Process storylines that need ML analysis (per active domain schema)."""
         try:
-            from shared.domain_registry import domain_key_to_schema, get_active_domain_keys
+            api.shared.domain_registry import domain_key_to_schema, get_active_domain_keys
         except Exception as e:
             logger.error(f"domain registry unavailable for ML processing: {e}")
             return
@@ -281,7 +281,7 @@ class MLProcessingService:
 
     def _extract_narrative_elements(self, content: str, title: str) -> list[str]:
         """Extract key narrative elements from article content"""
-        from shared.llm_text_sanitize import html_to_visible_text
+        api.shared.llm_text_sanitize import html_to_visible_text
 
         if not content:
             return [f"Headline: {title}"]
@@ -365,7 +365,7 @@ Create a narrative that shows how these individual story elements combine to tel
         self, raw_summary: str, articles: list[dict[str, Any]], storyline
     ) -> str:
         """Keep article-grounded prose only — never wrap with inventory metadata."""
-        from shared.llm_text_sanitize import (
+        api.shared.llm_text_sanitize import (
             is_inventory_metadata_summary,
             strip_inventory_metadata_summary,
             strip_trailing_llm_json,
@@ -382,7 +382,7 @@ Create a narrative that shows how these individual story elements combine to tel
 
     def _generate_narrative_fallback(self, articles: list[dict[str, Any]], storyline) -> str:
         """Article-grounded fallback — never emit Story Overview inventory fluff."""
-        from shared.llm_text_sanitize import html_to_visible_text
+        api.shared.llm_text_sanitize import html_to_visible_text
 
         if not articles:
             return ""

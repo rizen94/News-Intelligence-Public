@@ -16,7 +16,7 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from shared.vault_note_contract import MORNING_WEB_MAX_URLS_PER_STORY
+api.shared.vault_note_contract import MORNING_WEB_MAX_URLS_PER_STORY
 
 logger = logging.getLogger(__name__)
 

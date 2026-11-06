@@ -12,8 +12,8 @@ from decimal import Decimal
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Query
-from shared.database import get_db_connection, get_ui_db_connection_context
-from shared.domain_registry import (
+api.shared.database import get_db_connection, get_ui_db_connection_context
+api.shared.domain_registry import (
     domain_key_to_schema,
     get_active_domain_keys,
     get_schema_names_active,
@@ -132,7 +132,7 @@ def sync_entity_profiles(domain_key: str | None = Query(None, description="Sync 
     Returns counts of new profiles created per domain.
     """
     try:
-        from config.context_centric_config import is_context_centric_task_enabled
+        from api.config.context_centric_config import is_context_centric_task_enabled
         if not is_context_centric_task_enabled("entity_profile_sync"):
             return {"success": False, "error": "entity_profile_sync task is disabled in context_centric config"}
     except Exception:

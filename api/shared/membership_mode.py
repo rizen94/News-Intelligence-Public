@@ -16,8 +16,8 @@ class MembershipMode(str, Enum):
 def get_membership_mode() -> MembershipMode:
     """Derive mode from episode assembly + dual-write env (no new flags)."""
     try:
-        from shared.episode_attach_gate import episode_container_assembly_enabled
-        from shared.assembly_link_funnel import storyline_articles_dual_write_enabled
+        api.shared.episode_attach_gate import episode_container_assembly_enabled
+        api.shared.assembly_link_funnel import storyline_articles_dual_write_enabled
 
         if episode_container_assembly_enabled():
             if storyline_articles_dual_write_enabled():

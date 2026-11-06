@@ -17,7 +17,7 @@ if _API_ROOT not in sys.path:
 
 def _get_db_config():
     """Database config from shared source (DB_* env / .env)."""
-    from shared.database import get_db_config
+    api.shared.database import get_db_config
 
     return get_db_config()
 
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 def run_intelligence_pipeline(batch_size: int = 100):
     """Run the complete intelligence processing pipeline"""
     try:
-        from modules.intelligence.intelligence_orchestrator import IntelligenceOrchestrator
+        from api.modules.intelligence.intelligence_orchestrator import IntelligenceOrchestrator
 
         db_config = _get_db_config()
         logger.info("🚀 Starting intelligence processing pipeline...")
@@ -60,7 +60,7 @@ def run_intelligence_pipeline(batch_size: int = 100):
 def get_intelligence_status():
     """Get current status of intelligence processing"""
     try:
-        from modules.intelligence.intelligence_orchestrator import IntelligenceOrchestrator
+        from api.modules.intelligence.intelligence_orchestrator import IntelligenceOrchestrator
 
         db_config = _get_db_config()
         orchestrator = IntelligenceOrchestrator(db_config)
@@ -97,7 +97,7 @@ def get_intelligence_status():
 def process_single_article(article_id: int):
     """Process a single article through the intelligence pipeline"""
     try:
-        from modules.intelligence.intelligence_orchestrator import IntelligenceOrchestrator
+        from api.modules.intelligence.intelligence_orchestrator import IntelligenceOrchestrator
 
         db_config = _get_db_config()
         logger.info(f"🔍 Processing single article {article_id}...")
@@ -127,7 +127,7 @@ def create_custom_dataset(dataset_name: str, filters_str: str):
     try:
         import json
 
-        from modules.intelligence.intelligence_orchestrator import IntelligenceOrchestrator
+        from api.modules.intelligence.intelligence_orchestrator import IntelligenceOrchestrator
 
         # Parse filters
         try:
@@ -169,7 +169,7 @@ def create_custom_dataset(dataset_name: str, filters_str: str):
 def export_dataset(dataset_id: int, format_type: str = "csv"):
     """Export a dataset"""
     try:
-        from modules.intelligence.intelligence_orchestrator import IntelligenceOrchestrator
+        from api.modules.intelligence.intelligence_orchestrator import IntelligenceOrchestrator
 
         # Database configuration
         db_config = _get_db_config()

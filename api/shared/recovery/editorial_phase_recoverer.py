@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-from config.runtime import env_str
+from api.config.runtime import env_str
 
 logger = logging.getLogger(__name__)
 

@@ -37,8 +37,8 @@ if (
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import yaml  # noqa: E402
-from shared.database import get_db_connection  # noqa: E402
-from shared.services.domain_rss_seed import seed_from_domain_config  # noqa: E402
+api.shared.database import get_db_connection  # noqa: E402
+api.shared.services.domain_rss_seed import seed_from_domain_config  # noqa: E402
 
 
 def _load_config(path: Path) -> dict:
@@ -72,7 +72,7 @@ def main() -> None:
         raise SystemExit("YAML must define schema_name")
 
     if args.dry_run:
-        from shared.services.domain_rss_seed import extract_seed_feed_urls
+        api.shared.services.domain_rss_seed import extract_seed_feed_urls
 
         urls = extract_seed_feed_urls(cfg)
         print(f"dry-run: domain_key={domain_key!r} schema={schema_name!r} urls={len(urls)}")

@@ -43,7 +43,7 @@ def _now() -> str:
 
 
 def activate_ai_feeds(*, dry_run: bool) -> dict:
-    from shared.database import get_db_connection_context
+    api.shared.database import get_db_connection_context
 
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
@@ -96,7 +96,7 @@ def activate_ai_feeds(*, dry_run: bool) -> dict:
 
 
 def ensure_sanctions(*, dry_run: bool) -> dict:
-    from shared.database import get_db_connection_context
+    api.shared.database import get_db_connection_context
 
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:

@@ -43,7 +43,7 @@ RESTCOUNTRIES_URL = "https://restcountries.com/v3.1/all?fields=name,cca2,cca3,al
 
 def _resolve_seed_domain_keys(domains_arg: str) -> set[str]:
     """``all`` or empty = every key from ``get_active_domain_keys()`` (all onboarded silos)."""
-    from shared.domain_registry import get_active_domain_keys
+    api.shared.domain_registry import get_active_domain_keys
 
     raw = (domains_arg or "").strip()
     if not raw or raw.lower() == "all":
@@ -132,7 +132,7 @@ def main() -> int:
         print("Dry-run — no DB writes")
         return 0
 
-    from shared.domain_registry import get_active_domain_keys, is_valid_domain_key
+    api.shared.domain_registry import get_active_domain_keys, is_valid_domain_key
 
     from services.entity_seed_catalog_service import bulk_seed_canonical_entries
 

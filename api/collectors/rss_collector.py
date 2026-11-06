@@ -119,7 +119,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 
 # Add parent directory to path for service imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from shared.article_processing_gates import (
+api.shared.article_processing_gates import (
     article_eligible_for_context,
     finalize_rss_enrichment_after_inline,
     rss_item_passes_ingest_gates,
@@ -355,7 +355,7 @@ def _title_looks_like_credit_card_product_roundup(title: str) -> bool:
 
 # Import deduplication system
 try:
-    from modules.deduplication import DeduplicationManager
+    from api.modules.deduplication import DeduplicationManager
 
     DEDUPLICATION_AVAILABLE = True
 except ImportError:
@@ -585,9 +585,9 @@ def _rss_max_entries_per_feed() -> int:
 
 
 # Use shared pool (run with api as cwd or PYTHONPATH=api)
-from shared.database import get_db_config
-from shared.database import get_db_connection as _get_conn
-from shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED
+api.shared.database import get_db_config
+api.shared.database import get_db_connection as _get_conn
+api.shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED
 
 
 def get_db_connection():
@@ -1635,11 +1635,11 @@ def collect_rss_feeds() -> int:
         cur = conn.cursor()
 
         # Domains: full registry minus RSS_INGEST_EXCLUDE_* unless RSS_INGEST_MIRROR_PIPELINE matches pipeline silos.
-        from config.settings import (
+        from api.config.settings import (
             get_rss_ingest_excluded_domain_keys,
             rss_ingest_mirror_pipeline_enabled,
         )
-        from shared.domain_registry import pipeline_url_schema_pairs, url_schema_pairs
+        api.shared.domain_registry import pipeline_url_schema_pairs, url_schema_pairs
 
         feeds = []
         skip_dk = get_rss_ingest_excluded_domain_keys()
@@ -1694,14 +1694,14 @@ def collect_rss_feeds() -> int:
             feed_start = _time.time()
             feed_id, feed_name, feed_url, domain_key, schema_name = feed_data
             if not schema_name:
-                from shared.domain_registry import first_active_domain_key, resolve_domain_schema
+                api.shared.domain_registry import first_active_domain_key, resolve_domain_schema
 
                 dk = (domain_key or "").strip() or first_active_domain_key()
                 schema_name = resolve_domain_schema(dk)
 
             def _rss_log(status, fetched=0, saved=0, err=None):
                 try:
-                    from shared.logging.activity_logger import log_rss_pull
+                    api.shared.logging.activity_logger import log_rss_pull
 
                     log_rss_pull(
                         feed_id=feed_id,
@@ -2219,7 +2219,7 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
         duplicates_rejected = 0
 
         # Resolve schema from registry (all domain rss_feeds tables), not only built-in three.
-        from shared.domain_registry import (
+        api.shared.domain_registry import (
             rss_feed_lookup_param_count,
             rss_feed_lookup_union_sql,
             schema_to_primary_domain_key,

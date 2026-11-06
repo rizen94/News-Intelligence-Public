@@ -6,7 +6,7 @@ Used by spine conductor, nightly drain prefix, and bulk catch-up.
 
 from __future__ import annotations
 
-from config.runtime import env_str
+from api.config.runtime import env_str
 
 # Work-completion order for article spine (4h SLA).
 SPINE_PHASE_ORDER: tuple[str, ...] = (
@@ -53,7 +53,7 @@ def spine_pipeline_shadow_active() -> bool:
 def intake_fusion_enabled() -> bool:
     if env_str("INTAKE_FUSION_ENABLED", "true").lower() in ("0", "false", "no"):
         return False
-    from config.settings import unified_intake_extraction_enabled
+    from api.config.settings import unified_intake_extraction_enabled
 
     return unified_intake_extraction_enabled()
 
@@ -90,7 +90,7 @@ def spine_phases_for_nightly_prefix() -> tuple[str, ...]:
         "entity_profile_sync",
     )
     try:
-        from shared.assembly_phase_order import assembly_pipeline_ordered_active
+        api.shared.assembly_phase_order import assembly_pipeline_ordered_active
 
         if assembly_pipeline_ordered_active():
             return base

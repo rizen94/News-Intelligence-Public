@@ -44,7 +44,7 @@ def _load_env() -> None:
 
 
 def _fetch_candidates(schema: str, limit: int, max_len: int):
-    from shared.database import get_db_connection_context
+    api.shared.database import get_db_connection_context
 
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
@@ -114,7 +114,7 @@ def main() -> int:
     args = parser.parse_args()
     _load_env()
 
-    from shared.domain_registry import resolve_domain_schema
+    api.shared.domain_registry import resolve_domain_schema
     from services.article_content_enrichment_service import (
         ARXIV_ABSTRACT_CONTENT_MAX,
         enrich_article_content,
@@ -131,7 +131,7 @@ def main() -> int:
 
         sync_context = sync_context_from_article_after_content_change
 
-    from shared.database import get_db_connection_context
+    api.shared.database import get_db_connection_context
 
     ok = fail = attempted = 0
     t0 = time.time()

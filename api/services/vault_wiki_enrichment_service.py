@@ -15,7 +15,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from shared.database import get_db_connection_context
+api.shared.database import get_db_connection_context
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +224,7 @@ def _normalize_hit(
 def _api_summary_for_query(query: str) -> dict[str, Any] | None:
     """Wikipedia REST summary for query (or first search hit). Closes no DB handles."""
     try:
-        from modules.ml.rag_external_services import WikipediaService
+        from api.modules.ml.rag_external_services import WikipediaService
 
         wiki = WikipediaService()
         summary = wiki.get_article_summary(query)

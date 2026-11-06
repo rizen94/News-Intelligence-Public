@@ -16,7 +16,7 @@ from functools import lru_cache
 from typing import Any
 from urllib.parse import urlparse
 
-from config.runtime import env_bool, env_int, env_str
+from api.config.runtime import env_bool, env_int, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +141,7 @@ def _load_subject_entity_names(schema: str, *, limit: int = 80) -> list[str]:
         return cached[1]
     names: list[str] = []
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:

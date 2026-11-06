@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from config.runtime import env_bool
+from api.config.runtime import env_bool
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ def upsert_pipeline_status(
     if not pipeline_status_enabled():
         return
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:

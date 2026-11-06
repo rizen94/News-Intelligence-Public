@@ -18,7 +18,7 @@ from services.storyline_coherence_guardrails import (
     assess_cluster_coherence,
     post_process_storyline_description,
 )
-from shared.services.domain_aware_service import DomainAwareService
+api.shared.services.domain_aware_service import DomainAwareService
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ class ProactiveDetectionService(DomainAwareService):
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
                     cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
                     try:
-                        from shared.article_signal_gate import sql_article_signal_full_lane_and
+                        api.shared.article_signal_gate import sql_article_signal_full_lane_and
 
                         _sig = sql_article_signal_full_lane_and("a", self.schema)
                     except Exception:
@@ -611,7 +611,7 @@ class ProactiveDetectionService(DomainAwareService):
         # Re-check unlinked (avoid duplicate storylines if another process linked articles).
         # Signal-first: only full-lane articles count toward promotion.
         try:
-            from shared.article_signal_gate import sql_article_signal_full_lane_and
+            api.shared.article_signal_gate import sql_article_signal_full_lane_and
 
             _sig = sql_article_signal_full_lane_and("a", self.schema)
         except Exception:
@@ -739,7 +739,7 @@ class ProactiveDetectionService(DomainAwareService):
         storyline_id = int(row[0])
 
         try:
-            from shared.episode_attach_gate import (
+            api.shared.episode_attach_gate import (
                 lock_episode_signature,
                 seed_signature_from_entity_names,
             )
@@ -756,8 +756,8 @@ class ProactiveDetectionService(DomainAwareService):
                 "Proactive seed signature lock failed for %s: %s", storyline_id, lock_e
             )
 
-        from shared.membership_scoring import score_article_storyline_membership
-        from shared.membership_store import MembershipIntent, admit as membership_admit
+        api.shared.membership_scoring import score_article_storyline_membership
+        api.shared.membership_store import MembershipIntent, admit as membership_admit
 
         conn = cur.connection
         for aid in unlinked:

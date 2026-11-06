@@ -12,8 +12,8 @@ import logging
 import os
 from typing import Any
 
-from shared.database import get_db_connection_context
-from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
+api.shared.database import get_db_connection_context
+api.shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ def count_unlinked_articles(domain_key: str, *, lookback_hours: int | None = Non
         except Exception:
             lookback_hours = 72
     try:
-        from shared.article_signal_gate import sql_article_signal_full_lane_and
+        api.shared.article_signal_gate import sql_article_signal_full_lane_and
 
         sig = sql_article_signal_full_lane_and("a", schema)
         with get_db_connection_context() as conn:

@@ -38,7 +38,7 @@ class SourceCredibilityResult:
 
 def _cfg() -> dict[str, Any]:
     try:
-        from config.orchestrator_governance import get_orchestrator_governance_config
+        from api.config.orchestrator_governance import get_orchestrator_governance_config
 
         raw = get_orchestrator_governance_config().get("source_credibility") or {}
         if not isinstance(raw, dict):

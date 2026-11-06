@@ -7,16 +7,16 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from config.settings import (
+from api.config.settings import (
     news_intel_auth_cookie_max_age_seconds,
     news_intel_auth_cookie_name,
     news_intel_auth_cookie_samesite,
     news_intel_auth_cookie_secure,
     news_intel_public_web_auth_enabled,
 )
-from shared.database import get_db_connection
-from shared.middleware.public_web_auth import attach_public_web_auth_state
-from shared.services.public_web_auth_service import (
+api.shared.database import get_db_connection
+api.shared.middleware.public_web_auth import attach_public_web_auth_state
+api.shared.services.public_web_auth_service import (
     hash_password,
     issue_session_token_with_exp,
     resolve_session_role,

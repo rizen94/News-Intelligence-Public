@@ -6,15 +6,15 @@ Delegates to shared LLMService with finance model names from settings.
 import logging
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
-from config.settings import FINANCE_MODELS, MODELS, OLLAMA_HOST
-from shared.services.llm_service import LLMService, ModelType
-from shared.services.ollama_model_policy import InvocationKind, resolve_model_for_invocation
+from api.config.settings import FINANCE_MODELS, MODELS, OLLAMA_HOST
+api.shared.services.llm_service import LLMService, ModelType
+api.shared.services.ollama_model_policy import InvocationKind, resolve_model_for_invocation
 
 _llm_service: LLMService | None = None
 
@@ -65,7 +65,7 @@ async def generate(
         response = await llm._call_ollama(model, full_prompt)
         latency_ms = (time.perf_counter() - t0) * 1000
         try:
-            from shared.logging.llm_logger import log_llm_interaction
+            api.shared.logging.llm_logger import log_llm_interaction
 
             log_llm_interaction(
                 task_id=task_id,
@@ -87,7 +87,7 @@ async def generate(
     except Exception as e:
         latency_ms = (time.perf_counter() - t0) * 1000
         try:
-            from shared.logging.llm_logger import log_llm_interaction
+            api.shared.logging.llm_logger import log_llm_interaction
 
             log_llm_interaction(
                 task_id=task_id,

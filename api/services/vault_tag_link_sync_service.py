@@ -21,7 +21,7 @@ from services.vault_notes_registry_service import (
     replace_vault_note_links,
     resolve_title_to_vault_path,
 )
-from shared.vault_note_contract import (
+api.shared.vault_note_contract import (
     VAULT_SYNC_ROOTS,
     extract_hash_tags,
     extract_wikilink_titles,

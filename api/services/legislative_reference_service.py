@@ -15,9 +15,9 @@ from typing import Any
 
 from psycopg2.extras import Json, RealDictCursor
 
-from shared.database import get_db_connection_context
-from shared.domain_registry import is_valid_domain_key, resolve_domain_schema
-from shared.services.congress_gov_client import (
+api.shared.database import get_db_connection_context
+api.shared.domain_registry import is_valid_domain_key, resolve_domain_schema
+api.shared.services.congress_gov_client import (
     fetch_bill,
     fetch_bill_summaries,
     fetch_bill_text_versions,

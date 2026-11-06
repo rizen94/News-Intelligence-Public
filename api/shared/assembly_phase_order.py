@@ -6,7 +6,7 @@ Used by assembly conductor and automation suppression when ASSEMBLY_PIPELINE_MOD
 
 from __future__ import annotations
 
-from config.runtime import env_str
+from api.config.runtime import env_str
 
 # Work-completion order after spine (link indexer runs inside spine_sql_tail).
 # entity_organizer (T1 ambiguous enqueue) before distillation so pending stays

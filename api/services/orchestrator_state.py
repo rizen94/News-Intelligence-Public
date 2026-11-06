@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("orchestrator")
 except Exception:
@@ -22,7 +22,7 @@ SCHEMA_VERSION = 1
 
 
 def _get_db_path() -> Path:
-    from config.paths import ORCHESTRATOR_STATE_DB
+    from api.config.paths import ORCHESTRATOR_STATE_DB
 
     return Path(ORCHESTRATOR_STATE_DB)
 

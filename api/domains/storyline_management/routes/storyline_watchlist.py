@@ -5,7 +5,7 @@ Manage watched storylines, alerts, and monitoring dashboard data.
 
 import logging
 
-from config.database import get_db_connection
+from api.config.database import get_db_connection
 from fastapi import APIRouter, Body, HTTPException, Path, Query
 
 logger = logging.getLogger(__name__)

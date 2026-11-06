@@ -12,8 +12,8 @@ import logging
 import re
 from typing import Any
 
-from shared.database import get_ui_db_connection_context
-from shared.editorial_package_vocab import (
+api.shared.database import get_ui_db_connection_context
+api.shared.editorial_package_vocab import (
     ALL_MEMBER_TYPES,
     DECISION_ACTIONS,
     INFERENCE_STAGES,
@@ -28,7 +28,7 @@ from shared.editorial_package_vocab import (
     family_for_member_type,
     provenance_has_citeable_source,
 )
-from shared.post_processing_modals import allowed_domains_for_modal, normalize_domain_filter
+api.shared.post_processing_modals import allowed_domains_for_modal, normalize_domain_filter
 
 logger = logging.getLogger(__name__)
 
@@ -561,8 +561,8 @@ def add_member(
         raise ValueError(f"{mt} is not a narrative member type")
     _assert_modal_domain_allowed(added_by_modal, domain_key)
 
-    from shared.editorial_package_evidence import hydrate_member_provenance
-    from shared.editorial_package_reattach import (
+    api.shared.editorial_package_evidence import hydrate_member_provenance
+    api.shared.editorial_package_reattach import (
         clear_suppress_from_metadata,
         member_status_blocks_reattach,
     )
@@ -716,7 +716,7 @@ def set_member_status(
     if status not in MEMBER_STATUSES:
         raise ValueError(f"Invalid member status: {status}")
 
-    from shared.editorial_package_reattach import (
+    api.shared.editorial_package_reattach import (
         build_suppress_metadata,
         clear_suppress_from_metadata,
         flags_warrant_suppress,
@@ -1549,7 +1549,7 @@ def search_attachable(
 
                 # Per-domain articles
                 try:
-                    from shared.domain_registry import resolve_domain_schema
+                    api.shared.domain_registry import resolve_domain_schema
 
                     for dk in domain_list:
                         try:
@@ -1588,7 +1588,7 @@ def search_attachable(
 
             if modal in narrative_modals:
                 try:
-                    from shared.domain_registry import resolve_domain_schema
+                    api.shared.domain_registry import resolve_domain_schema
 
                     # Domain membership via source article schema — tags are ~99.7% empty,
                     # so empty-tag fallthrough previously assigned politics to medicine papers.
@@ -1692,7 +1692,7 @@ def search_attachable(
 
                 # Entities via story_entity_index
                 try:
-                    from shared.domain_registry import resolve_domain_schema
+                    api.shared.domain_registry import resolve_domain_schema
 
                     for dk in domain_list:
                         try:
@@ -1789,7 +1789,7 @@ def attach_search_hits(
     actor: str = "operator",
 ) -> list[dict[str, Any]]:
     """Attach search hits with theme/geo gate (same spirit as storyline seed)."""
-    from shared.editorial_package_attach_gate import (
+    api.shared.editorial_package_attach_gate import (
         attach_allowed,
         dominant_location_tokens_from_members,
         storyline_title_from_package,
@@ -1936,7 +1936,7 @@ def enrich_package_cite_provenance(package_id: int) -> dict[str, int]:
     Soft claim titles and chronological_events often seed with ids only;
     publish validation requires a URL (or a non-title quote).
     """
-    from shared.domain_registry import resolve_domain_schema
+    api.shared.domain_registry import resolve_domain_schema
 
     filled = 0
     scanned = 0
@@ -2164,7 +2164,7 @@ def ensure_package_from_kernel(
     """
     v12 THIN: rank act-verb CE for a day and seed a package (clone of package_from_selection).
     """
-    from shared.act_verb_kernel import list_act_verb_events_for_day
+    api.shared.act_verb_kernel import list_act_verb_events_for_day
 
     events = list_act_verb_events_for_day(
         day=day, domain_key=domain_key, limit=limit
@@ -2219,7 +2219,7 @@ def legacy_seed_for_storyline(domain_key: str, storyline_id: int) -> str:
 
 def primary_modal_for_domain(domain_key: str) -> str:
     """Prefer research or narrative rail for a domain tag (not reduction/editor)."""
-    from shared.post_processing_modals import domain_in_modal
+    api.shared.post_processing_modals import domain_in_modal
 
     dk = (domain_key or "").strip()
     in_research = domain_in_modal(dk, "research")
@@ -2242,7 +2242,7 @@ def _load_storyline_seed_rows(
     max_events: int,
 ) -> dict[str, Any]:
     """Pull storyline title + attachable members for package seeding."""
-    from shared.domain_registry import resolve_domain_schema
+    api.shared.domain_registry import resolve_domain_schema
 
     schema = resolve_domain_schema(domain_key)
     if not schema:
@@ -2403,7 +2403,7 @@ def _attach_storyline_seed_members(
     Theme/geo/unrelated candidates are skipped (not suppressed) so kitchen-sink
     storylines do not pollute membership; sources remain reusable elsewhere.
     """
-    from shared.editorial_package_attach_gate import (
+    api.shared.editorial_package_attach_gate import (
         attach_allowed,
         dominant_location_tokens_from_members,
     )
@@ -2736,7 +2736,7 @@ def _load_entity_seed_rows(
     max_claims: int,
 ) -> dict[str, Any]:
     """Pull appraisals / docs / articles / claims matching the research entity."""
-    from shared.domain_registry import resolve_domain_schema
+    api.shared.domain_registry import resolve_domain_schema
 
     schema = resolve_domain_schema(domain_key)
     if not schema:
@@ -3184,7 +3184,7 @@ def ensure_package_from_entity(
     Promotes to in_research. Does not require Reduction/Editor for knowledge
     profile merge (handled by knowledge_profile_service.auto_merge_from_package).
     """
-    from shared.domain_registry import resolve_domain_schema
+    api.shared.domain_registry import resolve_domain_schema
     from services.knowledge_profile_service import (
         KNOWLEDGE_PROFILE_DOMAINS,
         get_or_create_profile,

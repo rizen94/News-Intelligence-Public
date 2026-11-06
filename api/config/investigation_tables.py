@@ -7,7 +7,7 @@ Post-cutover: set USE_INVESTIGATION_PREFIXED_TABLES=true → intelligence.invest
 
 from __future__ import annotations
 
-from config.runtime import investigation_schema, investigation_table_prefix
+from api.config.runtime import investigation_schema, investigation_table_prefix
 
 
 def _qualified(base: str) -> str:

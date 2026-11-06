@@ -1,12 +1,12 @@
 """
 Central configuration for News Intelligence system.
-Paths from config.paths; resource limits, model names, API settings here.
+Paths from api.config.paths; resource limits, model names, API settings here.
 """
 
 import os
 from pathlib import Path
 
-from config.paths import (
+from api.config.paths import (
     CHROMA_DIR,
     DATA_DIR,
     FINANCE_CACHE_DB,
@@ -61,8 +61,8 @@ MODELS = {
     "topic_extraction": OLLAMA_MODEL_PRIMARY,
 }
 
-# Ollama hosts — canonical values from config.runtime (SSOT for host URLs)
-from config.runtime import (
+# Ollama hosts — canonical values from api.config.runtime (SSOT for host URLs)
+from api.config.runtime import (
     ollama_dual_host_routing_enabled as OLLAMA_DUAL_HOST_ROUTING_ENABLED,
     ollama_host as _runtime_ollama_host,
     ollama_pop_os_host as _runtime_ollama_pop_os_host,
@@ -406,10 +406,10 @@ def topic_clustering_batch_size() -> int:
     # No artificial ceiling — adaptive bounds + host headroom own the limit.
     default = max(5, n)
     try:
-        from shared.adaptive_batch_policy import get_persisted_adaptive_batch, resolve_adaptive_batch
+        api.shared.adaptive_batch_policy import get_persisted_adaptive_batch, resolve_adaptive_batch
 
         # Prefer live tune when adaptive is on; otherwise last persisted value for Monitor/ETA callers.
-        from shared.adaptive_batch_policy import adaptive_batch_enabled
+        api.shared.adaptive_batch_policy import adaptive_batch_enabled
 
         if adaptive_batch_enabled():
             tuned, _meta = resolve_adaptive_batch("topic_clustering", default)

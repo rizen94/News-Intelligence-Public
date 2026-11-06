@@ -9,7 +9,7 @@ import uuid
 from datetime import date, timedelta
 from typing import Any
 
-from shared.database import get_db_connection
+api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ def run_cross_domain_synthesis(
     conn = get_db_connection()
     if not conn:
         return {"success": False, "error": "Database connection failed", "correlations": []}
-    from shared.domain_registry import get_pipeline_active_domain_keys
+    api.shared.domain_registry import get_pipeline_active_domain_keys
 
     allowed = frozenset(get_pipeline_active_domain_keys())
     target_domains = [d for d in (domains or list(allowed)) if d in allowed]

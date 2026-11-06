@@ -124,15 +124,15 @@ IMPORT_RULES = {
         "import *",  # Wildcard imports
     ],
     "required_patterns": [
-        "from config.",  # Should use config imports
+        "from api.config.",  # Should use config imports
         "from services.",  # Should use services imports
         "from routes.",  # Should use routes imports
     ],
     "preferred_patterns": [
-        "from config.database import",  # Database imports
-        "from config.logging_config import",  # Logging imports
+        "from api.config.database import",  # Database imports
+        "from api.config.logging_config import",  # Logging imports
         "from services.",  # Service imports
-        "from schemas.",  # Schema imports
+        "from api.schemas.",  # Schema imports
     ],
 }
 
@@ -242,7 +242,7 @@ def fix_imports(file_path: str) -> dict[str, Any]:
             elif "routes" in file_path:
                 new_import = f"from routes.{match} import"
             elif "config" in file_path:
-                new_import = f"from config.{match} import"
+                new_import = f"from api.config.{match} import"
             elif "schemas" in file_path:
                 new_import = f"from schemas.{match} import"
             elif "middleware" in file_path:
@@ -301,8 +301,8 @@ def get_standard_imports(module_type: str) -> list[str]:
 
     if module_type == "service":
         return base_imports + [
-            "from config.database import get_db_config",
-            "from config.logging_config import get_component_logger",
+            "from api.config.database import get_db_config",
+            "from api.config.logging_config import get_component_logger",
             "import psycopg2",
             "from psycopg2.extras import RealDictCursor",
             "import json",
@@ -311,9 +311,9 @@ def get_standard_imports(module_type: str) -> list[str]:
         return base_imports + [
             "from fastapi import APIRouter, Depends, HTTPException, Query, Path",
             "from sqlalchemy.orm import Session",
-            "from config.database import get_db",
-            "from config.logging_config import get_component_logger",
-            "from schemas.robust_schemas import APIResponse",
+            "from api.config.database import get_db",
+            "from api.config.logging_config import get_component_logger",
+            "from api.schemas.robust_schemas import APIResponse",
         ]
     elif module_type == "schema":
         return base_imports + [
@@ -326,7 +326,7 @@ def get_standard_imports(module_type: str) -> list[str]:
         return base_imports + [
             "from fastapi import Request, Response",
             "from fastapi.responses import JSONResponse",
-            "from config.logging_config import get_component_logger",
+            "from api.config.logging_config import get_component_logger",
             "import traceback",
         ]
     else:

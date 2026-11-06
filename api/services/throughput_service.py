@@ -281,7 +281,7 @@ def compute_entity_profile_throughput(cur: Any) -> dict[str, Any]:
 
 def compute_full_throughput_snapshot() -> dict[str, Any]:
     """Compute a complete throughput snapshot without requiring a caller-owned DB cursor."""
-    from shared.database import get_db_connection_context
+    api.shared.database import get_db_connection_context
 
     snap = {"articles": None, "documents": None, "contexts": None, "entity_profiles": None}
 

@@ -38,7 +38,7 @@ def main() -> int:
 
     since = datetime.now(timezone.utc) - timedelta(hours=args.hours)
 
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any
 
 import requests
-from config.database import get_db
+from api.config.database import get_db
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ class TopicClusteringService:
 
             JSON Response:"""
 
-            from shared.services.llm_service import ollama_generate_sync
+            api.shared.services.llm_service import ollama_generate_sync
 
             response_text = ollama_generate_sync(
                 prompt,
@@ -91,7 +91,7 @@ class TopicClusteringService:
             return self._extract_fallback_topics(title, content)
 
         except Exception as e:
-            from shared.services.llm_service import is_ollama_pressure_error
+            api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -219,7 +219,7 @@ class TopicClusteringService:
 
             JSON Response:"""
 
-            from shared.services.llm_service import ollama_generate_sync
+            api.shared.services.llm_service import ollama_generate_sync
 
             response_text = ollama_generate_sync(
                 prompt,
@@ -252,7 +252,7 @@ class TopicClusteringService:
             return self._fallback_clustering(articles)
 
         except Exception as e:
-            from shared.services.llm_service import is_ollama_pressure_error
+            api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -363,7 +363,7 @@ class TopicClusteringService:
             db.commit()
 
             # Phase markers — deduplicated to canonical helper (bulk)
-            from shared.pipeline_pass_marker import bulk_record_article_phase_pass
+            api.shared.pipeline_pass_marker import bulk_record_article_phase_pass
             # Collect unique article IDs across all clusters
             seen_article_ids: set[int] = set()
             for t in topics_data.get("topics", []):

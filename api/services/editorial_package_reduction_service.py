@@ -23,9 +23,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from config.runtime import env_bool, env_int
-from shared.database import get_ui_db_connection_context
-from shared.domain_registry import resolve_domain_schema
+from api.config.runtime import env_bool, env_int
+api.shared.database import get_ui_db_connection_context
+api.shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -258,7 +258,7 @@ def _enrich_article_snippets(members: list[dict[str, Any]]) -> None:
 
 def build_review_payload(package: dict[str, Any]) -> dict[str, Any]:
     """Compact JSON payload for LLM + deterministic pre-flags."""
-    from shared.editorial_package_theme import is_theme_mismatch, package_spine_tokens
+    api.shared.editorial_package_theme import is_theme_mismatch, package_spine_tokens
 
     members = list(package.get("members") or [])
     links = list(package.get("links") or [])
@@ -676,8 +676,8 @@ async def _call_reduction_llm(payload: dict[str, Any]) -> tuple[dict[str, Any] |
         f"```json\n{json.dumps(llm_payload, default=str)[:100_000]}\n```\n"
     )
     try:
-        from shared.services.ollama_model_caller import get_ollama_model_caller
-        from shared.services.ollama_model_policy import InvocationKind
+        api.shared.services.ollama_model_caller import get_ollama_model_caller
+        api.shared.services.ollama_model_policy import InvocationKind
 
         caller = get_ollama_model_caller()
         result = await caller.generate(

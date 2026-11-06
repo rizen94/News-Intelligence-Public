@@ -68,7 +68,7 @@ def main() -> int:
         print("ERROR: YAML root must be a mapping of domain_key -> list of entities")
         return 1
 
-    from shared.domain_registry import is_valid_domain_key
+    api.shared.domain_registry import is_valid_domain_key
 
     from services.entity_seed_catalog_service import bulk_seed_canonical_entries
 

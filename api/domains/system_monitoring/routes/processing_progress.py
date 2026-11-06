@@ -13,8 +13,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from shared.database import get_ui_db_connection as get_db_connection
-from shared.domain_registry import get_schema_names_active, pipeline_url_schema_pairs
+api.shared.database import get_ui_db_connection as get_db_connection
+api.shared.domain_registry import get_schema_names_active, pipeline_url_schema_pairs
 
 logger = logging.getLogger(__name__)
 
@@ -498,7 +498,7 @@ def compute_processing_progress_response(
         # blocking requests — dimension/phase data still useful for the Monitor page.
         _skip_metrics = False
         try:
-            from shared.database import get_db_pool_snapshot
+            api.shared.database import get_db_pool_snapshot
 
             snap = get_db_pool_snapshot()
             ui_snap = snap.get("ui") or {}
@@ -686,7 +686,7 @@ def compute_processing_progress_response(
             backlog_measurement = {"contracts_ok": False, "contract_failures": [str(e)[:200]]}
 
     try:
-        from shared.gpu_metrics import maybe_record_gpu_metric_sample
+        api.shared.gpu_metrics import maybe_record_gpu_metric_sample
 
         maybe_record_gpu_metric_sample()
     except Exception:

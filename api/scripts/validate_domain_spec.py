@@ -12,8 +12,8 @@ _API = Path(__file__).resolve().parent.parent
 if str(_API) not in sys.path:
     sys.path.insert(0, str(_API))
 
-from shared.domain_registry_constants import RESERVED_SCHEMA_NAMES  # noqa: E402
-from shared.domain_spec import DomainSpec, load_json_schema  # noqa: E402
+api.shared.domain_registry_constants import RESERVED_SCHEMA_NAMES  # noqa: E402
+api.shared.domain_spec import DomainSpec, load_json_schema  # noqa: E402
 
 
 def main() -> None:
@@ -65,7 +65,7 @@ def main() -> None:
         pw_file = _API.parent / ".db_password_widow"
         if not os.environ.get("DB_PASSWORD") and pw_file.is_file():
             os.environ["DB_PASSWORD"] = pw_file.read_text(encoding="utf-8").strip()
-        from shared.database import get_db_connection
+        api.shared.database import get_db_connection
 
         conn = get_db_connection()
         if conn:

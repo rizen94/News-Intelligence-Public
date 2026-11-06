@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator
 
-from shared.database import get_db_connection
+api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ def membership_freeze_patch(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """JSONB merge patch to set the freeze."""
-    from config.runtime import env_float
+    from api.config.runtime import env_float
 
     hours = float(
         ttl_hours

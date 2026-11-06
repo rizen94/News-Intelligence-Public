@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from config.runtime import env_str
+from api.config.runtime import env_str
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] |
             get_storyline_review_queue_pending,
             get_storyline_review_queue_pending_by_domain,
         )
-        from shared.pipeline_queue_counts import get_all_phase_queue_depths
+        api.shared.pipeline_queue_counts import get_all_phase_queue_depths
 
         pending = {k: int(v) for k, v in get_all_phase_queue_depths().items()}
         backlog = {k: int(v) for k, v in get_all_backlog_counts().items()}
@@ -116,7 +116,7 @@ def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] |
         except Exception as e:
             logger.warning("monitor_backlog_snapshot spine_throughput failed: %s", e)
         try:
-            from shared.intake_catchup_latency import (
+            api.shared.intake_catchup_latency import (
                 compute_intake_catchup_latency,
                 record_intake_catchup_latency_sample,
             )
@@ -146,14 +146,14 @@ def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] |
         refreshed_at = datetime.now(timezone.utc).isoformat()
         queue_audit: dict[str, Any] = {}
         try:
-            from shared.queue_audit import build_queue_audit
+            api.shared.queue_audit import build_queue_audit
 
             queue_audit = build_queue_audit(pending)
         except Exception as e:
             logger.warning("monitor_backlog_snapshot queue_audit failed: %s", e)
         unified_intake_breakdown: dict[str, int] | None = None
         try:
-            from shared.pipeline_queue_counts import get_unified_intake_breakdown
+            api.shared.pipeline_queue_counts import get_unified_intake_breakdown
 
             unified_intake_breakdown = dict(get_unified_intake_breakdown())
         except Exception as e:
@@ -186,7 +186,7 @@ def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] |
             if work_queues
             else None,
         }
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -231,7 +231,7 @@ def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] |
 def read_monitor_backlog_snapshot(*, allow_stale: bool = False) -> dict[str, Any] | None:
     """Load snapshot from automation_state; None if missing or too old."""
     try:
-        from shared.database import get_ui_db_connection_context
+        api.shared.database import get_ui_db_connection_context
 
         with get_ui_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -271,7 +271,7 @@ def _append_snapshot_history(
     phase_count: int,
 ) -> None:
     """Persist a history row for read-mostly trend / p95 analysis (Phase E)."""
-    from shared.database import get_db_connection_context
+    api.shared.database import get_db_connection_context
 
     queue_depths = payload.get("queue_depths") or payload.get("pending") or {}
     backlog_counts = payload.get("backlog") or payload.get("backlog_counts") or {}

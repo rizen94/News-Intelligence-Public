@@ -75,13 +75,13 @@ def get_key_entities(
     Return a ranked list of entities by mention count (recurring / key targets).
     Uses entity_canonical + article_entities counts; does not require a cache table.
     """
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
         return {"success": False, "entities": [], "error": "Database connection failed"}
 
-    from shared.domain_registry import domain_key_to_schema, get_active_domain_keys
+    api.shared.domain_registry import domain_key_to_schema, get_active_domain_keys
 
     domains: list[str] = [domain_key] if domain_key else list(get_active_domain_keys())
     entities: list[dict[str, Any]] = []

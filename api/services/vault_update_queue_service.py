@@ -11,8 +11,8 @@ import socket
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from shared.database import get_db_connection_context
-from shared.vault_note_contract import DEFAULT_MAX_JOBS_PER_CYCLE
+api.shared.database import get_db_connection_context
+api.shared.vault_note_contract import DEFAULT_MAX_JOBS_PER_CYCLE
 
 logger = logging.getLogger(__name__)
 

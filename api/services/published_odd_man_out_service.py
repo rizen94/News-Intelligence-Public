@@ -20,7 +20,7 @@ _CITATION = re.compile(r"\[@m(\d+)\]")
 
 
 def published_story_id(package_id: int) -> int | None:
-    from shared.database import get_ui_db_connection_context
+    api.shared.database import get_ui_db_connection_context
 
     with get_ui_db_connection_context() as conn:
         with conn.cursor() as cur:
@@ -41,7 +41,7 @@ def scrub_story_citations(story_id: int, removed_member_ids: set[int]) -> int:
     """Drop [@mID] for uncoupled members from the published manuscript."""
     if not removed_member_ids:
         return 0
-    from shared.database import get_ui_db_connection_context
+    api.shared.database import get_ui_db_connection_context
 
     with get_ui_db_connection_context() as conn:
         with conn.cursor() as cur:
@@ -88,8 +88,8 @@ def _apply_member_actions_fast(
     actions: list[dict[str, Any]],
 ) -> dict[str, int]:
     """Bulk uncouple members with suppress stamp (one transaction)."""
-    from shared.database import get_ui_db_connection_context
-    from shared.editorial_package_reattach import (
+    api.shared.database import get_ui_db_connection_context
+    api.shared.editorial_package_reattach import (
         build_suppress_metadata,
         flags_warrant_suppress,
     )
@@ -208,7 +208,7 @@ def stamp_last_odd_man_out(
     active_member_count: int | None = None,
 ) -> None:
     """Record prune time + active count so readiness can detect post-prune drift."""
-    from shared.database import get_ui_db_connection_context
+    api.shared.database import get_ui_db_connection_context
 
     now = datetime.now(timezone.utc).isoformat()
     patch: dict[str, Any] = {
@@ -232,7 +232,7 @@ def stamp_last_odd_man_out(
 
 def load_package_light(package_id: int) -> dict[str, Any] | None:
     """Package row + active members/links only (no N+1 labels)."""
-    from shared.database import get_ui_db_connection_context
+    api.shared.database import get_ui_db_connection_context
 
     with get_ui_db_connection_context() as conn:
         with conn.cursor() as cur:
@@ -270,7 +270,7 @@ def load_package_light(package_id: int) -> dict[str, Any] | None:
 
 def membership_drifted_since_prune(pkg: dict[str, Any] | None) -> bool:
     """Re-export for callers; logic lives in shared attach gate."""
-    from shared.editorial_package_attach_gate import membership_drifted_since_prune as _drift
+    api.shared.editorial_package_attach_gate import membership_drifted_since_prune as _drift
 
     return _drift(pkg)
 

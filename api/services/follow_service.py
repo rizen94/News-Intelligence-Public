@@ -8,8 +8,8 @@ import json
 import logging
 from typing import Any
 
-from config.runtime import follow_living_cap
-from shared.database import get_ui_db_connection_context
+from api.config.runtime import follow_living_cap
+api.shared.database import get_ui_db_connection_context
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +273,7 @@ def enrich_follow_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Attach display title (and optional story_kind) for episode/container follows."""
     if not rows:
         return rows
-    from shared.domain_registry import resolve_domain_schema
+    api.shared.domain_registry import resolve_domain_schema
 
     out: list[dict[str, Any]] = []
     with get_ui_db_connection_context() as conn:

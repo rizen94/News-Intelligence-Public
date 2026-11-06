@@ -24,7 +24,7 @@ source of truth for state machine transitions.
 
 ## Usage Example
 
-    from shared.pipeline_state_constants import ARTICLE_ENRICHED, QUEUE_PENDING
+    api.shared.pipeline_state_constants import ARTICLE_ENRICHED, QUEUE_PENDING
 
     article.enrichment_status = ARTICLE_ENRICHED
     if status in ARTICLE_TERMINAL_STATES:

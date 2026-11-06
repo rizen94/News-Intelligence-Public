@@ -11,9 +11,9 @@ import logging
 from collections import defaultdict
 from typing import Any
 
-from shared.database import get_db_connection_context
-from shared.domain_registry import resolve_domain_schema
-from shared.vault_note_contract import slugify_entity_name
+api.shared.database import get_db_connection_context
+api.shared.domain_registry import resolve_domain_schema
+api.shared.vault_note_contract import slugify_entity_name
 
 logger = logging.getLogger(__name__)
 
@@ -593,7 +593,7 @@ def run_cluster_hub_discovery_cycle(
     domain_keys: list[str] | None = None,
     force: bool = False,
 ) -> dict[str, Any]:
-    from shared.domain_registry import get_pipeline_active_domain_keys
+    api.shared.domain_registry import get_pipeline_active_domain_keys
 
     domains = domain_keys or list(get_pipeline_active_domain_keys())
     out: dict[str, Any] = {"ok": True, "domains": {}}

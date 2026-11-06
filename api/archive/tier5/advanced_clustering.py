@@ -166,7 +166,7 @@ class LocalAdvancedClustering:
             return result
             
         except Exception as e:
-            from shared.services.llm_service import is_ollama_pressure_error
+            api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -214,7 +214,7 @@ class LocalAdvancedClustering:
             return np.array(embeddings)
             
         except Exception as e:
-            from shared.services.llm_service import is_ollama_pressure_error
+            api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -225,7 +225,7 @@ class LocalAdvancedClustering:
     def _call_embedding_model(self, texts: list[str], model: str) -> list[list[float]]:
         """Call specialized embedding model via CB hub."""
         try:
-            from shared.services.llm_service import ollama_embed_sync
+            api.shared.services.llm_service import ollama_embed_sync
 
             embeddings = []
             for text in texts:
@@ -242,7 +242,7 @@ class LocalAdvancedClustering:
     def _call_llm_for_embeddings(self, texts: list[str], model: str) -> list[list[float]]:
         """Use general LLM to generate embeddings via CB hub."""
         try:
-            from shared.services.llm_service import ollama_generate_sync
+            api.shared.services.llm_service import ollama_generate_sync
 
             embeddings = []
             for text in texts:
@@ -441,7 +441,7 @@ Guidelines:
 - Be objective and factual
 """
             
-            from shared.services.llm_service import ollama_generate_sync
+            api.shared.services.llm_service import ollama_generate_sync
 
             result = ollama_generate_sync(
                 prompt,
@@ -463,7 +463,7 @@ Guidelines:
             return ["topic1", "topic2", "topic3"], "Cluster of related articles"
             
         except Exception as e:
-            from shared.services.llm_service import is_ollama_pressure_error
+            api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise

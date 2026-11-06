@@ -9,9 +9,9 @@ from datetime import datetime
 from domains.content_analysis.services.topic_clustering_service import TopicClusteringService
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
 from pydantic import BaseModel
-from shared.database import get_db_config, get_db_connection
-from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
-from shared.services.domain_aware_service import (
+api.shared.database import get_db_config, get_db_connection
+api.shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
+api.shared.services.domain_aware_service import (
     get_domain_data_schemas,
     parse_optional_domain_to_schema,
     validate_domain,

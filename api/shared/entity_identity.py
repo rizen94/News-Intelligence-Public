@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from shared.database import get_db_connection
+api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 

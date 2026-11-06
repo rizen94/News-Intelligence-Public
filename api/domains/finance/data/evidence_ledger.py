@@ -11,12 +11,12 @@ from datetime import datetime, timezone
 from typing import Any
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
-from config.settings import FINANCE_DATA_DIR
+from api.config.settings import FINANCE_DATA_DIR
 from domains.finance.data.schema_version import ensure_schema_version, SCHEMA_VERSION
 
 LEDGER_DB = FINANCE_DATA_DIR / "evidence_ledger.db"

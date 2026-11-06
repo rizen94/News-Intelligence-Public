@@ -19,8 +19,8 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from shared.database import get_db_connection
-from shared.domain_registry import resolve_domain_schema
+api.shared.database import get_db_connection
+api.shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ def score_source_reliability_batch(source_domains: list[str]) -> dict[str, dict[
 
 def _governance_reliability_for_source(source_label: str) -> dict[str, Any]:
     """Blend orchestrator source_credibility (YAML) with legacy string tiers."""
-    from shared.services.source_credibility_service import resolve_source_credibility
+    api.shared.services.source_credibility_service import resolve_source_credibility
 
     gov = resolve_source_credibility("", source_label or "")
     legacy = score_source_reliability(source_label or "")
@@ -256,7 +256,7 @@ def wikipedia_reference_check(claim_text: str, subject: str | None = None) -> di
         out["status"] = "no_query"
         return out
     try:
-        from modules.ml.rag_external_services import WikipediaService
+        from api.modules.ml.rag_external_services import WikipediaService
 
         wiki = WikipediaService()
         arts = wiki.search_articles(query, limit=3)
@@ -484,7 +484,7 @@ def finance_sec_articles_signal(
     """Match claim terms against recent articles in the finance silo schema (``resolve_domain_schema(domain_key)``) whose URL looks SEC/EDGAR-hosted."""
     out: dict[str, Any] = {"status": "skipped", "match_count": 0}
     try:
-        from config.settings import finance_postgres_content_domain_key
+        from api.config.settings import finance_postgres_content_domain_key
 
         fk = finance_postgres_content_domain_key().strip().lower()
     except Exception:
@@ -607,7 +607,7 @@ def entailment_llm_borderline_check(
     )
 
     async def _run_llm() -> str:
-        from shared.services.llm_service import LLMService, ModelType
+        api.shared.services.llm_service import LLMService, ModelType
 
         llm = LLMService()
         return await llm._call_ollama(ModelType.LLAMA_8B, prompt)
@@ -1318,7 +1318,7 @@ def _llm_completeness_check(
     claims_text = "\n".join(f"- {c['subject']} {c['predicate']} {c['object']}" for c in claims[:10])
 
     try:
-        from shared.services.llm_service import LLMService
+        api.shared.services.llm_service import LLMService
 
         llm = LLMService()
         prompt = COMPLETENESS_PROMPT.format(
@@ -1359,7 +1359,7 @@ def verify_claim(
       5. Optional LLM entailment when corroboration is borderline
       6. Combined verification_status + confidence (caps on weak signals)
     """
-    from shared.services.source_credibility_service import resolve_source_credibility
+    api.shared.services.source_credibility_service import resolve_source_credibility
 
     schema = resolve_domain_schema(domain_key)
     conn = get_db_connection()
@@ -1488,7 +1488,7 @@ def verify_claim(
         wikidata_check = wikidata_reference_check(claim_text, claim.get("subject"))
         gdelt_check = gdelt_mention_signal(claim_text, claim.get("subject"))
         try:
-            from config.settings import finance_postgres_content_domain_key as _fpk
+            from api.config.settings import finance_postgres_content_domain_key as _fpk
 
             _fin = _fpk().strip().lower()
         except Exception:

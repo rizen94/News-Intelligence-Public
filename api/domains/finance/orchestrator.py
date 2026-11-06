@@ -12,14 +12,14 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
-from shared.logging.decision_logger import log_decision, log_decision_outcome
-from shared.logging.trace_logger import span_context
+api.shared.logging.decision_logger import log_decision, log_decision_outcome
+api.shared.logging.trace_logger import span_context
 
 from domains.finance.orchestrator_logger import (
     EVAL_FAILED,
@@ -1133,7 +1133,7 @@ Do not invent or guess values. Structure your response: (1) establish what happe
     def _load_schedule_config(self) -> list[dict[str, Any]]:
         """Load scheduled tasks from finance_schedule.yaml."""
         try:
-            from config.paths import FINANCE_SCHEDULE_YAML
+            from api.config.paths import FINANCE_SCHEDULE_YAML
 
             if not FINANCE_SCHEDULE_YAML.exists():
                 return []

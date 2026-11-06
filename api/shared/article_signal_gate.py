@@ -11,8 +11,8 @@ import logging
 import time
 from typing import Any
 
-from config.runtime import env_bool, env_float, env_int, env_str
-from shared.pipeline_state_constants import ARTICLE_ENRICHED, ARTICLE_FAILED, ARTICLE_INACCESSIBLE
+from api.config.runtime import env_bool, env_float, env_int, env_str
+api.shared.pipeline_state_constants import ARTICLE_ENRICHED, ARTICLE_FAILED, ARTICLE_INACCESSIBLE
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ _TRENDING_TTL_SEC = 3600
 
 def article_signal_enabled() -> bool:
     try:
-        from config.orchestrator_governance import get_orchestrator_governance_config
+        from api.config.orchestrator_governance import get_orchestrator_governance_config
 
         sf = get_orchestrator_governance_config().get("signal_first") or {}
         if isinstance(sf, dict) and "article_signal_enabled" in sf:
@@ -42,7 +42,7 @@ def article_signal_full_min_quality() -> float:
     except Exception:
         pass
     try:
-        from config.orchestrator_governance import get_orchestrator_governance_config
+        from api.config.orchestrator_governance import get_orchestrator_governance_config
 
         gov = get_orchestrator_governance_config()
         qt = (gov.get("quality_thresholds") or {}).get("min_importance_for_processing")
@@ -55,7 +55,7 @@ def article_signal_full_min_quality() -> float:
 
 def article_signal_trending_top_n() -> int:
     try:
-        from config.orchestrator_governance import get_orchestrator_governance_config
+        from api.config.orchestrator_governance import get_orchestrator_governance_config
 
         sf = get_orchestrator_governance_config().get("signal_first") or {}
         if isinstance(sf, dict) and sf.get("article_signal_trending_top_n") is not None:
@@ -146,7 +146,7 @@ def sql_context_has_full_lane_article(alias: str = "c") -> str:
     if not article_signal_enabled():
         return "TRUE"
     try:
-        from shared.domain_registry import pipeline_url_schema_pairs
+        api.shared.domain_registry import pipeline_url_schema_pairs
     except Exception:
         return "TRUE"
 
@@ -235,7 +235,7 @@ def load_trending_article_ids(schema: str) -> set[int]:
 
     ids: set[int] = set()
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         sub = sql_trending_cluster_ids_subquery(schema)
         with get_db_connection_context() as conn:
@@ -266,15 +266,15 @@ def defer_signal_light_unified_intake_batch(
     if not article_signal_enabled():
         return {}
 
-    from shared.database import get_db_connection_context
-    from shared.domain_registry import pipeline_url_schema_pairs
-    from shared.pipeline_pass_marker import (
+    api.shared.database import get_db_connection_context
+    api.shared.domain_registry import pipeline_url_schema_pairs
+    api.shared.pipeline_pass_marker import (
         TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
         bulk_record_article_phase_pass,
         phase_backlog_uses_pass_marker,
         sql_article_pass_null,
     )
-    from shared.article_processing_gates import sql_ml_ready_and_content_bounds
+    api.shared.article_processing_gates import sql_ml_ready_and_content_bounds
 
     if not phase_backlog_uses_pass_marker("unified_intake_extraction"):
         return {}
@@ -348,15 +348,15 @@ def defer_signal_light_phase_batch(
     if not article_signal_enabled():
         return {}
 
-    from shared.database import get_db_connection_context
-    from shared.domain_registry import pipeline_url_schema_pairs
-    from shared.pipeline_pass_marker import (
+    api.shared.database import get_db_connection_context
+    api.shared.domain_registry import pipeline_url_schema_pairs
+    api.shared.pipeline_pass_marker import (
         TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
         bulk_record_article_phase_pass,
         phase_backlog_uses_pass_marker,
         sql_article_pass_null,
     )
-    from shared.article_processing_gates import sql_ml_ready_and_content_bounds
+    api.shared.article_processing_gates import sql_ml_ready_and_content_bounds
 
     if not phase_backlog_uses_pass_marker(phase_name):
         return {}
@@ -414,8 +414,8 @@ def defer_signal_light_claim_contexts_batch(*, limit: int = 400) -> int:
     if not article_signal_enabled():
         return 0
 
-    from shared.database import get_db_connection_context
-    from shared.pipeline_pass_marker import (
+    api.shared.database import get_db_connection_context
+    api.shared.pipeline_pass_marker import (
         TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
         phase_backlog_uses_pass_marker,
         record_context_phase_pass,

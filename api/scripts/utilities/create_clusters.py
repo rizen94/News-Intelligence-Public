@@ -15,7 +15,7 @@ def _get_db_config():
     _api = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     if _api not in sys.path:
         sys.path.insert(0, _api)
-    from shared.database import get_db_config
+    api.shared.database import get_db_config
 
     return get_db_config()
 
@@ -25,7 +25,7 @@ def create_basic_clusters():
     print("Creating basic clusters from existing articles...")
 
     try:
-        from shared.database import get_db_connection
+        api.shared.database import get_db_connection
 
         conn = get_db_connection()
         cursor = conn.cursor()

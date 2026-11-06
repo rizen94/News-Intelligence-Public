@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from shared.domain_registry import domain_key_to_schema, get_active_domain_keys
+api.shared.domain_registry import domain_key_to_schema, get_active_domain_keys
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 def peer_article_counts() -> dict[str, int]:
     """Return approximate article counts per URL domain_key for peer comparison."""
     try:
-        from shared.database import get_db_connection
+        api.shared.database import get_db_connection
     except Exception as e:  # pragma: no cover
         logger.warning("peer_article_counts: DB unavailable: %s", e)
         return {}

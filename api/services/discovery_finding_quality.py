@@ -163,7 +163,7 @@ def resolve_attach_domain_key(
     modal: str,
 ) -> str | None:
     """Pick a domain allowed for this modal so add_member does not raise."""
-    from shared.post_processing_modals import allowed_domains_for_modal
+    api.shared.post_processing_modals import allowed_domains_for_modal
 
     allow = set(allowed_domains_for_modal(modal) or [])
     candidates: list[str] = []

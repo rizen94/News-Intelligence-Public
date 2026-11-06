@@ -11,16 +11,16 @@ import logging
 import random
 from typing import Any
 
-from config.runtime import env_float, env_int, env_str
-from shared.database import get_db_connection
-from shared.domain_processing_mode import filter_domains_for_phase
-from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
+from api.config.runtime import env_float, env_int, env_str
+api.shared.database import get_db_connection
+api.shared.domain_processing_mode import filter_domains_for_phase
+api.shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
 
 def embedding_link_candidates_enabled() -> bool:
-    from shared.chemistry_beaker import embedding_link_candidates_enabled as _enabled
+    api.shared.chemistry_beaker import embedding_link_candidates_enabled as _enabled
 
     return _enabled()
 
@@ -127,7 +127,7 @@ def _neighbors_per_query() -> int:
 
 
 # Re-export: canonical implementation lives in shared.link_scoring (v12).
-from shared.link_scoring import (  # noqa: E402
+api.shared.link_scoring import (  # noqa: E402
     blend_link_score,
     causal_boost_for_storyline_pair,
 )
@@ -395,7 +395,7 @@ def run_embedding_link_candidates_for_domain(
         storyline_pair_dedupe_key,
         upsert_graph_connection_proposal,
     )
-    from shared.connection_inference import stage_for_embedding_source
+    api.shared.connection_inference import stage_for_embedding_source
 
     _candidate_stage = stage_for_embedding_source(exploratory=False)
     lim = limit if limit is not None else _max_storylines()
@@ -854,7 +854,7 @@ def count_collision_sampling_actionable() -> int:
     belong to graph_connection_distillation — counting them here caused phantom
     backlog while the drain only samples pairs.
     """
-    from shared.chemistry_beaker import collision_sampling_enabled
+    api.shared.chemistry_beaker import collision_sampling_enabled
 
     if not collision_sampling_enabled():
         return 0
@@ -902,7 +902,7 @@ def run_random_collision_sample(
     COLLISION_EPSILON_RANDOM (default 0.2) keeps pure random exploration.
     Never auto-establishes; always inference_stage=hypothesized.
     """
-    from config.runtime import env_float, env_int
+    from api.config.runtime import env_float, env_int
     from services.domain_synthesis_config import (
         get_domain_synthesis_config,
         temporal_proximity_score,
@@ -913,8 +913,8 @@ def run_random_collision_sample(
         upsert_graph_connection_proposal,
     )
     from services.storyline_centroid import centroid_cosine, get_storyline_centroid
-    from shared.connection_inference import INFERENCE_HYPOTHESIZED
-    from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
+    api.shared.connection_inference import INFERENCE_HYPOTHESIZED
+    api.shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 
     n_pairs = max(1, min(50, pairs if pairs is not None else env_int("COLLISION_SAMPLING_PAIRS", 8)))
     try:

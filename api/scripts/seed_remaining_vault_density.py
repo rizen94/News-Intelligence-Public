@@ -176,7 +176,7 @@ def _dedupe(bullets: list[str], *, limit: int = 12) -> list[str]:
 
 
 def existing_ids(schema: str, table: str, ids: list[int]) -> list[int]:
-    from shared.database import get_db_connection_context
+    api.shared.database import get_db_connection_context
 
     if not ids:
         return []
@@ -191,7 +191,7 @@ def existing_ids(schema: str, table: str, ids: list[int]) -> list[int]:
 
 
 def fetch_theme(schema: str, patterns: list[str], *, days: int = 90, limit: int = 10) -> list[str]:
-    from shared.database import get_db_connection_context
+    api.shared.database import get_db_connection_context
 
     like = " OR ".join(["a.title ILIKE %s"] * len(patterns))
     params: list[Any] = [days] + [f"%{p}%" for p in patterns] + [limit]
@@ -218,7 +218,7 @@ def fetch_theme(schema: str, patterns: list[str], *, days: int = 90, limit: int 
 
 
 def resolve_anthropic_id() -> int | None:
-    from shared.database import get_db_connection_context
+    api.shared.database import get_db_connection_context
 
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
@@ -299,7 +299,7 @@ def persist_hub_brief(
 
 def seed_hubs(*, force: bool, dry_run: bool) -> dict[str, Any]:
     from services.vault_cluster_hub_service import write_cluster_hub
-    from shared.vault_note_contract import cluster_object_id, cluster_vault_rel_path
+    api.shared.vault_note_contract import cluster_object_id, cluster_vault_rel_path
 
     out: dict[str, Any] = {}
     for hub in HUBS:
@@ -358,8 +358,8 @@ def seed_hubs(*, force: bool, dry_run: bool) -> dict[str, Any]:
 
 
 def entity_hits(domain: str, eid: int) -> int:
-    from shared.database import get_db_connection_context
-    from shared.domain_registry import resolve_domain_schema
+    api.shared.database import get_db_connection_context
+    api.shared.domain_registry import resolve_domain_schema
 
     schema = resolve_domain_schema(domain)
     with get_db_connection_context() as conn:
@@ -383,9 +383,9 @@ def seed_entities(*, force: bool, dry_run: bool) -> list[dict[str, Any]]:
         fetch_recent_article_bullets,
     )
     from services.vault_notes_registry_service import upsert_vault_note
-    from shared.database import get_db_connection_context
-    from shared.domain_registry import resolve_domain_schema
-    from shared.vault_note_contract import entity_vault_rel_path
+    api.shared.database import get_db_connection_context
+    api.shared.domain_registry import resolve_domain_schema
+    api.shared.vault_note_contract import entity_vault_rel_path
 
     results: list[dict[str, Any]] = []
     root = vault_root()
@@ -557,7 +557,7 @@ def sync_finance_clipping_bodies(*, dry_run: bool, limit: int = 40) -> dict[str,
     """Mirror disk clipping markdown into empty PG body_md rows."""
     from services.vault_bridge_service import vault_root
     from services.vault_notes_registry_service import upsert_vault_note
-    from shared.database import get_db_connection_context
+    api.shared.database import get_db_connection_context
 
     root = vault_root()
     with get_db_connection_context() as conn:

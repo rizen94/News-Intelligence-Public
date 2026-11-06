@@ -217,7 +217,7 @@ async def orchestrator_manual_override(
                     return {"success": True, "result": result}
                 # Fallback: run collect directly and record
                 if source == "rss":
-                    from collectors.rss_collector import collect_rss_feeds
+                    from api.collectors.rss_collector import collect_rss_feeds
 
                     count = collect_rss_feeds()
                     orchestrator_state.append_decision_log(

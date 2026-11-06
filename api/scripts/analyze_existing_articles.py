@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import filtering functions from RSS collector
 try:
-    from collectors.rss_collector import (
+    from api.collectors.rss_collector import (
         calculate_article_impact_score,
         calculate_article_quality_score,
         is_advertisement,
@@ -31,7 +31,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Use shared DB config (run with api as cwd or PYTHONPATH=api)
-from shared.database import get_db_connection as _get_db_connection
+api.shared.database import get_db_connection as _get_db_connection
 
 
 def get_db_connection():
@@ -281,7 +281,7 @@ def main():
         sys.exit(1)
 
     # Registry + existing schemas (aligned with RSS / automation, not public.domains.is_active)
-    from shared.services.domain_aware_service import get_all_domains, resolve_domain_token_to_schema
+    api.shared.services.domain_aware_service import get_all_domains, resolve_domain_token_to_schema
 
     cur = conn.cursor()
     if args.domains:

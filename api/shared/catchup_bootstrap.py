@@ -14,7 +14,7 @@ def bootstrap_catchup(*, repo_root: Path | None = None, bulk_active: bool = Fals
         from dotenv import load_dotenv
 
         load_dotenv(env_file, override=False)
-    from config.catchup_defaults import apply_catchup_env_defaults
+    from api.config.catchup_defaults import apply_catchup_env_defaults
 
     apply_catchup_env_defaults(bulk_active=bulk_active)
     return repo_root

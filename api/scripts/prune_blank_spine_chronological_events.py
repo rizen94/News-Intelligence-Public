@@ -17,7 +17,7 @@ from pathlib import Path
 _root = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from shared.database import get_db_connection_context  # noqa: E402
+api.shared.database import get_db_connection_context  # noqa: E402
 
 _WHERE = """
     storyline_id IS NULL OR btrim(storyline_id::text) = ''

@@ -16,7 +16,7 @@ from enum import Enum
 from typing import Any
 
 import httpx
-from config.settings import (
+from api.config.settings import (
     MODELS,
     NARRATIVE_FINISHER_MODEL,
     OLLAMA_HOST,
@@ -25,7 +25,7 @@ from config.settings import (
     OLLAMA_POP_OS_HOST,
     OLLAMA_TIMEOUT,
 )
-from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
+from api.config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 
 def _httpx_ollama_timeout(lane: str | None = None) -> float:
@@ -401,7 +401,7 @@ class LLMService:
         Model selection via shared policy (ollama_model_policy).
         approx_prompt_chars: large background prompts may route to secondary (see MODELS["secondary"]).
         """
-        from shared.services.ollama_model_policy import resolve_model_for_llm_task
+        api.shared.services.ollama_model_policy import resolve_model_for_llm_task
 
         return resolve_model_for_llm_task(task_type, urgency, approx_prompt_chars)
 
@@ -831,7 +831,7 @@ Storyline context:
             )
             response = await self._call_ollama(model, prompt)
             try:
-                from shared.llm_text_sanitize import strip_llm_wrapping_artifacts
+                api.shared.llm_text_sanitize import strip_llm_wrapping_artifacts
 
                 cleaned = strip_llm_wrapping_artifacts(response or "")
             except Exception:
@@ -920,7 +920,7 @@ Storyline context:
         await cb.begin_probe_if_due()
 
         try:
-            from shared.services.ollama_model_policy import (
+            api.shared.services.ollama_model_policy import (
                 InvocationKind,
                 extraction_temperature_for_invocation,
                 keep_alive_for_invocation,

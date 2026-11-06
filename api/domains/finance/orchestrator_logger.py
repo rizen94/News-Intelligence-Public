@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     LOG = get_component_logger("finance")
 except Exception:
@@ -59,7 +59,7 @@ def log_queue_decision(
     for consolidated storage (logs/activity.log, logs/activity.jsonl).
     """
     try:
-        from shared.logging.activity_logger import log_orchestrator_decision
+        api.shared.logging.activity_logger import log_orchestrator_decision
 
         log_orchestrator_decision(
             orchestrator_id="finance",

@@ -13,7 +13,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from shared.database import get_db_connection
+api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 

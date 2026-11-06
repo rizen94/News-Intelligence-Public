@@ -10,14 +10,14 @@ from __future__ import annotations
 import logging
 import time
 
-from config.runtime import env_str
+from api.config.runtime import env_str
 
 logger = logging.getLogger(__name__)
 
 
 def _governance_run_budgets() -> dict:
     try:
-        from config.orchestrator_governance import get_orchestrator_governance_config
+        from api.config.orchestrator_governance import get_orchestrator_governance_config
 
         raw = get_orchestrator_governance_config().get("pipeline_controller") or {}
         return raw if isinstance(raw, dict) else {}

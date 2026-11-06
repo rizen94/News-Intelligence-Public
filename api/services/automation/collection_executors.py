@@ -75,7 +75,7 @@ async def _maybe_request_storyline_assembly_after_enrichment() -> None:  # type:
 async def execute_context_sync(task) -> None:  # type: ignore[name-defined]
     """Backfill: sync domain articles to intelligence.contexts (Phase 1.2 context-centric)."""
     from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
-    from config.context_centric_config import is_context_centric_task_enabled
+    from api.config.context_centric_config import is_context_centric_task_enabled
 
     if in_nightly_pipeline_window_est() and not (task.metadata or {}).get("nightly_sequential_drain"):
         logger.debug("Context sync: nightly pipeline window — handled by nightly_enrichment_context")
@@ -98,7 +98,7 @@ async def execute_context_sync(task) -> None:  # type: ignore[name-defined]
 
 async def execute_entity_profile_sync(task) -> None:  # type: ignore[name-defined]
     """Sync entity_canonical → entity_profiles + old_entity_to_new (Phase 1.3)."""
-    from config.context_centric_config import is_context_centric_task_enabled
+    from api.config.context_centric_config import is_context_centric_task_enabled
 
     if not is_context_centric_task_enabled("entity_profile_sync"):
         return
@@ -131,7 +131,7 @@ async def execute_document_collection(task) -> None:  # type: ignore[name-define
 
 
 def _doc_collection_sync() -> int | None:  # type: ignore[no-untyped-def]
-    from collectors.document_collector import discover_documents
+    from api.collectors.document_collector import discover_documents
     result = discover_documents(limit=50)
     return len(result) if isinstance(result, list) else None
 
@@ -149,7 +149,7 @@ async def execute_document_processing(task) -> None:  # type: ignore[name-define
 
 
 def _doc_process_sync() -> int:  # type: ignore[no-untyped-def]
-    from collectors.document_processor import process_pending_documents
+    from api.collectors.document_processor import process_pending_documents
     return process_pending_documents(limit=30)
 
 
@@ -160,7 +160,7 @@ def _doc_process_sync() -> int:  # type: ignore[no-untyped-def]
 async def execute_story_enhancement(task) -> None:  # type: ignore[name-defined]
     """Phase 3 RAG: story state triggers; enrich/build only when facts_only policy allows."""
     from services.enhancement_orchestrator_service import run_enhancement_cycle
-    from shared.pipeline_resource_policy import (
+    api.shared.pipeline_resource_policy import (
         story_enhancement_facts_only,
         story_enhancement_run_limits,
     )
@@ -201,7 +201,7 @@ async def execute_story_enhancement(task) -> None:  # type: ignore[name-defined]
 
 async def execute_entity_dossier_compile(task) -> None:  # type: ignore[name-defined]
     """Compile entity dossiers for entities missing or stale (Phase 2.6)."""
-    from config.context_centric_config import is_context_centric_task_enabled
+    from api.config.context_centric_config import is_context_centric_task_enabled
 
     if not is_context_centric_task_enabled("entity_dossier_compile"):
         return
@@ -266,7 +266,7 @@ async def execute_entity_enrichment(task) -> None:  # type: ignore[name-defined]
 
 async def execute_entity_profile_build(task) -> None:  # type: ignore[name-defined]
     """Build entity profiles from canonical entities + context_data (Phase 2.4)."""
-    from config.context_centric_config import is_context_centric_task_enabled
+    from api.config.context_centric_config import is_context_centric_task_enabled
 
     if not is_context_centric_task_enabled("entity_profile_build"):
         return

@@ -14,7 +14,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 import requests
-from collectors.rss_collector import collect_rss_feeds
+from api.collectors.rss_collector import collect_rss_feeds
 
 # Configure logging
 logging.basicConfig(
@@ -52,7 +52,7 @@ class AutomatedCollection:
         try:
             # Get count of raw articles using standard DB connection
             import psycopg2
-            from shared.database.connection import get_db_connect_kwargs
+            api.shared.database.connection import get_db_connect_kwargs
             
             kwargs = get_db_connect_kwargs()
             conn = psycopg2.connect(**kwargs)

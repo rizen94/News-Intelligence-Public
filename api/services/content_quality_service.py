@@ -116,7 +116,7 @@ class ContentQualityService:
     def _detect_clickbait(self, title: str, content: str) -> float:
         """Return 0-1 clickbait score (higher = more clickbait)."""
         try:
-            from collectors.rss_collector import is_clickbait_title
+            from api.collectors.rss_collector import is_clickbait_title
         except Exception:
 
             def is_clickbait_title(t):
@@ -325,7 +325,7 @@ def update_article_quality_in_db(
     Call after analyze_content_quality(). Returns True on success.
     """
     try:
-        from shared.database import get_db_connection
+        api.shared.database import get_db_connection
 
         conn = get_db_connection()
         if not conn:

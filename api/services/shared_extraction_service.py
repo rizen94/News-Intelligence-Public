@@ -125,7 +125,7 @@ class SharedExtractionService:
     def __init__(self):
         """Initialize extraction service with dependency injection."""
         # LLM service for direct model calls
-        from shared.services.llm_service import LLMService
+        api.shared.services.llm_service import LLMService
         self._llm = LLMService()
         
         # Entity extraction service

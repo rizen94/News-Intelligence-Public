@@ -14,8 +14,8 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from config.runtime import env_bool, env_int, env_str
-from shared.database import get_db_connection
+from api.config.runtime import env_bool, env_int, env_str
+api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ _FETCH_TIMEOUT = 15
 
 
 def rag_evidence_pull_enabled() -> bool:
-    from shared.chemistry_beaker import stimulus_rag_enabled
+    api.shared.chemistry_beaker import stimulus_rag_enabled
 
     return stimulus_rag_enabled()
 
@@ -64,7 +64,7 @@ def source_type_enabled(source_type: str) -> bool:
     if not env_name:
         return False
     try:
-        from config.feature_registry import is_feature_enabled
+        from api.config.feature_registry import is_feature_enabled
 
         key_map = {
             "court_pdf": "stimulus_rag_court_pdf",
@@ -318,7 +318,7 @@ def screen_ai_arxiv_for_evidence_pull(*, limit: int = 20) -> dict[str, Any]:
     """
     if not rag_evidence_pull_enabled():
         return {"enabled": False, "enqueued": 0}
-    from shared.domain_registry import resolve_domain_schema
+    api.shared.domain_registry import resolve_domain_schema
 
     domain_key = "artificial-intelligence"
     schema = resolve_domain_schema(domain_key)
@@ -417,7 +417,7 @@ def screen_hypothesized_bonds_for_evidence_pull(*, limit: int = 25) -> dict[str,
     """
     if not rag_evidence_pull_enabled():
         return {"enabled": False, "enqueued": 0}
-    from shared.domain_registry import resolve_domain_schema
+    api.shared.domain_registry import resolve_domain_schema
 
     domain_key = "artificial-intelligence"
     schema = resolve_domain_schema(domain_key)

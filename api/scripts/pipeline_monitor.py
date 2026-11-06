@@ -62,7 +62,7 @@ def _post(api_url: str, path: str, payload=None) -> dict:
 def _query_sql(sql, params=None):
     """Run a SQL query against the news_intel DB and return list of dicts."""
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
         with get_db_connection_context() as conn:
             cur = conn.cursor()
             cur.execute(sql, params or ())
@@ -75,7 +75,7 @@ def _query_sql(sql, params=None):
 
 def _active_domain_keys():
     try:
-        from shared.domain_registry import get_pipeline_active_domain_keys
+        api.shared.domain_registry import get_pipeline_active_domain_keys
         return get_pipeline_active_domain_keys()
     except Exception:
         return []

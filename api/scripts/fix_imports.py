@@ -13,7 +13,7 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config.import_standards import fix_imports, validate_all_imports
+from api.config.import_standards import fix_imports, validate_all_imports
 
 
 def fix_all_imports(project_root: str = None) -> dict[str, Any]:

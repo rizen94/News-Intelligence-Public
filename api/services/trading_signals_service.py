@@ -30,7 +30,7 @@ def upsert_ticker_mapping(
     confidence: float = 0.8,
 ) -> int | None:
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -76,7 +76,7 @@ def resolve_tickers_for_text(text: str) -> list[dict[str, Any]]:
             )
     # Also pull mapped entity tickers by name substring
     try:
-        from shared.database import get_ui_db_connection_context
+        api.shared.database import get_ui_db_connection_context
         from psycopg2.extras import RealDictCursor
 
         with get_ui_db_connection_context() as conn:
@@ -124,7 +124,7 @@ def score_event_impacts(
             c["causal_edge_id"] = causal_edge_id
     written: list[dict[str, Any]] = []
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -166,7 +166,7 @@ def score_event_impacts(
 
 def create_signal_from_impact(impact_id: int, *, idea_summary: str | None = None) -> int | None:
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
         from psycopg2.extras import RealDictCursor
 
         with get_db_connection_context() as conn:
@@ -229,7 +229,7 @@ def list_signals(
         LIMIT %s
     """
     try:
-        from shared.database import get_ui_db_connection_context
+        api.shared.database import get_ui_db_connection_context
         from psycopg2.extras import RealDictCursor
 
         with get_ui_db_connection_context() as conn:
@@ -251,7 +251,7 @@ def review_signal(
     if decision not in ("approved", "rejected"):
         raise ValueError("decision must be approved|rejected")
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -279,7 +279,7 @@ def generate_signals_from_recent_events(*, days: int = 14, limit: int = 15) -> d
     created_impacts = 0
     created_signals = 0
     try:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
         from psycopg2.extras import RealDictCursor
         from services.causal_edges_service import edges_for_tracked_event
 
@@ -389,7 +389,7 @@ def score_signal_outcome(
     Fetch Stooq move for a signal's ticker and write actual_move_pct / outcome_score.
     outcome_score in [-1, 1]: +1 if direction matched expected, -1 if opposite.
     """
-    from shared.database import get_db_connection_context
+    api.shared.database import get_db_connection_context
     from psycopg2.extras import RealDictCursor
 
     try:
@@ -454,7 +454,7 @@ def score_signal_outcome(
 
 def _score_signal_outcome_metadata(signal_id: int, *, lookback_days: int = 5) -> dict[str, Any]:
     import json
-    from shared.database import get_db_connection_context
+    api.shared.database import get_db_connection_context
     from psycopg2.extras import RealDictCursor
 
     try:
@@ -490,7 +490,7 @@ def _score_signal_outcome_metadata(signal_id: int, *, lookback_days: int = 5) ->
 
 def score_pending_signal_outcomes(*, limit: int = 25, lookback_days: int = 5) -> dict[str, Any]:
     """Batch score approved/pending signals missing outcome writeback."""
-    from shared.database import get_ui_db_connection_context
+    api.shared.database import get_ui_db_connection_context
 
     scored = 0
     errors = 0

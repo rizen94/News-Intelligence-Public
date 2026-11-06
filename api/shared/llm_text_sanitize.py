@@ -796,7 +796,7 @@ def sanitize_reader_note_body(
     if not raw:
         return ""
     try:
-        from shared.vault_note_contract import split_frontmatter_body
+        api.shared.vault_note_contract import split_frontmatter_body
 
         _fm, body = split_frontmatter_body(raw)
         raw = (body or "").strip() or raw

@@ -17,7 +17,7 @@ move work by themselves.
 
 from __future__ import annotations
 
-from config.runtime import env_str
+from api.config.runtime import env_str
 
 # Default MVP ownership when Widow opts in via REMOTE_PHASE_WORKER_ENABLED=true
 _DEFAULT_OWNED = ("unified_intake_extraction",)

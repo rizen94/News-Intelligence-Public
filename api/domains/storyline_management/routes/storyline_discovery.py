@@ -14,7 +14,7 @@ from services.ai_storyline_discovery import (
     StorylineCluster,
     get_discovery_service,
 )
-from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
+api.shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +149,7 @@ async def get_article_similarity(
     """
     try:
         from psycopg2.extras import RealDictCursor
-        from shared.database import get_db_config, get_db_connection
+        api.shared.database import get_db_config, get_db_connection
 
         db_config = get_db_config()
         service = get_discovery_service(db_config)
@@ -238,7 +238,7 @@ async def analyze_cluster(
     try:
         import requests
         from psycopg2.extras import RealDictCursor
-        from shared.database import get_db_config, get_db_connection
+        api.shared.database import get_db_config, get_db_connection
 
         get_db_config()
         schema = resolve_domain_schema(domain)
@@ -281,7 +281,7 @@ JSON:"""
 
         import os as _os
 
-        from shared.services.llm_service import ollama_generate_sync
+        api.shared.services.llm_service import ollama_generate_sync
 
         _ollama = (
             _os.environ.get("OLLAMA_HOST")

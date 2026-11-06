@@ -6,10 +6,10 @@ Bulletproof normalization between inconsistent source returns and orchestrator l
 import logging
 from typing import Any
 
-from shared.data_result import DataResult
+api.shared.data_result import DataResult
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("finance")
 except Exception:

@@ -17,7 +17,7 @@ _GENERATED = _SPECS / "generated"
 if str(_API) not in sys.path:
     sys.path.insert(0, str(_API))
 
-from shared.domain_spec import DomainSpec  # noqa: E402
+api.shared.domain_spec import DomainSpec  # noqa: E402
 
 
 def main() -> None:

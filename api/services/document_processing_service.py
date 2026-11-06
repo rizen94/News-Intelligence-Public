@@ -19,8 +19,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from shared.database import get_db_connection
-from shared.domain_registry import is_valid_domain_key
+api.shared.database import get_db_connection
+api.shared.domain_registry import is_valid_domain_key
 
 from services.document_download_service import fetch_pdf_from_url
 
@@ -304,7 +304,7 @@ def _extract_entities_from_text(text: str, max_chars: int = 3000) -> list[dict[s
     excerpt = text[:max_chars]
 
     try:
-        from shared.services.llm_service import LLMService
+        api.shared.services.llm_service import LLMService
 
         llm = LLMService()
         prompt = ENTITY_EXTRACTION_PROMPT.format(text=excerpt)
@@ -360,7 +360,7 @@ def _extract_key_findings(
         return []
 
     try:
-        from shared.services.llm_service import LLMService
+        api.shared.services.llm_service import LLMService
 
         llm = LLMService()
         prompt = FINDINGS_PROMPT.format(title=title or "Untitled", sections_text=sections_text)

@@ -6,13 +6,13 @@ Uses bge-large-en-v1.5 (1024-dim) when available; optional Ollama fallback.
 import logging
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
-from config.settings import (
+from api.config.settings import (
     CHUNK_OVERLAP_TOKENS,
     CHUNK_SIZE_TOKENS,
     FINANCE_MODELS,
@@ -169,7 +169,7 @@ def embed_with_ollama_fallback(text: str) -> tuple[list[float], str] | None:
         model = FINANCE_MODELS.get("embedding", "BAAI/bge-large-en-v1.5")
         return (vec, model)
     try:
-        from shared.services.llm_service import is_ollama_pressure_error, ollama_embed_sync
+        api.shared.services.llm_service import is_ollama_pressure_error, ollama_embed_sync
 
         emb = ollama_embed_sync(text[:4000], model="nomic-embed-text")
         if emb:

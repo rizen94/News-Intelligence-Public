@@ -22,7 +22,7 @@ import re
 from datetime import date, datetime, timezone
 from typing import Any
 
-from config.runtime import env_bool
+from api.config.runtime import env_bool
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +104,7 @@ def event_core_membership_enabled() -> bool:
     if env_bool("EVENT_CORE_MEMBERSHIP_ENABLED", False):
         return True
     try:
-        from config.feature_registry import is_feature_enabled
+        from api.config.feature_registry import is_feature_enabled
 
         return bool(is_feature_enabled("event_core_membership", default=False))
     except Exception:
@@ -122,7 +122,7 @@ def rare_anchor_lexicon() -> list[str]:
             out.append(key)
     try:
         from services.domain_synthesis_config import get_domain_synthesis_config
-        from shared.domain_registry import get_pipeline_active_domain_keys
+        api.shared.domain_registry import get_pipeline_active_domain_keys
 
         for dk in get_pipeline_active_domain_keys() or []:
             cfg = get_domain_synthesis_config(dk)
@@ -245,7 +245,7 @@ def find_quality_anchors_in_article(
 
 
 def _get_conn():
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     return get_db_connection()
 
@@ -465,7 +465,7 @@ def _ensure_facet_projection_storyline(
     """
     episode_mode = False
     try:
-        from shared.episode_attach_gate import episode_container_assembly_enabled
+        api.shared.episode_attach_gate import episode_container_assembly_enabled
 
         episode_mode = bool(episode_container_assembly_enabled())
     except Exception:
@@ -524,7 +524,7 @@ def _ensure_facet_projection_storyline(
 
     attached = 0
     if not episode_mode:
-        from shared.membership_store import MembershipIntent, admit as membership_admit
+        api.shared.membership_store import MembershipIntent, admit as membership_admit
 
         for aid in article_ids:
             ok, _reason = membership_admit(
@@ -578,7 +578,7 @@ def link_facets_from_article_membership(
     Conservative semantics (OPERATOR_ANSWERS / STORYLINE_CANONICAL_MODEL): one
     dominant facet storyline per TE+domain. Idempotent via UNIQUE + metadata tag.
     """
-    from shared.domain_registry import resolve_domain_schema
+    api.shared.domain_registry import resolve_domain_schema
 
     own_conn = conn is None
     if own_conn:
@@ -966,7 +966,7 @@ def run_rare_anchor_founding_scan(
     """
     if not event_core_membership_enabled():
         return {"skipped": True, "reason": "flag_off"}
-    from shared.domain_registry import resolve_domain_schema
+    api.shared.domain_registry import resolve_domain_schema
 
     schema = resolve_domain_schema(domain_key)
     lexicon = rare_anchor_lexicon()

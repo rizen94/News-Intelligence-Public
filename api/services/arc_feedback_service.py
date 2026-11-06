@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from shared.database import get_db_connection_context, get_ui_db_connection_context
+api.shared.database import get_db_connection_context, get_ui_db_connection_context
 
 logger = logging.getLogger(__name__)
 

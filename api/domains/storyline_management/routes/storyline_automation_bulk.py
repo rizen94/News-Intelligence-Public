@@ -9,9 +9,9 @@ from typing import Any, Optional
 from fastapi import Body, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
-from shared.database import get_db_connection
-from shared.domain_registry import DOMAIN_PATH_PATTERN, get_pipeline_schema_names_active, resolve_domain_schema
-from shared.services.domain_aware_service import validate_domain
+api.shared.database import get_db_connection
+api.shared.domain_registry import DOMAIN_PATH_PATTERN, get_pipeline_schema_names_active, resolve_domain_schema
+api.shared.services.domain_aware_service import validate_domain
 from services.storyline_automation_service import StorylineAutomationService
 
 logger = logging.getLogger(__name__)

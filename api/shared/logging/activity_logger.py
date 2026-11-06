@@ -34,7 +34,7 @@ def _ensure_init() -> None:
         if _INITIALIZED:
             return
         try:
-            from config.paths import LOG_DIR
+            from api.config.paths import LOG_DIR
 
             _LOG_DIR = Path(LOG_DIR)
         except Exception:

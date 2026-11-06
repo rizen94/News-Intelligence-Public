@@ -13,7 +13,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from shared.database import get_db_connection_context, get_ui_db_connection_context
+api.shared.database import get_db_connection_context, get_ui_db_connection_context
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +170,7 @@ def resolve_package_storyline_targets(package: dict[str, Any]) -> list[tuple[str
         domain_keys = [seeded[0]]
 
     if article_ids and domain_keys:
-        from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
+        api.shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 
         try:
             active = set(get_pipeline_active_domain_keys())
@@ -277,7 +277,7 @@ def project_package_to_editorial(
         patch_tracked_event_narrative,
     )
     from services.editorial_package_service import get_package
-    from shared.domain_registry import resolve_domain_schema
+    api.shared.domain_registry import resolve_domain_schema
 
     pkg = get_package(int(package_id), include=True)
     if not pkg:
@@ -494,7 +494,7 @@ def project_package_to_editorial(
 
 def backfill_published_packages(*, limit: int = 50, only_missing: bool = True) -> dict[str, Any]:
     """Project already-published packages (ops / catch-up)."""
-    from shared.domain_registry import resolve_domain_schema
+    api.shared.domain_registry import resolve_domain_schema
 
     with get_ui_db_connection_context() as conn:
         with conn.cursor() as cur:

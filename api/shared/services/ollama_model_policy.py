@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from config.settings import (
+from api.config.settings import (
     OLLAMA_BATCH_PROMPT_CHARS_FOR_SECONDARY,
     OLLAMA_USE_PHI_FOR_FAST_SIMPLE,
     OLLAMA_USE_QWEN_FOR_EXTRACTION,
@@ -30,8 +30,8 @@ from config.settings import (
 )
 
 # Import after settings to avoid cycles at collection time
-from shared.services.llm_service import ModelType, TaskType
-from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
+api.shared.services.llm_service import ModelType, TaskType
+from api.config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 
 class InvocationKind(str, Enum):

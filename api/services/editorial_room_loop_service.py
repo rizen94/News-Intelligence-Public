@@ -9,8 +9,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from shared.assembly_phase_order import editorial_room_loop_enabled
-from shared.recovery.editorial_phase_recoverer import (
+api.shared.assembly_phase_order import editorial_room_loop_enabled
+api.shared.recovery.editorial_phase_recoverer import (
     legacy_editorial_writers_enabled,
     load_editorial_room_loop_service,
 )

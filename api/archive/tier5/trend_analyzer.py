@@ -582,7 +582,7 @@ Guidelines:
 - Consider recent patterns and volatility
 """
             
-            from shared.services.llm_service import ollama_generate_sync
+            api.shared.services.llm_service import ollama_generate_sync
 
             result = ollama_generate_sync(
                 prompt,
@@ -623,7 +623,7 @@ Guidelines:
             ]
             
         except Exception as e:
-            from shared.services.llm_service import is_ollama_pressure_error
+            api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise

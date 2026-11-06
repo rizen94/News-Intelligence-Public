@@ -28,10 +28,10 @@ def storyline_article_count_subquery(
     """SQL scalar subquery: COUNT(*) for one storyline row."""
     if domain_key:
         try:
-            from shared.episode_attach_gate import episode_container_assembly_enabled
+            api.shared.episode_attach_gate import episode_container_assembly_enabled
 
             if episode_container_assembly_enabled():
-                from shared.episode_membership import episode_article_count_subquery
+                api.shared.episode_membership import episode_article_count_subquery
 
                 return episode_article_count_subquery(schema, storyline_alias, domain_key)
         except Exception:
@@ -51,10 +51,10 @@ def storyline_last_article_at_subquery(
     """SQL scalar subquery: latest article timestamp for one storyline row."""
     if domain_key:
         try:
-            from shared.episode_attach_gate import episode_container_assembly_enabled
+            api.shared.episode_attach_gate import episode_container_assembly_enabled
 
             if episode_container_assembly_enabled():
-                from shared.episode_membership import episode_last_article_at_subquery
+                api.shared.episode_membership import episode_last_article_at_subquery
 
                 return episode_last_article_at_subquery(schema, storyline_alias, domain_key)
         except Exception:

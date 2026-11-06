@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any
 
 import feedparser
-from config.database import get_db
+from api.config.database import get_db
 from sqlalchemy import text
 
 from services.pipeline_deduplication_service import PipelineDeduplicationService

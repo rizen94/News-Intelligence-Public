@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from psycopg2.extras import RealDictCursor
-from shared.database import get_db_connection
+api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -524,7 +524,7 @@ def get_distributed_cache_service() -> DistributedCacheService:
     """Get global distributed cache service instance"""
     global _distributed_cache_service
     if _distributed_cache_service is None:
-        from config.database import get_db_config
+        from api.config.database import get_db_config
 
         _distributed_cache_service = DistributedCacheService(get_db_config())
     return _distributed_cache_service

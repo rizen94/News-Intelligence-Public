@@ -155,7 +155,7 @@ def _query_phase_stats(
     sd = 0.0
     conn = None
     try:
-        from shared.database import get_ui_db_connection
+        api.shared.database import get_ui_db_connection
 
         conn = get_ui_db_connection()
         cur = conn.cursor()
@@ -212,7 +212,7 @@ def get_pipeline_throughput(latency_window_hours: int | None = None) -> dict[str
 
     phase_names: list[str] = []
     try:
-        from shared.database import get_ui_db_connection
+        api.shared.database import get_ui_db_connection
 
         conn = get_ui_db_connection()
         cur = conn.cursor()
@@ -233,7 +233,7 @@ def get_pipeline_throughput(latency_window_hours: int | None = None) -> dict[str
         # Recent processed (last 6 h) — reuse conn if available; otherwise query
         proc = 0
         try:
-            from shared.database import get_ui_db_connection
+            api.shared.database import get_ui_db_connection
 
             c = get_ui_db_connection()
             cur2 = c.cursor()

@@ -19,8 +19,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from shared.database import get_db_connection
-from shared.domain_registry import resolve_domain_schema
+api.shared.database import get_db_connection
+api.shared.domain_registry import resolve_domain_schema
 
 from services.domain_synthesis_config import get_domain_synthesis_config
 

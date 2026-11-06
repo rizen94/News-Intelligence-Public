@@ -10,7 +10,7 @@ import json
 import logging
 from typing import Any
 
-from shared.database import get_ui_db_connection_context
+api.shared.database import get_ui_db_connection_context
 
 logger = logging.getLogger(__name__)
 
@@ -294,7 +294,7 @@ def request_rework(
     if src not in ("editor", "reduction", "research", "narrative", "system"):
         raise ValueError("source_modal must be editor|reduction|research|narrative|system")
     from services.editorial_package_service import _append_decision, update_package
-    from shared.database import get_ui_db_connection_context
+    api.shared.database import get_ui_db_connection_context
 
     # Drop off Editor Alerts until Reduction/ready sends the package back.
     dismissed = dismiss_open_editor_handoffs(

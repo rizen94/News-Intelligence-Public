@@ -14,7 +14,7 @@ from services.storyline_consolidation_service import (
     derive_mega_storyline_title,
     get_consolidation_service,
 )
-from shared.domain_registry import get_pipeline_active_domain_keys
+api.shared.domain_registry import get_pipeline_active_domain_keys
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

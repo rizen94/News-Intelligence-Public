@@ -13,12 +13,12 @@ from typing import Any, Optional
 
 import httpx
 
-from config.settings import MODELS, OLLAMA_HOST, OLLAMA_TIMEOUT
+from api.config.settings import MODELS, OLLAMA_HOST, OLLAMA_TIMEOUT
 
-from shared.services.llm_service import LLMService, ModelType, llm_service, resolve_model_tag
-from shared.services.optional_llm_redis_cache import cache_get, cache_set
-from shared.services.ollama_model_policy import InvocationKind, resolve_model_for_invocation
-from config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
+api.shared.services.llm_service import LLMService, ModelType, llm_service, resolve_model_tag
+api.shared.services.optional_llm_redis_cache import cache_get, cache_set
+api.shared.services.ollama_model_policy import InvocationKind, resolve_model_for_invocation
+from api.config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ class OllamaModelCaller:
         """Default lane policy by invocation purpose."""
         import os
 
-        from shared.services.llm_service import _llm_execution_lane
+        api.shared.services.llm_service import _llm_execution_lane
 
         ctx_lane = _llm_execution_lane.get()
         if ctx_lane in ("cpu", "gpu"):

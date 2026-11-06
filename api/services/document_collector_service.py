@@ -180,10 +180,10 @@ def collect_documents(domain: str | None = None, max_per_source: int = 10) -> in
     domain: if set, only run sources that match this domain (politics|finance|artificial-intelligence).
     Returns count of new documents inserted.
     """
-    from shared.database import get_db_connection
+    api.shared.database import get_db_connection
 
     try:
-        from config.orchestrator_governance import get_orchestrator_governance_config
+        from api.config.orchestrator_governance import get_orchestrator_governance_config
 
         config = get_orchestrator_governance_config()
     except Exception:

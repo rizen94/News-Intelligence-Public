@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import sys
 
-from shared.database import get_db_connection_context
-from shared.domain_registry import get_active_domain_keys, resolve_domain_schema
+api.shared.database import get_db_connection_context
+api.shared.domain_registry import get_active_domain_keys, resolve_domain_schema
 
 
 def main() -> int:

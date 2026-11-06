@@ -12,13 +12,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 try:
-    from config.logging_config import get_component_logger
+    from api.config.logging_config import get_component_logger
 
     logger = get_component_logger("orchestrator")
 except Exception:
     logger = logging.getLogger(__name__)
 
-from shared.services.pipeline_trace_writer import log_pipeline_trace
+api.shared.services.pipeline_trace_writer import log_pipeline_trace
 
 from .collection_governor import SOURCE_RSS, CollectionGovernor, get_collection_source_ids
 from .learning_governor import LearningGovernor
@@ -56,7 +56,7 @@ class OrchestratorCoordinator:
     ):
         if config is None:
             try:
-                from config.orchestrator_governance import get_orchestrator_governance_config
+                from api.config.orchestrator_governance import get_orchestrator_governance_config
 
                 config = get_orchestrator_governance_config()
             except Exception as e:
@@ -483,7 +483,7 @@ class OrchestratorCoordinator:
                 pass
 
     def _collection_handler_and_topic(self, source_id: str) -> tuple[str | None, str | None]:
-        """Return (handler, topic) for source from config. handler e.g. 'rss' or 'finance'."""
+        """Return (handler, topic) for source from api.config. handler e.g. 'rss' or 'finance'."""
         collection = (self._config or {}).get("collection") or {}
         sources = collection.get("sources") or []
         for s in sources:

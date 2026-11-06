@@ -17,7 +17,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import psycopg2
-from shared.database.connection import get_db_connect_kwargs
+api.shared.database.connection import get_db_connect_kwargs
 
 # Add the project root to the Python path
 project_root = Path(__file__).parent.parent

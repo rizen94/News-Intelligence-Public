@@ -73,7 +73,7 @@ def main() -> None:
     )
 
     with __import__("contextlib").nullcontext() as conn:
-        from shared.database import get_db_connection_context
+        api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             if args.gdelt_only:

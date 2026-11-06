@@ -10,7 +10,7 @@ Features:
 """
 
 import json
-from shared.domain_registry import resolve_domain_schema
+api.shared.domain_registry import resolve_domain_schema
 import logging
 import os
 import re
@@ -110,7 +110,7 @@ class IntelligenceAnalysisService:
 
     def __init__(self, db_config: dict[str, Any] = None):
         if db_config is None:
-            from shared.database import get_db_config
+            api.shared.database import get_db_config
 
             db_config = get_db_config()
         self.db_config = db_config
@@ -119,7 +119,7 @@ class IntelligenceAnalysisService:
 
     def get_db_connection(self):
         """Get database connection from shared pool."""
-        from shared.database import get_db_connection as _get_conn
+        api.shared.database import get_db_connection as _get_conn
 
         return _get_conn()
 
@@ -129,7 +129,7 @@ class IntelligenceAnalysisService:
 
     def generate_embedding(self, text: str) -> list[float] | None:
         """Generate embedding using Ollama via CB hub. Re-raises CB/overload (no invent)."""
-        from shared.services.llm_service import is_ollama_pressure_error, ollama_embed_sync
+        api.shared.services.llm_service import is_ollama_pressure_error, ollama_embed_sync
 
         try:
             vec = ollama_embed_sync(text[:8000], model=EMBEDDING_MODEL)
@@ -288,7 +288,7 @@ class IntelligenceAnalysisService:
 {context}
 
 Summary:"""
-            from shared.services.llm_service import ollama_generate_sync
+            api.shared.services.llm_service import ollama_generate_sync
 
             text = ollama_generate_sync(
                 prompt,
@@ -313,7 +313,7 @@ Summary:"""
 
 Historical context (2-3 sentences):"""
 
-            from shared.services.llm_service import ollama_generate_sync
+            api.shared.services.llm_service import ollama_generate_sync
 
             text = ollama_generate_sync(
                 prompt,
@@ -910,7 +910,7 @@ Article Count: {storyline.get("article_count", 0)}
 
 List potential consequences (one per line):"""
 
-            from shared.services.llm_service import ollama_generate_sync
+            api.shared.services.llm_service import ollama_generate_sync
 
             text = ollama_generate_sync(
                 prompt,

@@ -24,12 +24,12 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from config.settings import (
+from api.config.settings import (
     news_intel_allow_anonymous_guest,
     news_intel_auth_cookie_name,
     news_intel_public_web_auth_enabled,
 )
-from shared.services.public_web_auth_service import decode_session_token
+api.shared.services.public_web_auth_service import decode_session_token
 
 logger = logging.getLogger(__name__)
 

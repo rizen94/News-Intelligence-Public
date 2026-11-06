@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 from typing import Any
 
-from config.database import get_db
+from api.config.database import get_db
 from scripts.article_deduplication import ArticleDeduplicationSystem
 from sqlalchemy import text
 
@@ -306,7 +306,7 @@ class PipelineDeduplicationService:
             return  # skip cross-silo summary writes; only concrete silos are persisted
 
         try:
-            from shared.database import get_db_connection
+            api.shared.database import get_db_connection
 
             conn = get_db_connection()
             if not conn:
