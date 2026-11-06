@@ -20,26 +20,26 @@ from services.article_entity_extraction_service import ArticleEntityExtractionSe
 from services.claim_extraction_service import insert_parsed_claims_for_context
 from services.context_processor_service import ensure_context_for_article, link_context_to_article_entities
 from services.event_extraction_service import EventExtractionService, VALID_EVENT_TYPES
-api.shared.fast_ner_lane import (
+from api.shared.fast_ner_lane import (
     extract_fast_entities,
     format_ner_hints_for_prompt,
     merge_entity_dicts,
 )
-api.shared.database import get_db_connection
-api.shared.intake_fusion_schema import (
+from api.shared.database import get_db_connection
+from api.shared.intake_fusion_schema import (
     fusion_prompt_schema_block,
     normalize_sentiment_label,
     normalize_topic_tags,
 )
-api.shared.pipeline_pass_marker import (
+from api.shared.pipeline_pass_marker import (
     infer_entity_extraction_terminal,
     infer_event_extraction_terminal,
     record_article_phase_pass,
 )
-api.shared.services.ollama_model_caller import get_ollama_model_caller
-api.shared.services.ollama_model_policy import InvocationKind
+from api.shared.services.ollama_model_caller import get_ollama_model_caller
+from api.shared.services.ollama_model_policy import InvocationKind
 from api.modules.ml.entity_extractor import _repair_json_object_text
-api.shared.spine_phase_order import intake_fusion_enabled
+from api.shared.spine_phase_order import intake_fusion_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +107,7 @@ class UnifiedIntakeExtractionService:
             if len(combined.strip()) < 400 and ner_count < 2:
                 schema = art.get("schema") or art.get("schema_name") or ""
                 if schema:
-                    api.shared.pipeline_pass_marker import (
+                    from api.shared.pipeline_pass_marker import (
                         TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
                         record_article_phase_pass,
                     )
@@ -142,7 +142,7 @@ class UnifiedIntakeExtractionService:
         raw = ""
         extraction_model = None
         try:
-            api.shared.bulk_catchup_llm_routing import is_retryable_bulk_llm_error
+            from api.shared.bulk_catchup_llm_routing import is_retryable_bulk_llm_error
 
             max_attempts = max(1, min(5, int(env_str("UIE_LLM_TRANSIENT_RETRIES", "3") or "3")))
             last_err: Exception | None = None
@@ -580,8 +580,8 @@ Return ONLY valid JSON — no markdown fences, no text before or after the JSON 
 
 def _store_topic_tags(cur, schema: str, article_id: int, topic_tags: list[dict[str, Any]]) -> None:
     """Seed article_keywords from fusion topic_tags for fast topic match."""
-    api.shared.database import get_db_connection
-    api.shared.pg_savepoint import execute_with_savepoint
+    from api.shared.database import get_db_connection
+    from api.shared.pg_savepoint import execute_with_savepoint
 
     conn = getattr(cur, "connection", None) or get_db_connection()
     sp_seq = 0
