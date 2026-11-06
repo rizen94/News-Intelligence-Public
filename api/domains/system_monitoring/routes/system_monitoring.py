@@ -2829,14 +2829,16 @@ def execute_pipeline_orchestration():
             from api.collectors.rss_collector import collect_rss_feeds
 
             rss_activity = collect_rss_feeds()
+            # collect_rss_feeds now returns a dict — extract activity count for tracing/logging
+            rss_count = rss_activity.get("activity", 0) if isinstance(rss_activity, dict) else rss_activity
             _log_pipeline_trace(
                 trace_id,
                 "rss_collection",
                 "completed",
-                {"rss_activity": rss_activity, "articles_added": rss_activity},
+                {"rss_activity": rss_count, "articles_added": rss_count},
             )
             logger.info(
-                f"[{trace_id}] RSS Collection completed: {rss_activity} articles touched (new + updated)"
+                f"[{trace_id}] RSS Collection completed: {rss_count} articles touched (new + updated)"
             )
         except Exception as e:
             _log_pipeline_trace(trace_id, "rss_collection", "error", {"error": str(e)})

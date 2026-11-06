@@ -23,7 +23,9 @@ async def main():
     print("1. RSS Feed Collection")
     print("=" * 60)
     rss_activity = collect_rss_feeds()
-    print(f"   RSS activity (new + updated): {rss_activity}\n")
+    # collect_rss_feeds now returns a dict — extract activity count for display
+    rss_count = rss_activity.get("activity", 0) if isinstance(rss_activity, dict) else rss_activity
+    print(f"   RSS activity (new + updated): {rss_count}\n")
 
     print("=" * 60)
     print("2. Queue unprocessed articles & process (entity + topic extraction)")

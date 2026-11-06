@@ -36,8 +36,10 @@ class AutomatedCollection:
         try:
             # Use the existing collect_rss_feeds function
             articles_collected = collect_rss_feeds()
+            # collect_rss_feeds now returns a dict — extract activity count for logging
+            collected_count = articles_collected.get("activity", 0) if isinstance(articles_collected, dict) else articles_collected
             logger.info(
-                "RSS collection completed. Activity (new + updated): %s", articles_collected
+                "RSS collection completed. Activity (new + updated): %s", collected_count
             )
             return articles_collected
 
@@ -95,7 +97,9 @@ class AutomatedCollection:
         logger.info("=" * 50)
 
         # Step 1: Collect RSS feeds
-        articles_collected = self.collect_rss_feeds()
+        collected = self.collect_rss_feeds()
+        # collect_rss_feeds now returns a dict — extract activity count for checks
+        articles_collected = collected.get("activity", 0) if isinstance(collected, dict) else collected
 
         # Step 2: Trigger ML processing if articles were collected
         if articles_collected > 0:

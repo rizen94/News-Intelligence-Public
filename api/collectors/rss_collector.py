@@ -1607,14 +1607,16 @@ def is_excluded_content(
     return False
 
 
-def collect_rss_feeds() -> int:
+def collect_rss_feeds() -> dict:
     """
     Collect articles from all active RSS feeds with deduplication.
 
     Returns:
-        Count of **new inserts plus same-URL updates** in this run. Used by automation/orchestrator
-        so refresh-only cycles still count as productive (no false empty-fetch backoff). For inserts
-        only, see logs ("Articles added" vs "Articles updated").
+        Dict with activity counts and error summaries:
+            activity (int): new inserts + same-URL updates in this run
+            articles_added, articles_updated, duplicates_rejected, excluded
+            filtered_clickbait, filtered_ads, filtered_quality, filtered_impact
+            errors (list[str]): per-feed error messages for visibility into failures
     """
     logger.info("Starting RSS feed collection with deduplication (v5.0 domain-aware)...")
 
@@ -1923,8 +1925,6 @@ def collect_rss_feeds() -> int:
                         (feed_id,),
                     )
 
-                    feed_conn.commit()
-
                     # ============================================================
                     # Batch insert new candidates (bulk upsert by URL)
                     # ============================================================
@@ -1938,7 +1938,7 @@ def collect_rss_feeds() -> int:
                             urls = [c[0] for c in new_candidates]
 
                             # Check which URLs already exist
-                            cur.execute(
+                            feed_cur.execute(
                                 f"SELECT url FROM {schema_name}.articles WHERE url = ANY(%s)",
                                 (urls,),
                             )
@@ -1991,7 +1991,10 @@ def collect_rss_feeds() -> int:
                                      event_date, ingestion_date)
                                     VALUES {placeholders_sql}
                                 """
-                                cur.execute(insert_sql, all_values)
+                                feed_cur.execute(insert_sql, all_values)
+
+                                # Commit both the RSS feed metadata UPDATE and article INSERT atomically
+                                feed_conn.commit()
 
                                 articles_added = len(insert_candidates)
                             else:
@@ -2000,6 +2003,20 @@ def collect_rss_feeds() -> int:
                         except Exception as e:
                             logger.error(f"Batch insert error for feed {feed_name}: {e}")
                             feed_conn.rollback()
+                            # Return error to prevent fallthrough to success path (the rollback
+                            # above clears the rss_feeds UPDATE too, so we let the outer handler
+                            # re-set status='error' on its own commit)
+                            return {
+                                "articles_added": 0,
+                                "articles_updated": 0,
+                                "duplicates": 0,
+                                "excluded": excluded_count,
+                                "filtered_clickbait": filtered_clickbait,
+                                "filtered_ads": filtered_ads,
+                                "filtered_quality": filtered_quality,
+                                "filtered_impact": filtered_impact,
+                                "error": str(e),
+                            }
                     else:
                         articles_added = 0
                         articles_updated = 0
@@ -2129,7 +2146,8 @@ def collect_rss_feeds() -> int:
         for feed in feeds:
             results.append(process_single_feed(feed))
 
-        # Aggregate results from parallel processing
+        # Aggregate results from sequential processing + collect errors
+        errors_seen: list[str] = []
         for result in results:
             total_articles_added += result.get("articles_added", 0)
             total_articles_updated += result.get("articles_updated", 0)
@@ -2139,6 +2157,8 @@ def collect_rss_feeds() -> int:
             total_filtered_ads += result.get("filtered_ads", 0)
             total_filtered_quality += result.get("filtered_quality", 0)
             total_filtered_impact += result.get("filtered_impact", 0)
+            if result.get("error"):
+                errors_seen.append(result["error"])
 
         # Note: No need to commit here - each feed connection commits its own transaction
 
@@ -2171,7 +2191,18 @@ def collect_rss_feeds() -> int:
                 logger.info(f"     - Content exclusion (sports/entertainment): {content_excluded}")
 
         activity = total_articles_added + total_articles_updated
-        return activity
+        return {
+            "activity": activity,
+            "articles_added": total_articles_added,
+            "articles_updated": total_articles_updated,
+            "duplicates_rejected": total_duplicates_rejected,
+            "excluded": total_excluded,
+            "filtered_clickbait": total_filtered_clickbait,
+            "filtered_ads": total_filtered_ads,
+            "filtered_quality": total_filtered_quality,
+            "filtered_impact": total_filtered_impact,
+            "errors": errors_seen,
+        }
 
     except Exception as e:
         logger.error(f"Error during RSS collection: {e}")
@@ -2180,7 +2211,7 @@ def collect_rss_feeds() -> int:
                 conn.rollback()
             except Exception:
                 pass
-        return 0
+        return {"activity": 0, "articles_added": 0, "errors": [str(e)], "errors_seen": []}
     finally:
         if conn:
             conn.close()
@@ -2429,4 +2460,6 @@ if __name__ == "__main__":
     # Test RSS collection
     print("Testing RSS collection...")
     result = collect_rss_feeds()
-    print(f"Collection completed. RSS activity (new + updated): {result}")
+    # collect_rss_feeds now returns a dict — extract activity count for display
+    count = result.get("activity", 0) if isinstance(result, dict) else result
+    print(f"Collection completed. RSS activity (new + updated): {count}")

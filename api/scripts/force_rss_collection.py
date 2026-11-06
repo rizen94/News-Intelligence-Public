@@ -97,7 +97,9 @@ def main() -> None:
     from api.collectors.rss_collector import collect_rss_feeds
 
     n = collect_rss_feeds()
-    _p(f"Done. RSS activity this run (new inserts + same-URL updates): {n}")
+    # collect_rss_feeds now returns a dict — extract activity count for display
+    activity = n.get("activity", 0) if isinstance(n, dict) else int(n) if not isinstance(n, str) else 0
+    _p(f"Done. RSS activity this run (new inserts + same-URL updates): {activity}")
 
     conn = get_db_connection()
     if not conn:

@@ -221,8 +221,10 @@ async def orchestrator_manual_override(
                     from api.collectors.rss_collector import collect_rss_feeds
 
                     count = collect_rss_feeds()
+                    # collect_rss_feeds now returns a dict — extract activity count
+                    count_activity = count.get("activity", 0) if isinstance(count, dict) else count
                     orchestrator_state.append_decision_log(
-                        "manual_override", outcome=f"force_rss_{count}"
+                        "manual_override", outcome=f"force_rss_{count_activity}"
                     )
                     try:
                         from services.activity_feed_service import get_activity_feed

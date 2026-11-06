@@ -4399,12 +4399,29 @@ class AutomationManager:
 
         try:
             loop = asyncio.get_event_loop()
-            activity = await loop.run_in_executor(None, collect_rss_feeds)
-            if activity > 0:
-                logger.info(
-                    "RSS processing: %s articles touched (new inserts + same-URL updates)",
-                    activity,
+            result = await loop.run_in_executor(None, collect_rss_feeds)
+
+            # Backward compat: old callers may pass a plain int (no longer the case, but safe)
+            if isinstance(result, dict):
+                activity = result.get("activity", 0)
+                errors = result.get("errors", [])
+            else:
+                activity = result
+                errors = []
+
+            if errors:
+                logger.warning(
+                    "RSS processing completed with %d error(s): %s",
+                    len(errors),
+                    "; ".join(str(e)[:80] for e in errors[:5]),
                 )
+
+            if activity > 0 or errors:
+                signal = (
+                    f"{activity} articles touched"
+                    + (" (with errors)" if errors else "")
+                )
+                logger.info("RSS processing: %s", signal)
         except Exception as e:
             logger.warning(f"RSS processing failed: {e}")
 

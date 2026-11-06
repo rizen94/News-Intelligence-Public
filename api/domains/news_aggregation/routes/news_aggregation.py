@@ -368,12 +368,14 @@ async def collect_rss_feeds_now(domain: str = Path(..., pattern=DOMAIN_PATH_PATT
 
         # Run collection synchronously (collects from all domains)
         rss_activity = collect_rss_feeds()
+        # collect_rss_feeds now returns a dict — extract activity count for API response
+        rss_count = rss_activity.get("activity", 0) if isinstance(rss_activity, dict) else rss_activity
 
         return {
             "success": True,
             "message": "RSS feed collection completed (new inserts + same-URL updates)",
-            "articles_added": rss_activity,
-            "rss_activity_total": rss_activity,
+            "articles_added": rss_count,
+            "rss_activity_total": rss_count,
             "domain": domain,
             "timestamp": datetime.now().isoformat(),
         }

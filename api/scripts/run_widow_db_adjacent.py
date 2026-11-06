@@ -44,8 +44,10 @@ def _run_rss() -> int:
     )
 
     n = collect_rss_feeds()
-    logging.info("RSS: %s articles added", n)
-    return int(n)
+    # Result is now a dict with 'activity', 'errors', etc. — extract count for logging
+    activity = n.get("activity", 0) if isinstance(n, dict) else int(n) if not isinstance(n, str) else 0
+    logging.info("RSS: %s articles touched (new+updated)", activity)
+    return activity
 
 
 def _run_context_sync() -> None:
