@@ -15,8 +15,8 @@ from dataclasses import dataclass
 from typing import Any, NamedTuple
 
 from api.config.runtime import env_str
-api.shared.database import get_db_connection
-api.shared.services.llm_service import LLMService, ModelType
+from api.shared.database import get_db_connection
+from api.shared.services.llm_service import LLMService, ModelType
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ def entity_profile_build_priority_first_pass() -> bool:
 def entity_profile_build_batch_limit() -> int:
     default = max(1, min(150, _env_int("ENTITY_PROFILE_BUILD_LIMIT", 25)))
     try:
-        api.shared.adaptive_batch_policy import resolve_adaptive_batch
+        from api.shared.adaptive_batch_policy import resolve_adaptive_batch
 
         tuned, _meta = resolve_adaptive_batch("entity_profile_build", default)
         return tuned
@@ -643,13 +643,13 @@ async def build_profile_sections(entity_profile_id: int) -> ProfileBuildResult:
 
 def sql_entity_profile_upstream_cleared_exists() -> str:
     """SQL EXISTS fragment: profile has a mention tied to upstream-cleared article + context."""
-    api.shared.pipeline_domain_sql import pipeline_url_schema_pairs_for_phase
-    api.shared.pipeline_pass_marker import sql_article_pass_cleared, sql_context_pass_cleared
+    from api.shared.pipeline_domain_sql import pipeline_url_schema_pairs_for_phase
+    from api.shared.pipeline_pass_marker import sql_article_pass_cleared, sql_context_pass_cleared
 
     ctx_cleared = sql_context_pass_cleared("claim_extraction", "c")
     branches: list[str] = []
     try:
-        api.shared.pipeline_resource_policy import intake_extraction_suppressed
+        from api.shared.pipeline_resource_policy import intake_extraction_suppressed
 
         entity_phase = (
             "unified_intake_extraction"
@@ -715,8 +715,8 @@ def _set_profile_build_statement_timeout(cur) -> None:
 
 def get_entity_profile_ids_to_build(limit: int = 20) -> list[int]:
     """Return buildable profile IDs: pipeline-active domains with context mentions."""
-    api.shared.entity_profile_eligibility import sql_entity_profile_selectable_for_build
-    api.shared.pipeline_domain_sql import pipeline_domain_any_sql
+    from api.shared.entity_profile_eligibility import sql_entity_profile_selectable_for_build
+    from api.shared.pipeline_domain_sql import pipeline_domain_any_sql
 
     conn = get_db_connection()
     if not conn:
@@ -903,7 +903,7 @@ async def _process_batched_profile_chunk(
         err = str(e).lower()
         # Detect pressure errors via canonical helper, plus proxy preemption / 503.
         try:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
         except ImportError:
             is_ollama_pressure_error = lambda exc: False  # type: ignore[misc,assignment]
         if is_ollama_pressure_error(e) or "preempt" in err or "503" in err:
@@ -1070,7 +1070,7 @@ async def run_profile_builder_batch_batched(
 def _entity_profile_build_budget_seconds(budget_seconds: int | None) -> int:
     if budget_seconds is not None:
         return max(0, int(budget_seconds))
-    api.shared.pipeline_batch_drain import phase_run_budget_seconds
+    from api.shared.pipeline_batch_drain import phase_run_budget_seconds
 
     # Align with PhasePolicy.run_budget_seconds (900) when env/governance unset.
     sec = phase_run_budget_seconds("entity_profile_build", default=900)
@@ -1093,7 +1093,7 @@ async def drain_entity_profile_build(
     Drain entity profile builds until idle, budget expires, or stall detected.
     Shared by assembly conductor and automation_manager.
     """
-    api.shared.pipeline_batch_drain import DrainStallTracker, RunBudget
+    from api.shared.pipeline_batch_drain import DrainStallTracker, RunBudget
 
     budget_sec = _entity_profile_build_budget_seconds(budget_seconds)
     budget = RunBudget(budget_sec)

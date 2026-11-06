@@ -6,7 +6,7 @@ import math
 
 import pytest
 
-api.shared.membership_scoring import (
+from api.shared.membership_scoring import (
     MembershipScore,
     combine_membership_parts,
     score_article_against_signals,

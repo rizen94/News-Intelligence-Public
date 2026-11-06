@@ -7,8 +7,8 @@ RAG analysis, proactive detection, and advanced analysis features
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
-api.shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
-api.shared.services.domain_aware_service import validate_domain
+from api.shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
+from api.shared.services.domain_aware_service import validate_domain
 
 from ..schemas.storyline_schemas import EmergingStoryline, EmergingStorylinesResponse
 from ..services.proactive_detection_service import ProactiveDetectionService
@@ -139,7 +139,7 @@ async def analyze_domain_storyline(
             JOB_COMPREHENSIVE_RAG,
             enqueue_content_refinement,
         )
-        api.shared.database import get_db_connection
+        from api.shared.database import get_db_connection
 
         schema = resolve_domain_schema(domain)
 
@@ -210,7 +210,7 @@ async def perform_domain_rag_analysis(
             JOB_COMPREHENSIVE_RAG,
             enqueue_content_refinement,
         )
-        api.shared.database import get_db_connection
+        from api.shared.database import get_db_connection
 
         schema = resolve_domain_schema(domain)
         conn = get_db_connection()

@@ -36,7 +36,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from api.config.runtime import env_int
-api.shared.services.llm_service import LLMService, ModelType
+from api.shared.services.llm_service import LLMService, ModelType
 
 logger = logging.getLogger(__name__)
 
@@ -480,7 +480,7 @@ class StoryContinuationService:
             try:
                 raw = await self.llm._call_ollama(ModelType.LLAMA_8B, prompt)
             finally:
-                api.shared.database import get_db_connection
+                from api.shared.database import get_db_connection
 
                 self.conn = get_db_connection()
                 if self.conn and self.schema:
@@ -521,7 +521,7 @@ class StoryContinuationService:
             domain_key = getattr(self, "domain_key", None) or ""
             if not domain_key:
                 try:
-                    api.shared.domain_registry import schema_to_primary_domain_key
+                    from api.shared.domain_registry import schema_to_primary_domain_key
 
                     domain_key = schema_to_primary_domain_key(schema)
                 except Exception:
@@ -530,7 +530,7 @@ class StoryContinuationService:
             # Prefer episode attach gate + EEL when assembly is on.
             gated = False
             try:
-                api.shared.episode_attach_gate import (
+                from api.shared.episode_attach_gate import (
                     allow_event_episode_attach,
                     episode_container_assembly_enabled,
                     insert_event_episode_link,
@@ -630,8 +630,8 @@ class StoryContinuationService:
             # Derived bag dual-write (same path as attach_article_events_to_episode).
             if article_id:
                 try:
-                    api.shared.assembly_link_funnel import storyline_articles_dual_write_enabled
-                    api.shared.membership_store import insert_derived_bag_row
+                    from api.shared.assembly_link_funnel import storyline_articles_dual_write_enabled
+                    from api.shared.membership_store import insert_derived_bag_row
 
                     if storyline_articles_dual_write_enabled():
                         insert_derived_bag_row(

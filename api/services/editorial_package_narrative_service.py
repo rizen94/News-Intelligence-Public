@@ -25,8 +25,8 @@ from pathlib import Path
 from typing import Any
 
 from api.config.runtime import env_bool, env_int
-api.shared.database import get_db_connection_context, get_ui_db_connection_context
-api.shared.editorial_package_vocab import (
+from api.shared.database import get_db_connection_context, get_ui_db_connection_context
+from api.shared.editorial_package_vocab import (
     INFERENCE_STAGES,
     LINK_TYPES,
     NARRATIVE_MEMBER_TYPES,
@@ -624,7 +624,7 @@ def validate_narrative_payload(
 
         cand = candidates[key]
         prov = cand.get("provenance") if isinstance(cand.get("provenance"), dict) else {}
-        api.shared.editorial_package_attach_gate import (
+        from api.shared.editorial_package_attach_gate import (
             attach_allowed,
             dominant_location_tokens_from_members,
             storyline_title_from_package,
@@ -916,8 +916,8 @@ async def _call_narrative_llm(payload: dict[str, Any]) -> tuple[dict[str, Any] |
         f"```json\n{json.dumps(payload, default=str)[:100_000]}\n```\n"
     )
     try:
-        api.shared.services.ollama_model_caller import get_ollama_model_caller
-        api.shared.services.ollama_model_policy import InvocationKind
+        from api.shared.services.ollama_model_caller import get_ollama_model_caller
+        from api.shared.services.ollama_model_policy import InvocationKind
 
         caller = get_ollama_model_caller()
         result = await caller.generate(

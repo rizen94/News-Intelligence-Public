@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sys
 
-api.shared.debug_session_log import agent_dbg
+from api.shared.debug_session_log import agent_dbg
 from services.ai_storyline_discovery import (
     STORYLINE_DISCOVERY_CLUSTERING_MAX_N,
     STORYLINE_DISCOVERY_MAX_PAIRS,

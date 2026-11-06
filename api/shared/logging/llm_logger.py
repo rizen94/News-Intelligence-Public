@@ -148,7 +148,7 @@ def log_llm_interaction(
         pass
 
     try:
-        api.shared.logging.activity_logger import log_activity
+        from api.shared.logging.activity_logger import log_activity
 
         simple = {
             k: v

@@ -10,8 +10,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-api.shared.database import get_db_connection
-api.shared.domain_registry import is_valid_domain_key, resolve_domain_schema
+from api.shared.database import get_db_connection
+from api.shared.domain_registry import is_valid_domain_key, resolve_domain_schema
 
 from services.entity_profile_sync_service import sync_domain_entity_profiles
 from services.entity_resolution_service import ENTITY_TYPES

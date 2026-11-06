@@ -15,10 +15,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-api.shared.database import get_ui_db_connection_context
-api.shared.domain_registry import resolve_domain_schema
-api.shared.editorial_package_vocab import provenance_has_citeable_source
-api.shared.evidence_grade import normalize_evidence_grade
+from api.shared.database import get_ui_db_connection_context
+from api.shared.domain_registry import resolve_domain_schema
+from api.shared.editorial_package_vocab import provenance_has_citeable_source
+from api.shared.evidence_grade import normalize_evidence_grade
 
 logger = logging.getLogger(__name__)
 
@@ -569,8 +569,8 @@ def _llm_synthesize_report(profile: dict[str, Any], *, entity_name: str) -> str 
     )
 
     async def _run() -> str | None:
-        api.shared.services.ollama_model_caller import get_ollama_model_caller
-        api.shared.services.ollama_model_policy import InvocationKind
+        from api.shared.services.ollama_model_caller import get_ollama_model_caller
+        from api.shared.services.ollama_model_policy import InvocationKind
 
         caller = get_ollama_model_caller()
         result = await caller.generate(
@@ -979,7 +979,7 @@ def _haystack_for_subject_match(
             parts.append(str(t)[:400])
     if article_id is not None:
         try:
-            api.shared.domain_registry import resolve_domain_schema
+            from api.shared.domain_registry import resolve_domain_schema
 
             schema = resolve_domain_schema(domain_key)
             with get_ui_db_connection_context() as conn:

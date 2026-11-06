@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import sys
 
-api.shared.debug_session_log import agent_dbg
+from api.shared.debug_session_log import agent_dbg
 from services.circuit_breaker_service import CircuitState, get_circuit_breaker_service
 
 

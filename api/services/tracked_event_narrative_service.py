@@ -15,8 +15,8 @@ import json
 import logging
 from typing import Any
 
-api.shared.database import get_db_connection
-api.shared.domain_registry import get_active_domain_keys
+from api.shared.database import get_db_connection
+from api.shared.domain_registry import get_active_domain_keys
 from services.quality_monitoring_service import get_quality_monitoring_service
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ LENS_FOCUS: dict[str, str] = {
 
 async def _llm_text(prompt: str, max_prompt_chars: int = 6000) -> str | None:
     try:
-        api.shared.services.llm_service import TaskType, llm_service
+        from api.shared.services.llm_service import TaskType, llm_service
 
         result = await llm_service.generate_summary(
             prompt[:max_prompt_chars], task_type=TaskType.QUICK_SUMMARY
@@ -277,11 +277,11 @@ async def generate_narrative_stack_for_event(event_id: int) -> dict[str, Any]:
             )
             lt = await _llm_text(lens_prompt, 8000)
             if lt:
-                api.shared.llm_text_sanitize import sanitize_on_persist
+                from api.shared.llm_text_sanitize import sanitize_on_persist
 
                 lenses[lens_key] = sanitize_on_persist(lt, "narrative")
 
-        api.shared.llm_text_sanitize import sanitize_on_persist
+        from api.shared.llm_text_sanitize import sanitize_on_persist
 
         global_text = sanitize_on_persist(global_text, "narrative")
 

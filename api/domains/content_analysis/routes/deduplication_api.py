@@ -12,7 +12,7 @@ from services.deduplication_api_service import merge_claims as run_merge_claims
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/deduplication", tags=["Deduplication (P3)"])
+router = APIRouter(prefix="/deduplication", tags=["Deduplication (P3)"])
 
 
 @router.post("/consolidate_articles")

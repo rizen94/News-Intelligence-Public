@@ -7,7 +7,7 @@ storyline routes, and services that cause ``NameError`` and conditional-SQL bugs
 
 ### Simple upsert (ON CONFLICT with no update):
 
-    api.shared.database.upsert import insert_or_upsert
+    from api.shared.database.upsert import insert_or_upsert
 
     with get_db_connection() as conn:
         cur = conn.cursor()

@@ -13,11 +13,11 @@ from typing import Any
 
 from api.config.settings import OLLAMA_HOST
 
-api.shared.database import get_db_connection
-api.shared.domain_registry import schema_to_primary_domain_key
-api.shared.services.llm_service import LLMService
-api.shared.services.ollama_model_caller import get_ollama_model_caller
-api.shared.services.ollama_model_policy import InvocationKind
+from api.shared.database import get_db_connection
+from api.shared.domain_registry import schema_to_primary_domain_key
+from api.shared.services.llm_service import LLMService
+from api.shared.services.ollama_model_caller import get_ollama_model_caller
+from api.shared.services.ollama_model_policy import InvocationKind
 
 from services.entity_relational_expansion_service import expand_relational_entity_async
 from services.entity_resolution_service import _add_alias, resolve_to_canonical

@@ -15,7 +15,7 @@ from typing import Optional, Any, Callable
 from dataclasses import dataclass, field
 from queue import PriorityQueue, Empty
 import psycopg2
-api.shared.database.connection import get_db_connect_kwargs
+from api.shared.database.connection import get_db_connect_kwargs
 import json
 
 logger = logging.getLogger(__name__)
@@ -569,7 +569,7 @@ class ResourceMonitor:
                                           capture_output=True, text=True, timeout=5)
                     if result.returncode == 0:
                         self.gpu_usage = float(result.stdout.strip())
-                except:
+                except Exception:
                     self.gpu_usage = 0.0
                 
                 time.sleep(5)  # Monitor every 5 seconds

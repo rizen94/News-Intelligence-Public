@@ -13,9 +13,9 @@ import re
 from datetime import date, datetime, timezone
 from typing import Any
 
-api.shared.database import get_db_connection_context
-api.shared.domain_registry import resolve_domain_schema
-api.shared.vault_note_contract import (
+from api.shared.database import get_db_connection_context
+from api.shared.domain_registry import resolve_domain_schema
+from api.shared.vault_note_contract import (
     AUTO_BRIEF_END,
     AUTO_BRIEF_START,
     AUTO_SIGNIFICANCE_END,

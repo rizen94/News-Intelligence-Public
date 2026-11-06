@@ -29,7 +29,7 @@ def summarize_claim_variants_for_event(
     For a chronological event (or its cluster root), collect variant titles /
     descriptions and group near-duplicates.
     """
-    api.shared.database import get_ui_db_connection_context
+    from api.shared.database import get_ui_db_connection_context
     from psycopg2.extras import RealDictCursor
 
     try:

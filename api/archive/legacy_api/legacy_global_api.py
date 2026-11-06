@@ -20,8 +20,8 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-api.shared.database import get_db_connection
-api.shared.services.domain_aware_service import (
+from api.shared.database import get_db_connection
+from api.shared.services.domain_aware_service import (
     normalize_domain_to_schema,
     resolve_article_id_to_schema,
     resolve_storyline_id_to_schema,
@@ -32,19 +32,19 @@ logger = logging.getLogger(__name__)
 
 def _compat_schemas() -> tuple[str, ...]:
     """Active domain silo schemas (registry + DB)."""
-    api.shared.services.domain_aware_service import get_domain_data_schemas
+    from api.shared.services.domain_aware_service import get_domain_data_schemas
 
     return get_domain_data_schemas()
 
 
 def _validate_compat_domain(domain: str | None) -> str:
     """Return schema name for v3 legacy domain key; default first active registry domain."""
-    api.shared.domain_registry import first_active_domain_key
+    from api.shared.domain_registry import first_active_domain_key
 
     key = (domain or first_active_domain_key()).strip()
     sch = normalize_domain_to_schema(key)
     if sch not in _compat_schemas():
-        api.shared.domain_registry import get_active_domain_keys
+        from api.shared.domain_registry import get_active_domain_keys
 
         allowed = ", ".join(get_active_domain_keys())
         raise HTTPException(

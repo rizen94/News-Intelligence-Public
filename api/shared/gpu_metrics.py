@@ -108,7 +108,7 @@ def maybe_record_gpu_metric_sample() -> None:
     if metrics.get("gpu_memory_total_mb") is None:
         return
     try:
-        api.shared.database import get_ui_db_connection
+        from api.shared.database import get_ui_db_connection
 
         conn = get_ui_db_connection()
         try:
@@ -159,7 +159,7 @@ def fetch_gpu_metric_hourly_buckets(*, hours: int = 72) -> list[dict[str, Any]]:
     h = max(1, min(int(hours), 168))
     out: list[dict[str, Any]] = []
     try:
-        api.shared.database import get_ui_db_connection
+        from api.shared.database import get_ui_db_connection
 
         conn = get_ui_db_connection()
         try:
@@ -231,8 +231,8 @@ def should_throttle_ollama_for_lane(
     dual = env_str("OLLAMA_DUAL_HOST_ROUTING_ENABLED", "").lower() in ("1", "true", "yes")
     if dual and lane == "gpu":
         try:
-            api.shared.adaptive_batch_policy import ensure_routing_context
-            api.shared.catchup_host_metrics import sample_resources
+            from api.shared.adaptive_batch_policy import ensure_routing_context
+            from api.shared.catchup_host_metrics import sample_resources
 
             ensure_routing_context()
             snap = sample_resources()

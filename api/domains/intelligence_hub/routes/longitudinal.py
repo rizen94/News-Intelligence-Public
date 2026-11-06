@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-api.shared.database import get_db_connection_context, get_ui_db_connection_context
+from api.shared.database import get_db_connection_context, get_ui_db_connection_context
 from api.schemas.response_schemas import APIResponse
 
 from services.arc_catalog_service import (
@@ -45,7 +45,7 @@ from services.wikidata_review_service import list_entities_missing_wikidata_qid
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/intelligence", tags=["Longitudinal Intelligence"])
+router = APIRouter(prefix="/intelligence", tags=["Longitudinal Intelligence"])
 
 
 class GenerateReportRequest(BaseModel):

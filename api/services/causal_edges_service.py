@@ -39,7 +39,7 @@ def upsert_causal_edge(
     grade = evidence_grade if evidence_grade in _ALLOWED_GRADES else "weak"
     conf = max(0.0, min(1.0, float(confidence)))
     try:
-        api.shared.database import get_db_connection_context
+        from api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -120,7 +120,7 @@ def list_causal_edges(
         LIMIT %s
     """
     try:
-        api.shared.database import get_ui_db_connection_context
+        from api.shared.database import get_ui_db_connection_context
         from psycopg2.extras import RealDictCursor
 
         with get_ui_db_connection_context() as conn:
@@ -228,7 +228,7 @@ def has_causal_edge_between(
     if kind_a not in _ALLOWED_KINDS or kind_b not in _ALLOWED_KINDS:
         return False
     try:
-        api.shared.database import get_ui_db_connection_context
+        from api.shared.database import get_ui_db_connection_context
 
         clauses = [
             "status = 'active'",
@@ -321,8 +321,8 @@ def harvest_causal_edges_from_claims(
     """
     stats = {"scanned": 0, "matched": 0, "written": 0, "skipped": 0}
     try:
-        api.shared.database import get_db_connection_context
-        api.shared.domain_registry import resolve_domain_schema
+        from api.shared.database import get_db_connection_context
+        from api.shared.domain_registry import resolve_domain_schema
         from psycopg2.extras import RealDictCursor
 
         clauses = ["ec.confidence >= %s"]
@@ -421,7 +421,7 @@ def seed_edges_from_correlations(*, days: int = 30, min_strength: float = 0.6, l
     """Promote strong cross-domain correlations into typed causal edges (weak grade)."""
     written = 0
     try:
-        api.shared.database import get_db_connection_context
+        from api.shared.database import get_db_connection_context
         from psycopg2.extras import RealDictCursor
 
         with get_db_connection_context() as conn:

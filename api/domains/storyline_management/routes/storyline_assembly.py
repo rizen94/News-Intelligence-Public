@@ -10,7 +10,7 @@ from api.services.storyline_assembly_service import (
     count_unlinked_articles,
     run_storyline_assembly_for_domain,
 )
-api.shared.domain_registry import DOMAIN_PATH_PATTERN, is_valid_domain_key
+from api.shared.domain_registry import DOMAIN_PATH_PATTERN, is_valid_domain_key
 
 logger = logging.getLogger(__name__)
 

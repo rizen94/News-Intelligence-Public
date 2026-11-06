@@ -46,7 +46,7 @@ def main():
     args = parser.parse_args()
     do_delete = args.execute
 
-    api.shared.database import get_db_connection
+    from api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

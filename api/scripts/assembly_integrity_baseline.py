@@ -29,7 +29,7 @@ if env_file.exists():
 
 
 def _schemas() -> list[tuple[str, str]]:
-    api.shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
+    from api.shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 
     out = []
     for dk in get_pipeline_active_domain_keys():
@@ -41,9 +41,9 @@ def _schemas() -> list[tuple[str, str]]:
 
 
 def run_baseline() -> dict[str, Any]:
-    api.shared.database import get_db_connection_context
-    api.shared.episode_attach_gate import episode_container_assembly_enabled
-    api.shared.pipeline_state_constants import ARTICLE_FAILED, ARTICLE_INACCESSIBLE
+    from api.shared.database import get_db_connection_context
+    from api.shared.episode_attach_gate import episode_container_assembly_enabled
+    from api.shared.pipeline_state_constants import ARTICLE_FAILED, ARTICLE_INACCESSIBLE
 
     assembly_on = bool(episode_container_assembly_enabled())
     schemas = _schemas()

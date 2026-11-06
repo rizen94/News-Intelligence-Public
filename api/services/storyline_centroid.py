@@ -47,7 +47,7 @@ def get_storyline_centroid(
     """
     owns_conn = False
     if conn is None:
-        api.shared.database import get_db_connection
+        from api.shared.database import get_db_connection
 
         conn = get_db_connection()
         owns_conn = True

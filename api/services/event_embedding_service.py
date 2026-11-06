@@ -55,7 +55,7 @@ def embed_and_store_chronological_events(
     if not text_rows:
         return 0
 
-    api.shared.services.llm_service import ollama_embed_sync
+    from api.shared.services.llm_service import ollama_embed_sync
 
     # ------------------------------------------------------------------
     # 1. Generate embeddings (one-by-one via ollama_embed_sync)

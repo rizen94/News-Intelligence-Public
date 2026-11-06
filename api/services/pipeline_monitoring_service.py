@@ -14,7 +14,7 @@ import json
 
 from services.pipeline_logger import get_pipeline_logger
 from services.quality_monitoring_service import get_quality_monitoring_service
-api.shared.database import get_db_connection
+from api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 

@@ -90,7 +90,7 @@ def spine_phases_for_nightly_prefix() -> tuple[str, ...]:
         "entity_profile_sync",
     )
     try:
-        api.shared.assembly_phase_order import assembly_pipeline_ordered_active
+        from api.shared.assembly_phase_order import assembly_pipeline_ordered_active
 
         if assembly_pipeline_ordered_active():
             return base

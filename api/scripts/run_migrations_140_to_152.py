@@ -57,7 +57,7 @@ MIGRATIONS_140_152 = [
 
 
 def main():
-    api.shared.database import get_db_connection
+    from api.shared.database import get_db_connection
 
     start_from = 140
     if "--from" in sys.argv:
@@ -73,7 +73,7 @@ def main():
         print(f"No migrations to run (start_from={start_from}).")
         return
 
-    api.shared.migration_sql_paths import resolve_migration_sql_file
+    from api.shared.migration_sql_paths import resolve_migration_sql_file
 
     conn = get_db_connection()
     if not conn:

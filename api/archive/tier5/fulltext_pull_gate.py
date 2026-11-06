@@ -141,7 +141,7 @@ def _load_subject_entity_names(schema: str, *, limit: int = 80) -> list[str]:
         return cached[1]
     names: list[str] = []
     try:
-        api.shared.database import get_db_connection_context
+        from api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:

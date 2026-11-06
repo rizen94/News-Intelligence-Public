@@ -20,7 +20,7 @@ from services.relationship_extraction_service import (
 )
 from services.trend_predictions_service import get_predictions, get_trend_analysis
 
-router = APIRouter(prefix="/api/intelligence", tags=["Cross-domain & relationships"])
+router = APIRouter(prefix="/intelligence", tags=["Cross-domain & relationships"])
 
 
 @router.post("/cross_domain_synthesis")

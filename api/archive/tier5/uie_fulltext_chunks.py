@@ -12,8 +12,8 @@ from typing import Any
 
 from api.config.runtime import env_str
 from api.config.settings import unified_intake_max_article_chars
-api.shared.context_chunking import _split_by_paragraphs
-api.shared.services.ollama_model_policy import InvocationKind, num_ctx_for_invocation
+from api.shared.context_chunking import _split_by_paragraphs
+from api.shared.services.ollama_model_policy import InvocationKind, num_ctx_for_invocation
 
 
 # Leave headroom for schema instructions + JSON output inside the model window.

@@ -8,10 +8,10 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
-api.shared.database import get_db_connection
-api.shared.services.domain_aware_service import get_domain_data_schemas
+from api.shared.database import get_db_connection
+from api.shared.services.domain_aware_service import get_domain_data_schemas
 from api.config.settings import MODELS
-api.shared.services.llm_service import TaskType, llm_service
+from api.shared.services.llm_service import TaskType, llm_service
 
 logger = logging.getLogger(__name__)
 

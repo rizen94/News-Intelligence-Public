@@ -325,7 +325,7 @@ def update_article_quality_in_db(
     Call after analyze_content_quality(). Returns True on success.
     """
     try:
-        api.shared.database import get_db_connection
+        from api.shared.database import get_db_connection
 
         conn = get_db_connection()
         if not conn:

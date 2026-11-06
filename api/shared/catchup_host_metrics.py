@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def _phase_uses_gpu_llm(phase: str) -> bool:
-    api.shared.pipeline_resource_policy import get_phase_policy
+    from api.shared.pipeline_resource_policy import get_phase_policy
 
     pol = get_phase_policy(phase)
     return bool(pol and pol.requires_llm and pol.execution_lane == "gpu")
@@ -64,7 +64,7 @@ class ResourceSnapshot:
     cpu_llm_headroom: float
 
     def phase_headroom(self, phase: str) -> float:
-        api.shared.pipeline_resource_policy import phase_resource_class
+        from api.shared.pipeline_resource_policy import phase_resource_class
 
         parts: list[float] = [self.local_memory_headroom, self.db_headroom]
         if _phase_uses_gpu_llm(phase):
@@ -298,7 +298,7 @@ def sample_resources() -> ResourceSnapshot:
 
     db_worker_util = 0.0
     try:
-        api.shared.database import get_db_pool_snapshot
+        from api.shared.database import get_db_pool_snapshot
 
         snap = get_db_pool_snapshot()
         db_worker_util = float((snap.get("worker") or {}).get("utilization") or 0.0)

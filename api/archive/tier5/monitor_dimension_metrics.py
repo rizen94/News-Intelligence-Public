@@ -25,7 +25,7 @@ def get_dimension_backlog(dimension_id: str, queue_depths: dict[str, int] | None
     if not phase:
         return 0
     if queue_depths is None:
-        api.shared.pipeline_queue_counts import get_all_phase_queue_depths
+        from api.shared.pipeline_queue_counts import get_all_phase_queue_depths
 
         queue_depths = get_all_phase_queue_depths()
     return int(queue_depths.get(phase) or 0)
@@ -34,7 +34,7 @@ def get_dimension_backlog(dimension_id: str, queue_depths: dict[str, int] | None
 def get_all_dimension_backlogs(queue_depths: dict[str, int] | None = None) -> dict[str, int]:
     """Backlog per dimension id."""
     if queue_depths is None:
-        api.shared.pipeline_queue_counts import get_all_phase_queue_depths
+        from api.shared.pipeline_queue_counts import get_all_phase_queue_depths
 
         queue_depths = get_all_phase_queue_depths()
     return {

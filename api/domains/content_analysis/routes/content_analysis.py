@@ -14,21 +14,21 @@ from domains.content_analysis.services.topic_filter_rules import (
 )
 from domains.content_analysis.services.topic_merge_suggestions import get_merge_suggestions
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
-api.shared.database import get_db_connection, get_ui_db_connection_context
-api.shared.domain_registry import (
+from api.shared.database import get_db_connection, get_ui_db_connection_context
+from api.shared.domain_registry import (
     DOMAIN_PATH_PATTERN,
     resolve_domain_schema,
     schema_to_primary_domain_key,
 )
-api.shared.services.domain_aware_service import (
+from api.shared.services.domain_aware_service import (
     get_domain_data_schemas,
     parse_optional_domain_to_schema,
     resolve_article_id_to_schema,
     validate_domain,
 )
 from api.config.settings import MODELS
-api.shared.services.llm_service import TaskType, llm_service
-api.shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED
+from api.shared.services.llm_service import TaskType, llm_service
+from api.shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED
 
 logger = logging.getLogger(__name__)
 
@@ -2442,7 +2442,7 @@ async def process_article_clustering(
                                 f"📋 {queued_count} articles queued for LLM topic extraction"
                             )
                             logger.info("   - Queue worker will process them when LLM is available")
-                except:
+                except Exception:
                     pass
                 finally:
                     conn.close()
@@ -2535,7 +2535,7 @@ async def process_new_storyline_comprehensive(domain: str, storyline_id: int, sc
             process_storyline_rag_analysis,
         )
         from domains.storyline_management.services.storyline_service import StorylineService
-        api.shared.database import get_db_connection
+        from api.shared.database import get_db_connection
 
         logger.info(
             f"Starting comprehensive processing for storyline {storyline_id} (domain: {domain})"

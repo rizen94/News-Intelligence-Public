@@ -10,8 +10,8 @@ See docs/STORY_STATE_UPDATE_TRIGGERS.md.
 import logging
 import os
 
-api.shared.database import get_db_connection
-api.shared.domain_registry import resolve_domain_schema
+from api.shared.database import get_db_connection
+from api.shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 

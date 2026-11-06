@@ -18,7 +18,7 @@ import sys
 import time
 
 def run(dry_run: bool = True):
-    api.shared.database import get_db_connection
+    from api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -65,7 +65,7 @@ def run(dry_run: bool = True):
 
                 try:
                     # First verify the article still exists in its schema
-                    api.shared.pipeline_context import resolve_domain_schema
+                    from api.shared.pipeline_context import resolve_domain_schema
                     schema = resolve_domain_schema(domain_key)
                     cur.execute(
                         f"SELECT 1 FROM {schema}.articles WHERE id = %s",
@@ -116,7 +116,7 @@ def run(dry_run: bool = True):
             print("\nPhase 3: Orphan detection")
             
             # Collect all active domain schemas
-            api.shared.pipeline_context import resolve_domain_schema
+            from api.shared.pipeline_context import resolve_domain_schema
             try:
                 from services.backlog_metrics import get_pipeline_schema_names_active
                 schemas = get_pipeline_schema_names_active()

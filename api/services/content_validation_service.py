@@ -5,9 +5,9 @@ before proceeding with downstream processing.
 """
 
 import logging
-api.shared.domain_registry import resolve_domain_schema
+from api.shared.domain_registry import resolve_domain_schema
 from typing import Optional, Tuple
-api.shared.database import get_db_connection
+from api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 

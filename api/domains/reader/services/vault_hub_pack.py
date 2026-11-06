@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-api.shared.database import get_ui_db_connection_context
-api.shared.domain_registry import resolve_domain_schema
+from api.shared.database import get_ui_db_connection_context
+from api.shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ def build_vault_hub_pack(
         max_notes=16,
     )
 
-    api.shared.llm_text_sanitize import sanitize_reader_prose
+    from api.shared.llm_text_sanitize import sanitize_reader_prose
 
     _hub_title = str(hub.get("title") or "")
     _raw_brief = hub.get("current_brief")
@@ -110,7 +110,7 @@ def build_vault_hub_pack(
                 )
                 for row in cur.fetchall() or []:
                     sid = int(row[0])
-                    api.shared.llm_text_sanitize import sanitize_reader_dek
+                    from api.shared.llm_text_sanitize import sanitize_reader_dek
 
                     _mh = row[1] or f"Storyline {sid}"
                     member_cards.append(

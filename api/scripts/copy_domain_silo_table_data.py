@@ -258,7 +258,7 @@ def main() -> int:
         print("ERROR: schema names must be plain identifiers")
         return 1
 
-    api.shared.database import get_db_connection
+    from api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

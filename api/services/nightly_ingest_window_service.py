@@ -43,7 +43,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-api.shared.domain_registry import get_active_domain_keys
+from api.shared.domain_registry import get_active_domain_keys
 
 logger = logging.getLogger(__name__)
 
@@ -402,7 +402,7 @@ async def _maybe_nightly_kickoff_rss(
     ):
         return
     try:
-        api.shared.pipeline_article_selection import pipeline_backfill_collection_should_pause
+        from api.shared.pipeline_article_selection import pipeline_backfill_collection_should_pause
 
         if pipeline_backfill_collection_should_pause():
             return

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from services.discovery_finding_quality import RESEARCH_SEED_DOMAINS
-api.shared.post_processing_modals import modals_for_domain
+from api.shared.post_processing_modals import modals_for_domain
 
 logger = logging.getLogger(__name__)
 
@@ -337,8 +337,8 @@ async def interpret_research_idea(
     parsed: dict[str, Any] | None = None
     err: str | None = None
     try:
-        api.shared.services.ollama_model_caller import get_ollama_model_caller
-        api.shared.services.ollama_model_policy import InvocationKind
+        from api.shared.services.ollama_model_caller import get_ollama_model_caller
+        from api.shared.services.ollama_model_policy import InvocationKind
 
         caller = get_ollama_model_caller()
         result = await caller.generate(
@@ -595,7 +595,7 @@ def assemble_from_idea(
         search_attachable,
     )
     from services.package_evidence_brief_service import get_or_create_brief, update_brief
-    api.shared.domain_registry import get_pipeline_active_domain_keys
+    from api.shared.domain_registry import get_pipeline_active_domain_keys
 
     text = (idea or "").strip()
     if len(text) < 8:
@@ -871,8 +871,8 @@ def assemble_from_idea(
     # Only when we already have some on-theme members (avoid OR-token spam).
     if attached > 0 and attached < attach_limit and primary_dk:
         try:
-            api.shared.database import get_db_connection_context
-            api.shared.domain_registry import resolve_domain_schema
+            from api.shared.database import get_db_connection_context
+            from api.shared.domain_registry import resolve_domain_schema
 
             schema = resolve_domain_schema(primary_dk)
             like_terms: list[str] = []

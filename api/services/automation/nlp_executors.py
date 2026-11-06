@@ -33,7 +33,7 @@ def _get_pipeline_active_domain_keys():
 def _story_enhancement_facts_only() -> bool:
     """Return whether story enhancement is limited to facts-only policy."""
     try:
-        api.shared.pipeline_resource_policy import story_enhancement_facts_only as _fef
+        from api.shared.pipeline_resource_policy import story_enhancement_facts_only as _fef
         return _fef()
     except ImportError:
         return False
@@ -42,7 +42,7 @@ def _story_enhancement_facts_only() -> bool:
 def _story_enhancement_run_limits(*, fact_batch=20, queue_batch=150, enrich_limit=30, build_limit=4) -> dict:
     """Return run limits for story enhancement based on facts_only policy."""
     try:
-        api.shared.pipeline_resource_policy import story_enhancement_run_limits as _srl
+        from api.shared.pipeline_resource_policy import story_enhancement_run_limits as _srl
         return _srl(fact_batch=fact_batch, queue_batch=queue_batch, enrich_limit=enrich_limit, build_limit=build_limit)
     except ImportError:
         return {"fact_batch": fact_batch, "queue_batch": queue_batch, "enrich_limit": enrich_limit, "build_limit": build_limit}
@@ -279,7 +279,7 @@ async def execute_metadata_enrichment(task) -> None:
 async def execute_story_enhancement(task) -> None:
     """Phase 3 RAG: story state triggers; enrich/build only when facts_only policy allows."""
     from services.enhancement_orchestrator_service import run_enhancement_cycle
-    api.shared.pipeline_resource_policy import (
+    from api.shared.pipeline_resource_policy import (
         story_enhancement_facts_only,
         story_enhancement_run_limits,
     )

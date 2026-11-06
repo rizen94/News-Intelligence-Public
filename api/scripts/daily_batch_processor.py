@@ -64,7 +64,7 @@ async def process_articles_ml():
     logger.info("=" * 80)
 
     try:
-        api.shared.database import get_db_connection
+        from api.shared.database import get_db_connection
 
         conn = get_db_connection()
         if not conn:
@@ -133,7 +133,7 @@ async def process_topic_clustering():
     logger.info("=" * 80)
 
     from domains.content_analysis.services.topic_clustering_service import TopicClusteringService
-    api.shared.database import get_db_config, get_db_connection
+    from api.shared.database import get_db_config, get_db_connection
 
     conn = None
     try:
@@ -143,7 +143,7 @@ async def process_topic_clustering():
             return None
 
         # Registry + existing schemas (same as automation RSS / get_all_domains — not public.domains.is_active)
-        api.shared.services.domain_aware_service import get_all_domains
+        from api.shared.services.domain_aware_service import get_all_domains
 
         try:
             domain_rows = get_all_domains()
@@ -263,7 +263,7 @@ async def update_statistics():
     logger.info("=" * 80)
 
     try:
-        api.shared.database import get_db_connection
+        from api.shared.database import get_db_connection
 
         conn = get_db_connection()
         if not conn:

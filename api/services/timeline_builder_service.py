@@ -207,7 +207,7 @@ class TimelineBuilderService:
 
     def _gap_threshold(self, storyline_id: int) -> int:
         """Use a shorter threshold for active stories, longer for slow-moving ones."""
-        api.shared.services.domain_aware_service import get_domain_data_schemas
+        from api.shared.services.domain_aware_service import get_domain_data_schemas
 
         schemas = [self.schema_name] if self.schema_name else list(get_domain_data_schemas())
         cursor = self.conn.cursor()
@@ -352,8 +352,8 @@ def build_storyline_spine(domain_key: str, storyline_id: int, conn=None) -> dict
     """
     Domain-scoped chronological spine (public.chronological_events + schema storylines join).
   """
-    api.shared.database import get_db_connection
-    api.shared.domain_registry import resolve_domain_schema
+    from api.shared.database import get_db_connection
+    from api.shared.domain_registry import resolve_domain_schema
 
     schema = resolve_domain_schema(domain_key)
     own_conn = conn is None

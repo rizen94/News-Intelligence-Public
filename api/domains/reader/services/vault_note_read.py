@@ -9,7 +9,7 @@ from typing import Any
 
 from services.vault_bridge_service import vault_root
 from services.vault_notes_registry_service import get_vault_note, get_vault_note_by_path
-api.shared.vault_note_contract import entity_vault_rel_path
+from api.shared.vault_note_contract import entity_vault_rel_path
 
 
 def _read_note_body(vault_path: str | None) -> str | None:

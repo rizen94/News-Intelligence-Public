@@ -4,7 +4,7 @@ Database compatibility shim - re-exports api.shared.database.
 All DB access uses the single pooled connection in shared.
 """
 
-api.shared.database import (
+from api.shared.database import (
     check_database_health,
     get_database_config,
     get_database_url,

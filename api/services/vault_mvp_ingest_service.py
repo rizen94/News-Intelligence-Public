@@ -21,8 +21,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from typing import Any
 
-api.shared.database import get_db_connection_context
-api.shared.vault_note_contract import (
+from api.shared.database import get_db_connection_context
+from api.shared.vault_note_contract import (
     AUTO_TIMELINE_END,
     AUTO_TIMELINE_START,
     MAX_MVP_WIKI_TARGETS,
@@ -375,8 +375,8 @@ Text:
 """
 
     async def _gen() -> str:
-        api.shared.services.ollama_model_caller import get_ollama_model_caller
-        api.shared.services.ollama_model_policy import InvocationKind
+        from api.shared.services.ollama_model_caller import get_ollama_model_caller
+        from api.shared.services.ollama_model_policy import InvocationKind
 
         caller = get_ollama_model_caller()
         result = await caller.generate(

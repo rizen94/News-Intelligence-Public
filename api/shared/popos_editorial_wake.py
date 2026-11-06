@@ -7,10 +7,10 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-api.shared.database import get_db_connection_context
+from api.shared.database import get_db_connection_context
 
 if TYPE_CHECKING:
-    api.shared.phase_idle_gate import PhaseIdleBackoff
+    from api.shared.phase_idle_gate import PhaseIdleBackoff
 
 logger = logging.getLogger(__name__)
 

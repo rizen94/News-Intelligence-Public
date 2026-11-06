@@ -46,11 +46,11 @@ async def drain_phase(
     per = articles_per_domain if articles_per_domain is not None else 40
 
     if name == "unified_intake_extraction":
-        api.shared.unified_intake_extraction_runner import run_unified_intake_extraction_batch_drain
+        from api.shared.unified_intake_extraction_runner import run_unified_intake_extraction_batch_drain
 
         if articles_per_domain is None:
             try:
-                api.shared.adaptive_batch_policy import resolve_phase_batch_limit
+                from api.shared.adaptive_batch_policy import resolve_phase_batch_limit
 
                 per = resolve_phase_batch_limit(
                     "unified_intake_extraction", 40, env_suffix="ARTICLES_PER_DOMAIN"
@@ -71,7 +71,7 @@ async def drain_phase(
 
     if name == "topic_clustering":
         from api.config.settings import topic_clustering_batch_size, topic_clustering_concurrency
-        api.shared.domain_registry import get_pipeline_active_domain_keys
+        from api.shared.domain_registry import get_pipeline_active_domain_keys
 
         scripts = str(_API / "scripts")
         if scripts not in sys.path:
@@ -96,10 +96,10 @@ async def drain_phase(
         return await run_storyline_assembly_all_domains()
 
     if name == "content_enrichment":
-        api.shared.content_enrichment_drain import run_content_enrichment_batch
+        from api.shared.content_enrichment_drain import run_content_enrichment_batch
 
         try:
-            api.shared.adaptive_batch_policy import resolve_adaptive_batch
+            from api.shared.adaptive_batch_policy import resolve_adaptive_batch
 
             per, _meta = resolve_adaptive_batch("content_enrichment", per)
         except Exception:
@@ -262,15 +262,15 @@ async def drain_phase(
         return await asyncio.to_thread(run_catchup_batch_sync, limit=limit)
 
     if name == "story_continuation":
-        api.shared.domain_processing_mode import domain_runs_phase
-        api.shared.domain_registry import pipeline_url_schema_pairs
-        api.shared.database import get_db_connection
-        api.shared.services.llm_service import llm_service
+        from api.shared.domain_processing_mode import domain_runs_phase
+        from api.shared.domain_registry import pipeline_url_schema_pairs
+        from api.shared.database import get_db_connection
+        from api.shared.services.llm_service import llm_service
         from services.story_continuation_service import StoryContinuationService
 
         cont_limit = articles_per_domain if articles_per_domain is not None else 30
         try:
-            api.shared.adaptive_batch_policy import resolve_adaptive_batch
+            from api.shared.adaptive_batch_policy import resolve_adaptive_batch
 
             cont_limit, _meta = resolve_adaptive_batch("story_continuation", cont_limit)
         except Exception:
@@ -319,7 +319,7 @@ async def drain_phase(
                     svc.conn = None
         total["processed"] = total["linked"] + total["flagged"] + total["inherited"]
         try:
-            api.shared.pipeline_handoffs import after_story_continuation
+            from api.shared.pipeline_handoffs import after_story_continuation
 
             after_story_continuation(None, linked=int(total.get("linked") or 0))
         except Exception as handoff_e:
@@ -343,7 +343,7 @@ async def drain_phase(
 
     if name == "story_enhancement":
         from services.enhancement_orchestrator_service import run_enhancement_cycle
-        api.shared.pipeline_resource_policy import (
+        from api.shared.pipeline_resource_policy import (
             story_enhancement_facts_only,
             story_enhancement_run_limits,
         )

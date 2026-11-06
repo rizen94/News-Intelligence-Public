@@ -17,7 +17,7 @@ from services.intelligence_analysis_service import (
     IntelligenceAnalysisService,
     get_intelligence_service,
 )
-api.shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
+from api.shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 

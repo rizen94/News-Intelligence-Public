@@ -50,10 +50,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import yaml  # noqa: E402
 from psycopg2 import sql as psql  # noqa: E402
-api.shared.database import get_db_connection  # noqa: E402
-api.shared.domain_registry_constants import RESERVED_SCHEMA_NAMES  # noqa: E402
-api.shared.services.domain_rss_seed import seed_from_domain_config  # noqa: E402
-api.shared.services.domain_silo_post_migration import activate_domain_row  # noqa: E402
+from api.shared.database import get_db_connection  # noqa: E402
+from api.shared.domain_registry_constants import RESERVED_SCHEMA_NAMES  # noqa: E402
+from api.shared.services.domain_rss_seed import seed_from_domain_config  # noqa: E402
+from api.shared.services.domain_silo_post_migration import activate_domain_row  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -193,7 +193,7 @@ def run_verify(cmd: str) -> int:
 
 def _resolve_config_from_spec(spec_path: Path) -> Path:
     """Validate spec, generate slim YAML, return path to domains/{key}.yaml."""
-    api.shared.domain_spec import DomainSpec
+    from api.shared.domain_spec import DomainSpec
 
     spec = DomainSpec.from_json_file(spec_path.resolve())
     yaml_path = Path(__file__).resolve().parent.parent / "config" / "domains" / f"{spec.domain_key}.yaml"

@@ -9,7 +9,7 @@ import uuid
 from datetime import date, timedelta
 from typing import Any
 
-api.shared.database import get_db_connection
+from api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,9 @@ def _pairwise_entity_correlations(
     target_domains: list[str],
     *,
     correlation_threshold: float,
+    strength_base: float = 0.55,
+    strength_increment: float = 0.04,
+    max_entities_capped: int = 8,
     max_rows: int = 280,
     max_pairs: int = 150,
 ) -> list[dict[str, Any]]:
@@ -82,7 +85,9 @@ def _pairwise_entity_correlations(
             seen_pairs.add(ek)
             ds = sorted(udom)
             d1, d2 = ds[0], ds[1]
-            strength = min(1.0, 0.55 + 0.04 * min(len(shared), 8))
+            # Parameterized strength: configurable base + per-entity boost, capped at 1.0
+            shared_count = min(len(shared), max_entities_capped)
+            strength = min(1.0, strength_base + strength_increment * shared_count)
             if strength < correlation_threshold:
                 continue
             out.append(
@@ -110,7 +115,7 @@ def run_cross_domain_synthesis(
     conn = get_db_connection()
     if not conn:
         return {"success": False, "error": "Database connection failed", "correlations": []}
-    api.shared.domain_registry import get_pipeline_active_domain_keys
+    from api.shared.domain_registry import get_pipeline_active_domain_keys
 
     allowed = frozenset(get_pipeline_active_domain_keys())
     target_domains = [d for d in (domains or list(allowed)) if d in allowed]
@@ -250,6 +255,34 @@ def run_cross_domain_synthesis(
                         rec["correlation_type"],
                     ),
                 )
+                # Seed source contexts for provenance (contexts that mention all entity profiles in this correlation)
+                entity_ids_sql = tuple(rec["entity_profile_ids"][:80])
+                seed_ctx_ids: list[int] = []
+                if entity_ids_sql:
+                    cur.execute(
+                        """
+                        SELECT DISTINCT cem.context_id
+                        FROM intelligence.context_entity_mentions cem
+                        WHERE cem.entity_profile_id = ANY(%s)
+                        ORDER BY cem.created_at DESC
+                        LIMIT 200
+                        """,
+                        (entity_ids_sql,),
+                    )
+                    seed_ctx_ids = [r[0] for r in cur.fetchall() if r[0] is not None]
+                # Backfill source_context_ids on the correlation row
+                if seed_ctx_ids:
+                    try:
+                        cur.execute(
+                            """
+                            UPDATE intelligence.cross_domain_correlations
+                            SET source_context_ids = %s::int[]
+                            WHERE correlation_id = %s
+                            """,
+                            (seed_ctx_ids, cor_id),
+                        )
+                    except Exception:
+                        pass  # column may not exist yet on older deployments
                 inserted.append(
                     {
                         "correlation_id": str(cor_id),
@@ -259,6 +292,7 @@ def run_cross_domain_synthesis(
                         "entity_profile_ids": rec["entity_profile_ids"],
                         "correlation_strength": strength,
                         "correlation_type": rec["correlation_type"],
+                        "source_context_ids": seed_ctx_ids[:50],
                     }
                 )
         conn.commit()
@@ -472,4 +506,115 @@ def get_meta_storylines(
         }
         for c in result.get("correlations", [])
     ]
-    return {"success": True, "meta_storylines": meta_storylines}
+
+def get_correlation_timeline(
+    domains: list[str] | None = None,
+    since_days: int | None = None,
+    include_entities: bool = True,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Chronological cross-domain timeline showing entity profiles active across domains."""
+    conn = get_db_connection()
+    if not conn:
+        return {"success": False, "timeline": [], "error": "DB connection failed"}
+    try:
+        conditions = ["1=1"]
+        args: list[Any] = []
+        if since_days is not None:
+            conditions.append("discovered_at >= NOW() - INTERVAL '1 day' * %s")
+            args.append(since_days)
+        args.append(limit)
+        with conn.cursor() as cur:
+            base = "SELECT correlation_id, domain_1, domain_2, entity_profile_ids, event_ids,"
+            base += " correlation_strength, correlation_type, discovered_at, source_context_ids"
+            base += " FROM intelligence.cross_domain_correlations WHERE " + " AND ".join(conditions)
+            base += " ORDER BY discovered_at DESC LIMIT %s"
+            cur.execute(base, tuple(args))
+            corr_rows = cur.fetchall()
+        conn.close()
+
+        timeline: list[dict[str, Any]] = []
+        if not include_entities:
+            for row in corr_rows:
+                cor_id, d1, d2, eids, ev_ids, strength, ctype, disc_at, src_ctx = (
+                    row[0], row[1], row[2], row[3] or [], row[4] or [],
+                    row[5], row[6], row[7], row[8] or [],
+                )
+                timeline.append({
+                    "correlation_id": str(cor_id),
+                    "discovered_at": disc_at.isoformat() if disc_at else None,
+                    "domain_span": sorted(set([d1, d2])),
+                    "event_count": len(list(ev_ids)),
+                    "shared_entity_ids": list(eids)[:40],
+                    "correlation_strength": float(strength) if strength is not None else None,
+                    "correlation_type": ctype,
+                    "source_context_ids": src_ctx[:30] if src_ctx else [],
+                })
+            return {"success": True, "timeline": timeline}
+
+        # Entity enrichment: look up per-entity profile details + domain presence
+        entity_cache: dict[int, dict[str, Any]] = {}
+        for row in corr_rows:
+            cor_id, d1, d2, eids_raw, ev_ids, strength, ctype, disc_at, src_ctx = (
+                row[0], row[1], row[2], row[3] or [], row[4] or [],
+                row[5], row[6], row[7], row[8] or [],
+            )
+            entity_ids_list = list(eids_raw) if isinstance(eids_raw, (list, tuple)) else []
+
+            entry: dict[str, Any] = {
+                "correlation_id": str(cor_id),
+                "discovered_at": disc_at.isoformat() if disc_at else None,
+                "domain_span": sorted(set([d1, d2])),
+                "event_count": len(list(ev_ids)),
+                "shared_entity_ids": entity_ids_list[:40],
+                "correlation_strength": float(strength) if strength is not None else None,
+                "correlation_type": ctype,
+                "source_context_ids": src_ctx[:30] if src_ctx else [],
+            }
+
+            if entity_ids_list:
+                eids_sql = tuple(entity_ids_list[:60])
+                try:
+                    conn2 = get_db_connection()
+                    if conn2:
+                        with conn2.cursor() as cur2:
+                            cur2.execute(
+                                "SELECT ep.id, ep.metadata->>'canonical_name', "
+                                "ep.metadata->>'entity_type', ep.multi_domain_priority, "
+                                "MIN(c.created_at), MAX(c.created_at) "
+                                "FROM intelligence.entity_profiles ep "
+                                "JOIN context_entity_mentions cem ON cem.entity_profile_id = ep.id "
+                                "JOIN contexts c ON c.id = cem.context_id "
+                                "WHERE ep.id = ANY(%s) GROUP BY ep.id",
+                                (eids_sql,),
+                            )
+                            for er in cur2.fetchall():
+                                eid, cname, etype, is_multi, earliest, latest = (
+                                    er[0], er[1] or f"Entity #{er[0]}", er[2] or "unknown",
+                                    er[3] or False, er[4], er[5],
+                                )
+                                entity_cache[eid] = {
+                                    "entity_profile_id": eid,
+                                    "canonical_name": cname,
+                                    "entity_type": etype,
+                                    "multi_domain_priority": is_multi,
+                                    "earliest_witnessed": earliest.isoformat() if earliest else None,
+                                    "latest_witnessed": latest.isoformat() if latest else None,
+                                }
+                        conn2.close()
+                except Exception as e:
+                    logger.debug("entity_enrich timeline: %s", e)
+
+            if entity_cache:
+                entry["entity_details"] = list(entity_cache.values())[:40]
+
+            timeline.append(entry)
+
+        return {"success": True, "timeline": timeline}
+    except Exception as e:
+        logger.warning("get_correlation_timeline: %s", e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return {"success": False, "timeline": [], "error": str(e)}

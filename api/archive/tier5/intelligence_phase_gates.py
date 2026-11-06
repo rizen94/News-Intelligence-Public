@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from api.config.runtime import env_bool
-api.shared.database import get_db_connection_context
+from api.shared.database import get_db_connection_context
 
 logger = logging.getLogger(__name__)
 

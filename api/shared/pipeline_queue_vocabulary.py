@@ -216,7 +216,7 @@ _NO_ROW_BATCH_MODEL_PHASES = frozenset(
 def _configured_rows_per_run_source(phase_name: str) -> str:
     """``adaptive_persisted`` when Monitor batch comes from adaptive_batch state."""
     try:
-        api.shared.adaptive_batch_policy import (
+        from api.shared.adaptive_batch_policy import (
             adaptive_batch_enabled,
             get_persisted_adaptive_batch,
         )

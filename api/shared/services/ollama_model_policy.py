@@ -30,7 +30,7 @@ from api.config.settings import (
 )
 
 # Import after settings to avoid cycles at collection time
-api.shared.services.llm_service import ModelType, TaskType
+from api.shared.services.llm_service import ModelType, TaskType
 from api.config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 

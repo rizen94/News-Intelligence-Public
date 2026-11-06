@@ -17,8 +17,8 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-api.shared.database import get_db_connection_context
-api.shared.vault_note_contract import (
+from api.shared.database import get_db_connection_context
+from api.shared.vault_note_contract import (
     AUTO_POSTURE_END,
     AUTO_POSTURE_START,
     AUTO_SIGNIFICANCE_END,
@@ -366,7 +366,7 @@ def _write_file(rel: str, content: str, *, force: bool) -> dict[str, Any]:
     existing = path.read_text(encoding="utf-8") if path.is_file() else None
     # Preserve Obsidian tags when overwriting with force
     if existing and force:
-        api.shared.vault_note_contract import split_frontmatter_body
+        from api.shared.vault_note_contract import split_frontmatter_body
 
         new_fm, new_body = split_frontmatter_body(content)
         content = merge_write_vault_markdown(

@@ -11,7 +11,7 @@ after loading the dump. Falls back to Wikipedia API when no local match is found
 import logging
 from typing import Any
 
-api.shared.database import get_db_connection
+from api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 

@@ -650,7 +650,7 @@ def get_db_connection(use_reserved: bool = False):
                 )
                 # #region agent log
                 try:
-                    api.shared.debug_session_log import agent_dbg
+                    from api.shared.debug_session_log import agent_dbg
 
                     agent_dbg(
                         "B",

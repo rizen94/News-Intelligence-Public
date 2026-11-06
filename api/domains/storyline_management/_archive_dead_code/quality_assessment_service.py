@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from psycopg2.extras import RealDictCursor
-api.shared.services.domain_aware_service import DomainAwareService
+from api.shared.services.domain_aware_service import DomainAwareService
 
 logger = logging.getLogger(__name__)
 

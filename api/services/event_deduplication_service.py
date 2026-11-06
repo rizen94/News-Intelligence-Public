@@ -118,7 +118,7 @@ def _dedup_tick_batch() -> int:
 
 async def _get_embedding(text: str) -> list[float] | None:
     """Get a 768-d embedding from Ollama's nomic-embed-text model via CB hub."""
-    api.shared.services.llm_service import is_ollama_pressure_error, ollama_embed_async
+    from api.shared.services.llm_service import is_ollama_pressure_error, ollama_embed_async
 
     try:
         return await ollama_embed_async(text, model=EMBED_MODEL)

@@ -11,8 +11,8 @@ import logging
 from datetime import date
 from typing import Any
 
-api.shared.database import get_db_connection, get_db_connection_context
-api.shared.domain_registry import is_valid_domain_key, resolve_domain_schema
+from api.shared.database import get_db_connection, get_db_connection_context
+from api.shared.domain_registry import is_valid_domain_key, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +153,7 @@ def _generate_dossier_narrative(
     )
 
     try:
-        api.shared.services.llm_service import TaskType, llm_service
+        from api.shared.services.llm_service import TaskType, llm_service
 
         narrative_lane = execution_lane if execution_lane is not None else _dossier_narrative_execution_lane()
         text = llm_service.generate(
@@ -183,7 +183,7 @@ def compile_dossier(
     """
     if not is_valid_domain_key(domain_key):
         return {"success": False, "error": f"Unknown domain_key: {domain_key}"}
-    api.shared.pipeline_domain_sql import is_retired_domain_key
+    from api.shared.pipeline_domain_sql import is_retired_domain_key
 
     if is_retired_domain_key(domain_key):
         return {"success": False, "error": f"Retired domain_key: {domain_key}"}
@@ -474,9 +474,9 @@ def _run_scheduled_dossier_compiles(
 
     ``stale_days`` is deprecated; set ``ENTITY_DOSSIER_STALE_DAYS`` in env instead.
     """
-    api.shared.database import get_db_connection
-    api.shared.entity_dossier_eligibility import sql_entity_dossier_needs_compile
-    api.shared.pipeline_domain_sql import pipeline_domain_any_sql
+    from api.shared.database import get_db_connection
+    from api.shared.entity_dossier_eligibility import sql_entity_dossier_needs_compile
+    from api.shared.pipeline_domain_sql import pipeline_domain_any_sql
 
     if stale_days is not None and stale_days >= 0:
         import logging as _logging

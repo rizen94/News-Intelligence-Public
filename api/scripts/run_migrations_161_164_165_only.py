@@ -37,8 +37,8 @@ FILES = [
 
 
 def main():
-    api.shared.database import get_db_connection
-    api.shared.migration_sql_paths import resolve_migration_sql_file
+    from api.shared.database import get_db_connection
+    from api.shared.migration_sql_paths import resolve_migration_sql_file
 
     conn = get_db_connection()
     if not conn:

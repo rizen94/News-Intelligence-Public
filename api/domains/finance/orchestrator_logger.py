@@ -59,7 +59,7 @@ def log_queue_decision(
     for consolidated storage (logs/activity.log, logs/activity.jsonl).
     """
     try:
-        api.shared.logging.activity_logger import log_orchestrator_decision
+        from api.shared.logging.activity_logger import log_orchestrator_decision
 
         log_orchestrator_decision(
             orchestrator_id="finance",

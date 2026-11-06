@@ -46,8 +46,8 @@ from services.storyline_coherence_guardrails import (
     post_process_storyline_description,
     storyline_metadata_prompt_suffix,
 )
-api.shared.domain_registry import first_active_domain_key, resolve_domain_schema
-api.shared.pipeline_pass_marker import bulk_record_article_phase_pass, phase_backlog_uses_pass_marker
+from api.shared.domain_registry import first_active_domain_key, resolve_domain_schema
+from api.shared.pipeline_pass_marker import bulk_record_article_phase_pass, phase_backlog_uses_pass_marker
 from api.config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
@@ -217,7 +217,7 @@ class AIStorylineDiscovery:
 
     def get_db_connection(self):
         """Get database connection from shared pool."""
-        api.shared.database import get_db_connection as _get_conn
+        from api.shared.database import get_db_connection as _get_conn
 
         return _get_conn()
 
@@ -261,7 +261,7 @@ class AIStorylineDiscovery:
         (do not invent SHA-hash vectors that look like successful embeddings).
         Soft miss (empty vector) returns None.
         """
-        api.shared.services.llm_service import is_ollama_pressure_error, ollama_embed_sync
+        from api.shared.services.llm_service import is_ollama_pressure_error, ollama_embed_sync
 
         try:
             vec = ollama_embed_sync(text[:4000], model=EMBEDDING_MODEL)
@@ -450,11 +450,11 @@ class AIStorylineDiscovery:
         if limit is None:
             limit = STORYLINE_DISCOVERY_ARTICLE_LIMIT
 
-        api.shared.pipeline_article_selection import sql_order_created_at
+        from api.shared.pipeline_article_selection import sql_order_created_at
 
         _ord = sql_order_created_at()
         try:
-            api.shared.article_signal_gate import sql_article_signal_full_lane_and
+            from api.shared.article_signal_gate import sql_article_signal_full_lane_and
 
             sig = sql_article_signal_full_lane_and("a", schema)
         except Exception:
@@ -625,7 +625,7 @@ class AIStorylineDiscovery:
                     if progress_callback and completed % 10 == 0:
                         progress_callback(completed + cached_count, total + cached_count)
                 except Exception as e:
-                    api.shared.services.llm_service import is_ollama_pressure_error
+                    from api.shared.services.llm_service import is_ollama_pressure_error
 
                     if is_ollama_pressure_error(e):
                         pressure_err = e
@@ -914,7 +914,7 @@ class AIStorylineDiscovery:
         )
         # #region agent log
         try:
-            api.shared.debug_session_log import agent_dbg
+            from api.shared.debug_session_log import agent_dbg
 
             agent_dbg(
                 "A",
@@ -1136,7 +1136,7 @@ Reply with ONLY a JSON object:
 {{"title": "headline", "description": "one sentence summary"}}"""
 
         try:
-            api.shared.services.llm_service import ollama_generate_sync
+            from api.shared.services.llm_service import ollama_generate_sync
 
             result = ollama_generate_sync(
                 prompt,
@@ -1165,7 +1165,7 @@ Reply with ONLY a JSON object:
                     pass
 
         except Exception as e:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -1444,8 +1444,8 @@ Reply with ONLY a JSON object:
         schema: str,
     ) -> int:
         """Admit cluster articles through membership_store with per-article scores."""
-        api.shared.membership_scoring import score_article_against_signals
-        api.shared.membership_store import MembershipIntent, admit as membership_admit
+        from api.shared.membership_scoring import score_article_against_signals
+        from api.shared.membership_store import MembershipIntent, admit as membership_admit
         from services.domain_synthesis_config import get_domain_synthesis_config
         from services.storyline_centroid import l2_normalize
 
@@ -1735,7 +1735,7 @@ Reply with ONLY a JSON object:
                 if result:
                     storyline_id = int(result[0])
                     try:
-                        api.shared.episode_attach_gate import (
+                        from api.shared.episode_attach_gate import (
                             lock_episode_signature,
                             seed_signature_from_entity_names,
                         )
@@ -2325,7 +2325,7 @@ Reply with ONLY a JSON object:
         }
         # #region agent log
         try:
-            api.shared.debug_session_log import agent_dbg
+            from api.shared.debug_session_log import agent_dbg
 
             agent_dbg(
                 "A",
@@ -2442,7 +2442,7 @@ Reply with ONLY a JSON object:
                         cluster.suggested_description = metadata["description"]
                         llm_count += 1
                     except Exception as e:
-                        api.shared.services.llm_service import is_ollama_pressure_error
+                        from api.shared.services.llm_service import is_ollama_pressure_error
 
                         if is_ollama_pressure_error(e):
                             raise
@@ -2594,7 +2594,7 @@ def get_discovery_service(db_config: dict[str, Any] = None) -> AIStorylineDiscov
 
     if _discovery_service is None:
         if db_config is None:
-            api.shared.database import get_db_config
+            from api.shared.database import get_db_config
 
             db_config = get_db_config()
         _discovery_service = AIStorylineDiscovery(db_config)

@@ -9,8 +9,8 @@ See docs/V6_QUALITY_FIRST_UPGRADE_PLAN.md, V6_QUALITY_FIRST_TODO.md Tier 3.
 import logging
 from typing import Any
 
-api.shared.database import get_db_connection
-api.shared.domain_registry import is_valid_domain_key, resolve_domain_schema
+from api.shared.database import get_db_connection
+from api.shared.domain_registry import is_valid_domain_key, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 async def _llm_synthesize(prompt: str) -> str | None:
     """Call LLM for narrative synthesis; returns text or None."""
     try:
-        api.shared.services.llm_service import TaskType, llm_service
+        from api.shared.services.llm_service import TaskType, llm_service
 
         result = await llm_service.generate_summary(prompt[:4000], task_type=TaskType.QUICK_SUMMARY)
         if result.get("success"):

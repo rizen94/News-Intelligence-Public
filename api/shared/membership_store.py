@@ -12,7 +12,7 @@ import logging
 from enum import Enum
 from typing import Any
 
-api.shared.membership_mode import MembershipMode, get_membership_mode
+from api.shared.membership_mode import MembershipMode, get_membership_mode
 
 logger = logging.getLogger(__name__)
 
@@ -192,8 +192,8 @@ def admit(
     content-aware ``score_article_storyline_membership`` overrides ``blend_score``
     unless the caller already supplied ``score_parts``.
     """
-    api.shared.assembly_link_modes import LINK_MODE_SEQUENCE
-    api.shared.episode_attach_gate import (
+    from api.shared.assembly_link_modes import LINK_MODE_SEQUENCE
+    from api.shared.episode_attach_gate import (
         attach_article_events_to_episode,
         episode_container_assembly_enabled,
     )
@@ -260,7 +260,7 @@ def admit(
     parts_meta: dict[str, Any] = dict(score_parts) if isinstance(score_parts, dict) else {}
     if do_recompute:
         try:
-            api.shared.membership_scoring import score_article_storyline_membership
+            from api.shared.membership_scoring import score_article_storyline_membership
 
             ms = score_article_storyline_membership(
                 conn,
@@ -564,7 +564,7 @@ def admit(
 
         # DUAL_WRITE + HITL/manual only: thin bag seed when no CE yet
         try:
-            api.shared.assembly_link_funnel import allow_storyline_membership_attach
+            from api.shared.assembly_link_funnel import allow_storyline_membership_attach
 
             ok_gate, gate_reason = allow_storyline_membership_attach(
                 conn,
@@ -621,7 +621,7 @@ def admit(
     # LEGACY_BAG
     if not episode_container_assembly_enabled():
         try:
-            api.shared.assembly_link_funnel import allow_storyline_membership_attach
+            from api.shared.assembly_link_funnel import allow_storyline_membership_attach
 
             ok_gate, gate_reason = allow_storyline_membership_attach(
                 conn,
@@ -686,7 +686,7 @@ def insert_derived_bag_row(
     metadata: dict[str, Any] | None = None,
 ) -> bool:
     """Dual-write derived row from EEL attach (episode_attach_gate only)."""
-    api.shared.membership_mode import bag_writes_allowed
+    from api.shared.membership_mode import bag_writes_allowed
 
     if not bag_writes_allowed():
         return False
@@ -716,8 +716,8 @@ def reconcile_derived_bag_from_eel(
 
     ASSEMBLY_MODEL: bag is derived from EEL. Safe when episode_container_assembly is on.
     """
-    api.shared.episode_attach_gate import episode_container_assembly_enabled
-    api.shared.storyline_article_counts import sync_counts_update_sql
+    from api.shared.episode_attach_gate import episode_container_assembly_enabled
+    from api.shared.storyline_article_counts import sync_counts_update_sql
 
     if not episode_container_assembly_enabled():
         return {"skipped": 1, "inserted": 0, "removed": 0}
@@ -791,7 +791,7 @@ def reconcile_derived_bags_for_domain(
     limit: int = 80,
 ) -> dict[str, Any]:
     """Reconcile active episodes that show bag↔EEL article-set drift."""
-    api.shared.episode_attach_gate import episode_container_assembly_enabled
+    from api.shared.episode_attach_gate import episode_container_assembly_enabled
 
     if not episode_container_assembly_enabled():
         return {"domain": domain_key, "skipped": True, "episodes": 0, "inserted": 0, "removed": 0}
@@ -857,7 +857,7 @@ def copy_bag_rows(
     relevance_multiplier: float = 1.0,
 ) -> int:
     """Maintenance: copy bag rows between storylines (consolidation only)."""
-    api.shared.membership_mode import bag_writes_allowed
+    from api.shared.membership_mode import bag_writes_allowed
 
     if not bag_writes_allowed():
         return 0

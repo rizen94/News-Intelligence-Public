@@ -7,14 +7,14 @@ from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel, Field
-api.shared.database import (
+from api.shared.database import (
     get_db_connection_context,
     get_ui_db_connection_context,
 )
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/system_monitoring", tags=["System Monitoring"])
+router = APIRouter(prefix="/system_monitoring", tags=["System Monitoring"])
 
 
 class MLQueueRequest(BaseModel):

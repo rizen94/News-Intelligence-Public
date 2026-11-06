@@ -12,7 +12,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-api.shared.services.llm_service import LLMService, ModelType
+from api.shared.services.llm_service import LLMService, ModelType
 
 logger = logging.getLogger(__name__)
 

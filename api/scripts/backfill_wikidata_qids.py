@@ -17,8 +17,8 @@ import requests
 _API_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _API_ROOT)
 
-api.shared.database import get_db_connection_context
-api.shared.domain_registry import is_valid_domain_key, resolve_domain_schema
+from api.shared.database import get_db_connection_context
+from api.shared.domain_registry import is_valid_domain_key, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 _WD_SPARQL = "https://query.wikidata.org/sparql"

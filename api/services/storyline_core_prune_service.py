@@ -16,9 +16,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from api.config.runtime import env_int, env_str
-api.shared.database import get_db_connection_context
-api.shared.domain_registry import resolve_domain_schema
-api.shared.storyline_article_counts import sync_counts_update_sql, sync_storyline_derived_metrics
+from api.shared.database import get_db_connection_context
+from api.shared.domain_registry import resolve_domain_schema
+from api.shared.storyline_article_counts import sync_counts_update_sql, sync_storyline_derived_metrics
 
 from services.storyline_page_subject import (
     holdings_in_text,

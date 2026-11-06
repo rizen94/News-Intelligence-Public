@@ -12,10 +12,10 @@ import logging
 from typing import Any
 
 from api.config.runtime import env_str
-api.shared.database import get_db_connection_context
-api.shared.domain_registry import pipeline_url_schema_pairs, resolve_domain_schema
-api.shared.entity_relationships_store import UPSERT_ENTITY_RELATIONSHIP_SQL, normalize_edge
-api.shared.pipeline_pass_marker import sql_article_pass_cleared
+from api.shared.database import get_db_connection_context
+from api.shared.domain_registry import pipeline_url_schema_pairs, resolve_domain_schema
+from api.shared.entity_relationships_store import UPSERT_ENTITY_RELATIONSHIP_SQL, normalize_edge
+from api.shared.pipeline_pass_marker import sql_article_pass_cleared
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ def index_spine_complete_articles(*, limit: int | None = None) -> dict[str, Any]
 
 def index_domain_co_mentions(domain_key: str, *, limit: int = 50) -> dict[str, Any]:
     """Index co-mention edges for pending articles in one domain (entity_organizer path)."""
-    api.shared.domain_registry import resolve_domain_schema
+    from api.shared.domain_registry import resolve_domain_schema
 
     schema_name = resolve_domain_schema(domain_key)
     cap = max(1, min(int(limit), 500))
@@ -151,7 +151,7 @@ def _index_entity_co_mentions(
     rows = cur.fetchall()
     if len(rows) < 2:
         return 0
-    api.shared.entity_relationships_store import entity_relationships_at_cap
+    from api.shared.entity_relationships_store import entity_relationships_at_cap
 
     if entity_relationships_at_cap():
         logger.warning("link_indexer: entity_relationships at cap — skipping new edges")

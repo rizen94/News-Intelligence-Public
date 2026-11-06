@@ -6,7 +6,7 @@ for articles, storylines, and whole briefings. Used to reorder briefing feed and
 import logging
 from typing import Any
 
-api.shared.database import get_db_connection
+from api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 

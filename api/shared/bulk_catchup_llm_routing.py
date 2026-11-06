@@ -42,7 +42,7 @@ def dual_lane_extraction_active() -> bool:
     if raw in ("0", "false", "no"):
         return False
     try:
-        api.shared.automation_llm_routing import automation_use_popos_gpu
+        from api.shared.automation_llm_routing import automation_use_popos_gpu
 
         if automation_use_popos_gpu():
             return env_str("OLLAMA_DUAL_HOST_ROUTING_ENABLED", "").lower() in ("1", "true", "yes")
@@ -188,7 +188,7 @@ def configure_catchup_extraction_routing(
         env_set("BULK_CPU_EXTRACTION_MODEL", cpu_extraction_model)
 
     try:
-        api.shared.ollama_extraction_model_resolver import resolve_extraction_models_for_hosts
+        from api.shared.ollama_extraction_model_resolver import resolve_extraction_models_for_hosts
 
         resolve_extraction_models_for_hosts(gpu_host=pop, cpu_host=local, run_id="bulk_catchup")
         extraction_model = env_str("OLLAMA_MODEL_EXTRACTION", extraction_model).strip()

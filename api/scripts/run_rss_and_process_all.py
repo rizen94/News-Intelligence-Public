@@ -8,7 +8,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-api.shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED
+from api.shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED
 
 
 async def main():
@@ -16,8 +16,8 @@ async def main():
     from domains.content_analysis.services.topic_extraction_queue_worker import (
         TopicExtractionQueueWorker,
     )
-    api.shared.database import get_db_connection
-    api.shared.domain_registry import url_schema_pairs
+    from api.shared.database import get_db_connection
+    from api.shared.domain_registry import url_schema_pairs
 
     print("=" * 60)
     print("1. RSS Feed Collection")

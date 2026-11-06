@@ -16,7 +16,7 @@ _SPECS = _DOMAINS / "specs"
 if str(_API) not in sys.path:
     sys.path.insert(0, str(_API))
 
-api.shared.services.domain_rss_seed import extract_seed_feed_entries, extract_seed_feed_category  # noqa: E402
+from api.shared.services.domain_rss_seed import extract_seed_feed_entries, extract_seed_feed_category  # noqa: E402
 
 # Known applied silo migrations (metadata only).
 _MIGRATION_REF_BY_KEY: dict[str, str] = {

@@ -9,8 +9,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-api.shared.database import get_db_connection
-api.shared.services.domain_aware_service import get_domain_data_schemas
+from api.shared.database import get_db_connection
+from api.shared.services.domain_aware_service import get_domain_data_schemas
 
 
 def _find_rss_feed_schema(conn, feed_id: int) -> str | None:
@@ -29,7 +29,7 @@ def _find_rss_feed_schema(conn, feed_id: int) -> str | None:
 from scripts.rss_duplicate_detector import RSSDuplicateDetector
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/rss_feeds", tags=["RSS Feed Duplicates"])
+router = APIRouter(prefix="/rss_feeds", tags=["RSS Feed Duplicates"])
 
 
 class DuplicateDetectionResponse(BaseModel):

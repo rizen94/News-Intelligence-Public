@@ -13,7 +13,7 @@ from typing import Any
 
 import numpy as np
 from psycopg2.extras import RealDictCursor
-api.shared.database import get_db_connection
+from api.shared.database import get_db_connection
 
 from .base import BaseRAGService
 

@@ -31,7 +31,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Use shared DB config (run with api as cwd or PYTHONPATH=api)
-api.shared.database import get_db_connection as _get_db_connection
+from api.shared.database import get_db_connection as _get_db_connection
 
 
 def get_db_connection():
@@ -281,7 +281,7 @@ def main():
         sys.exit(1)
 
     # Registry + existing schemas (aligned with RSS / automation, not public.domains.is_active)
-    api.shared.services.domain_aware_service import get_all_domains, resolve_domain_token_to_schema
+    from api.shared.services.domain_aware_service import get_all_domains, resolve_domain_token_to_schema
 
     cur = conn.cursor()
     if args.domains:

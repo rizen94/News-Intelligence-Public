@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Any
 
 from api.config.runtime import env_bool, env_int
-api.shared.database import get_ui_db_connection_context
-api.shared.editorial_package_theme import is_theme_mismatch, package_spine_tokens
+from api.shared.database import get_ui_db_connection_context
+from api.shared.editorial_package_theme import is_theme_mismatch, package_spine_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -695,7 +695,7 @@ def _attach_completed_rag_pulls(
     limit: int = 4,
 ) -> int:
     """Attach completed rag_evidence_pull → processed_documents as context members."""
-    api.shared.database import get_db_connection_context
+    from api.shared.database import get_db_connection_context
 
     domains = [str(d) for d in (package.get("domain_keys") or []) if d]
     attached = 0
@@ -880,7 +880,7 @@ def _sync_vault_note(
         # A4: register PG mirror so packages↔vault handoff is queryable (not binder).
         try:
             from services.vault_notes_registry_service import upsert_vault_note
-            api.shared.vault_note_contract import structural_tags_for_note
+            from api.shared.vault_note_contract import structural_tags_for_note
 
             domain_key = "global"
             dks = package.get("domain_keys") or []
@@ -1007,8 +1007,8 @@ async def _llm_synthesize(
         + "\n```\n"
     )
     try:
-        api.shared.services.ollama_model_caller import get_ollama_model_caller
-        api.shared.services.ollama_model_policy import InvocationKind
+        from api.shared.services.ollama_model_caller import get_ollama_model_caller
+        from api.shared.services.ollama_model_policy import InvocationKind
 
         caller = get_ollama_model_caller()
         result = await caller.generate(

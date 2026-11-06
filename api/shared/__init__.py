@@ -5,9 +5,9 @@ re-exported here so callers can import from ``shared`` (flat, no deep nesting).
 
 Usage:
 
-    api.shared.database import insert_or_upsert, get_db_connection  # database utilities
-    api.shared.domain_registry import DOMAIN_PATH_PATTERN              # domain constants
-    api.shared.pipeline_state_constants import ARTICLE_PENDING        # pipeline states
+    from api.shared.database import insert_or_upsert, get_db_connection  # database utilities
+    from api.shared.domain_registry import DOMAIN_PATH_PATTERN              # domain constants
+    from api.shared.pipeline_state_constants import ARTICLE_PENDING        # pipeline states
     from shared import ROUTERS                                          # all domain routers
 
 """

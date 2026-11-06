@@ -13,9 +13,9 @@ from typing import Any, Optional
 
 from psycopg2.extras import RealDictCursor
 from api.config.settings import MODELS
-api.shared.domain_registry import resolve_domain_schema
-api.shared.services.domain_aware_service import DomainAwareService, validate_domain
-api.shared.services.llm_service import llm_service
+from api.shared.domain_registry import resolve_domain_schema
+from api.shared.services.domain_aware_service import DomainAwareService, validate_domain
+from api.shared.services.llm_service import llm_service
 
 logger = logging.getLogger(__name__)
 
@@ -484,7 +484,7 @@ async def process_storyline_rag_analysis(
 ):
     """Background task for RAG-enhanced storyline analysis"""
     try:
-        api.shared.database import get_db_connection
+        from api.shared.database import get_db_connection
 
         schema = resolve_domain_schema(domain)
         title, description, current_summary = storyline
@@ -510,7 +510,7 @@ async def process_storyline_rag_analysis(
                 build_vault_pack_for_entity_ids,
                 render_vault_context_pack_for_llm,
             )
-            api.shared.database import get_db_connection_context
+            from api.shared.database import get_db_connection_context
 
             entity_ids: list[int] = []
             with get_db_connection_context() as _conn:

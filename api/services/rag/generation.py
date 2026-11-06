@@ -81,7 +81,7 @@ class RAGGenerationModule:
 
     def get_db_connection(self):
         """Get database connection from shared pool."""
-        api.shared.database import get_db_connection as _get_conn
+        from api.shared.database import get_db_connection as _get_conn
 
         return _get_conn()
 
@@ -96,14 +96,14 @@ class RAGGenerationModule:
             return self.embedding_cache[cache_key]
 
         try:
-            api.shared.services.llm_service import ollama_embed_sync
+            from api.shared.services.llm_service import ollama_embed_sync
 
             embedding = ollama_embed_sync(text[:2000], model=EMBEDDING_MODEL)
             if embedding:
                 self.embedding_cache[cache_key] = embedding
                 return embedding
         except Exception as e:
-            api.shared.services.llm_service import is_ollama_pressure_error as _pressure
+            from api.shared.services.llm_service import is_ollama_pressure_error as _pressure
 
             if _pressure(e):
                 raise
@@ -221,7 +221,7 @@ Answer:"""
             Tuple of (answer, confidence_score)
         """
         try:
-            api.shared.services.llm_service import ollama_generate_sync
+            from api.shared.services.llm_service import ollama_generate_sync
 
             answer = ollama_generate_sync(
                 prompt,

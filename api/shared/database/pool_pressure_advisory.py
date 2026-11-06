@@ -52,7 +52,7 @@ def build_pool_pressure_signal(
 ) -> dict[str, Any]:
     """Build advisory payload from a pool snapshot (or live snapshot)."""
     if snap is None:
-        api.shared.database import get_db_pool_snapshot
+        from api.shared.database import get_db_pool_snapshot
 
         snap = get_db_pool_snapshot()
     worker = (snap or {}).get("worker") or {}
@@ -109,7 +109,7 @@ def publish_db_pool_pressure_advisory(
         return signal
 
     try:
-        api.shared.database import ephemeral_db_connection_context
+        from api.shared.database import ephemeral_db_connection_context
 
         with ephemeral_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -176,7 +176,7 @@ def read_db_pool_pressure_advisory(
         "age_sec": None,
     }
     try:
-        api.shared.database import ephemeral_db_connection_context
+        from api.shared.database import ephemeral_db_connection_context
 
         with ephemeral_db_connection_context() as conn:
             with conn.cursor() as cur:

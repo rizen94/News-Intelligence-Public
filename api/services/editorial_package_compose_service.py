@@ -20,8 +20,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 from api.config.runtime import env_bool, env_int
-api.shared.database import get_ui_db_connection_context
-api.shared.editorial_package_vocab import provenance_has_citeable_source
+from api.shared.database import get_ui_db_connection_context
+from api.shared.editorial_package_vocab import provenance_has_citeable_source
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +227,7 @@ def _citeable_active_ids(pkg: dict[str, Any], payload: dict[str, Any]) -> set[in
     Payload-only hydration is not enough; validate_prose_citations reads stored provenance.
     Members stamped ``suppress_reattach`` are excluded even if somehow still active.
     """
-    api.shared.editorial_package_reattach import member_excluded_from_compose
+    from api.shared.editorial_package_reattach import member_excluded_from_compose
 
     allowed: set[int] = set()
     for m in pkg.get("members") or []:
@@ -380,7 +380,7 @@ def hydrate_member_evidence(
     if not rows:
         return rows
 
-    api.shared.domain_registry import resolve_domain_schema
+    from api.shared.domain_registry import resolve_domain_schema
 
     ce_ids = [
         int(r["member_id"])
@@ -456,7 +456,7 @@ def hydrate_member_evidence(
         mid = r.get("member_id")
         mt = r.get("member_type")
         if mt == "chronological_event" and mid is not None and int(mid) in ce_by_id:
-            api.shared.editorial_package_theme import parse_case_caption_parties
+            from api.shared.editorial_package_theme import parse_case_caption_parties
 
             ce = ce_by_id[int(mid)]
             description = _clean_text(ce.get("description") or "", limit=excerpt_limit)
@@ -533,7 +533,7 @@ def hydrate_member_evidence(
                     r["excerpt"] = content
                 if art.get("url") and not r.get("url"):
                     r["url"] = _clean_text(art.get("url"), limit=240)
-                api.shared.editorial_package_theme import parse_case_caption_parties
+                from api.shared.editorial_package_theme import parse_case_caption_parties
 
                 caption_parties = parse_case_caption_parties(f"{title} {content[:500]}")
                 if caption_parties and not r.get("parties"):
@@ -593,7 +593,7 @@ def build_compose_payload(
     *,
     mode: ComposeMode = "draft",
 ) -> dict[str, Any]:
-    api.shared.editorial_package_reattach import member_excluded_from_compose
+    from api.shared.editorial_package_reattach import member_excluded_from_compose
 
     title = str(package.get("working_title") or "").strip()
     stub = str(package.get("summary_stub") or "").strip()
@@ -1062,8 +1062,8 @@ async def _call_compose_llm(
         f"```json\n{json.dumps(payload, default=str)[:140_000]}\n```\n"
     )
     try:
-        api.shared.services.ollama_model_caller import get_ollama_model_caller
-        api.shared.services.ollama_model_policy import InvocationKind
+        from api.shared.services.ollama_model_caller import get_ollama_model_caller
+        from api.shared.services.ollama_model_policy import InvocationKind
 
         caller = get_ollama_model_caller()
         result = await caller.generate(
@@ -1196,7 +1196,7 @@ async def run_compose_pass(
                 "editorial_projection": projection,
             }
 
-    api.shared.editorial_package_reattach import member_excluded_from_compose
+    from api.shared.editorial_package_reattach import member_excluded_from_compose
 
     active_members = [
         m
@@ -1275,7 +1275,7 @@ async def run_compose_pass(
             if not validated.get("title"):
                 validated["title"] = payload.get("working_title")
 
-    api.shared.stakes_gate import ensure_reader_sections, evaluate_stakes_gate
+    from api.shared.stakes_gate import ensure_reader_sections, evaluate_stakes_gate
 
     body = ensure_reader_sections(body, payload)
     allowed_cite_ids = _citeable_active_ids(pkg, payload)

@@ -64,7 +64,7 @@ def _resolve_committees(bioguide_id: str | None, cfg: dict[str, Any]) -> tuple[l
     if not enrich_cfg.get("use_congress_gov", True):
         return [], []
     try:
-        api.shared.services.congress_gov_client import congress_gov_api_key, congress_gov_request
+        from api.shared.services.congress_gov_client import congress_gov_api_key, congress_gov_request
 
         if not congress_gov_api_key():
             return [], []
@@ -149,7 +149,7 @@ def enrich_congress_trades(*, limit: int = 500, days_back: int | None = 365) -> 
     window = int((cfg.get("enrichment") or {}).get("bipartisan_cluster_window_days") or 14)
     today = _today()
 
-    api.shared.database import get_db_connection_context
+    from api.shared.database import get_db_connection_context
     from psycopg2.extras import RealDictCursor
 
     upserted = 0
@@ -250,7 +250,7 @@ def score_congress_trades(*, limit: int = 500) -> dict[str, Any]:
         return {"ok": False, "error": "feature_disabled"}
 
     cfg = load_congress_trade_config()
-    api.shared.database import get_db_connection_context
+    from api.shared.database import get_db_connection_context
     from psycopg2.extras import RealDictCursor
 
     written = 0
@@ -369,7 +369,7 @@ def rebuild_monthly_paper_portfolio(*, as_of_month: date | None = None) -> dict[
     last_day = date(month.year, month.month, monthrange(month.year, month.month)[1])
     mark_date = min(last_day, _today())
 
-    api.shared.database import get_db_connection_context
+    from api.shared.database import get_db_connection_context
     from psycopg2.extras import RealDictCursor
     from services.trading_signals_service import fetch_stooq_daily_csv
 
@@ -521,7 +521,7 @@ def promote_to_trading_signals(*, top_n: int | None = None) -> dict[str, Any]:
     source = str(hitl.get("metadata_source") or "congress_quiver")
     today = _today()
 
-    api.shared.database import get_db_connection_context
+    from api.shared.database import get_db_connection_context
     from psycopg2.extras import RealDictCursor
 
     created = 0
@@ -640,7 +640,7 @@ def list_congress_signals(
     eligible_only: bool = True,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    api.shared.database import get_ui_db_connection_context
+    from api.shared.database import get_ui_db_connection_context
     from psycopg2.extras import RealDictCursor
 
     where = "WHERE eligible = TRUE" if eligible_only else ""
@@ -666,7 +666,7 @@ def list_congress_signals(
 
 
 def get_paper_portfolio(*, months: int = 12) -> dict[str, Any]:
-    api.shared.database import get_ui_db_connection_context
+    from api.shared.database import get_ui_db_connection_context
     from psycopg2.extras import RealDictCursor
 
     try:

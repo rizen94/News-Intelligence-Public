@@ -15,8 +15,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
 
-api.shared.database import get_db_connection_context
-api.shared.domain_registry import resolve_domain_schema
+from api.shared.database import get_db_connection_context
+from api.shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -169,8 +169,8 @@ Evidence:
 
 
 async def _llm_brief(prompt: str) -> str:
-    api.shared.services.ollama_model_caller import get_ollama_model_caller
-    api.shared.services.ollama_model_policy import InvocationKind
+    from api.shared.services.ollama_model_caller import get_ollama_model_caller
+    from api.shared.services.ollama_model_policy import InvocationKind
 
     caller = get_ollama_model_caller()
     result = await caller.generate(
@@ -197,7 +197,7 @@ def _persist_brief(hub: dict[str, Any], brief: str, fingerprint: str) -> dict[st
     from services.vault_bridge_service import vault_root
     from services.vault_note_patch import patch_auto_sections
     from services.vault_notes_registry_service import upsert_vault_note
-    api.shared.vault_note_contract import cluster_object_id
+    from api.shared.vault_note_contract import cluster_object_id
 
     domain_key = str(hub.get("domain_key") or "politics")
     cluster_key = str(hub.get("cluster_key") or hub.get("id"))

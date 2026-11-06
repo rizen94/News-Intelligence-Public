@@ -34,12 +34,12 @@ except ImportError as e:
 
 try:
     # Pipeline stale-pending purge (mirror of /{domain}/storylines/review-queue/cron-purge)
-    api.shared.domain_registry import (  # noqa: F401
+    from api.shared.domain_registry import (  # noqa: F401
         get_active_domain_keys,
         get_pipeline_schema_names_active,
         resolve_domain_schema,
     )
-    api.shared.services.domain_aware_service import validate_domain as _validate_domain
+    from api.shared.services.domain_aware_service import validate_domain as _validate_domain
 
     PURGE_AVAILABLE = True
 except ImportError as e:
@@ -54,7 +54,7 @@ def _get_db_config() -> dict[str, str]:
     _api = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     if _api not in sys.path:
         sys.path.insert(0, _api)
-    api.shared.database import get_db_config
+    from api.shared.database import get_db_config
 
     return get_db_config()
 
@@ -262,7 +262,7 @@ def show_status():
 
     # Check database connection
     try:
-        api.shared.database import get_db_connection
+        from api.shared.database import get_db_connection
 
         conn = get_db_connection()
         cur = conn.cursor()

@@ -31,10 +31,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "api"))
 
-api.shared.database import get_db_connection_context  # noqa: E402
-api.shared.domain_registry import resolve_domain_schema  # noqa: E402
-api.shared.membership_scoring import score_article_storyline_membership  # noqa: E402
-api.shared.membership_store import MembershipIntent, admit as membership_admit  # noqa: E402
+from api.shared.database import get_db_connection_context  # noqa: E402
+from api.shared.domain_registry import resolve_domain_schema  # noqa: E402
+from api.shared.membership_scoring import score_article_storyline_membership  # noqa: E402
+from api.shared.membership_store import MembershipIntent, admit as membership_admit  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -216,7 +216,7 @@ def run(*, domain_key: str | None, storyline_ids: list[int] | None, apply: bool)
         if domains_to_scan is None:
             cur = conn.cursor()
             try:
-                api.shared.domain_registry import get_active_domain_keys
+                from api.shared.domain_registry import get_active_domain_keys
                 domains_to_scan = list(get_active_domain_keys()) or []
             except Exception:
                 logger.warning("Could not auto-detect domains; use --domain")

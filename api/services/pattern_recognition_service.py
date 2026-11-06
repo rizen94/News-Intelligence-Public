@@ -8,8 +8,8 @@ import json
 import logging
 from typing import Any
 
-api.shared.database import get_db_connection
-api.shared.domain_registry import get_active_domain_keys
+from api.shared.database import get_db_connection
+from api.shared.domain_registry import get_active_domain_keys
 
 logger = logging.getLogger(__name__)
 
@@ -367,7 +367,7 @@ def generate_pattern_report(domain_key: str | None = None, limit: int = 20) -> d
         try:
             import asyncio
 
-            api.shared.services.llm_service import TaskType, llm_service
+            from api.shared.services.llm_service import TaskType, llm_service
 
             async def _gen():
                 result = await llm_service.generate_summary(

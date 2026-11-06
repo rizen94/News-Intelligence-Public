@@ -19,10 +19,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from api.config.runtime import env_int, env_str
-api.shared.database import get_db_connection
-api.shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
-api.shared.services.llm_service import LLMService, ModelType
-api.shared.services.ollama_model_policy import InvocationKind
+from api.shared.database import get_db_connection
+from api.shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
+from api.shared.services.llm_service import LLMService, ModelType
+from api.shared.services.ollama_model_policy import InvocationKind
 
 logger = logging.getLogger(__name__)
 
@@ -586,7 +586,7 @@ async def run_storyline_review_agent_for_domain(
     if batch_limit is None:
         limit = max(10, env_int("STORYLINE_REVIEW_BATCH_SIZE", 60))
         try:
-            api.shared.adaptive_batch_policy import resolve_adaptive_batch
+            from api.shared.adaptive_batch_policy import resolve_adaptive_batch
 
             limit, _meta = resolve_adaptive_batch("storyline_review_agent", limit)
             limit = max(10, int(limit))

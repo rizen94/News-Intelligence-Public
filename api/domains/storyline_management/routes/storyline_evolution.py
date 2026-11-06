@@ -7,8 +7,8 @@ Intelligent storyline evolution and quality assessment
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
-api.shared.domain_registry import DOMAIN_PATH_PATTERN
-api.shared.services.domain_aware_service import validate_domain
+from api.shared.domain_registry import DOMAIN_PATH_PATTERN
+from api.shared.services.domain_aware_service import validate_domain
 
 from ..schemas.storyline_schemas import (
     EvolutionResult,

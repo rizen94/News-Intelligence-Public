@@ -244,7 +244,7 @@ def compute_mode(
     pressure: bool = False,
 ) -> SchedulerMode:
     """Pick exactly one scheduling mode for this replan."""
-    api.shared.pipeline_resource_policy import (
+    from api.shared.pipeline_resource_policy import (
         intake_preprocess_pending,
         post_process_preferred_enabled,
         preprocess_stable_pending,
@@ -329,7 +329,7 @@ def admit_phase(
         return "stall_hold"
 
     try:
-        api.shared.remote_phase_worker import phase_owned_by_remote_worker
+        from api.shared.remote_phase_worker import phase_owned_by_remote_worker
 
         if not ignore_remote_ownership and phase_owned_by_remote_worker(name):
             return "remote_owned"
@@ -338,7 +338,7 @@ def admit_phase(
 
     try:
         from api.config.runtime import env_str
-        api.shared.process_memory import AUTOMATION_RSS_PAUSE_EXEMPT_PHASES, process_rss_mb
+        from api.shared.process_memory import AUTOMATION_RSS_PAUSE_EXEMPT_PHASES, process_rss_mb
 
         raw_block = (env_str("AUTOMATION_BLOCK_PHASES", "") or "").strip()
         if raw_block and name in {x.strip() for x in raw_block.split(",") if x.strip()}:
@@ -357,7 +357,7 @@ def admit_phase(
         if not ignore_remote_ownership:
             return "disabled"
         try:
-            api.shared.remote_phase_worker import phase_owned_by_remote_worker
+            from api.shared.remote_phase_worker import phase_owned_by_remote_worker
 
             if not phase_owned_by_remote_worker(name):
                 return "disabled"
@@ -398,7 +398,7 @@ def admit_phase(
         pass
 
     try:
-        api.shared.assembly_phase_order import post_spine_scheduling_suppressed
+        from api.shared.assembly_phase_order import post_spine_scheduling_suppressed
 
         if post_spine_scheduling_suppressed(name):
             return "post_spine_suppressed"
@@ -406,7 +406,7 @@ def admit_phase(
         pass
 
     try:
-        api.shared.pipeline_resource_policy import (
+        from api.shared.pipeline_resource_policy import (
             entity_profile_build_allowed,
             intake_extraction_suppressed,
             intake_first_gpu_defer_threshold,
@@ -415,8 +415,8 @@ def admit_phase(
             refinement_phase_allowed,
             unified_superseded_automation_phases,
         )
-        api.shared.pipeline_resource_policy import INTAKE_PREPROCESS_PHASES
-        api.shared.spine_phase_order import spine_pipeline_ordered_active
+        from api.shared.pipeline_resource_policy import INTAKE_PREPROCESS_PHASES
+        from api.shared.spine_phase_order import spine_pipeline_ordered_active
 
         if intake_extraction_suppressed() and name in legacy_intake_extraction_phases():
             return "legacy_intake_suppressed"
@@ -459,7 +459,7 @@ def admit_phase(
 
     try:
         from api.config.runtime import env_str
-        api.shared.database.db_availability import is_automation_db_ready
+        from api.shared.database.db_availability import is_automation_db_ready
 
         if env_str("AUTOMATION_PAUSE_WHEN_DB_DOWN", "true").lower() in ("1", "true", "yes"):
             if not is_automation_db_ready():

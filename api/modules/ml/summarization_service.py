@@ -7,6 +7,7 @@ import requests
 import json
 import logging
 import time
+import os
 from typing import Optional
 from datetime import datetime
 
@@ -25,7 +26,7 @@ class MLSummarizationService:
             ollama_url: URL of the Ollama service
             model_name: Name of the model to use for summarization
         """
-        self.ollama_url = (ollama_url or __import__("os").environ.get("OLLAMA_HOST") or __import__("os").environ.get("OLLAMA_URL") or "http://127.0.0.1:11434").rstrip("/")
+        self.ollama_url = (ollama_url or os.environ.get("OLLAMA_HOST") or os.environ.get("OLLAMA_URL") or "http://127.0.0.1:11434").rstrip("/")
         self.model_name = model_name
         self.timeout = 300  # 5 minutes timeout for large models
         self.ml_available = False
@@ -72,7 +73,7 @@ class MLSummarizationService:
             Generated text response
         """
         try:
-            api.shared.services.llm_service import ollama_generate_sync
+            from api.shared.services.llm_service import ollama_generate_sync
 
             full_prompt = prompt
             if system_prompt:
@@ -89,7 +90,7 @@ class MLSummarizationService:
             logger.info(f"✅ Ollama response received in {generation_time:.2f}s")
             return response_text or ""
         except Exception as e:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -156,7 +157,7 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 }
                 
         except Exception as e:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -227,7 +228,7 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 }
                 
         except Exception as e:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -287,7 +288,7 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 }
                 
         except Exception as e:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -363,7 +364,7 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 }
                 
         except Exception as e:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -494,7 +495,7 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
             }
             
         except Exception as e:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise

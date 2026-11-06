@@ -39,7 +39,7 @@ def _is_phase_disabled(phase: str) -> bool:
 
 def build_startup_readiness(request: Request) -> dict[str, Any]:
     """Build readiness payload; ready=true only when core pipeline subsystems are live."""
-    api.shared.database.db_availability import is_automation_db_ready
+    from api.shared.database.db_availability import is_automation_db_ready
 
     automation = getattr(request.app.state, "automation", None)
     automation_thread = getattr(request.app.state, "automation_thread", None)

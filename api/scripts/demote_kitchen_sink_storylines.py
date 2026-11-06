@@ -26,8 +26,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "api"))
 
-api.shared.database import get_db_connection_context  # noqa: E402
-api.shared.domain_registry import (  # noqa: E402
+from api.shared.database import get_db_connection_context  # noqa: E402
+from api.shared.domain_registry import (  # noqa: E402
     get_pipeline_active_domain_keys,
     resolve_domain_schema,
 )

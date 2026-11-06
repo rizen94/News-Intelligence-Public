@@ -15,7 +15,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from api.config.runtime import env_bool, env_int, env_str
-api.shared.database import get_db_connection
+from api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ _FETCH_TIMEOUT = 15
 
 
 def rag_evidence_pull_enabled() -> bool:
-    api.shared.chemistry_beaker import stimulus_rag_enabled
+    from api.shared.chemistry_beaker import stimulus_rag_enabled
 
     return stimulus_rag_enabled()
 
@@ -318,7 +318,7 @@ def screen_ai_arxiv_for_evidence_pull(*, limit: int = 20) -> dict[str, Any]:
     """
     if not rag_evidence_pull_enabled():
         return {"enabled": False, "enqueued": 0}
-    api.shared.domain_registry import resolve_domain_schema
+    from api.shared.domain_registry import resolve_domain_schema
 
     domain_key = "artificial-intelligence"
     schema = resolve_domain_schema(domain_key)
@@ -417,7 +417,7 @@ def screen_hypothesized_bonds_for_evidence_pull(*, limit: int = 25) -> dict[str,
     """
     if not rag_evidence_pull_enabled():
         return {"enabled": False, "enqueued": 0}
-    api.shared.domain_registry import resolve_domain_schema
+    from api.shared.domain_registry import resolve_domain_schema
 
     domain_key = "artificial-intelligence"
     schema = resolve_domain_schema(domain_key)

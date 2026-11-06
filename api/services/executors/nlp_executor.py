@@ -132,7 +132,7 @@ class NlpPipelineExecutor:
     ) -> None:
         """Run a single enrichment cycle step for NLP phases."""
         try:
-            api.shared.enrichment.pipelines import enrichment_cycle
+            from api.shared.enrichment.pipelines import enrichment_cycle
         except ImportError as exc:
             logger.error("Missing enrichment_cycle dependency: %s", exc)
             raise

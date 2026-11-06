@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 
-api.shared.services.response_cache import cached_response_sync
+from api.shared.services.response_cache import cached_response_sync
 
 logger = logging.getLogger(__name__)
 

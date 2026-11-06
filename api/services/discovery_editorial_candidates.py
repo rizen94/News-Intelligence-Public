@@ -5,13 +5,13 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-api.shared.database import get_db_connection_context
-api.shared.editorial_package_vocab import (
+from api.shared.database import get_db_connection_context
+from api.shared.editorial_package_vocab import (
     NARRATIVE_MEMBER_TYPES,
     RESEARCH_MEMBER_TYPES,
     provenance_has_citeable_source,
 )
-api.shared.post_processing_modals import allowed_domains_for_modal
+from api.shared.post_processing_modals import allowed_domains_for_modal
 
 logger = logging.getLogger(__name__)
 

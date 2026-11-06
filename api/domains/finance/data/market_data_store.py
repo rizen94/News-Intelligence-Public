@@ -15,7 +15,7 @@ except Exception:
     logger = logging.getLogger(__name__)
 
 from api.config.settings import FINANCE_MARKET_DB
-api.shared.data_result import DataResult
+from api.shared.data_result import DataResult
 from domains.finance.data.schema_version import ensure_schema_version, SCHEMA_VERSION
 
 

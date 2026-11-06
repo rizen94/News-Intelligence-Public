@@ -34,8 +34,8 @@ from datetime import datetime, timezone
 from collections.abc import Callable
 from typing import Any
 
-api.shared.database import get_db_connection
-api.shared.domain_registry import get_active_domain_keys
+from api.shared.database import get_db_connection
+from api.shared.domain_registry import get_active_domain_keys
 
 logger = logging.getLogger(__name__)
 
@@ -1034,7 +1034,7 @@ async def _run_timeline_narrative(domain_key: str, storyline_id: int, mode: str)
         if not result.get("success"):
             raise RuntimeError(result.get("error", "narrative_generation_failed"))
 
-        api.shared.llm_text_sanitize import sanitize_on_persist
+        from api.shared.llm_text_sanitize import sanitize_on_persist
 
         raw_text = (result.get("narrative") or result.get("briefing") or "").strip()
         text = sanitize_on_persist(raw_text, "narrative")

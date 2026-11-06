@@ -19,9 +19,9 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException, Path, Query, Request
 from fastapi.responses import JSONResponse
 from psycopg2.extras import RealDictCursor
-api.shared.database import get_db_connection
-api.shared.domain_registry import DOMAIN_PATH_PATTERN, is_valid_domain_key, resolve_domain_schema
-api.shared.services.domain_aware_service import validate_domain
+from api.shared.database import get_db_connection
+from api.shared.domain_registry import DOMAIN_PATH_PATTERN, is_valid_domain_key, resolve_domain_schema
+from api.shared.services.domain_aware_service import validate_domain
 
 from domains.finance.orchestrator_types import TaskPriority, TaskType
 
@@ -257,7 +257,7 @@ async def get_finance_trace(
     """Reconstruct task trace: spans, orchestrator decisions, LLM interactions."""
     _check_domain(domain)
     try:
-        api.shared.logging.trace_logger import get_traces_for_task
+        from api.shared.logging.trace_logger import get_traces_for_task
 
         spans = get_traces_for_task(task_id)
         decisions = []

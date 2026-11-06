@@ -51,7 +51,7 @@ def fetch_commodity(
     start_str = start_dt.strftime("%Y-%m-%d")
     end_str = end_dt.strftime("%Y-%m-%d")
 
-    api.shared.data_result import DataResult
+    from api.shared.data_result import DataResult
 
     from domains.finance.data.evidence_ledger import record as ledger_record
 

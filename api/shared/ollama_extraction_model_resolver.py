@@ -192,8 +192,8 @@ def resolve_extraction_models_for_hosts(
                     env_set("BULK_CPU_EXTRACTION_MODEL", cpu_fallback)
 
     try:
-        api.shared.services.llm_service import reset_llm_service
-        api.shared.services.ollama_model_caller import reset_ollama_model_caller
+        from api.shared.services.llm_service import reset_llm_service
+        from api.shared.services.ollama_model_caller import reset_ollama_model_caller
 
         reset_llm_service()
         reset_ollama_model_caller()

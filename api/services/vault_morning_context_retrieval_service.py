@@ -10,8 +10,8 @@ import logging
 import re
 from typing import Any
 
-api.shared.database import get_db_connection_context
-api.shared.vault_note_contract import (
+from api.shared.database import get_db_connection_context
+from api.shared.vault_note_contract import (
     MORNING_VAULT_RETRIEVAL_CHARS,
     MORNING_VAULT_RETRIEVAL_LIMIT,
 )

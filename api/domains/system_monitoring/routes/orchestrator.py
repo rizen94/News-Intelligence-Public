@@ -4,6 +4,7 @@ Used by OrchestratorCoordinator and governors. See docs/ORCHESTRATOR_DEVELOPMENT
 """
 
 import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, Body, Query, Request
@@ -193,7 +194,7 @@ async def orchestrator_manual_override(
                     "error": f"source must be one of: {', '.join(allowed_sources)}",
                 }
             # Report to activity feed so Monitor shows "Current activity" during collection
-            activity_id = f"force_collect_{source}_{int(__import__('time').time())}"
+            activity_id = f"force_collect_{source}_{int(time.time())}"
             try:
                 from services.activity_feed_service import get_activity_feed
 

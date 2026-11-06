@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-api.shared.database import get_db_connection_context
+from api.shared.database import get_db_connection_context
 
 logger = logging.getLogger(__name__)
 

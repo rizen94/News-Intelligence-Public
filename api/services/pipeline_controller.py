@@ -129,7 +129,7 @@ def get_post_collection_kickoff_phases() -> list[str]:
     else:
         phases = ["content_enrichment", "context_sync"]
     try:
-        api.shared.spine_phase_order import spine_pipeline_ordered_active
+        from api.shared.spine_phase_order import spine_pipeline_ordered_active
 
         if spine_pipeline_ordered_active():
             phases = ["content_enrichment"]
@@ -143,7 +143,7 @@ def post_intake_beaker_enabled() -> bool:
     if raw is not None:
         return bool(raw)
     try:
-        api.shared.chemistry_beaker import chemistry_beaker_enabled
+        from api.shared.chemistry_beaker import chemistry_beaker_enabled
 
         return chemistry_beaker_enabled()
     except Exception:
@@ -153,7 +153,7 @@ def post_intake_beaker_enabled() -> bool:
 def get_post_intake_beaker_phases() -> list[str]:
     """Chemistry beaker phases after RSS intake preprocess clears."""
     try:
-        api.shared.chemistry_beaker import get_post_intake_beaker_phases as _phases
+        from api.shared.chemistry_beaker import get_post_intake_beaker_phases as _phases
 
         return _phases()
     except Exception:
@@ -277,7 +277,7 @@ def catchup_phases() -> frozenset[str]:
 def residual_assembly_pending_threshold() -> int:
     """Min storyline_assembly pending to enqueue residual assembly when catchup drivers are clear."""
     try:
-        api.shared.pipeline_admission import mode_residual_min
+        from api.shared.pipeline_admission import mode_residual_min
 
         return mode_residual_min()
     except Exception:
@@ -288,7 +288,7 @@ def residual_assembly_pending_threshold() -> int:
 def residual_topic_clustering_pending_threshold() -> int:
     """Min topic_clustering pending to enqueue residual TC when catchup drivers are clear."""
     try:
-        api.shared.pipeline_admission import mode_residual_min
+        from api.shared.pipeline_admission import mode_residual_min
 
         return mode_residual_min()
     except Exception:
@@ -299,7 +299,7 @@ def residual_topic_clustering_pending_threshold() -> int:
 def residual_mention_resolution_pending_threshold() -> int:
     """Min mention_resolution pending to enqueue residual CEM drain when catchup drivers are clear."""
     try:
-        api.shared.pipeline_admission import mode_residual_min
+        from api.shared.pipeline_admission import mode_residual_min
 
         return mode_residual_min()
     except Exception:
@@ -310,7 +310,7 @@ def residual_mention_resolution_pending_threshold() -> int:
 def residual_entity_profile_build_pending_threshold() -> int:
     """Min entity_profile_build pending to enqueue residual EPB when catchup drivers are clear."""
     try:
-        api.shared.pipeline_admission import mode_residual_min
+        from api.shared.pipeline_admission import mode_residual_min
 
         return mode_residual_min()
     except Exception:
@@ -324,7 +324,7 @@ def residual_assembly_widow_fallback_stale_sec() -> float:
 
 
 def is_catchup_active(pending: dict[str, int]) -> bool:
-    api.shared.pipeline_resource_policy import extract_bulk_pending_total
+    from api.shared.pipeline_resource_policy import extract_bulk_pending_total
 
     if extract_bulk_pending_total(pending) > catchup_clear_threshold():
         return True
@@ -348,7 +348,7 @@ def _spine_sql_tail_should_run(pending: dict[str, int]) -> bool:
 
 
 def _popos_gpu_phases() -> frozenset[str]:
-    api.shared.pipeline_resource_policy import Host, PHASE_POLICIES
+    from api.shared.pipeline_resource_policy import Host, PHASE_POLICIES
 
     return frozenset(
         name
@@ -367,7 +367,7 @@ def lane_pools_active(hosts: dict[str, Any] | None = None) -> bool:
 
 
 def _widow_routine_phases() -> frozenset[str]:
-    api.shared.pipeline_resource_policy import Host, PHASE_POLICIES
+    from api.shared.pipeline_resource_policy import Host, PHASE_POLICIES
 
     routine_hosts = {Host.WIDOW_CPU, Host.WIDOW_DB, Host.WIDOW_FETCH}
     return frozenset(
@@ -388,8 +388,8 @@ def sample_host_resources(force: bool = False) -> Any:
     ):
         return ctrl
     try:
-        api.shared.adaptive_batch_policy import ensure_routing_context
-        api.shared.catchup_host_metrics import sample_resources
+        from api.shared.adaptive_batch_policy import ensure_routing_context
+        from api.shared.catchup_host_metrics import sample_resources
 
         ensure_routing_context()
         snap = sample_resources()
@@ -403,7 +403,7 @@ def sample_host_resources(force: bool = False) -> Any:
 
 def popos_available_for_overflow(resources: Any) -> bool:
     from api.config.runtime import env_bool
-    api.shared.bulk_catchup_llm_routing import dual_lane_extraction_active
+    from api.shared.bulk_catchup_llm_routing import dual_lane_extraction_active
 
     if not dual_lane_extraction_active():
         return False
@@ -465,7 +465,7 @@ def widow_oom_popos_overflow_active(resources: Any, automation: Any) -> bool:
 
 
 def host_state_dict(resources: Any) -> dict[str, Any]:
-    api.shared.bulk_catchup_llm_routing import dual_lane_extraction_active
+    from api.shared.bulk_catchup_llm_routing import dual_lane_extraction_active
 
     widow: dict[str, Any] = {}
     popos: dict[str, Any] = {}
@@ -512,7 +512,7 @@ def host_state_dict(resources: Any) -> dict[str, Any]:
 
 def _widow_process_rss_mb() -> float | None:
     try:
-        api.shared.process_memory import process_rss_mb
+        from api.shared.process_memory import process_rss_mb
 
         return process_rss_mb()
     except Exception:
@@ -521,7 +521,7 @@ def _widow_process_rss_mb() -> float | None:
 
 def _remote_owned_phases_list() -> list[str]:
     try:
-        api.shared.remote_phase_worker import remote_owned_phases
+        from api.shared.remote_phase_worker import remote_owned_phases
 
         return sorted(remote_owned_phases())
     except Exception:
@@ -542,7 +542,7 @@ class PhaseHealth:
 
 
 def _processed_count_from_row(row: dict[str, Any]) -> int:
-    api.shared.monitor_run_vocabulary import throughput_from_payload
+    from api.shared.monitor_run_vocabulary import throughput_from_payload
 
     return throughput_from_payload(row, prefer_iteration=False)
 
@@ -667,7 +667,7 @@ def assess_phase_health(
 def _recent_run_history(phase: str, limit: int = 5) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     try:
-        api.shared.database import get_ui_db_connection_context
+        from api.shared.database import get_ui_db_connection_context
 
         skip = ("drain_started", "phase_started")
         with get_ui_db_connection_context() as conn:
@@ -750,7 +750,7 @@ def _phase_eligible(
     if stall_holds.get(phase, 0) > 0:
         return False
     try:
-        api.shared.remote_phase_worker import phase_owned_by_remote_worker
+        from api.shared.remote_phase_worker import phase_owned_by_remote_worker
 
         if not ignore_remote_ownership and phase_owned_by_remote_worker(phase):
             return False
@@ -758,14 +758,14 @@ def _phase_eligible(
         pass
     try:
         from api.config.runtime import env_str
-        api.shared.process_memory import process_rss_mb
+        from api.shared.process_memory import process_rss_mb
 
         raw_block = (env_str("AUTOMATION_BLOCK_PHASES", "") or "").strip()
         if raw_block and phase in {x.strip() for x in raw_block.split(",") if x.strip()}:
             return False
         pause_mb = float(env_str("AUTOMATION_RSS_PAUSE_MB", "1800") or "1800")
         rss = process_rss_mb()
-        api.shared.process_memory import AUTOMATION_RSS_PAUSE_EXEMPT_PHASES
+        from api.shared.process_memory import AUTOMATION_RSS_PAUSE_EXEMPT_PHASES
 
         if rss is not None and rss >= pause_mb and phase not in AUTOMATION_RSS_PAUSE_EXEMPT_PHASES:
             return False
@@ -780,7 +780,7 @@ def _phase_eligible(
         if not ignore_remote_ownership:
             return False
         try:
-            api.shared.remote_phase_worker import phase_owned_by_remote_worker
+            from api.shared.remote_phase_worker import phase_owned_by_remote_worker
 
             if not phase_owned_by_remote_worker(phase):
                 return False
@@ -804,7 +804,7 @@ def _phase_eligible(
         pass
 
     try:
-        api.shared.assembly_phase_order import post_spine_scheduling_suppressed
+        from api.shared.assembly_phase_order import post_spine_scheduling_suppressed
 
         if post_spine_scheduling_suppressed(phase):
             return False
@@ -812,7 +812,7 @@ def _phase_eligible(
         pass
 
     try:
-        api.shared.pipeline_resource_policy import (
+        from api.shared.pipeline_resource_policy import (
             bulk_extract_compete_defer_phase,
             entity_profile_build_allowed,
             intake_extraction_suppressed,
@@ -836,7 +836,7 @@ def _phase_eligible(
 
     try:
         from api.config.runtime import env_str
-        api.shared.database.db_availability import is_automation_db_ready
+        from api.shared.database.db_availability import is_automation_db_ready
 
         if env_str("AUTOMATION_PAUSE_WHEN_DB_DOWN", "true").lower() in ("1", "true", "yes"):
             if not is_automation_db_ready():
@@ -867,7 +867,7 @@ def _collection_allowed(pending: dict[str, int], automation: Any) -> bool:
         _collection_throttle_pending_total,
         collection_cycle_has_pending_work,
     )
-    api.shared.pipeline_resource_policy import post_process_preferred
+    from api.shared.pipeline_resource_policy import post_process_preferred
 
     q_len = len(getattr(automation, "_pending_collection_queue", []) or [])
     if not collection_cycle_has_pending_work(pending, pending_collection_queue_len=q_len):
@@ -975,7 +975,7 @@ def _catchup_order_policy(
       or PopOS unavailable / Widow under pressure → Widow-local structure before GPU.
     - popos_first: PopOS has headroom and Widow RAM is OK → GPU/PopOS phases before Widow DB/CPU.
     """
-    api.shared.pipeline_resource_policy import post_process_preferred
+    from api.shared.pipeline_resource_policy import post_process_preferred
 
     if pending is not None and post_process_preferred(pending):
         return "widow_first"
@@ -997,7 +997,7 @@ _STRUCTURE_CATCHUP_PRIORITY: tuple[str, ...] = (
 
 def _structure_catchup_hot(pending: dict[str, int] | None) -> bool:
     """Delegate to resource policy (shared threshold + pending phases)."""
-    api.shared.pipeline_resource_policy import structure_catchup_hot
+    from api.shared.pipeline_resource_policy import structure_catchup_hot
 
     return structure_catchup_hot(pending)
 
@@ -1014,7 +1014,7 @@ def _sort_post_phases_by_host(
     Host lane (popos_first / widow_first) applies inside a band only.
     When structure catchup is hot: drop refinement band only (keep mention_resolution).
     """
-    api.shared.pipeline_resource_policy import (
+    from api.shared.pipeline_resource_policy import (
         post_intake_work_band,
         structure_catchup_hot,
     )
@@ -1060,7 +1060,7 @@ def _sort_post_phases_by_host(
 
 def _sort_intake_preprocess_phases(intake: list[tuple[str, int]]) -> list[str]:
     """Fixed spine preprocess order, then -pending within the same rank."""
-    api.shared.pipeline_resource_policy import INTAKE_PREPROCESS_ORDER
+    from api.shared.pipeline_resource_policy import INTAKE_PREPROCESS_ORDER
 
     order_idx = {name: i for i, name in enumerate(INTAKE_PREPROCESS_ORDER)}
     intake.sort(key=lambda x: (order_idx.get(x[0], 999), -x[1], x[0]))
@@ -1083,7 +1083,7 @@ def _catchup_phases_by_backlog(
     (soft intake-first), then eligible structure-band / mention_resolution work is
     still appended so EPB/MR are not starved. Otherwise full post band follows intake.
     """
-    api.shared.pipeline_resource_policy import (
+    from api.shared.pipeline_resource_policy import (
         INTAKE_PREPROCESS_PHASES,
         STRUCTURE_BAND_PHASES,
         intake_preprocess_hot,
@@ -1195,7 +1195,7 @@ def _widow_residual_assembly_fallback_allowed(
 ) -> bool:
     """Remote-owned assembly may run on Widow only when the PopOS worker is stale."""
     try:
-        api.shared.remote_phase_worker import phase_owned_by_remote_worker
+        from api.shared.remote_phase_worker import phase_owned_by_remote_worker
 
         if not phase_owned_by_remote_worker("storyline_assembly"):
             return False
@@ -1234,7 +1234,7 @@ def pick_next_phases(
     When ``PIPELINE_FLAT_SCHEDULER`` is enabled (default), uses mode → priority →
     admit_phase. Legacy catchup/maintenance/OOM tree remains for rollback.
     """
-    api.shared.pipeline_admission import flat_scheduler_enabled, pick_next_phases_flat
+    from api.shared.pipeline_admission import flat_scheduler_enabled, pick_next_phases_flat
 
     if flat_scheduler_enabled():
         mem_critical = widow_memory_critical(resources)
@@ -1423,7 +1423,7 @@ def _pick_next_phases_legacy(
         skip=skip,
         resources=resources,
     )
-    api.shared.pipeline_resource_policy import post_process_preferred
+    from api.shared.pipeline_resource_policy import post_process_preferred
 
     if intake_first:
         branch = "catchup_intake_first"
@@ -1547,7 +1547,7 @@ class PipelineController:
 
         pending: dict[str, int] = {}
         try:
-            api.shared.pipeline_queue_counts import get_all_phase_queue_depths
+            from api.shared.pipeline_queue_counts import get_all_phase_queue_depths
 
             # Must not block the uvicorn event loop — sync queue-depth SQL can take
             # tens of seconds under relation locks and freezes Monitor overview.

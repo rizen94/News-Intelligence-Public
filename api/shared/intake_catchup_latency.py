@@ -76,9 +76,9 @@ def _round_opt(v: Any, nd: int = 2) -> float | None:
 
 def _scored_cte_sql(schema: str, domain_key_literal: str) -> str:
     """Per-schema SELECT producing scored cohort rows (no params — domain key embedded)."""
-    api.shared.article_processing_gates import sql_context_sync_article_ready
-    api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
-    api.shared.unified_intake_backlog import sql_actionable_unified_intake
+    from api.shared.article_processing_gates import sql_context_sync_article_ready
+    from api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
+    from api.shared.unified_intake_backlog import sql_actionable_unified_intake
 
     # Domain keys are registry-controlled (safe identifiers); escape quotes only.
     dk = domain_key_literal.replace("'", "''")
@@ -221,8 +221,8 @@ def compute_intake_catchup_latency(
                 out.pop("_cache_key", None)
                 return out
 
-    api.shared.database import get_db_connection_context
-    api.shared.domain_registry import pipeline_url_schema_pairs
+    from api.shared.database import get_db_connection_context
+    from api.shared.domain_registry import pipeline_url_schema_pairs
 
     pairs = list(pipeline_url_schema_pairs())
     empty_preprocess = {
@@ -528,7 +528,7 @@ def record_intake_catchup_latency_sample(snapshot: dict[str, Any] | None = None)
             "preprocess_ok": (snap.get("preprocess") or {}).get("ok_under_sla"),
             "preprocess_sla_hours": (snap.get("preprocess") or {}).get("sla_hours"),
         }
-        api.shared.database import get_db_connection_context
+        from api.shared.database import get_db_connection_context
 
         keep = max(24, env_int("CATCHUP_LATENCY_SAMPLE_KEEP", 72))
         with get_db_connection_context() as conn:

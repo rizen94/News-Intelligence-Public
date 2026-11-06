@@ -16,8 +16,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-api.shared.database import get_db_connection_context
-api.shared.vault_note_contract import (
+from api.shared.database import get_db_connection_context
+from api.shared.vault_note_contract import (
     MAX_MORNING_NEWS_EXPANSIONS,
     MAX_MORNING_SCIENCE_EXPANSIONS,
     MORNING_BRIEF_ACTIVITY_DAYS,
@@ -95,7 +95,7 @@ def _fingerprint(parts: list[str]) -> str:
 
 def _dek_from_body(body: str, *, max_len: int = 280) -> str:
     """Plain-text standfirst for reader cards (StoryUnit renders dek as text, not MD)."""
-    api.shared.llm_text_sanitize import sanitize_reader_dek
+    from api.shared.llm_text_sanitize import sanitize_reader_dek
 
     text = (body or "").strip()
     if not text:
@@ -327,7 +327,7 @@ def _clipping_and_wiki_evidence(
 def _vault_pack_excerpt(domain_key: str, article_id: int) -> str:
     try:
         from domains.reader.services.vault_context_pack import build_vault_context_pack
-        api.shared.domain_registry import resolve_domain_schema
+        from api.shared.domain_registry import resolve_domain_schema
 
         schema = resolve_domain_schema(domain_key) or _schema(domain_key)
         with get_db_connection_context() as conn:
@@ -360,8 +360,8 @@ def _vault_pack_excerpt(domain_key: str, article_id: int) -> str:
 
 
 async def _llm_expansion(prompt: str) -> str:
-    api.shared.services.ollama_model_caller import get_ollama_model_caller
-    api.shared.services.ollama_model_policy import InvocationKind
+    from api.shared.services.ollama_model_caller import get_ollama_model_caller
+    from api.shared.services.ollama_model_policy import InvocationKind
 
     # LONG_SYNTHESIS: higher num_predict / ctx than INTERACTIVE_SUMMARY (800 tok),
     # but still primary/8b lane — not the narrative-finisher 70b path.
@@ -377,7 +377,7 @@ async def _llm_expansion(prompt: str) -> str:
 
 def _stub_expansion_body(*, title: str, article: dict[str, Any]) -> str:
     """Cacheable brief when LLM times out — title + cleaned lead excerpt only."""
-    api.shared.llm_text_sanitize import html_to_visible_text
+    from api.shared.llm_text_sanitize import html_to_visible_text
 
     excerpt = html_to_visible_text(
         (article.get("summary") or article.get("body") or "").strip(),

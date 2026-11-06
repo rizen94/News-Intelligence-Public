@@ -13,21 +13,21 @@ from typing import Any
 
 import psutil
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Query, Request
-api.shared.database import get_ui_db_connection
-api.shared.domain_registry import (
+from api.shared.database import get_ui_db_connection
+from api.shared.domain_registry import (
     get_active_domain_keys,
     get_pipeline_schema_names_active,
     get_schema_names_active,
     iter_pipeline_url_schema_pairs,
     iter_url_schema_pairs,
 )
-api.shared.services.automation_run_history_writer import persist_automation_run_history
-api.shared.services.domain_aware_service import (
+from api.shared.services.automation_run_history_writer import persist_automation_run_history
+from api.shared.services.domain_aware_service import (
     get_all_domains,
     resolve_domain_token_to_schema,
 )
-api.shared.services.pipeline_trace_writer import log_pipeline_trace as _log_pipeline_trace
-api.shared.services.response_cache import cached_response, cached_response_sync
+from api.shared.services.pipeline_trace_writer import log_pipeline_trace as _log_pipeline_trace
+from api.shared.services.response_cache import cached_response, cached_response_sync
 
 # Reserve dedicated pool for monitoring/page-load endpoints in this module
 get_monitoring_db_connection = get_ui_db_connection
@@ -70,7 +70,7 @@ router = APIRouter(
 
 def _registry_silo_schemas() -> list[str]:
     """Schemas for YAML-active silos that exist in Postgres (same basis as RSS / ``get_all_domains``)."""
-    api.shared.domain_registry import get_schema_names_active
+    from api.shared.domain_registry import get_schema_names_active
 
     rows = get_all_domains()
     out = [str(r["schema_name"]) for r in rows]
@@ -118,7 +118,7 @@ def _check_frontend_once() -> dict[str, Any]:
 def _get_gpu_metrics() -> dict[str, Any]:
     """Get GPU metrics (utilization, VRAM, temperature) from shared helper."""
     try:
-        api.shared.gpu_metrics import get_gpu_metrics
+        from api.shared.gpu_metrics import get_gpu_metrics
 
         return get_gpu_metrics()
     except ImportError:
@@ -147,7 +147,7 @@ def get_registry_domains() -> dict[str, Any]:
     Active domains api.shared.domain_registry (built-ins + active YAML).
     Used by the web SPA for nav, domain validation, and API path detection.
     """
-    api.shared.domain_registry import get_domain_entries
+    from api.shared.domain_registry import get_domain_entries
 
     rows: list[dict[str, Any]] = []
     for e in get_domain_entries():
@@ -168,7 +168,7 @@ def get_registry_domains() -> dict[str, Any]:
 def _probe_db_health_fast() -> str:
     """Quick SELECT 1 on the isolated health pool — never checkout from UI/worker pools."""
     try:
-        api.shared.database import get_health_db_connection_context
+        from api.shared.database import get_health_db_connection_context
 
         with get_health_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -264,7 +264,7 @@ async def health_check():
         try:
             import threading
 
-            api.shared.gpu_metrics import maybe_record_gpu_metric_sample
+            from api.shared.gpu_metrics import maybe_record_gpu_metric_sample
 
             threading.Thread(
                 target=maybe_record_gpu_metric_sample, daemon=True, name="gpu-metric-sample"
@@ -620,7 +620,7 @@ def _build_monitoring_overview_sync(request: Request) -> dict[str, Any]:
 
     webserver: dict[str, Any] = {}
     try:
-        api.shared.services.route_supervisor import get_route_supervisor
+        from api.shared.services.route_supervisor import get_route_supervisor
 
         supervisor = get_route_supervisor()
         if supervisor.frontend_health:
@@ -747,7 +747,7 @@ async def get_monitoring_overview(request: Request):
         logger.warning("monitoring/overview timed out after 8s — returning degraded snapshot")
         try:
             webserver = {}
-            api.shared.services.route_supervisor import get_route_supervisor
+            from api.shared.services.route_supervisor import get_route_supervisor
 
             supervisor = get_route_supervisor()
             if supervisor.frontend_health:
@@ -944,14 +944,14 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
     def _live_db_pressure_block() -> dict[str, Any]:
         out: dict[str, Any] = {}
         try:
-            api.shared.services.api_request_tracker import get_api_yield_snapshot
+            from api.shared.services.api_request_tracker import get_api_yield_snapshot
 
             out["api_yield"] = get_api_yield_snapshot()
         except Exception as e:
             out["api_yield"] = {"error": str(e)[:120]}
         try:
-            api.shared.database import get_db_pool_snapshot
-            api.shared.database.pool_pressure_advisory import (
+            from api.shared.database import get_db_pool_snapshot
+            from api.shared.database.pool_pressure_advisory import (
                 build_pool_pressure_signal,
                 publish_db_pool_pressure_advisory,
             )
@@ -1141,7 +1141,7 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
         phases.sort(key=lambda p: (p.get("stage_order", 99), p.get("name") or ""))
         backlog_counts = status.get("backlog_counts") or {}
         try:
-            api.shared.pipeline_article_selection import pipeline_article_selection_mode_report
+            from api.shared.pipeline_article_selection import pipeline_article_selection_mode_report
 
             _pipe_sel = pipeline_article_selection_mode_report()
         except Exception:
@@ -2848,7 +2848,7 @@ def execute_pipeline_orchestration():
         _log_pipeline_trace(trace_id, "topic_clustering", "started")
 
         try:
-            api.shared.database import get_db_connection
+            from api.shared.database import get_db_connection
 
             from domains.content_analysis.services.advanced_topic_extractor import (
                 AdvancedTopicExtractor,
@@ -3025,7 +3025,7 @@ async def ingest_client_log(log_entry: dict[str, Any] = Body(...)):
     Persists to activity.jsonl with component=client.
     """
     try:
-        api.shared.logging.activity_logger import log_activity
+        from api.shared.logging.activity_logger import log_activity
 
         level = log_entry.get("level", "info")
         message = log_entry.get("message", "Client log")
@@ -3053,7 +3053,7 @@ async def ingest_client_logs_batch(batch: dict[str, Any] = Body(...)):
     if not isinstance(logs, list):
         return {"success": False, "error": "logs must be an array"}
     try:
-        api.shared.logging.activity_logger import log_activity
+        from api.shared.logging.activity_logger import log_activity
 
         for entry in logs[:100]:  # Cap at 100 per batch
             level = entry.get("level", "info")

@@ -14,7 +14,7 @@ Examples:
     # Custom batch sizes / safety cap:
       PYTHONPATH=api uv run python api/scripts/backfill_chronological_event_embeddings.py --batch-size 500 --max-batches 120
 
-"
+"""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ API_DIR = Path(__file__).resolve().parents[1]
 ROOT = API_DIR.parent
 sys.path.insert(0, str(API_DIR))
 sys.path.insert(0, str(ROOT))
+import contextlib
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("backfill_event_embeddings")
@@ -72,8 +73,8 @@ def main() -> None:
         fill_missing_gdelt_events_embeddings,
     )
 
-    with __import__("contextlib").nullcontext() as conn:
-        api.shared.database import get_db_connection_context
+    with contextlib.nullcontext() as conn:
+        from api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             if args.gdelt_only:

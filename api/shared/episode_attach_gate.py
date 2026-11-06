@@ -187,7 +187,7 @@ def classify_event_anchors(
     pairs: list[tuple[Any, Any, Any]] = []  # cid, type, name
 
     try:
-        api.shared.assembly_link_funnel import is_durable_entity_type
+        from api.shared.assembly_link_funnel import is_durable_entity_type
     except Exception:
 
         def is_durable_entity_type(_et: str | None) -> bool:  # type: ignore
@@ -277,7 +277,7 @@ def classify_event_anchors(
         if not name_l:
             return False
         try:
-            api.shared.hub_denylist import is_blocked_hub_name
+            from api.shared.hub_denylist import is_blocked_hub_name
 
             if is_blocked_hub_name(name_l):
                 return True
@@ -671,7 +671,7 @@ def seed_signature_from_entity_names(
         if name_l in hub_names:
             return True
         try:
-            api.shared.hub_denylist import is_blocked_hub_name
+            from api.shared.hub_denylist import is_blocked_hub_name
 
             if is_blocked_hub_name(name_l):
                 return True
@@ -747,7 +747,7 @@ def attach_article_events_to_episode(
         return 0, "feature_off"
     if derive_storyline_article is None:
         try:
-            api.shared.assembly_link_funnel import storyline_articles_dual_write_enabled
+            from api.shared.assembly_link_funnel import storyline_articles_dual_write_enabled
 
             derive_storyline_article = storyline_articles_dual_write_enabled()
         except Exception:
@@ -808,7 +808,7 @@ def attach_article_events_to_episode(
                     (str(int(episode_id)), int(eid)),
                 )
         if linked and derive_storyline_article:
-            api.shared.membership_store import insert_derived_bag_row
+            from api.shared.membership_store import insert_derived_bag_row
 
             insert_derived_bag_row(
                 cur,
@@ -862,7 +862,7 @@ def admit_article_to_episode_or_storyline(
 
     Prefer importing membership_store directly in new code.
     """
-    api.shared.membership_store import MembershipIntent, admit
+    from api.shared.membership_store import MembershipIntent, admit
 
     return admit(
         conn,

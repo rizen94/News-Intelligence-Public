@@ -38,7 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def main():
-    api.shared.database import get_db_config, get_db_connection
+    from api.shared.database import get_db_config, get_db_connection
 
     api_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     backup_dir = os.path.join(api_dir, "scripts", "backups")

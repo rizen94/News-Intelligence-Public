@@ -14,7 +14,7 @@ except Exception:
     logger = logging.getLogger(__name__)
 
 from api.config.settings import FRED_API_KEY
-api.shared.data_result import DataResult
+from api.shared.data_result import DataResult
 
 from domains.finance.commodity_registry import get_fred_series_id as registry_get_fred_series_id
 from domains.finance.commodity_registry import get_unit as registry_get_unit

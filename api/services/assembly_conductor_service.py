@@ -11,15 +11,15 @@ import logging
 from typing import Any
 
 from api.config.runtime import env_str
-api.shared.assembly_phase_order import (
+from api.shared.assembly_phase_order import (
     POST_SPINE_PHASE_ORDER,
     assembly_pipeline_mode,
     assembly_pipeline_ordered_active,
     assembly_pipeline_shadow_active,
     editorial_room_loop_enabled,
 )
-api.shared.pipeline_batch_drain import DrainStallTracker, RunBudget
-api.shared.services.conductor_run_history import run_conductor_phase_with_history
+from api.shared.pipeline_batch_drain import DrainStallTracker, RunBudget
+from api.shared.services.conductor_run_history import run_conductor_phase_with_history
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +65,8 @@ def _defer_dossier_profile_first_pass_threshold() -> int:
 
 def _assembly_phases_eligible() -> tuple[str, ...]:
     """Assembly phases that have at least one research-mode domain (or fail-open)."""
-    api.shared.domain_processing_mode import filter_domains_for_phase
-    api.shared.domain_registry import get_pipeline_active_domain_keys
+    from api.shared.domain_processing_mode import filter_domains_for_phase
+    from api.shared.domain_registry import get_pipeline_active_domain_keys
 
     phases: list[str] = []
     active = list(get_pipeline_active_domain_keys())
@@ -198,7 +198,7 @@ def _event_tracking_batch_timeout_seconds(batch_limit: int) -> float:
 def _entity_dossier_compile_limit() -> int:
     default = max(1, min(100, int(env_str("ENTITY_DOSSIER_COMPILE_MAX", "20"))))
     try:
-        api.shared.adaptive_batch_policy import resolve_adaptive_batch
+        from api.shared.adaptive_batch_policy import resolve_adaptive_batch
 
         tuned, _meta = resolve_adaptive_batch("entity_dossier_compile", default)
         return tuned
@@ -215,7 +215,7 @@ async def _drain_assembly_phase(
     if shadow:
         try:
             from services.backlog_metrics import get_all_backlog_counts
-            api.shared.pipeline_queue_counts import get_phase_queue_depth
+            from api.shared.pipeline_queue_counts import get_phase_queue_depth
 
             queue_depth = int(get_phase_queue_depth(phase))
             scheduling_backlog = int(get_all_backlog_counts().get(phase, 0) or 0)
@@ -318,7 +318,7 @@ async def _drain_event_tracking(automation: Any | None) -> dict[str, Any]:
     timeout = _event_tracking_batch_timeout_seconds(batch_limit)
 
     try:
-        api.shared.adaptive_batch_policy import resolve_adaptive_batch
+        from api.shared.adaptive_batch_policy import resolve_adaptive_batch
 
         batch_limit, _meta = resolve_adaptive_batch("event_tracking", batch_limit)
         timeout = _event_tracking_batch_timeout_seconds(batch_limit)

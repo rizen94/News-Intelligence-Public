@@ -9,12 +9,12 @@ Pipeline phase: should run after storyline_processing and event_tracking, before
 """
 
 import json
-api.shared.domain_registry import resolve_domain_schema
+from api.shared.domain_registry import resolve_domain_schema
 import logging
 from datetime import datetime
 from typing import Any
 
-api.shared.database import get_db_connection
+from api.shared.database import get_db_connection
 
 from services.domain_synthesis_config import get_domain_synthesis_config
 
@@ -50,7 +50,7 @@ EDITORIAL_BRIEFING_TEMPLATE = {
 async def _llm_generate(prompt: str) -> str | None:
     """Call LLM; returns text or None on failure."""
     try:
-        api.shared.services.llm_service import TaskType, llm_service
+        from api.shared.services.llm_service import TaskType, llm_service
 
         result = await llm_service.generate_summary(prompt[:3000], task_type=TaskType.QUICK_SUMMARY)
         if result.get("success"):
@@ -472,7 +472,7 @@ def _parse_editorial_json(
     llm_text: str, title: str, article_ids: list[int], sources: list[str]
 ) -> tuple[dict, bool]:
     """Try to parse LLM output as editorial JSON (5W1H); fall back to sanitized lede only."""
-    api.shared.llm_text_sanitize import parse_llm_json_response, sanitize_on_persist
+    from api.shared.llm_text_sanitize import parse_llm_json_response, sanitize_on_persist
 
     parsed, _ = parse_llm_json_response(llm_text)
     if isinstance(parsed, dict):
@@ -516,7 +516,7 @@ def _parse_editorial_json(
 
 def _parse_briefing_json(llm_text: str, event_name: str) -> dict:
     """Try to parse LLM output as briefing JSON; fall back to sanitized template."""
-    api.shared.llm_text_sanitize import parse_llm_json_response, sanitize_on_persist
+    from api.shared.llm_text_sanitize import parse_llm_json_response, sanitize_on_persist
 
     parsed, _ = parse_llm_json_response(llm_text)
     if isinstance(parsed, dict):

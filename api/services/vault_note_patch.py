@@ -8,7 +8,7 @@ import hashlib
 import re
 from typing import Any
 
-api.shared.vault_note_contract import (
+from api.shared.vault_note_contract import (
     AUTO_BRIEF_END,
     AUTO_BRIEF_START,
     AUTO_POSTURE_END,

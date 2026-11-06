@@ -6,7 +6,7 @@ import logging
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Path, Query
 
-api.shared.domain_registry import DOMAIN_PATH_PATTERN
+from api.shared.domain_registry import DOMAIN_PATH_PATTERN
 
 from ..services.storyline_pack import build_storyline_reader_pack
 

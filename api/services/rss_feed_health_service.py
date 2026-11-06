@@ -172,8 +172,8 @@ def evaluate_weekly_cull(domain_key: str | None = None) -> list[FeedHealthVerdic
     if not rss_feed_silence_enabled():
         return []
 
-    api.shared.database import get_db_connection_context
-    api.shared.domain_registry import pipeline_url_schema_pairs
+    from api.shared.database import get_db_connection_context
+    from api.shared.domain_registry import pipeline_url_schema_pairs
 
     pairs = pipeline_url_schema_pairs()
     if domain_key:
@@ -260,8 +260,8 @@ def evaluate_feeds(domain_key: str | None = None) -> list[FeedHealthVerdict]:
     if not rss_feed_silence_enabled():
         return []
 
-    api.shared.database import get_db_connection_context
-    api.shared.domain_registry import pipeline_url_schema_pairs
+    from api.shared.database import get_db_connection_context
+    from api.shared.domain_registry import pipeline_url_schema_pairs
 
     pairs = pipeline_url_schema_pairs()
     if domain_key:
@@ -406,7 +406,7 @@ def apply_verdicts(
     if not verdicts:
         return counts
 
-    api.shared.database import get_db_connection_context
+    from api.shared.database import get_db_connection_context
 
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -512,8 +512,8 @@ def run_feed_health_cycle(*, dry_run: bool | None = None) -> dict[str, Any]:
 
 def get_feed_health_monitor_counts() -> dict[str, int]:
     """Active warning feeds and feeds silenced in last 7 days."""
-    api.shared.database import get_db_connection_context
-    api.shared.domain_registry import get_pipeline_schema_names_active
+    from api.shared.database import get_db_connection_context
+    from api.shared.domain_registry import get_pipeline_schema_names_active
 
     warning = 0
     silenced_7d = 0

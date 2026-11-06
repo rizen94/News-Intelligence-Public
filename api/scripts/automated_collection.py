@@ -52,7 +52,7 @@ class AutomatedCollection:
         try:
             # Get count of raw articles using standard DB connection
             import psycopg2
-            api.shared.database.connection import get_db_connect_kwargs
+            from api.shared.database.connection import get_db_connect_kwargs
             
             kwargs = get_db_connect_kwargs()
             conn = psycopg2.connect(**kwargs)

@@ -29,7 +29,7 @@ def _is_finance_silo_domain_key(dk: str) -> bool:
 
 def _non_finance_domain_tokens() -> frozenset[str]:
     """Lowercased URL keys and schema names for active silos except finance (cross-domain map provenance)."""
-    api.shared.domain_registry import domain_key_to_schema, get_active_domain_keys
+    from api.shared.domain_registry import domain_key_to_schema, get_active_domain_keys
 
     out: set[str] = set()
     for dk in get_active_domain_keys():
@@ -117,7 +117,7 @@ _LOGISTICS_MARKERS: frozenset[str] = frozenset(
 
 def cross_domain_sql_domains_array() -> list[str]:
     """URL keys and schema-style tokens for active silos except finance (tracked_events.domain_keys)."""
-    api.shared.domain_registry import domain_key_to_schema, get_active_domain_keys
+    from api.shared.domain_registry import domain_key_to_schema, get_active_domain_keys
 
     ordered: list[str] = []
     seen: set[str] = set()

@@ -35,7 +35,7 @@ any_ollama_circuit_shedding = _cb_mod.any_ollama_circuit_shedding
 get_circuit_breaker_service = _cb_mod.get_circuit_breaker_service
 
 try:
-    api.shared.debug_session_log import agent_dbg  # noqa: E402
+    from api.shared.debug_session_log import agent_dbg  # noqa: E402
 except Exception:  # pragma: no cover
 
     def agent_dbg(*_a, **_k):  # type: ignore[misc]

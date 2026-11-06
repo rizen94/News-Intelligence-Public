@@ -7,7 +7,7 @@ Uses ML/LLM to generate intelligent timeline events from articles
 import logging
 import json
 import psycopg2
-api.shared.database.connection import get_db_connect_kwargs
+from api.shared.database.connection import get_db_connect_kwargs
 from datetime import datetime, timedelta
 from typing import Any, Optional
 from dataclasses import dataclass
@@ -39,7 +39,7 @@ class TimelineGenerator:
     
     def __init__(self, db_config: dict[str, str], ollama_url: str | None = None):
         self.db_config = db_config
-        self.ollama_url = (ollama_url or __import__("os").environ.get("OLLAMA_HOST") or __import__("os").environ.get("OLLAMA_URL") or "http://127.0.0.1:11434").rstrip("/")
+        self.ollama_url = (ollama_url or os.environ.get("OLLAMA_HOST") or os.environ.get("OLLAMA_URL") or "http://127.0.0.1:11434").rstrip("/")
         self.model_name = "llama3.1:8b"  # Use fast 8B model (llama3.1:405b available for quality)
         
         # Update database config to use correct database name
@@ -98,7 +98,7 @@ class TimelineGenerator:
             return stored_events[:max_events]
             
         except Exception as e:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -287,7 +287,7 @@ class TimelineGenerator:
             return events
             
         except Exception as e:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -351,7 +351,7 @@ Return as JSON array with this format:
     def _call_llm_for_events(self, context: str) -> list[dict[str, Any]]:
         """Call LLM to generate timeline events"""
         try:
-            api.shared.services.llm_service import ollama_generate_sync
+            from api.shared.services.llm_service import ollama_generate_sync
 
             response_text = ollama_generate_sync(
                 context,
@@ -378,7 +378,7 @@ Return as JSON array with this format:
             return []
             
         except Exception as e:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise

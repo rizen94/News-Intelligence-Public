@@ -16,7 +16,7 @@ except Exception:
     logger = logging.getLogger(__name__)
 
 from api.config.settings import EDGAR_RATE_LIMIT_PER_SECOND, EDGAR_USER_AGENT
-api.shared.data_result import DataResult
+from api.shared.data_result import DataResult
 
 from domains.finance.data_sources.base import DataSourceBase
 
@@ -71,7 +71,7 @@ def fetch_filing_index(cik: str, form_filter: str | None = "10-K") -> DataResult
         r = requests.get(url, headers=_headers(accept_json=True), timeout=30)
         duration_ms = (time.perf_counter() - t0) * 1000
         try:
-            api.shared.logging.activity_logger import log_external_call
+            from api.shared.logging.activity_logger import log_external_call
 
             log_external_call(
                 url=url,
@@ -91,7 +91,7 @@ def fetch_filing_index(cik: str, form_filter: str | None = "10-K") -> DataResult
     except Exception as e:
         duration_ms = (time.perf_counter() - t0) * 1000
         try:
-            api.shared.logging.activity_logger import log_external_call
+            from api.shared.logging.activity_logger import log_external_call
 
             log_external_call(
                 url=url,
@@ -153,7 +153,7 @@ def download_filing(cik: str, accession_number: str, primary_document: str) -> D
         r = requests.get(url, headers=_headers(), timeout=60)
         duration_ms = (time.perf_counter() - t0) * 1000
         try:
-            api.shared.logging.activity_logger import log_external_call
+            from api.shared.logging.activity_logger import log_external_call
 
             log_external_call(
                 url=url,
@@ -174,7 +174,7 @@ def download_filing(cik: str, accession_number: str, primary_document: str) -> D
     except Exception as e:
         duration_ms = (time.perf_counter() - t0) * 1000
         try:
-            api.shared.logging.activity_logger import log_external_call
+            from api.shared.logging.activity_logger import log_external_call
 
             log_external_call(
                 url=url,

@@ -65,7 +65,7 @@ def is_junk_title(title: str | None) -> bool:
 
 
 def sanitize_vault_prose(text: str | None, *, max_length: int = 12000) -> str:
-    api.shared.llm_text_sanitize import html_to_visible_text, strip_trailing_llm_json
+    from api.shared.llm_text_sanitize import html_to_visible_text, strip_trailing_llm_json
 
     cleaned = strip_trailing_llm_json(text)
     return (html_to_visible_text(cleaned, max_length=max_length) or "").strip()
@@ -198,7 +198,7 @@ def expansions_for_briefing_day(briefing_day: str | None, *, limit: int = 40) ->
     if not day:
         return []
     try:
-        api.shared.database import get_db_connection_context
+        from api.shared.database import get_db_connection_context
     except Exception:
         return []
     out: list[dict[str, Any]] = []
@@ -251,7 +251,7 @@ def daily_briefing_serve_allowed(
 
 def _entity_is_followed(canonical_entity_id: int) -> bool:
     try:
-        api.shared.database import get_db_connection_context
+        from api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -275,7 +275,7 @@ def _entity_is_followed(canonical_entity_id: int) -> bool:
 
 def _entity_is_hub_seed(canonical_entity_id: int) -> bool:
     try:
-        api.shared.database import get_db_connection_context
+        from api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -301,8 +301,8 @@ def _entity_is_hub_seed(canonical_entity_id: int) -> bool:
 def _entity_recent_article_hits(domain_key: str, canonical_entity_id: int) -> int:
     """Count distinct articles mentioning entity in the hot window."""
     try:
-        api.shared.database import get_db_connection_context
-        api.shared.domain_registry import resolve_domain_schema
+        from api.shared.database import get_db_connection_context
+        from api.shared.domain_registry import resolve_domain_schema
 
         schema = resolve_domain_schema(domain_key)
         days = entity_note_window_days()
@@ -362,8 +362,8 @@ def entity_md_write_allowed(
 
 def load_storyline_member_titles(domain_key: str, storyline_id: int, *, limit: int = 40) -> list[str]:
     try:
-        api.shared.database import get_db_connection_context
-        api.shared.domain_registry import resolve_domain_schema
+        from api.shared.database import get_db_connection_context
+        from api.shared.domain_registry import resolve_domain_schema
 
         schema = resolve_domain_schema(domain_key)
         with get_db_connection_context() as conn:

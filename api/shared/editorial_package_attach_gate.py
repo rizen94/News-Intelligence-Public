@@ -13,7 +13,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
-api.shared.editorial_package_theme import (
+from api.shared.editorial_package_theme import (
     extract_case_party_tokens,
     is_theme_mismatch,
     theme_tokens,
@@ -183,8 +183,8 @@ def fetch_storyline_title(domain_key: str | None, storyline_id: int | None) -> s
     if not dk or storyline_id is None:
         return ""
     try:
-        api.shared.database import get_ui_db_connection_context
-        api.shared.domain_registry import resolve_domain_schema
+        from api.shared.database import get_ui_db_connection_context
+        from api.shared.domain_registry import resolve_domain_schema
 
         schema = resolve_domain_schema(dk)
         if not schema:

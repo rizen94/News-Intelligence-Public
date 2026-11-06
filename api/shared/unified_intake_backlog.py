@@ -15,9 +15,9 @@ import time
 
 from api.config.runtime import env_str
 from api.config.settings import unified_intake_legacy_aware_backlog_enabled
-api.shared.article_processing_gates import sql_ml_ready_and_content_bounds
-api.shared.domain_registry import get_pipeline_schema_names_active
-api.shared.pipeline_pass_marker import (
+from api.shared.article_processing_gates import sql_ml_ready_and_content_bounds
+from api.shared.domain_registry import get_pipeline_schema_names_active
+from api.shared.pipeline_pass_marker import (
     TERMINAL_PROCESSED_WITH_OUTPUT,
     phase_backlog_uses_pass_marker,
     sql_article_pass_null,
@@ -133,7 +133,7 @@ def sql_legacy_backfill_eligible(schema: str, alias: str = "a") -> str:
 
 
 def _query_unified_intake_backlog_stats() -> dict[str, int]:
-    api.shared.database import get_db_connection
+    from api.shared.database import get_db_connection
 
     out = {
         "total_missing_unified_pass": 0,
@@ -210,8 +210,8 @@ def backfill_unified_pass_from_legacy_batch(
     Set unified_intake_extraction pass marker for legacy-complete articles (no LLM).
     Returns article ids backfilled.
     """
-    api.shared.database import get_db_connection_context
-    api.shared.pipeline_pass_marker import bulk_record_article_phase_pass
+    from api.shared.database import get_db_connection_context
+    from api.shared.pipeline_pass_marker import bulk_record_article_phase_pass
 
     if not unified_intake_legacy_aware_backlog_enabled():
         return []
@@ -241,3 +241,44 @@ def backfill_unified_pass_from_legacy_batch(
         )
         invalidate_unified_intake_backlog_stats_cache()
     return ids
+
+
+def complete_queue_items_for_backfilled_ids(
+    *,
+    schema_name: str,
+    article_ids: list[int],
+) -> None:
+    """Update unified_intake_queue status from 'processing' to 'completed' for backfilled articles.
+
+    This is critical because _backfill_legacy_complete() sets pass markers but does NOT update
+    the queue status — leaving items stuck as 'processing' which causes infinite re-processing.
+    """
+    if not article_ids:
+        return
+    from api.shared.database import get_db_connection_context
+
+    with get_db_connection_context() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(
+                    f"""
+                    UPDATE {schema_name}.unified_intake_queue
+                    SET status = 'completed', completed_at = NOW()
+                    WHERE article_id = ANY(%s) AND status = 'processing'
+                    """,
+                    (article_ids,),
+                )
+                updated = cur.rowcount
+                if updated:
+                    logger.info(
+                        "complete_queue_items_for_backfilled_ids: set %d/%d items to completed for schema %s",
+                        updated,
+                        len(article_ids),
+                        schema_name,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "complete_queue_items_for_backfilled_ids queue update %s: %s",
+                    schema_name,
+                    e,
+                )

@@ -124,9 +124,9 @@ def sample_spine_latencies_from_db(*, limit: int = 200) -> int:
     Returns number of samples recorded.
     """
     try:
-        api.shared.database import get_db_connection_context
-        api.shared.domain_registry import pipeline_url_schema_pairs
-        api.shared.pipeline_pass_marker import sql_article_pass_cleared
+        from api.shared.database import get_db_connection_context
+        from api.shared.domain_registry import pipeline_url_schema_pairs
+        from api.shared.pipeline_pass_marker import sql_article_pass_cleared
 
         recorded = 0
         per_schema = max(10, limit // 5)

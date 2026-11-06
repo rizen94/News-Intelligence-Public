@@ -11,7 +11,7 @@ import logging
 from typing import Any, Sequence
 
 from api.config.runtime import env_bool, env_int, env_str
-api.shared.assembly_link_modes import (
+from api.shared.assembly_link_modes import (
     DENY_SOLO_ENTITY_TYPES,
     DURABLE_ENTITY_TYPES,
     LINK_MODE_SEQUENCE,
@@ -47,7 +47,7 @@ def storyline_articles_write_allowed() -> bool:
     When episode assembly is off, legacy bag writes remain allowed.
     """
     try:
-        api.shared.episode_attach_gate import episode_container_assembly_enabled
+        from api.shared.episode_attach_gate import episode_container_assembly_enabled
 
         if episode_container_assembly_enabled():
             return storyline_articles_dual_write_enabled()
@@ -294,8 +294,8 @@ def allow_storyline_membership_attach(
     3. blend_score ≥ auto_approve_combined
     4. under attach_hard_cap
     """
-    api.shared.assembly_link_modes import AUTO_MEMBERSHIP_MODES
-    api.shared.storyline_attach_caps import storyline_at_or_over_attach_cap
+    from api.shared.assembly_link_modes import AUTO_MEMBERSHIP_MODES
+    from api.shared.storyline_attach_caps import storyline_at_or_over_attach_cap
 
     mode = (link_mode or LINK_MODE_SEQUENCE).strip()
     if mode not in AUTO_MEMBERSHIP_MODES:
@@ -448,7 +448,7 @@ def prefilter_same_event_candidates(
 
     cur = conn.cursor()
     try:
-        api.shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
+        from api.shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 
         schemas = [resolve_domain_schema(dk) for dk in get_pipeline_active_domain_keys()]
         cur.execute(

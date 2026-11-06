@@ -12,8 +12,8 @@ from collections import defaultdict
 from typing import Any
 
 from api.config.runtime import env_bool
-api.shared.database import get_db_connection_context
-api.shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
+from api.shared.database import get_db_connection_context
+from api.shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 

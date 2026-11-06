@@ -17,7 +17,7 @@ _API_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _API_ROOT not in sys.path:
     sys.path.insert(0, _API_ROOT)
 
-api.shared.database import get_db_connection
+from api.shared.database import get_db_connection
 
 
 def main() -> int:

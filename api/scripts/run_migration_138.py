@@ -7,7 +7,7 @@ import sys
 _API_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _API_ROOT)
 
-api.shared.migration_sql_runner import run_by_migration_number
+from api.shared.migration_sql_runner import run_by_migration_number
 
 if __name__ == "__main__":
     raise SystemExit(run_by_migration_number("138"))

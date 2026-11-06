@@ -19,7 +19,7 @@ import requests
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-api.shared.services.domain_aware_service import get_domain_data_schemas
+from api.shared.services.domain_aware_service import get_domain_data_schemas
 
 # Configure logging
 logging.basicConfig(
@@ -46,7 +46,7 @@ class RSSDuplicateDetector:
             _api = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
             if _api not in sys.path:
                 sys.path.insert(0, _api)
-            api.shared.database import get_db_connection
+            from api.shared.database import get_db_connection
 
             self.conn = get_db_connection()
             logger.info("✅ Database connected successfully")
@@ -200,7 +200,7 @@ class RSSDuplicateDetector:
                     end = content.find("</title>", start)
                     if end > start:
                         title = content[start:end].strip()
-                except:
+                except Exception:
                     pass
 
             return {

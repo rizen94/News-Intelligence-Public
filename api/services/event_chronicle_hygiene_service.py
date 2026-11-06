@@ -269,7 +269,7 @@ def hygiene_tracked_event_chronicles(
         )
         if remaining_context_ids:
             try:
-                api.shared.event_chronicle_contexts import upsert_chronicle_context_links
+                from api.shared.event_chronicle_contexts import upsert_chronicle_context_links
 
                 upsert_chronicle_context_links(cur, event_id, remaining_context_ids)
             except Exception as e:
@@ -305,7 +305,7 @@ def hygiene_all_tracked_event_chronicles(
     progress_every: int = 100,
 ) -> dict[str, Any]:
     """Run hygiene across tracked events. Uses a direct DB connection (caller env)."""
-    api.shared.database import get_db_connection
+    from api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

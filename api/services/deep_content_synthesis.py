@@ -12,7 +12,7 @@ Features:
 """
 
 import json
-api.shared.domain_registry import resolve_domain_schema
+from api.shared.domain_registry import resolve_domain_schema
 import logging
 import os
 import re
@@ -187,7 +187,7 @@ class DeepContentSynthesisService:
         logger.info("Deep Content Synthesis Service initialized")
 
     def get_db_connection(self):
-        api.shared.database import get_db_connection as _get_conn
+        from api.shared.database import get_db_connection as _get_conn
 
         return _get_conn()
 
@@ -237,7 +237,7 @@ Output as JSON array:
 Focus on the most important and newsworthy facts. Extract 5-15 key facts."""
 
         try:
-            api.shared.services.llm_service import ollama_generate_sync
+            from api.shared.services.llm_service import ollama_generate_sync
 
             result = ollama_generate_sync(
                 prompt,
@@ -270,7 +270,7 @@ Focus on the most important and newsworthy facts. Extract 5-15 key facts."""
 
                     return facts
         except Exception as e:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -978,7 +978,7 @@ Write in neutral, encyclopedic tone. Be informative and comprehensive."""
     def _generate_llm_content(self, prompt: str, max_tokens: int = 500) -> str:
         """Generate content using LLM via CB hub."""
         try:
-            api.shared.services.llm_service import ollama_generate_sync
+            from api.shared.services.llm_service import ollama_generate_sync
 
             text = ollama_generate_sync(
                 prompt,
@@ -989,7 +989,7 @@ Write in neutral, encyclopedic tone. Be informative and comprehensive."""
             if text:
                 return text.strip()
         except Exception as e:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -1118,7 +1118,7 @@ Write in neutral, encyclopedic tone. Be informative and comprehensive."""
         # Fall back to LLM via CB hub
         prompt = f"Explain '{term}' in 1-2 sentences for a general audience. Be concise and clear."
         try:
-            api.shared.services.llm_service import ollama_generate_sync
+            from api.shared.services.llm_service import ollama_generate_sync
 
             text = ollama_generate_sync(
                 prompt,
@@ -1129,7 +1129,7 @@ Write in neutral, encyclopedic tone. Be informative and comprehensive."""
             if text:
                 return text.strip()[:200]
         except Exception as e:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise

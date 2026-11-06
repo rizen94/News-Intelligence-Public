@@ -11,8 +11,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-api.shared.database import get_db_connection_context
-api.shared.domain_registry import resolve_domain_schema
+from api.shared.database import get_db_connection_context
+from api.shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 

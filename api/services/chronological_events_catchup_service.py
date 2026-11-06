@@ -14,8 +14,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from api.config.runtime import env_bool, env_int
-api.shared.database import get_db_connection_context
-api.shared.domain_registry import pipeline_url_schema_pairs
+from api.shared.database import get_db_connection_context
+from api.shared.domain_registry import pipeline_url_schema_pairs
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +188,7 @@ def _mark_timeline(conn, schema: str, article_id: int, events_saved: int) -> Non
 
 def _record_event_extraction_pass(schema: str, article_id: int, events_saved: int) -> None:
     try:
-        api.shared.pipeline_pass_marker import (
+        from api.shared.pipeline_pass_marker import (
             TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
             TERMINAL_PROCESSED_WITH_OUTPUT,
             record_article_phase_pass,

@@ -9,12 +9,12 @@ import asyncio
 from typing import Optional, Any
 from datetime import datetime, timedelta
 import psycopg2
-api.shared.database.connection import get_db_connect_kwargs
+from api.shared.database.connection import get_db_connect_kwargs
 import json
 
 from .ml_queue_manager import MLQueueManager, MLTask, TaskType, TaskPriority
 from .timeline_generator import TimelineGenerator
-api.shared.pipeline_state_constants import ML_COMPLETED, ML_FAILED
+from api.shared.pipeline_state_constants import ML_COMPLETED, ML_FAILED
 
 logger = logging.getLogger(__name__)
 

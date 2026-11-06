@@ -7,7 +7,7 @@ Provides endpoints for route supervisor monitoring and reports
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
-api.shared.services.route_supervisor import get_route_supervisor
+from api.shared.services.route_supervisor import get_route_supervisor
 
 logger = logging.getLogger(__name__)
 

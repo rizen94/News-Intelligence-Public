@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from api.config.runtime import env_bool, env_float, env_str
-api.shared.domain_registry import resolve_domain_schema
+from api.shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ def _min_match_score() -> float:
 def _oversized_storyline_article_count(domain_key: str | None = None) -> int:
     """Prefer domain attach_hard_cap so narrative scoring aligns with silent admit."""
     try:
-        api.shared.storyline_attach_caps import attach_hard_cap
+        from api.shared.storyline_attach_caps import attach_hard_cap
 
         if domain_key:
             return max(50, int(attach_hard_cap(domain_key)))
@@ -125,7 +125,7 @@ def _event_types_compatible(a: str | None, b: str | None) -> bool:
 def _canonical_ids_for_articles(schema: str, article_ids: list[int]) -> set[int]:
     if not article_ids:
         return set()
-    api.shared.database import get_db_connection_context
+    from api.shared.database import get_db_connection_context
 
     ids: set[int] = set()
     try:
@@ -149,7 +149,7 @@ def _canonical_ids_for_articles(schema: str, article_ids: list[int]) -> set[int]
 def _canonical_ids_from_profile_ids(profile_ids: set[int]) -> set[int]:
     if not profile_ids:
         return set()
-    api.shared.database import get_db_connection_context
+    from api.shared.database import get_db_connection_context
 
     out: set[int] = set()
     try:
@@ -172,7 +172,7 @@ def _canonical_ids_from_profile_ids(profile_ids: set[int]) -> set[int]:
 def _canonical_ids_for_entity_names(schema: str, names: list[str]) -> set[int]:
     if not names:
         return set()
-    api.shared.database import get_db_connection_context
+    from api.shared.database import get_db_connection_context
 
     out: set[int] = set()
     try:
@@ -201,7 +201,7 @@ def _canonical_ids_for_entity_names(schema: str, names: list[str]) -> set[int]:
 def _event_types_for_articles(article_ids: list[int]) -> set[str]:
     if not article_ids:
         return set()
-    api.shared.database import get_db_connection_context
+    from api.shared.database import get_db_connection_context
 
     types: set[str] = set()
     try:
@@ -246,7 +246,7 @@ def _score_tracked_events(
     event_types: set[str],
 ) -> list[tuple[float, int, int | None, str]]:
     """Returns (score, tracked_event_id, storyline_id_or_none, reason)."""
-    api.shared.database import get_db_connection_context
+    from api.shared.database import get_db_connection_context
 
     results: list[tuple[float, int, int | None, str]] = []
     if not canonical_ids and not geo_tokens:
@@ -343,7 +343,7 @@ def _score_storylines(
     domain_key: str | None = None,
 ) -> list[tuple[float, int, str]]:
     """Returns (score, storyline_id, reason)."""
-    api.shared.database import get_db_connection_context
+    from api.shared.database import get_db_connection_context
 
     results: list[tuple[float, int, str]] = []
     title_tokens = _tokenize(title_hint or "")
@@ -581,10 +581,10 @@ def attach_articles_to_storyline(
     if not aids:
         return 0
 
-    api.shared.database import get_db_connection_context
-    api.shared.membership_scoring import score_article_storyline_membership
-    api.shared.membership_store import MembershipIntent, admit
-    api.shared.storyline_article_counts import sync_counts_update_sql
+    from api.shared.database import get_db_connection_context
+    from api.shared.membership_scoring import score_article_storyline_membership
+    from api.shared.membership_store import MembershipIntent, admit
+    from api.shared.storyline_article_counts import sync_counts_update_sql
 
     added = 0
     try:

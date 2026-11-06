@@ -81,7 +81,7 @@ class CollectionExecutor:
     async def _execute_content_enrichment(self) -> None:
         """Enrich items across configured enrichment cycles."""
         from services.domain_feed_service import get_domain_config
-        api.shared.pipeline_batch_drain import phase_run_budget_seconds
+        from api.shared.pipeline_batch_drain import phase_run_budget_seconds
 
         domain = self._params.get("domain", "finance")
         config = get_domain_config(domain)
@@ -135,7 +135,7 @@ class CollectionExecutor:
     async def _execute_research_paper_profiling(self) -> None:
         """Profile research papers in science_tech / finance domains."""
         from services.domain_feed_service import get_domain_config
-        api.shared.pipeline_batch_drain import phase_run_budget_seconds
+        from api.shared.pipeline_batch_drain import phase_run_budget_seconds
 
         domain = self._params.get("domain", "science_tech")
         config = get_domain_config(domain)
@@ -255,7 +255,7 @@ class CollectionExecutor:
         budget: float,
     ) -> None:
         """Run a single enrichment cycle step."""
-        api.shared.enrichment.pipelines import enrichment_cycle
+        from api.shared.enrichment.pipelines import enrichment_cycle
         task_phase = self._get_phase()
 
         try:

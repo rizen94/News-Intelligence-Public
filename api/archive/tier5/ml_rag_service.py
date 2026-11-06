@@ -9,7 +9,7 @@ import time
 from typing import Optional, Any
 from datetime import datetime, timedelta
 import psycopg2
-api.shared.database.connection import get_db_connect_kwargs
+from api.shared.database.connection import get_db_connect_kwargs
 from collections import defaultdict, Counter
 import re
 
@@ -17,7 +17,7 @@ from .summarization_service import MLSummarizationService
 from .background_processor import BackgroundMLProcessor
 from .rag_external_services import RAGExternalServicesManager
 from .gdelt_rag_service import GDELTRAGService
-api.shared.pipeline_state_constants import ML_COMPLETED
+from api.shared.pipeline_state_constants import ML_COMPLETED
 
 logger = logging.getLogger(__name__)
 

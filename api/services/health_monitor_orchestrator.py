@@ -70,7 +70,7 @@ def _create_health_alert(feed_name: str, message: str) -> None:
     try:
         import json
 
-        api.shared.database import get_db_connection
+        from api.shared.database import get_db_connection
 
         conn = get_db_connection()
         if not conn:

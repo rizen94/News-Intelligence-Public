@@ -68,8 +68,8 @@ from typing import Any
 
 from psycopg2.extras import RealDictCursor
 
-api.shared.article_processing_gates import sql_ml_ready_and_content_bounds
-api.shared.pipeline_article_selection import (
+from api.shared.article_processing_gates import sql_ml_ready_and_content_bounds
+from api.shared.pipeline_article_selection import (
     log_terminal_skip_stub_candidate,
     pipeline_article_selection_mode_report,
     pipeline_backfill_collection_should_pause,
@@ -77,14 +77,14 @@ api.shared.pipeline_article_selection import (
     sql_order_coalesce_pub_created,
     sql_order_created_at,
 )
-api.shared.domain_registry import (
+from api.shared.domain_registry import (
     get_pipeline_active_domain_keys,
     get_pipeline_schema_names_active,
     pipeline_url_schema_pairs,
     resolve_domain_schema,
     schema_to_primary_domain_key,
 )
-api.shared.pipeline_state_constants import (
+from api.shared.pipeline_state_constants import (
     ARTICLE_ENRICHED,
     ARTICLE_FAILED,
     ARTICLE_INACCESSIBLE,
@@ -141,7 +141,7 @@ except ImportError:
 
 
 # Persist each automation run to DB so "last 24h" is based on wall-clock time, not API restart
-api.shared.services.automation_run_history_writer import (
+from api.shared.services.automation_run_history_writer import (
     persist_automation_run_history as _persist_automation_run,
 )
 
@@ -320,7 +320,7 @@ def automation_db_pool_should_defer_phase(phase_name: str) -> bool:
     if not _automation_db_pool_pressure_gate_enabled():
         return False
     try:
-        api.shared.database import get_db_pool_snapshot
+        from api.shared.database import get_db_pool_snapshot
 
         snap = get_db_pool_snapshot()
         worker = snap.get("worker") or {}
@@ -342,7 +342,7 @@ def automation_http_pressure_should_defer_phase(phase_name: str) -> bool:
     if phase_name in _db_pool_gate_exempt_phases():
         return False
     try:
-        api.shared.services.api_request_tracker import http_load_should_defer_work
+        from api.shared.services.api_request_tracker import http_load_should_defer_work
 
         return bool(http_load_should_defer_work())
     except Exception:
@@ -354,7 +354,7 @@ def automation_disk_io_should_defer_phase(phase_name: str) -> bool:
     if phase_name in _db_pool_gate_exempt_phases():
         return False
     try:
-        api.shared.database.disk_io_pressure_advisory import disk_io_should_defer_phase
+        from api.shared.database.disk_io_pressure_advisory import disk_io_should_defer_phase
 
         defer, _adv = disk_io_should_defer_phase(phase_name)
         return bool(defer)
@@ -389,7 +389,7 @@ def research_llm_backlog_pending(*, max_age_s: float = 60.0) -> int:
         return int(_LLM_BACKLOG_CACHE.get("pending") or 0)
     pending = 0
     try:
-        api.shared.database import get_db_connection_context
+        from api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -1630,7 +1630,7 @@ class AutomationManager:
 
         self._apply_automation_disabled_schedules()
         try:
-            api.shared.retired_phase_registry import apply_retired_schedule_suppression
+            from api.shared.retired_phase_registry import apply_retired_schedule_suppression
 
             apply_retired_schedule_suppression(self.schedules)
         except Exception as e:
@@ -1667,7 +1667,7 @@ class AutomationManager:
         raw = os.environ.get("AUTOMATION_DISABLED_SCHEDULES", "").strip()
         names = {x.strip() for x in raw.split(",") if x.strip()} if raw else set()
         try:
-            api.shared.remote_phase_worker import remote_owned_phases
+            from api.shared.remote_phase_worker import remote_owned_phases
 
             names |= set(remote_owned_phases())
         except Exception:
@@ -1684,7 +1684,7 @@ class AutomationManager:
             return None
         remote_owned: set[str] = set()
         try:
-            api.shared.remote_phase_worker import remote_owned_phases
+            from api.shared.remote_phase_worker import remote_owned_phases
 
             remote_owned = set(remote_owned_phases())
         except Exception:
@@ -2020,7 +2020,7 @@ class AutomationManager:
             if stall_holds.get(task.name, 0) > 0:
                 actions.append(f"drop_stall_hold:{task.name}")
                 continue
-            api.shared.bulk_catchup_pause import bulk_catchup_pause_defers_phase
+            from api.shared.bulk_catchup_pause import bulk_catchup_pause_defers_phase
 
             if bulk_catchup_pause_defers_phase(task.name) and not meta.get("operator_request"):
                 actions.append(f"drop_bulk_pause:{task.name}")
@@ -2100,7 +2100,7 @@ class AutomationManager:
             if self._should_skip_redundant_phase_request(phase):
                 actions.append(f"skip_redundant:{phase}")
                 continue
-            api.shared.bulk_catchup_pause import bulk_catchup_pause_defers_phase
+            from api.shared.bulk_catchup_pause import bulk_catchup_pause_defers_phase
 
             if bulk_catchup_pause_defers_phase(phase):
                 actions.append(f"drop_bulk_pause:{phase}")
@@ -2191,7 +2191,7 @@ class AutomationManager:
 
     def _get_db_connection_sync(self):
         """Synchronous DB connection for use from sync code (e.g. load/save queue)."""
-        api.shared.database import get_db_connection
+        from api.shared.database import get_db_connection
 
         return get_db_connection()
 
@@ -2244,7 +2244,7 @@ class AutomationManager:
             )
             return None
 
-        api.shared.database import (
+        from api.shared.database import (
             get_db_connection_context,
             get_health_db_connection_context,
         )
@@ -2326,7 +2326,7 @@ class AutomationManager:
         if not MUST_RUN_SCHEDULE_PHASES:
             return None
         try:
-            api.shared.database import get_db_connection_context
+            from api.shared.database import get_db_connection_context
 
             with get_db_connection_context() as conn:
                 with conn.cursor() as cur:
@@ -2618,7 +2618,7 @@ class AutomationManager:
         except Exception:
             cpu_percent = None
         try:
-            api.shared.gpu_metrics import get_gpu_metrics
+            from api.shared.gpu_metrics import get_gpu_metrics
 
             gpu_percent = get_gpu_metrics().get("gpu_utilization_percent")
             if gpu_percent is not None:
@@ -2628,7 +2628,7 @@ class AutomationManager:
         db_snapshot = {}
         worker_util = 0.0
         try:
-            api.shared.database import get_db_pool_snapshot
+            from api.shared.database import get_db_pool_snapshot
 
             db_snapshot = get_db_pool_snapshot()
             worker = db_snapshot.get("worker") or {}
@@ -2654,7 +2654,7 @@ class AutomationManager:
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         try:
-            api.shared.database.pool_pressure_advisory import publish_db_pool_pressure_advisory
+            from api.shared.database.pool_pressure_advisory import publish_db_pool_pressure_advisory
 
             signal = publish_db_pool_pressure_advisory(db_snapshot, source="api")
             if signal:
@@ -2673,7 +2673,7 @@ class AutomationManager:
         except Exception:
             pass
         try:
-            api.shared.database.disk_io_pressure_advisory import read_run_file
+            from api.shared.database.disk_io_pressure_advisory import read_run_file
 
             # Governor timer owns sampling; headroom only surfaces the latest /run snapshot.
             disk_sig = read_run_file()
@@ -3207,7 +3207,7 @@ class AutomationManager:
         # When PostgreSQL is down, do not schedule new phases (avoids LLM/CPU waste). Flush runs when DB is back.
         try:
             if os.getenv("AUTOMATION_PAUSE_WHEN_DB_DOWN", "true").lower() in ("1", "true", "yes"):
-                api.shared.database.db_availability import is_automation_db_ready
+                from api.shared.database.db_availability import is_automation_db_ready
 
                 if not is_automation_db_ready():
                     return False
@@ -3584,10 +3584,10 @@ class AutomationManager:
         task.metadata = task.metadata or {}
         heavy_inflight_held = False
         try:
-            api.shared.retired_phase_registry import is_hard_retired_schedule_phase
+            from api.shared.retired_phase_registry import is_hard_retired_schedule_phase
 
             if is_hard_retired_schedule_phase(task.name):
-                api.shared.legacy_editorial_rollback import legacy_editorial_writers_enabled
+                from api.shared.legacy_editorial_rollback import legacy_editorial_writers_enabled
 
                 allow_legacy = (
                     task.name
@@ -3651,7 +3651,7 @@ class AutomationManager:
         task.metadata["lane_reason"] = lane_reason
         lane_token = None
         try:
-            api.shared.services.llm_service import push_llm_execution_lane
+            from api.shared.services.llm_service import push_llm_execution_lane
 
             lane_token = push_llm_execution_lane(effective_lane)
         except Exception:
@@ -3714,7 +3714,7 @@ class AutomationManager:
         # Phases that call Ollama / shared LLM paths (or heavy GPU); yield to API + share ollama_semaphore.
         if task.name in OLLAMA_AUTOMATION_PHASES:
             try:
-                api.shared.services.api_request_tracker import should_yield_to_api
+                from api.shared.services.api_request_tracker import should_yield_to_api
 
                 if (
                     not (task.metadata or {}).get("nightly_sequential_drain")
@@ -3732,7 +3732,7 @@ class AutomationManager:
                 pass
             # GPU temperature throttle: pause Ollama work if GPU is too hot
             try:
-                api.shared.gpu_metrics import (
+                from api.shared.gpu_metrics import (
                     GPU_THROTTLE_SLEEP_SECONDS,
                     get_gpu_metrics,
                     should_throttle_ollama,
@@ -4191,7 +4191,7 @@ class AutomationManager:
         except Exception as e:
             # Mid-run CB/overload: defer+requeue (same contract as admission shed), not fail-storm.
             try:
-                api.shared.services.llm_service import is_ollama_pressure_error
+                from api.shared.services.llm_service import is_ollama_pressure_error
 
                 _pressure = is_ollama_pressure_error(e)
             except Exception:
@@ -4274,7 +4274,7 @@ class AutomationManager:
                 self.ollama_semaphore.release()
             if lane_token is not None:
                 try:
-                    api.shared.services.llm_service import pop_llm_execution_lane
+                    from api.shared.services.llm_service import pop_llm_execution_lane
 
                     pop_llm_execution_lane(lane_token)
                 except Exception:
@@ -4602,7 +4602,7 @@ class AutomationManager:
                 except Exception as e:
                     logger.debug("collection_cycle post-RSS replan: %s", e)
             try:
-                api.shared.chemistry_beaker import kickoff_beaker_phases
+                from api.shared.chemistry_beaker import kickoff_beaker_phases
 
                 kickoff_beaker_phases(self, reason="collection_cycle_post_rss")
             except Exception as e:
@@ -5184,7 +5184,7 @@ class AutomationManager:
     async def _execute_story_enhancement(self, task: Task):
         """Phase 3 RAG: story state triggers; enrich/build only when facts_only policy allows."""
         from services.enhancement_orchestrator_service import run_enhancement_cycle
-        api.shared.pipeline_resource_policy import (
+        from api.shared.pipeline_resource_policy import (
             story_enhancement_facts_only,
             story_enhancement_run_limits,
         )
@@ -5826,7 +5826,7 @@ class AutomationManager:
     async def _execute_longitudinal_matview_refresh(self, task: Task):
         import asyncio
 
-        api.shared.database import get_db_connection_context
+        from api.shared.database import get_db_connection_context
 
         def _refresh():
             with get_db_connection_context() as conn:
@@ -6008,7 +6008,7 @@ class AutomationManager:
     async def _execute_pending_db_flush(self, task: Task):
         """Replay automation_run_history rows queued while DB was unreachable."""
         try:
-            api.shared.database.pending_db_writes import flush_pending_writes
+            from api.shared.database.pending_db_writes import flush_pending_writes
 
             stats = flush_pending_writes()
             logger.info("pending_db_flush: %s", stats)
@@ -6017,7 +6017,7 @@ class AutomationManager:
 
     async def _execute_health_check(self, task: Task):
         """Execute health check task (manual ``request_phase`` only; scheduled runs use ``_standalone_health_check_loop``)."""
-        api.shared.database import get_health_db_connection_context
+        from api.shared.database import get_health_db_connection_context
 
         loop = asyncio.get_event_loop()
 
@@ -6033,7 +6033,7 @@ class AutomationManager:
 
     async def _standalone_health_check_loop(self):
         """Periodic SELECT 1 on the **health** DB pool — not queued with other phases, does not use the worker pool."""
-        api.shared.database import get_health_db_connection_context
+        from api.shared.database import get_health_db_connection_context
 
         loop = asyncio.get_event_loop()
 
@@ -6161,7 +6161,7 @@ class AutomationManager:
 
     async def _execute_rag_enhancement(self, task: Task):
         """Execute RAG enhancement per domain (v8): enhance storylines with Wikipedia/GDELT context, store by (domain, storyline_id)."""
-        api.shared.database import get_db_connection
+        from api.shared.database import get_db_connection
 
         from services.rag import get_rag_service
 
@@ -6381,7 +6381,7 @@ class AutomationManager:
     async def _execute_sentiment_analysis(self, task: Task):
         """Execute sentiment analysis task"""
         from services.ai_processing_service import get_ai_service
-        api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_article_phase_pass, sql_article_pass_null
+        from api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_article_phase_pass, sql_article_pass_null
 
         ai_service = get_ai_service()
         analyzed_count = 0
@@ -6457,7 +6457,7 @@ class AutomationManager:
         from domains.storyline_management.services.storyline_service import (
             StorylineService as DomainStorylineService,
         )
-        api.shared.database import get_db_connection
+        from api.shared.database import get_db_connection
         from services.content_validation_service import content_validation_service
 
         processed_count = 0
@@ -6507,7 +6507,7 @@ class AutomationManager:
                                 continue
                             summary_text = (result.get("data") or {}).get("summary", "")
                             if summary_text:
-                                api.shared.llm_text_sanitize import sanitize_briefing_lede
+                                from api.shared.llm_text_sanitize import sanitize_briefing_lede
 
                                 summary_text = sanitize_briefing_lede(summary_text, max_length=400)
                                 processed_count += 1
@@ -6709,7 +6709,7 @@ class AutomationManager:
                             saved,
                         )
                 except Exception as e:
-                    api.shared.services.llm_service import is_ollama_pressure_error
+                    from api.shared.services.llm_service import is_ollama_pressure_error
 
                     if is_ollama_pressure_error(e):
                         raise
@@ -6733,7 +6733,7 @@ class AutomationManager:
                 except Exception as hub_e:
                     logger.debug("Vault cluster hub post-discovery: %s", hub_e)
         except Exception as e:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 # Propagate so _execute_task retries / does not mark a clean success with junk clusters
@@ -6862,12 +6862,12 @@ class AutomationManager:
             articles_per_domain = 20
         articles_per_domain = max(5, min(120, articles_per_domain))
 
-        api.shared.article_signal_gate import (
+        from api.shared.article_signal_gate import (
             article_signal_enabled,
             defer_signal_light_phase_batch,
             sql_article_signal_full_lane_and,
         )
-        api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
+        from api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
 
         if article_signal_enabled():
             defer_signal_light_phase_batch(
@@ -6933,7 +6933,7 @@ class AutomationManager:
                     )
                     ok = bool(result.get("success"))
                     if ok:
-                        api.shared.pipeline_pass_marker import record_article_phase_pass
+                        from api.shared.pipeline_pass_marker import record_article_phase_pass
 
                         cnt = (result.get("counts") or {}).get("entities") or 0
                         record_article_phase_pass(
@@ -6994,7 +6994,7 @@ class AutomationManager:
         """v5.0 -- Extract structured events with temporal grounding from domain articles."""
         try:
             from services.event_extraction_service import EventExtractionService
-            api.shared.database import get_db_connection
+            from api.shared.database import get_db_connection
 
             svc = EventExtractionService()
             loop = asyncio.get_event_loop()
@@ -7040,7 +7040,7 @@ class AutomationManager:
                                 )
                                 conn_a.commit()
                                 try:
-                                    api.shared.pipeline_pass_marker import record_article_phase_pass
+                                    from api.shared.pipeline_pass_marker import record_article_phase_pass
 
                                     record_article_phase_pass(
                                         schema,
@@ -7076,7 +7076,7 @@ class AutomationManager:
                             )
                             return 0
 
-                api.shared.database.db_availability import schema_has_table
+                from api.shared.database.db_availability import schema_has_table
 
                 for schema in get_pipeline_schema_names_active():
                     if not schema_has_table(schema, "articles"):
@@ -7089,12 +7089,12 @@ class AutomationManager:
                         domain_for_events = schema_to_primary_domain_key(schema)
                     except KeyError:
                         domain_for_events = schema.replace("_", "-")
-                    api.shared.article_signal_gate import (
+                    from api.shared.article_signal_gate import (
                         article_signal_enabled,
                         defer_signal_light_phase_batch,
                         sql_article_signal_full_lane_and,
                     )
-                    api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
+                    from api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
 
                     if article_signal_enabled():
                         defer_signal_light_phase_batch("event_extraction", per_domain_limit=80)
@@ -7218,7 +7218,7 @@ class AutomationManager:
     async def _execute_story_continuation_v5(self, task: Task):
         """v5.0 -- Match events to existing storylines and manage lifecycle states. Runs per domain (storylines/story_entity_index are per-schema)."""
         from services.story_continuation_service import StoryContinuationService
-        api.shared.database.disk_io_pressure_advisory import disk_io_should_defer_phase
+        from api.shared.database.disk_io_pressure_advisory import disk_io_should_defer_phase
 
         defer, disk_meta = disk_io_should_defer_phase("story_continuation")
         if defer:
@@ -7270,7 +7270,7 @@ class AutomationManager:
             f"checked={total['checked']}, linked={total['linked']}, flagged={total['flagged']}"
         )
         try:
-            api.shared.pipeline_handoffs import after_story_continuation
+            from api.shared.pipeline_handoffs import after_story_continuation
 
             after_story_continuation(self, linked=int(total.get("linked") or 0))
         except Exception as handoff_e:
@@ -7430,7 +7430,7 @@ class AutomationManager:
                     summary = f"Timeline ({len(events)} events): " + " | ".join(parts[:12])
                     if use_historical:
                         try:
-                            api.shared.domain_registry import schema_to_primary_domain_key
+                            from api.shared.domain_registry import schema_to_primary_domain_key
                             from services.storyline_historical_context_service import (
                                 build_storyline_historical_context,
                                 render_historical_context_for_llm,
@@ -7498,7 +7498,7 @@ class AutomationManager:
             from domains.content_analysis.services.topic_clustering_service import (
                 TopicClusteringService,
             )
-            api.shared.domain_registry import (
+            from api.shared.domain_registry import (
                 first_active_domain_key,
                 pipeline_url_schema_pairs,
                 resolve_domain_schema,
@@ -7535,7 +7535,7 @@ class AutomationManager:
             LOW_CONFIDENCE_COUNT = 6  # 30% of batch size
             MEDIUM_CONFIDENCE_COUNT = 6  # 30% of batch size
 
-            api.shared.database import get_db_config
+            from api.shared.database import get_db_config
 
             db_config = get_db_config()
             total_processed = 0
@@ -7770,7 +7770,7 @@ class AutomationManager:
 
     async def _get_db_connection(self):
         """Get database connection from shared pool. Runs in executor to avoid blocking the event loop."""
-        api.shared.database import get_db_connection
+        from api.shared.database import get_db_connection
 
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, get_db_connection)
@@ -8245,8 +8245,8 @@ class AutomationManager:
         }
         # Fresh pool snapshot for Monitor (headroom may be a few seconds stale).
         try:
-            api.shared.database import get_db_pool_snapshot
-            api.shared.database.pool_pressure_advisory import (
+            from api.shared.database import get_db_pool_snapshot
+            from api.shared.database.pool_pressure_advisory import (
                 build_pool_pressure_signal,
                 publish_db_pool_pressure_advisory,
             )
@@ -8271,7 +8271,7 @@ class AutomationManager:
         except Exception as e:
             rr["db_pool"] = {"error": str(e)[:120]}
         try:
-            api.shared.database.disk_io_pressure_advisory import (
+            from api.shared.database.disk_io_pressure_advisory import (
                 read_disk_io_pressure_advisory,
                 read_run_file,
             )
@@ -8294,7 +8294,7 @@ class AutomationManager:
         except Exception as e:
             rr["disk_io_pressure"] = {"available": False, "error": str(e)[:120]}
         try:
-            api.shared.services.llm_service import llm_service as _ls
+            from api.shared.services.llm_service import llm_service as _ls
 
             rr["llm_endpoints"] = {
                 "dual_host_enabled": bool(_ls.dual_host_enabled),
@@ -8311,7 +8311,7 @@ class AutomationManager:
         except Exception as e:
             rr["llm_endpoints"] = {"error": str(e)}
         try:
-            api.shared.services.api_request_tracker import get_api_yield_snapshot
+            from api.shared.services.api_request_tracker import get_api_yield_snapshot
 
             rr["api_yield"] = get_api_yield_snapshot()
         except Exception as e:

@@ -48,7 +48,7 @@ def main() -> None:
         nightly_unified_pipeline_enabled,
     )
     from services.pipeline_schedule_service import pipeline_schedule_info, rss_collection_allowed
-    api.shared.domain_registry import (
+    from api.shared.domain_registry import (
         get_pipeline_included_domain_keys,
         pipeline_url_schema_pairs,
         url_schema_pairs,
@@ -110,7 +110,7 @@ def main() -> None:
 
     conn = None
     try:
-        api.shared.database import get_db_connection
+        from api.shared.database import get_db_connection
 
         conn = get_db_connection()
         if conn:

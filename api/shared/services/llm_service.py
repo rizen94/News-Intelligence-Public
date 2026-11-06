@@ -87,7 +87,7 @@ logger = logging.getLogger(__name__)
 
 # Global cap (env OLLAMA_CONCURRENCY; default 6). PopOS noise experiment may set 5.
 try:
-    OLLAMA_CONCURRENCY = max(1, int(__import__("os").environ.get("OLLAMA_CONCURRENCY", "6") or 6))
+    OLLAMA_CONCURRENCY = max(1, int(os.environ.get("OLLAMA_CONCURRENCY", "6") or 6))
 except ValueError:
     OLLAMA_CONCURRENCY = 6
 _ollama_semaphore: asyncio.Semaphore | None = None
@@ -401,7 +401,7 @@ class LLMService:
         Model selection via shared policy (ollama_model_policy).
         approx_prompt_chars: large background prompts may route to secondary (see MODELS["secondary"]).
         """
-        api.shared.services.ollama_model_policy import resolve_model_for_llm_task
+        from api.shared.services.ollama_model_policy import resolve_model_for_llm_task
 
         return resolve_model_for_llm_task(task_type, urgency, approx_prompt_chars)
 
@@ -831,7 +831,7 @@ Storyline context:
             )
             response = await self._call_ollama(model, prompt)
             try:
-                api.shared.llm_text_sanitize import strip_llm_wrapping_artifacts
+                from api.shared.llm_text_sanitize import strip_llm_wrapping_artifacts
 
                 cleaned = strip_llm_wrapping_artifacts(response or "")
             except Exception:
@@ -920,7 +920,7 @@ Storyline context:
         await cb.begin_probe_if_due()
 
         try:
-            api.shared.services.ollama_model_policy import (
+            from api.shared.services.ollama_model_policy import (
                 InvocationKind,
                 extraction_temperature_for_invocation,
                 keep_alive_for_invocation,

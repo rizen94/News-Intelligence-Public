@@ -9,8 +9,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-api.shared.database import get_db_connection_context
-api.shared.vault_note_contract import entity_vault_rel_path
+from api.shared.database import get_db_connection_context
+from api.shared.vault_note_contract import entity_vault_rel_path
 
 logger = logging.getLogger(__name__)
 
@@ -405,7 +405,7 @@ def set_geo_parent(
 
 def resolve_title_to_vault_path(title: str) -> str | None:
     """Match wikilink title to a registry path via title, slug, or common aliases."""
-    api.shared.vault_note_contract import (
+    from api.shared.vault_note_contract import (
         SCIENCE_TOPIC_DIR,
         entity_vault_rel_path,
         slugify_entity_name,
@@ -623,7 +623,7 @@ def list_morning_expansions(
     try:
         from services.morning_briefing_manager_service import _magnet_member_cap
         from services.vault_quality_gates import expansion_coherence_ok
-        api.shared.domain_registry import resolve_domain_schema
+        from api.shared.domain_registry import resolve_domain_schema
     except Exception:
         _magnet_member_cap = lambda: 32  # type: ignore
         expansion_coherence_ok = None  # type: ignore

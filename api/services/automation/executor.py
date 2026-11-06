@@ -61,7 +61,7 @@ EVENT_EXTRACTION_V5_PHASE = "event_extraction_v5"
 async def execute_mention_resolution(task: Any) -> PhaseResult:
     """Drain CEM mention resolver (replaces nri-mention-resolver.timer)."""
     from api.nri_core.resolver_runner import run_mention_resolution_drain
-    api.shared.pipeline_batch_drain import phase_run_budget_seconds
+    from api.shared.pipeline_batch_drain import phase_run_budget_seconds
 
     budget = phase_run_budget_seconds(MENTION_RESOLUTION_PHASE, 900)
     loop = asyncio.get_event_loop()
@@ -225,7 +225,7 @@ async def execute_story_enhancement(task: Any) -> PhaseResult:
     """Phase 3 RAG: story state triggers; enrich/build only when facts_only policy allows."""
     try:
         from services.enhancement_orchestrator_service import run_enhancement_cycle
-        api.shared.pipeline_resource_policy import (
+        from api.shared.pipeline_resource_policy import (
             story_enhancement_facts_only,
             story_enhancement_run_limits,
         )
@@ -308,7 +308,7 @@ async def execute_event_extraction_v5(task: Any) -> PhaseResult:
             )
             conn.commit()
             try:
-                api.shared.pipeline_pass_marker import record_article_phase_pass
+                from api.shared.pipeline_pass_marker import record_article_phase_pass
                 record_article_phase_pass(schema_, article_id, "event_extraction", "timeline_saved")
             except Exception:
                 pass

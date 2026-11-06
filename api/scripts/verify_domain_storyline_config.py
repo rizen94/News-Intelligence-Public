@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from services.domain_synthesis_config import get_storyline_development_config  # noqa: E402
-api.shared.domain_registry import get_pipeline_active_domain_keys  # noqa: E402
+from api.shared.domain_registry import get_pipeline_active_domain_keys  # noqa: E402
 
 
 def _profile_dict(domain: str) -> dict:

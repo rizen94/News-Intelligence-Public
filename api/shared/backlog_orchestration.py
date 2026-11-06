@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from api.config.runtime import env_set, env_str
-api.shared.bulk_catchup_llm_routing import configure_catchup_extraction_routing
+from api.shared.bulk_catchup_llm_routing import configure_catchup_extraction_routing
 
 logger = logging.getLogger(__name__)
 
@@ -125,8 +125,8 @@ def unload_ollama_model(gpu_host: str, model: str, *, blocking: bool = False) ->
 
 def _reset_llm_clients() -> None:
     try:
-        api.shared.services.llm_service import reset_llm_service
-        api.shared.services.ollama_model_caller import reset_ollama_model_caller
+        from api.shared.services.llm_service import reset_llm_service
+        from api.shared.services.ollama_model_caller import reset_ollama_model_caller
 
         reset_llm_service()
         reset_ollama_model_caller()
@@ -267,7 +267,7 @@ async def run_with_gpu_lane(
     coro_factory: Callable[[], Awaitable[T]],
 ) -> T:
     """Run one LLM-bound unit of work on the PopOS GPU lane."""
-    api.shared.services.llm_service import pop_llm_execution_lane, push_llm_execution_lane
+    from api.shared.services.llm_service import pop_llm_execution_lane, push_llm_execution_lane
 
     async with sem:
         token = push_llm_execution_lane("gpu")

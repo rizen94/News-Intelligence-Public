@@ -173,7 +173,7 @@ def main() -> int:
 
     entries = [{"name": lab, "entity_type": et_default} for lab in unique]
 
-    api.shared.domain_registry import is_valid_domain_key
+    from api.shared.domain_registry import is_valid_domain_key
 
     from services.entity_seed_catalog_service import bulk_seed_canonical_entries
 

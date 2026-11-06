@@ -14,7 +14,7 @@ from enum import Enum
 from typing import Any
 
 from psycopg2.extras import RealDictCursor
-api.shared.database import get_db_connection_context
+from api.shared.database import get_db_connection_context
 
 # Try to import Prometheus client
 try:

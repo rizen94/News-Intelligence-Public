@@ -15,8 +15,8 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-api.shared.database import get_db_connection
-api.shared.domain_registry import resolve_domain_schema
+from api.shared.database import get_db_connection
+from api.shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 

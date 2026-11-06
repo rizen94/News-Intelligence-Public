@@ -7,11 +7,12 @@ Groups by normalized subject (echo clusters) and normalized triple across contex
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
-api.shared.database import get_db_connection_context
+from api.shared.database import get_db_connection_context
 
 logger = logging.getLogger(__name__)
 
@@ -343,7 +344,7 @@ def classify_replication_status(
     - matches without author overlap → replicated_independent
     - explicit contradiction flag on a match → contradicted
     """
-    api.shared.evidence_grade import normalize_replication_status
+    from api.shared.evidence_grade import normalize_replication_status
 
     if not matching_findings:
         return normalize_replication_status("single_study")
@@ -545,7 +546,7 @@ def update_appraisal_replication_status(
                 """,
                 (
                     status,
-                    __import__("json").dumps(
+                    json.dumps(
                         {
                             "replication_match_count": len(matches),
                             "replication_match_ids": [m["appraisal_id"] for m in matches[:20]],

@@ -8,7 +8,7 @@ import json
 from typing import Optional
 from datetime import datetime
 import psycopg2
-api.shared.database.connection import get_db_connect_kwargs
+from api.shared.database.connection import get_db_connect_kwargs
 
 from .summarization_service import MLSummarizationService
 from .content_analyzer import ContentAnalyzer

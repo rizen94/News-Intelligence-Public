@@ -58,10 +58,10 @@ def _safe_request_editorial(automation: Any, phase: str, *, reason: str = "pipel
     if not phase:
         return
     try:
-        api.shared.remote_phase_worker import phase_owned_by_remote_worker
+        from api.shared.remote_phase_worker import phase_owned_by_remote_worker
 
         if phase_owned_by_remote_worker(phase):
-            api.shared.popos_editorial_wake import request_popos_editorial_wake
+            from api.shared.popos_editorial_wake import request_popos_editorial_wake
 
             request_popos_editorial_wake([phase], reason=reason)
             logger.info("PopOS editorial wake requested: %s (%s)", phase, reason)
@@ -140,8 +140,8 @@ def after_event_deduplication(
 def _stale_morning_slate_needs_wake(*, min_novel: int = 3, max_age_hours: int = 36) -> bool:
     """True when living expansions are missing/stale and novel episode work exists."""
     try:
-        api.shared.database import get_db_connection_context
-        api.shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
+        from api.shared.database import get_db_connection_context
+        from api.shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
     except Exception:
         return False
     try:
@@ -251,7 +251,7 @@ def after_connection_discovery(
             automation, "editorial_narrative_pass", reason="after_connection_discovery"
         )
     if int(research_queued or 0) <= 0 and int(narrative_queued or 0) <= 0:
-        api.shared.popos_editorial_wake import request_popos_editorial_wake
+        from api.shared.popos_editorial_wake import request_popos_editorial_wake
 
         request_popos_editorial_wake(
             ["editorial_research_pass", "editorial_narrative_pass"],

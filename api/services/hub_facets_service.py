@@ -59,8 +59,8 @@ def list_hub_articles(
     limit: int = 50,
     offset: int = 0,
 ) -> dict[str, Any]:
-    api.shared.database import get_ui_db_connection_context
-    api.shared.domain_registry import resolve_domain_schema
+    from api.shared.database import get_ui_db_connection_context
+    from api.shared.domain_registry import resolve_domain_schema
 
     facet = _facet_or_404(domain_key, hub_key)
     schema = resolve_domain_schema(domain_key)
@@ -119,8 +119,8 @@ def list_hub_storylines(
     Storylines that carry the hub on SEI and also have ≥1 non-hub durable
     (party/matter) — true threads under the hub lens.
     """
-    api.shared.database import get_ui_db_connection_context
-    api.shared.domain_registry import resolve_domain_schema
+    from api.shared.database import get_ui_db_connection_context
+    from api.shared.domain_registry import resolve_domain_schema
 
     facet = _facet_or_404(domain_key, hub_key)
     schema = resolve_domain_schema(domain_key)

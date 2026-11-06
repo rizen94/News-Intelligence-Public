@@ -16,7 +16,7 @@ from typing import Any
 
 import yaml
 
-api.shared.services.domain_rss_seed import seed_from_domain_config
+from api.shared.services.domain_rss_seed import seed_from_domain_config
 
 logger = logging.getLogger(__name__)
 

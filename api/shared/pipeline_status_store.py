@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -26,7 +27,7 @@ def upsert_pipeline_status(
     if not pipeline_status_enabled():
         return
     try:
-        api.shared.database import get_db_connection_context
+        from api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -48,7 +49,7 @@ def upsert_pipeline_status(
                         phase_name,
                         outcome,
                         terminal_state,
-                        __import__("json").dumps(metadata or {}),
+                        json.dumps(metadata or {}),
                     ),
                 )
             conn.commit()

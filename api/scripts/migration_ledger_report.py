@@ -69,8 +69,8 @@ def main() -> int:
     )
     args = p.parse_args()
 
-    api.shared.database import get_db_connection
-    api.shared.migration_sql_paths import (
+    from api.shared.database import get_db_connection
+    from api.shared.migration_sql_paths import (
         archive_historical_dir,
         list_sql_migrations,
         migrations_root,

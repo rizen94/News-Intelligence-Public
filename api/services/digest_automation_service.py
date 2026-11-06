@@ -10,7 +10,7 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Any
 
-api.shared.database import ephemeral_db_connection_context
+from api.shared.database import ephemeral_db_connection_context
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ _digest_service: Any = None
 def _get_daily_briefing_service():
     """Lazy init DailyBriefingService with shared db_config."""
     from api.modules.ml.daily_briefing_service import DailyBriefingService
-    api.shared.database import get_db_config
+    from api.shared.database import get_db_config
 
     return DailyBriefingService(get_db_config())
 
@@ -81,7 +81,7 @@ def _insert_weekly_digest(
             with conn.cursor() as cur:
                 # Pull editorial ledes from storylines updated this week
                 editorial_suggestions = []
-                api.shared.domain_registry import get_pipeline_schema_names_active
+                from api.shared.domain_registry import get_pipeline_schema_names_active
 
                 for schema in get_pipeline_schema_names_active():
                     try:

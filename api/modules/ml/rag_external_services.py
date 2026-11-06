@@ -414,7 +414,7 @@ class TimelineAnalysisService:
                     periods['last_month'].append(event)
                 else:
                     periods['older'].append(event)
-            except:
+            except Exception:
                 periods['older'].append(event)
         
         return periods

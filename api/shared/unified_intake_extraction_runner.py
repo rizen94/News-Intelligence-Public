@@ -22,33 +22,33 @@ except ImportError as _uie_imp_err:
     )
 
 try:
-    api.shared.bulk_catchup_llm_routing import (
+    from api.shared.bulk_catchup_llm_routing import (
         assign_extraction_lane,
         create_lane_semaphores,
         dual_lane_extraction_active,
     )
-    api.shared.domain_registry import pipeline_url_schema_pairs
-    api.shared.pipeline_article_selection import (
+    from api.shared.domain_registry import pipeline_url_schema_pairs
+    from api.shared.pipeline_article_selection import (
         sql_order_coalesce_pub_created,
         sql_order_unified_intake_value_priority,
         unified_intake_newest_first,
         unified_intake_row_value_sort_key,
         unified_intake_value_priority_order_enabled,
     )
-    api.shared.pipeline_batch_drain import (
+    from api.shared.pipeline_batch_drain import (
         DrainStallTracker,
         RunBudget,
         phase_batch_limit,
         phase_run_budget_seconds,
     )
-    api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
-    api.shared.unified_intake_backlog import (
+    from api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
+    from api.shared.unified_intake_backlog import (
         backfill_unified_pass_from_legacy_batch,
         sql_actionable_unified_intake,
         sql_unified_intake_base_eligible,
         unified_intake_legacy_aware_backlog_enabled,
     )
-    api.shared.services.llm_service import pop_llm_execution_lane, push_llm_execution_lane
+    from api.shared.services.llm_service import pop_llm_execution_lane, push_llm_execution_lane
 except ImportError as _uie_deps_err:
     logger.error("unified_intake_extraction_runner dependency import failed: %s", _uie_deps_err)
     raise
@@ -110,7 +110,7 @@ async def run_unified_intake_extraction_batch_drain(
     pass_clause = ""
     if phase_backlog_uses_pass_marker("unified_intake_extraction"):
         pass_clause = f" AND ({sql_article_pass_null('unified_intake_extraction', 'a')}) "
-    api.shared.article_signal_gate import (
+    from api.shared.article_signal_gate import (
         article_signal_enabled,
         defer_signal_light_unified_intake_batch,
         sql_article_signal_full_lane_filter,
@@ -118,7 +118,7 @@ async def run_unified_intake_extraction_batch_drain(
 
     if article_signal_enabled():
         defer_signal_light_unified_intake_batch(per_domain_limit=per_domain * 2)
-        api.shared.article_signal_gate import (
+        from api.shared.article_signal_gate import (
             defer_signal_light_claim_contexts_batch,
             defer_signal_light_phase_batch,
         )
@@ -141,22 +141,43 @@ async def run_unified_intake_extraction_batch_drain(
     )
     domains = list(pipeline_url_schema_pairs())
 
-    def _backfill_legacy_complete() -> int:
+    def _backfill_legacy_complete() -> tuple[int, dict[str, list[int]]]:
+        """Backfill pass markers for legacy-complete articles.
+
+        Returns (total_backfilled_count, per_schema_article_ids) so the caller can also
+        update unified_intake_queue status from 'processing' to 'completed' — this is critical
+        because backfill previously only set pass markers, leaving queue items stuck as 'processing'.
+        """
         if not unified_intake_legacy_aware_backlog_enabled():
-            return 0
-        n = 0
+            return 0, {}
+        total = 0
+        per_schema_ids: dict[str, list[int]] = {}
         backfill_limit = max(per_domain * 4, 200)
         for _domain_key, schema_name in domains:
             try:
-                n += len(
-                    backfill_unified_pass_from_legacy_batch(
-                        schema_name=schema_name,
-                        limit=backfill_limit,
-                    )
+                ids = backfill_unified_pass_from_legacy_batch(
+                    schema_name=schema_name,
+                    limit=backfill_limit,
                 )
+                if ids:
+                    per_schema_ids[schema_name] = ids
+                    total += len(ids)
             except Exception as e:
                 logger.warning("unified_intake legacy backfill %s: %s", schema_name, e)
-        return n
+
+        # Also update queue status — this is the fix for Bug #1 (queue stuck on 'processing')
+        for schema_name, ids in per_schema_ids.items():
+            try:
+                from api.shared.unified_intake_backlog import complete_queue_items_for_backfilled_ids
+
+                complete_queue_items_for_backfilled_ids(
+                    schema_name=schema_name,
+                    article_ids=ids,
+                )
+            except Exception as e:
+                logger.warning("unified_intake queue update after backfill %s: %s", schema_name, e)
+
+        return total, per_schema_ids
 
     from services.spine_work_queue_service import (
         claim_fair_share_batch,
@@ -192,7 +213,7 @@ async def run_unified_intake_extraction_batch_drain(
                 {pass_clause}
             """
         limit_sql = "" if article_ids else f" LIMIT {per_domain}"
-        api.shared.database import get_db_connection_context
+        from api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cursor:
@@ -241,7 +262,7 @@ async def run_unified_intake_extraction_batch_drain(
     try:
         lane_idx = 0
         while not budget.expired():
-            round_backfill = await loop.run_in_executor(None, _backfill_legacy_complete)
+            round_backfill, _backfill_per_schema = await loop.run_in_executor(None, _backfill_legacy_complete)
             backfill_count += round_backfill
             claimed_by_schema: dict[str, list[int]] = {}
             use_queue_round = False

@@ -76,7 +76,7 @@ def log_decision(
         pass
 
     try:
-        api.shared.logging.activity_logger import log_activity
+        from api.shared.logging.activity_logger import log_activity
 
         log_activity(
             component="orchestrator",

@@ -59,8 +59,8 @@ def _ledger_phases() -> list[str]:
 
 def _articles_created_24h() -> int:
     try:
-        api.shared.database import get_db_connection
-        api.shared.domain_registry import get_pipeline_schema_names_active
+        from api.shared.database import get_db_connection
+        from api.shared.domain_registry import get_pipeline_schema_names_active
 
         conn = get_db_connection()
         if not conn:

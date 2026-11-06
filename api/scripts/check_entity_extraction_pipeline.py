@@ -30,8 +30,8 @@ if not os.environ.get("DB_PASSWORD") and (_pw := _root / ".db_password_widow").i
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-api.shared.database import get_db_connection_context  # noqa: E402
-api.shared.domain_registry import (  # noqa: E402
+from api.shared.database import get_db_connection_context  # noqa: E402
+from api.shared.domain_registry import (  # noqa: E402
     get_pipeline_active_domain_keys,
     get_pipeline_excluded_domain_keys,
     get_pipeline_included_domain_keys,

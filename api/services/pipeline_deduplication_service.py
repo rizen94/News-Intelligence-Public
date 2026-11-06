@@ -306,7 +306,7 @@ class PipelineDeduplicationService:
             return  # skip cross-silo summary writes; only concrete silos are persisted
 
         try:
-            api.shared.database import get_db_connection
+            from api.shared.database import get_db_connection
 
             conn = get_db_connection()
             if not conn:

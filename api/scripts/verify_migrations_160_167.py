@@ -95,7 +95,7 @@ def domain_catalog_schemas_with_articles(cur) -> list[str]:
 
 
 def main():
-    api.shared.database import get_db_connection
+    from api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

@@ -64,8 +64,8 @@ from api.collectors.rss_collector import (  # noqa: E402
     is_clickbait_title,
     is_excluded_content,
 )
-api.shared.database import get_db_connection  # noqa: E402
-api.shared.domain_registry import url_schema_pairs  # noqa: E402
+from api.shared.database import get_db_connection  # noqa: E402
+from api.shared.domain_registry import url_schema_pairs  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

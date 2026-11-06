@@ -14,7 +14,7 @@ if _API not in sys.path:
 from api.modules.intelligence.article_processor import ArticleProcessor
 from api.modules.intelligence.content_clusterer import ContentClusterer
 from services.pattern_entity_extractor import PatternEntityExtractor
-api.shared.database import get_db_config
+from api.shared.database import get_db_config
 
 
 def process_articles():

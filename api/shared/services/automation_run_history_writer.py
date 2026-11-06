@@ -69,7 +69,7 @@ def persist_automation_run_history(
         if sleeps_before_attempt[attempt]:
             time.sleep(sleeps_before_attempt[attempt])
         try:
-            api.shared.database import (
+            from api.shared.database import (
                 get_db_connection,
                 get_health_db_connection,
                 get_ui_db_connection,
@@ -113,7 +113,7 @@ def persist_automation_run_history(
     if last_err is not None:
         logger.warning("persist automation_run_history failed (runs not recorded): %s", last_err)
     try:
-        api.shared.database.pending_db_writes import enqueue_automation_run_history
+        from api.shared.database.pending_db_writes import enqueue_automation_run_history
 
         enqueue_automation_run_history(
             phase_name,

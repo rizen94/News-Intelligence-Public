@@ -19,7 +19,7 @@ except Exception:
 
 from api.config.paths import FINANCE_DATA_DIR
 from api.config.settings import METALS_DEV_API_KEY
-api.shared.data_result import DataResult
+from api.shared.data_result import DataResult
 
 from domains.finance.data_sources.base import DataSourceBase
 
@@ -124,7 +124,7 @@ def _request(path: str, params: dict) -> DataResult[dict]:
         r = requests.get(url, params=params, timeout=30)
         duration_ms = (time.perf_counter() - t0) * 1000
         try:
-            api.shared.logging.activity_logger import log_external_call
+            from api.shared.logging.activity_logger import log_external_call
 
             log_external_call(
                 url=url,

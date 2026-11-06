@@ -140,7 +140,7 @@ def _dedupe_bullets(bullets: list[str], *, limit: int = 14) -> list[str]:
 
 
 def existing_storyline_ids(schema: str, ids: tuple[int, ...]) -> list[int]:
-    api.shared.database import get_db_connection_context
+    from api.shared.database import get_db_connection_context
 
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
@@ -153,7 +153,7 @@ def existing_storyline_ids(schema: str, ids: tuple[int, ...]) -> list[int]:
 
 
 def existing_entity_ids(schema: str, ids: tuple[int, ...]) -> list[int]:
-    api.shared.database import get_db_connection_context
+    from api.shared.database import get_db_connection_context
 
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
@@ -172,7 +172,7 @@ def fetch_theme_articles(
     days: int = 60,
     limit: int = 12,
 ) -> list[str]:
-    api.shared.database import get_db_connection_context
+    from api.shared.database import get_db_connection_context
 
     like = " OR ".join(["a.title ILIKE %s"] * len(patterns))
     params: list[Any] = [int(days)] + [f"%{p}%" for p in patterns] + [int(limit)]
@@ -201,7 +201,7 @@ def fetch_theme_articles(
 def fetch_member_timeline(
     schema: str, storyline_ids: list[int], *, limit: int = 14
 ) -> list[str]:
-    api.shared.database import get_db_connection_context
+    from api.shared.database import get_db_connection_context
 
     if not storyline_ids:
         return []
@@ -357,7 +357,7 @@ def seed_one(
     dry_run: bool,
 ) -> dict[str, Any]:
     from services.vault_cluster_hub_service import write_cluster_hub
-    api.shared.vault_note_contract import cluster_object_id, cluster_vault_rel_path
+    from api.shared.vault_note_contract import cluster_object_id, cluster_vault_rel_path
 
     wr = write_cluster_hub(
         domain_key=domain_key,

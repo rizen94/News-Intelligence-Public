@@ -48,7 +48,7 @@ def main() -> int:
         with open(args.file, "rb") as f:
             checksum = hashlib.sha256(f.read()).hexdigest()[:64]
 
-    api.shared.database import get_db_connection
+    from api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

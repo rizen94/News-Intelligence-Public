@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from api.config.runtime import env_bool, env_str
-api.shared.database import get_db_connection_context
+from api.shared.database import get_db_connection_context
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,7 @@ def merge_write_vault_markdown(
     structural_tags: list[str] | None = None,
 ) -> str:
     """Write note preserving Obsidian tags / unknown frontmatter keys."""
-    api.shared.vault_note_contract import merge_frontmatter
+    from api.shared.vault_note_contract import merge_frontmatter
 
     existing_fm: dict[str, Any] = {}
     if existing_text:

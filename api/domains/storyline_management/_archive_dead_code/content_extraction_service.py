@@ -9,8 +9,8 @@ import re
 from datetime import datetime
 from typing import Any
 
-api.shared.services.domain_aware_service import DomainAwareService
-api.shared.services.llm_service import llm_service
+from api.shared.services.domain_aware_service import DomainAwareService
+from api.shared.services.llm_service import llm_service
 
 logger = logging.getLogger(__name__)
 

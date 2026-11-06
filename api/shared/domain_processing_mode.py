@@ -96,7 +96,7 @@ def _modes_from_yaml() -> dict[str, str]:
     """Bootstrap map from domain YAML when DB column is unavailable."""
     out: dict[str, str] = {}
     try:
-        api.shared.domain_registry import _load_yaml_domain_files
+        from api.shared.domain_registry import _load_yaml_domain_files
 
         for entry in _load_yaml_domain_files():
             dk = str(entry.get("domain_key") or "").strip()
@@ -125,7 +125,7 @@ def get_domain_processing_modes() -> dict[str, str]:
     try:
         from psycopg2.extras import RealDictCursor
 
-        api.shared.database import get_ui_db_connection
+        from api.shared.database import get_ui_db_connection
     except Exception:
         return yaml_modes
 

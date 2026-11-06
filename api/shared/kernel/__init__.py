@@ -1,12 +1,12 @@
 """Shared kernel — cross-domain infrastructure primitives."""
 
-api.shared.kernel.domain_events import (
+from api.shared.kernel.domain_events import (
     DomainEvent,
     DomainEventBus,
     get_domain_event_bus,
     publish_domain_event,
 )
-api.shared.services.article_query_service import (
+from api.shared.services.article_query_service import (
     get_domain_articles,
     get_recent_domain_articles,
 )

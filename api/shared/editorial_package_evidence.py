@@ -14,7 +14,7 @@ import re
 from html import unescape
 from typing import Any
 
-api.shared.editorial_package_theme import parse_case_caption_parties
+from api.shared.editorial_package_theme import parse_case_caption_parties
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +78,8 @@ def hydrate_member_provenance(
     provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return provenance enriched from CE / article / claim source rows."""
-    api.shared.database import get_ui_db_connection_context
-    api.shared.domain_registry import resolve_domain_schema
+    from api.shared.database import get_ui_db_connection_context
+    from api.shared.domain_registry import resolve_domain_schema
 
     prov = dict(provenance or {})
     mt = (member_type or "").strip()

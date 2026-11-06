@@ -7,7 +7,7 @@ Public-data collectors use storyline_id ``public_data:{domain_key}``.
 from __future__ import annotations
 
 from api.collectors.public_event_upsert import PUBLIC_STORYLINE_PREFIX, public_storyline_id
-api.shared.domain_registry import (
+from api.shared.domain_registry import (
     get_pipeline_active_domain_keys,
     is_valid_domain_key,
     resolve_domain_schema,

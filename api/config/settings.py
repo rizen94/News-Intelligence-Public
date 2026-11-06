@@ -4,7 +4,11 @@ Paths from api.config.paths; resource limits, model names, API settings here.
 """
 
 import os
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
 
 from api.config.paths import (
     CHROMA_DIR,
@@ -406,10 +410,10 @@ def topic_clustering_batch_size() -> int:
     # No artificial ceiling — adaptive bounds + host headroom own the limit.
     default = max(5, n)
     try:
-        api.shared.adaptive_batch_policy import get_persisted_adaptive_batch, resolve_adaptive_batch
+        from api.shared.adaptive_batch_policy import get_persisted_adaptive_batch, resolve_adaptive_batch
 
         # Prefer live tune when adaptive is on; otherwise last persisted value for Monitor/ETA callers.
-        api.shared.adaptive_batch_policy import adaptive_batch_enabled
+        from api.shared.adaptive_batch_policy import adaptive_batch_enabled
 
         if adaptive_batch_enabled():
             tuned, _meta = resolve_adaptive_batch("topic_clustering", default)
@@ -417,8 +421,8 @@ def topic_clustering_batch_size() -> int:
         adaptive = get_persisted_adaptive_batch("topic_clustering")
         if adaptive is not None:
             return max(5, int(adaptive))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Failed to resolve topic_clustering batch size from adaptive policy: %s — using default %d", e, default)
     return default
 
 

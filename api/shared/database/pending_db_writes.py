@@ -129,7 +129,7 @@ def flush_pending_writes() -> dict[str, Any]:
         flushed = failed = skipped = discarded = 0
 
         try:
-            api.shared.database import get_db_connection
+            from api.shared.database import get_db_connection
         except Exception as e:
             logger.warning("pending_db_writes: no DB module: %s", e)
             return {"flushed": 0, "failed": 0, "skipped": len(lines), "error": str(e)}
@@ -210,7 +210,7 @@ def flush_pending_writes() -> dict[str, Any]:
             logger.error("pending_db_writes: could not rewrite queue file: %s", e)
 
         try:
-            api.shared.database.db_availability import invalidate_db_health_cache
+            from api.shared.database.db_availability import invalidate_db_health_cache
 
             if flushed:
                 invalidate_db_health_cache()

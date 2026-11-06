@@ -12,9 +12,9 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
-api.shared.auth.public_web_dependencies import require_public_web_admin
-api.shared.database import get_db_connection
-api.shared.services.public_web_auth_service import hash_password
+from api.shared.auth.public_web_dependencies import require_public_web_admin
+from api.shared.database import get_db_connection
+from api.shared.services.public_web_auth_service import hash_password
 
 logger = logging.getLogger(__name__)
 

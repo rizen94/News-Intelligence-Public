@@ -20,7 +20,7 @@ try:
 except Exception:
     logger = logging.getLogger(__name__)
 
-api.shared.data_result import DataResult
+from api.shared.data_result import DataResult
 
 from domains.finance.data.evidence_ledger import record as ledger_record
 from domains.finance.data.market_data_store import get_series, upsert_observations

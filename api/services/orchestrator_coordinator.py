@@ -18,7 +18,7 @@ try:
 except Exception:
     logger = logging.getLogger(__name__)
 
-api.shared.services.pipeline_trace_writer import log_pipeline_trace
+from api.shared.services.pipeline_trace_writer import log_pipeline_trace
 
 from .collection_governor import SOURCE_RSS, CollectionGovernor, get_collection_source_ids
 from .learning_governor import LearningGovernor

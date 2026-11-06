@@ -153,7 +153,7 @@ def infer_arc_stage(
     Returns dict with pattern, stage, stage_index, stages, matched_event_ids.
     When persist=True, merges into quality_metrics.
     """
-    api.shared.domain_registry import resolve_domain_schema
+    from api.shared.domain_registry import resolve_domain_schema
 
     schema = resolve_domain_schema(domain_key)
     patterns: list[str] = []
@@ -248,7 +248,7 @@ def infer_arc_stage(
     try:
         if conn is not None:
             return _run(conn)
-        api.shared.database import get_db_connection_context
+        from api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as db:
             return _run(db)

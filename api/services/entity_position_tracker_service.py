@@ -13,8 +13,8 @@ import json
 import logging
 from typing import Any
 
-api.shared.database import get_db_connection
-api.shared.domain_registry import (
+from api.shared.database import get_db_connection
+from api.shared.domain_registry import (
     get_active_domain_keys,
     is_valid_domain_key,
     resolve_domain_schema,
@@ -175,7 +175,7 @@ def _extract_positions_from_article(
 ) -> list[dict[str, Any]]:
     """Use LLM to extract positions from a single article."""
     try:
-        api.shared.services.llm_service import LLMService
+        from api.shared.services.llm_service import LLMService
 
         llm = LLMService()
     except Exception:

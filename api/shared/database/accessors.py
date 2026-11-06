@@ -8,17 +8,17 @@ stable interface that won't break when the underlying module is refactored.
 
 Before (bypasses facade, counted as sprawl):
 
-    api.shared.database import get_db_connection_context
+    from api.shared.database import get_db_connection_context
     with get_db_connection_context() as conn:
         ...
 
 After (goes through facade):
 
-    api.shared.database import execute_query, fetch_many
+    from api.shared.database import execute_query, fetch_many
 
 Or just use the re-exports already in ``shared.database.__init__``:
 
-    api.shared.database import get_db_connection_context
+    from api.shared.database import get_db_connection_context
     with get_db_connection_context() as conn:
         ...
 

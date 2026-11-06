@@ -14,10 +14,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 
-api.shared.database import get_db_connection
-api.shared.domain_registry import resolve_domain_schema, get_active_domain_keys
+from api.shared.database import get_db_connection
+from api.shared.domain_registry import resolve_domain_schema, get_active_domain_keys
 from api.config.logging_config import get_component_logger
-api.shared.services.domain_aware_service import validate_domain
+from api.shared.services.domain_aware_service import validate_domain
 
 logger = logging.getLogger(__name__)
 ops_logger = get_component_logger("ops")
@@ -232,7 +232,7 @@ class RouteSupervisor:
         # Substitute path parameters
         test_path = route_path
         if "{domain}" in test_path:
-            api.shared.domain_registry import first_active_domain_key
+            from api.shared.domain_registry import first_active_domain_key
 
             test_path = test_path.replace("{domain}", domain or first_active_domain_key())
         if "{article_id}" in test_path:
@@ -278,7 +278,7 @@ class RouteSupervisor:
                             f"Schema mismatch in {route_path}",
                             {"route": route_path, "method": method, "error": error_detail},
                         )
-                except:
+                except Exception:
                     error_message = "Server error"
             else:
                 status = RouteStatus.DEGRADED
@@ -422,7 +422,7 @@ class RouteSupervisor:
                     200,
                     404,
                 ]  # 404 is OK, means frontend is up
-            except:
+            except Exception:
                 api_connection = False
 
         except requests.exceptions.Timeout:

@@ -160,7 +160,7 @@ def _doc_process_sync() -> int:  # type: ignore[no-untyped-def]
 async def execute_story_enhancement(task) -> None:  # type: ignore[name-defined]
     """Phase 3 RAG: story state triggers; enrich/build only when facts_only policy allows."""
     from services.enhancement_orchestrator_service import run_enhancement_cycle
-    api.shared.pipeline_resource_policy import (
+    from api.shared.pipeline_resource_policy import (
         story_enhancement_facts_only,
         story_enhancement_run_limits,
     )

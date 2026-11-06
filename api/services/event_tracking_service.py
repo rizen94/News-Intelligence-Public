@@ -10,7 +10,7 @@ import re
 from datetime import date
 from typing import Any, TypedDict
 
-api.shared.services.llm_service import LLMService, ModelType
+from api.shared.services.llm_service import LLMService, ModelType
 
 from services.commodity_event_bridge import maybe_append_finance_domain_key
 
@@ -71,7 +71,7 @@ _MAX_KEY_PARTICIPANTS = 20
 
 
 def _domain_key_to_schema(domain_key: str) -> str:
-    api.shared.domain_registry import domain_key_to_schema
+    from api.shared.domain_registry import domain_key_to_schema
 
     try:
         return domain_key_to_schema(domain_key)
@@ -80,7 +80,7 @@ def _domain_key_to_schema(domain_key: str) -> str:
 
 
 def _active_schema_set() -> frozenset[str]:
-    api.shared.domain_registry import get_pipeline_schema_names_active
+    from api.shared.domain_registry import get_pipeline_schema_names_active
 
     return frozenset(get_pipeline_schema_names_active())
 
@@ -159,7 +159,7 @@ async def discover_events_from_contexts(
     Analyze recent contexts and create tracked events from clusters.
     Returns summary of events created.
     """
-    api.shared.database import get_db_connection
+    from api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -175,7 +175,7 @@ async def discover_events_from_contexts(
         min_len = int(os.environ.get("EVENT_TRACKING_MIN_CONTENT_LEN", "180") or 180)
 
     try:
-        api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_context_pass_null
+        from api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_context_pass_null
 
         pass_sql = ""
         if phase_backlog_uses_pass_marker("event_tracking"):
@@ -282,7 +282,7 @@ async def discover_events_from_contexts(
         )
     if not events:
         try:
-            api.shared.pipeline_pass_marker import bulk_record_context_phase_pass, phase_backlog_uses_pass_marker
+            from api.shared.pipeline_pass_marker import bulk_record_context_phase_pass, phase_backlog_uses_pass_marker
 
             if phase_backlog_uses_pass_marker("event_tracking"):
                 bulk_record_context_phase_pass(
@@ -447,7 +447,7 @@ async def discover_events_from_contexts(
         conn.close()
         logger.info(f"discover_events: created {len(created_events)} events")
         try:
-            api.shared.pipeline_pass_marker import bulk_record_context_phase_pass, phase_backlog_uses_pass_marker
+            from api.shared.pipeline_pass_marker import bulk_record_context_phase_pass, phase_backlog_uses_pass_marker
 
             if phase_backlog_uses_pass_marker("event_tracking"):
                 bulk_record_context_phase_pass(
@@ -514,7 +514,7 @@ def backfill_key_participants_for_tracked_events(limit: int = 30) -> int:
     Backfill key_participant_entity_ids for events that have none.
     Call from automation after event_tracking batch. Returns number of events updated.
     """
-    api.shared.database import get_db_connection
+    from api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -557,7 +557,7 @@ def link_tracked_events_to_storylines(limit: int = 50) -> int:
     domain whose articles mention the same entities; set storyline_id = 'schema:id'.
     Returns number of events linked.
     """
-    api.shared.database import get_db_connection
+    from api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -672,7 +672,7 @@ async def run_event_tracking_batch(limit: int = 300) -> int:
     """
     batch_size = 30  # small enough for 8B model to return valid JSON
     created_total = 0
-    api.shared.domain_registry import get_pipeline_active_domain_keys
+    from api.shared.domain_registry import get_pipeline_active_domain_keys
 
     for domain in get_pipeline_active_domain_keys():
         for offset in range(0, limit, batch_size):
@@ -706,7 +706,7 @@ async def _update_existing_event_chronicles(limit: int = 20) -> int:
     For existing tracked_events, check for new contexts that match
     and append chronicle entries.
     """
-    api.shared.database import get_db_connection
+    from api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

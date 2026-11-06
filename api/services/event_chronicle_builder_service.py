@@ -10,8 +10,8 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-api.shared.database import get_db_connection
-api.shared.domain_registry import domain_key_to_schema, get_active_domain_keys
+from api.shared.database import get_db_connection
+from api.shared.domain_registry import domain_key_to_schema, get_active_domain_keys
 
 logger = logging.getLogger(__name__)
 

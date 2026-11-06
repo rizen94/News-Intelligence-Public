@@ -34,7 +34,7 @@ def _governance_band() -> tuple[float, float]:
 
 def get_persisted_full_min_quality() -> float | None:
     try:
-        api.shared.database import get_db_connection_context
+        from api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -55,8 +55,8 @@ def get_persisted_full_min_quality() -> float | None:
 
 def _intake_net_growth_metrics() -> dict[str, Any]:
     """Reuse intake_processing_ratio domain loop for 7d net growth estimate."""
-    api.shared.database import get_db_connection_context
-    api.shared.domain_registry import get_schema_names_active
+    from api.shared.database import get_db_connection_context
+    from api.shared.domain_registry import get_schema_names_active
 
     created_7d = 0
     enriched_7d = 0
@@ -109,7 +109,7 @@ def adjust_admission_threshold(*, dry_run: bool = False) -> dict[str, Any]:
     action = "hold"
 
     try:
-        api.shared.database import get_db_connection_context
+        from api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:

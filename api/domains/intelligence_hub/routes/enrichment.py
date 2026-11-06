@@ -13,7 +13,7 @@ from services.quality_feedback_service import submit_claim_feedback
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/enrichment", tags=["Enrichment (P3)"])
+router = APIRouter(prefix="/enrichment", tags=["Enrichment (P3)"])
 
 
 @router.post("/enrich_entity")

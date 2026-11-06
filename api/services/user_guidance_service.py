@@ -29,7 +29,7 @@ def get_user_guidance(get_db_connection) -> dict[str, Any]:
     if not conn:
         return out
     try:
-        api.shared.domain_registry import pipeline_url_schema_pairs
+        from api.shared.domain_registry import pipeline_url_schema_pairs
 
         cur = conn.cursor()
         for domain, schema in pipeline_url_schema_pairs():

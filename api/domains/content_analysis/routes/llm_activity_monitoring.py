@@ -8,9 +8,9 @@ from datetime import datetime
 
 from domains.content_analysis.services.llm_activity_tracker import get_llm_activity_tracker
 from fastapi import APIRouter, HTTPException, Query
-api.shared.domain_registry import get_pipeline_schema_names_active, resolve_domain_schema
+from api.shared.domain_registry import get_pipeline_schema_names_active, resolve_domain_schema
 
-api.shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED
+from api.shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_COMPLETED, QUEUE_FAILED
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
@@ -145,7 +145,7 @@ async def get_domain_llm_activity(
     Get LLM activity for a specific domain
     """
     try:
-        api.shared.services.domain_aware_service import validate_domain
+        from api.shared.services.domain_aware_service import validate_domain
 
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
@@ -224,7 +224,7 @@ async def get_llm_dashboard():
         active_tasks = tracker.get_active_tasks()
 
         # Get queue status for all domains
-        api.shared.database import get_db_connection
+        from api.shared.database import get_db_connection
 
         queue_stats = {}
         conn = get_db_connection()

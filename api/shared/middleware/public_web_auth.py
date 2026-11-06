@@ -29,7 +29,7 @@ from api.config.settings import (
     news_intel_auth_cookie_name,
     news_intel_public_web_auth_enabled,
 )
-api.shared.services.public_web_auth_service import decode_session_token
+from api.shared.services.public_web_auth_service import decode_session_token
 
 logger = logging.getLogger(__name__)
 

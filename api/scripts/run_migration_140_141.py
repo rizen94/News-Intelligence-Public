@@ -22,8 +22,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def main():
-    api.shared.database import get_db_connection
-    api.shared.migration_sql_paths import resolve_migration_sql_file
+    from api.shared.database import get_db_connection
+    from api.shared.migration_sql_paths import resolve_migration_sql_file
 
     for name in ("140_orchestration_schema.sql", "141_intelligence_schema.sql"):
         try:

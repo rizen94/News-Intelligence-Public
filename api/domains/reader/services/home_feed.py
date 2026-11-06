@@ -18,8 +18,8 @@ from typing import Any
 
 from cachetools import TTLCache
 
-api.shared.database import get_ui_db_connection_context
-api.shared.domain_registry import (
+from api.shared.database import get_ui_db_connection_context
+from api.shared.domain_registry import (
     get_active_domain_keys,
     pipeline_url_schema_pairs,
     resolve_domain_schema,
@@ -188,7 +188,7 @@ def _dek_from_row(
     *,
     document_status: str | None = None,
 ) -> str:
-    api.shared.llm_text_sanitize import sanitize_reader_dek
+    from api.shared.llm_text_sanitize import sanitize_reader_dek
 
     def _as_text(raw: Any) -> str:
         if raw is None:
@@ -457,7 +457,7 @@ def _apply_vault_hub_feed_hygiene(
                 updated = _as_aware(datetime.fromisoformat(str(h["updated_at"])))
             except Exception:
                 updated = None
-        api.shared.llm_text_sanitize import sanitize_reader_dek, sanitize_reader_prose
+        from api.shared.llm_text_sanitize import sanitize_reader_dek, sanitize_reader_prose
 
         brief = (h.get("current_brief") or "").strip()
         headline = h.get("title") or ck
@@ -543,7 +543,7 @@ def _morning_expansion_units(*, lane_filter: str | None = None) -> list[dict[str
                 updated_at = datetime.fromisoformat(raw_u.replace("Z", "+00:00"))
             except ValueError:
                 updated_at = None
-        api.shared.llm_text_sanitize import sanitize_reader_dek
+        from api.shared.llm_text_sanitize import sanitize_reader_dek
 
         headline = ex.get("title") or f"Storyline {sid}"
         dek = (
@@ -618,7 +618,7 @@ def _priority_current_event_units(*, limit: int = 40) -> list[dict[str, Any]]:
                 updated_at = datetime.fromisoformat(raw_u.replace("Z", "+00:00"))
             except ValueError:
                 updated_at = None
-        api.shared.llm_text_sanitize import sanitize_reader_dek
+        from api.shared.llm_text_sanitize import sanitize_reader_dek
 
         age_days = int(arc.get("age_days") or 0)
         note_chars = int(arc.get("note_chars") or 0)

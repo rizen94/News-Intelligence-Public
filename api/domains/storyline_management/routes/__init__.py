@@ -24,8 +24,8 @@ from .storyline_discovery import router as discovery_router
 from .storyline_evolution import router as evolution_router
 from .storyline_helpers import router as helpers_router
 
-# Import background tasks from rag_analysis_service (migrated)
-from .rag_analysis_service import (
+# Import background tasks from rag_analysis_service (migrated to services/)
+from ..services.rag_analysis_service import (
     perform_rag_analysis_background,
     process_storyline_rag_analysis,
     trigger_storyline_evolution,

@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from typing import Any
 
-api.shared.vault_note_contract import (
+from api.shared.vault_note_contract import (
     MAX_MORNING_NEWS_EXPANSIONS,
     MAX_MORNING_SCIENCE_EXPANSIONS,
     MORNING_NEW_OF_NOTE_CAP,
@@ -56,8 +56,8 @@ def _run_async(coro):
 
 
 async def _llm_manager(prompt: str) -> str:
-    api.shared.services.ollama_model_caller import get_ollama_model_caller
-    api.shared.services.ollama_model_policy import InvocationKind
+    from api.shared.services.ollama_model_caller import get_ollama_model_caller
+    from api.shared.services.ollama_model_policy import InvocationKind
 
     caller = get_ollama_model_caller()
     result = await caller.generate(

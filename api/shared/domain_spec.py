@@ -11,8 +11,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-api.shared.domain_registry_constants import RESERVED_SCHEMA_NAMES
-api.shared.domain_silo_contract import DEFAULT_CLONE_FROM_SCHEMA, SILO_CORE_TABLES, SILO_OPTIONAL_TABLES
+from api.shared.domain_registry_constants import RESERVED_SCHEMA_NAMES
+from api.shared.domain_silo_contract import DEFAULT_CLONE_FROM_SCHEMA, SILO_CORE_TABLES, SILO_OPTIONAL_TABLES
 
 SPECS_DIR = Path(__file__).resolve().parent.parent / "config" / "domains" / "specs"
 SCHEMA_PATH = SPECS_DIR / "domain.spec.schema.json"

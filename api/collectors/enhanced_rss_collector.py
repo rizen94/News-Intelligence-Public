@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Use shared connection (run with api as cwd or PYTHONPATH=api)
 def _get_connection():
-    api.shared.database import get_db_connection
+    from api.shared.database import get_db_connection
 
     return get_db_connection()
 

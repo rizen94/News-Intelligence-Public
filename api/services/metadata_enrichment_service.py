@@ -885,7 +885,7 @@ class MetadataEnrichmentService:
             sentiment_score = await self._calculate_sentiment(text)
             article_placeholder = {"content": text, "language": detected_language}
             quality_score = await self._calculate_quality_score(article_placeholder, text)
-            api.shared.database import get_db_connection
+            from api.shared.database import get_db_connection
 
             conn = get_db_connection()
             if not conn:
@@ -906,7 +906,7 @@ class MetadataEnrichmentService:
                 conn.commit()
 
                 # Phase marker — deduplicated to canonical helper
-                api.shared.pipeline_pass_marker import record_article_phase_pass
+                from api.shared.pipeline_pass_marker import record_article_phase_pass
                 record_article_phase_pass(
                     schema=schema,
                     article_id=article_id,
@@ -927,16 +927,16 @@ async def run_metadata_enrichment_batch_for_domains(limit_per_domain: int = 5) -
     Runs per domain schema (politics, finance, science_tech). Returns total enriched count.
     Call from automation (metadata_enrichment task).
     """
-    api.shared.database import get_db_connection
-    api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
-    api.shared.pipeline_article_selection import sql_order_id
+    from api.shared.database import get_db_connection
+    from api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
+    from api.shared.pipeline_article_selection import sql_order_id
 
     service = await get_enrichment_service()
     conn = get_db_connection()
     if not conn:
         return 0
     total = 0
-    api.shared.domain_registry import get_pipeline_schema_names_active
+    from api.shared.domain_registry import get_pipeline_schema_names_active
 
     schemas = get_pipeline_schema_names_active()
     pass_clause = ""

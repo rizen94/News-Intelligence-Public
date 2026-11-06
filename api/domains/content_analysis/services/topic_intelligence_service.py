@@ -10,7 +10,7 @@ from typing import Any
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
-api.shared.database.connection import get_db_connect_kwargs
+from api.shared.database.connection import get_db_connect_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ class TopicIntelligenceService:
 
     def __init__(self, domain: str = "politics"):
         self.domain = domain
-        api.shared.domain_registry import resolve_domain_schema
+        from api.shared.domain_registry import resolve_domain_schema
 
         self.schema = resolve_domain_schema(domain)
         self.stop_words = self._load_stop_words()
@@ -464,7 +464,7 @@ class TopicIntelligenceService:
                     score += 0.2
                 elif days_ago < 30:
                     score += 0.1
-            except:
+            except Exception:
                 pass
 
         return min(score, 1.0)  # Cap at 1.0

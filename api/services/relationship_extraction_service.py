@@ -7,7 +7,7 @@ See docs/DATA_PIPELINE_ENHANCEMENTS_ROADMAP.md.
 import logging
 from typing import Any
 
-api.shared.database import get_db_connection
+from api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 

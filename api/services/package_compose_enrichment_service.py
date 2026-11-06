@@ -132,7 +132,7 @@ def collect_storyline_rag_framing(
     if not dk or sid is None:
         return {"ok": False, "skipped": "no_storyline", "text": "", "chars": 0}
     try:
-        api.shared.database import get_db_connection_context
+        from api.shared.database import get_db_connection_context
         from services.storyline_rag_context_service import render_rag_context_for_llm
 
         rag_data = None
@@ -262,7 +262,7 @@ def apply_mempalace_priority_to_package(
     if not match.get("matched") or match.get("priority") not in ("watch", "preferred"):
         return
     try:
-        api.shared.database import get_db_connection_context
+        from api.shared.database import get_db_connection_context
         import json
 
         patch = {

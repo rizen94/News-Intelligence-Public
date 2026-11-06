@@ -28,7 +28,7 @@ def cluster_row_to_topic_api(row: tuple, *, keyword_col: int | None = None) -> d
 
 
 def resolve_cluster_schema(conn, cluster_id: int, domain: str | None) -> str | None:
-    api.shared.services.domain_aware_service import (
+    from api.shared.services.domain_aware_service import (
         get_domain_data_schemas,
         parse_optional_domain_to_schema,
     )

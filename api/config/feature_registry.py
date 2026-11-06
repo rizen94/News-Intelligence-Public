@@ -63,7 +63,7 @@ def _load_yaml_registry() -> dict[str, dict[str, Any]]:
 
 def _db_overrides() -> dict[str, dict[str, Any]]:
     try:
-        api.shared.database import get_db_connection_context
+        from api.shared.database import get_db_connection_context
 
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
@@ -174,7 +174,7 @@ def _staged_runtime_allowed() -> bool:
     if env_bool("FEATURE_STAGED_RUNTIME_ENABLED", False):
         return True
     try:
-        api.shared.pipeline_resource_policy import (
+        from api.shared.pipeline_resource_policy import (
             assembly_pipeline_shadow_active,
             spine_pipeline_shadow_active,
         )

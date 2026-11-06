@@ -52,7 +52,7 @@ if str(_API) not in sys.path:
 _CONFIG_DIR = _API / "config" / "domains"
 _SYNTHESIS_CONFIG = _API / "config" / "domain_synthesis_config.yaml"
 
-api.shared.domain_silo_contract import SILO_CRITICAL_TABLES, SILO_EXTENDED_TABLES
+from api.shared.domain_silo_contract import SILO_CRITICAL_TABLES, SILO_EXTENDED_TABLES
 
 _CRITICAL_TABLES = SILO_CRITICAL_TABLES
 _EXTENDED_TABLES = SILO_EXTENDED_TABLES
@@ -138,7 +138,7 @@ def main() -> None:
         errors.append("Retired domain key science-tech — do not onboard; use split silos (e.g. artificial-intelligence).")
 
     # Registry (active YAML only)
-    api.shared.domain_registry import (
+    from api.shared.domain_registry import (
         RESERVED_SCHEMA_NAMES,
         get_domain_entries,
         resolve_domain_schema,
@@ -180,7 +180,7 @@ def main() -> None:
         _print_report(cfg_path, domain_key, schema_name, errors, warnings)
         _exit_with_status(errors, warnings, args.strict)
 
-    api.shared.database import get_db_connection
+    from api.shared.database import get_db_connection
 
     conn = get_db_connection()
     if not conn:

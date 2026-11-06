@@ -92,7 +92,7 @@ class TopicClusteringService:
     def _get_schema_name(self, domain: str) -> str:
         """Resolve Postgres schema from domain key via domain_registry."""
         try:
-            api.shared.domain_registry import resolve_domain_schema
+            from api.shared.domain_registry import resolve_domain_schema
 
             return resolve_domain_schema(domain)
         except Exception:
@@ -100,7 +100,7 @@ class TopicClusteringService:
 
     def _get_db_connection(self):
         """Get database connection from shared pool and set search_path to domain schema."""
-        api.shared.database import get_db_connection
+        from api.shared.database import get_db_connection
 
         conn = get_db_connection()
         with conn.cursor() as cur:
@@ -166,7 +166,7 @@ class TopicClusteringService:
             Generated text response
         """
         try:
-            api.shared.services.llm_service import ollama_generate_async
+            from api.shared.services.llm_service import ollama_generate_async
 
             full_prompt = prompt
             if system_prompt:
@@ -191,7 +191,7 @@ class TopicClusteringService:
             return response_text
 
         except Exception as e:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -324,7 +324,7 @@ JSON Response:"""
             return []
 
         except Exception as e:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise
@@ -350,12 +350,12 @@ JSON Response:"""
         signal_full_only: bool = True,
     ) -> list[int]:
         """Bounded backlog selection — LIMIT in SQL, no full-table fetch."""
-        api.shared.pipeline_article_selection import sql_order_created_at
+        from api.shared.pipeline_article_selection import sql_order_created_at
 
         signal_sql = ""
         if signal_full_only:
             try:
-                api.shared.article_signal_gate import (
+                from api.shared.article_signal_gate import (
                     article_signal_enabled,
                     sql_article_signal_full_lane_filter,
                 )
@@ -740,7 +740,7 @@ JSON Response:"""
             return assignment_result
 
         except Exception as e:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise

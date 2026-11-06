@@ -364,7 +364,7 @@ def persist_phase_run_event(event: PhaseRunEvent, *, allow_empty: bool = False) 
         finished_at=event.finished_at,
     ):
         return False
-    api.shared.services.automation_run_history_writer import persist_automation_run_history
+    from api.shared.services.automation_run_history_writer import persist_automation_run_history
 
     persist_automation_run_history(
         event.phase_key,

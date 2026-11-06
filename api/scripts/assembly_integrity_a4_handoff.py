@@ -31,9 +31,9 @@ def main() -> int:
     ap.add_argument("--brief-limit", type=int, default=200, help="Max vaulted briefs to register")
     args = ap.parse_args()
 
-    api.shared.database import get_db_connection_context
+    from api.shared.database import get_db_connection_context
     from services.vault_notes_registry_service import upsert_vault_note
-    api.shared.vault_note_contract import structural_tags_for_note
+    from api.shared.vault_note_contract import structural_tags_for_note
     from services.vault_mvp_ingest_service import file_article_to_vault
 
     brief_n = clip_n = clip_ok = 0

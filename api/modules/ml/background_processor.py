@@ -6,6 +6,7 @@ Handles asynchronous ML processing with timing tracking and queue management
 import threading
 import time
 import logging
+import os
 import psycopg2
 from datetime import datetime
 from typing import Optional, Any
@@ -13,8 +14,8 @@ from queue import Queue, Empty
 import json
 
 from .summarization_service import MLSummarizationService
-api.shared.pipeline_state_constants import ML_COMPLETED, ML_FAILED, ML_MAX_RETRY_COUNT, ML_PENDING, ML_RUNNING
-api.shared.database.connection import get_db_connect_kwargs
+from api.shared.pipeline_state_constants import ML_COMPLETED, ML_FAILED, ML_MAX_RETRY_COUNT, ML_PENDING, ML_RUNNING
+from api.shared.database.connection import get_db_connect_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ class BackgroundMLProcessor:
             ollama_url: URL of the Ollama service
         """
         self.db_config = db_config
-        self.ollama_url = (ollama_url or __import__("os").environ.get("OLLAMA_HOST") or __import__("os").environ.get("OLLAMA_URL") or "http://127.0.0.1:11434").rstrip("/")
+        self.ollama_url = (ollama_url or os.environ.get("OLLAMA_HOST") or os.environ.get("OLLAMA_URL") or "http://127.0.0.1:11434").rstrip("/")
         self.ml_service = MLSummarizationService(ollama_url)
         
         # Processing queue and thread management
@@ -190,7 +191,7 @@ class BackgroundMLProcessor:
             logger.info(f"Completed ML task {queue_id} in {duration:.2f}s")
             
         except Exception as e:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 logger.warning(

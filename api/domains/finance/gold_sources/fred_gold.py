@@ -14,7 +14,7 @@ except Exception:
     logger = logging.getLogger(__name__)
 
 from api.config.settings import FRED_API_KEY, FRED_GOLD_SERIES_ID
-api.shared.data_result import DataResult
+from api.shared.data_result import DataResult
 
 from domains.finance.data_sources.fred import get_client
 

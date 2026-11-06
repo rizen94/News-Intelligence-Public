@@ -12,14 +12,14 @@ from datetime import datetime, timezone
 from typing import Any
 
 from api.config.runtime import env_str
-api.shared.pipeline_batch_drain import DrainStallTracker, RunBudget, phase_run_budget_seconds
-api.shared.spine_phase_order import (
+from api.shared.pipeline_batch_drain import DrainStallTracker, RunBudget, phase_run_budget_seconds
+from api.shared.spine_phase_order import (
     SPINE_PHASE_ORDER,
     spine_pipeline_mode,
     spine_pipeline_ordered_active,
     spine_pipeline_shadow_active,
 )
-api.shared.services.conductor_run_history import (
+from api.shared.services.conductor_run_history import (
     persist_conductor_phase_run_async,
     record_conductor_phase_heartbeat,
 )
@@ -144,7 +144,7 @@ async def _drain_spine_phase(
     if shadow:
         try:
             from services.backlog_metrics import get_all_backlog_counts
-            api.shared.pipeline_queue_counts import get_phase_queue_depth
+            from api.shared.pipeline_queue_counts import get_phase_queue_depth
 
             queue_depth = int(get_phase_queue_depth(phase))
             scheduling_backlog = int(get_all_backlog_counts().get(phase, 0) or 0)
@@ -189,7 +189,7 @@ async def _drain_enrichment(automation: Any | None, *, budget_seconds: int = 120
     claim_batch = 60
     enrich_batch = 60
     try:
-        api.shared.adaptive_batch_policy import resolve_adaptive_batch
+        from api.shared.adaptive_batch_policy import resolve_adaptive_batch
 
         claim_batch, _meta = resolve_adaptive_batch("content_enrichment", claim_batch)
         enrich_batch = claim_batch
@@ -272,7 +272,7 @@ async def _drain_enrichment(automation: Any | None, *, budget_seconds: int = 120
 async def _drain_unified_intake(
     automation: Any | None, *, budget_seconds: int = 0
 ) -> dict[str, Any]:
-    api.shared.unified_intake_extraction_runner import run_unified_intake_extraction_batch_drain
+    from api.shared.unified_intake_extraction_runner import run_unified_intake_extraction_batch_drain
 
     drain_started = datetime.now(timezone.utc)
     batch_window_started: datetime | None = None
@@ -328,8 +328,8 @@ async def _drain_unified_intake(
 
     per_domain = None
     try:
-        api.shared.adaptive_batch_policy import resolve_adaptive_batch
-        api.shared.pipeline_batch_drain import phase_batch_limit
+        from api.shared.adaptive_batch_policy import resolve_adaptive_batch
+        from api.shared.pipeline_batch_drain import phase_batch_limit
 
         default_pd = phase_batch_limit("unified_intake_extraction", 40)
         per_domain, _meta = resolve_adaptive_batch("unified_intake_extraction", default_pd)

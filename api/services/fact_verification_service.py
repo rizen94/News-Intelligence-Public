@@ -19,8 +19,8 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-api.shared.database import get_db_connection
-api.shared.domain_registry import resolve_domain_schema
+from api.shared.database import get_db_connection
+from api.shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ def score_source_reliability_batch(source_domains: list[str]) -> dict[str, dict[
 
 def _governance_reliability_for_source(source_label: str) -> dict[str, Any]:
     """Blend orchestrator source_credibility (YAML) with legacy string tiers."""
-    api.shared.services.source_credibility_service import resolve_source_credibility
+    from api.shared.services.source_credibility_service import resolve_source_credibility
 
     gov = resolve_source_credibility("", source_label or "")
     legacy = score_source_reliability(source_label or "")
@@ -607,7 +607,7 @@ def entailment_llm_borderline_check(
     )
 
     async def _run_llm() -> str:
-        api.shared.services.llm_service import LLMService, ModelType
+        from api.shared.services.llm_service import LLMService, ModelType
 
         llm = LLMService()
         return await llm._call_ollama(ModelType.LLAMA_8B, prompt)
@@ -1318,7 +1318,7 @@ def _llm_completeness_check(
     claims_text = "\n".join(f"- {c['subject']} {c['predicate']} {c['object']}" for c in claims[:10])
 
     try:
-        api.shared.services.llm_service import LLMService
+        from api.shared.services.llm_service import LLMService
 
         llm = LLMService()
         prompt = COMPLETENESS_PROMPT.format(
@@ -1359,7 +1359,7 @@ def verify_claim(
       5. Optional LLM entailment when corroboration is borderline
       6. Combined verification_status + confidence (caps on weak signals)
     """
-    api.shared.services.source_credibility_service import resolve_source_credibility
+    from api.shared.services.source_credibility_service import resolve_source_credibility
 
     schema = resolve_domain_schema(domain_key)
     conn = get_db_connection()

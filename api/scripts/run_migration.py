@@ -18,7 +18,7 @@ import sys
 _API_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _API_ROOT)
 
-api.shared.migration_sql_runner import cli_main
+from api.shared.migration_sql_runner import cli_main
 
 if __name__ == "__main__":
     raise SystemExit(cli_main())

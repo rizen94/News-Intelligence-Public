@@ -19,7 +19,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from api.config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
-api.shared.pipeline_state_constants import (
+from api.shared.pipeline_state_constants import (
     ARTICLE_ENRICHED, ARTICLE_FAILED, ARTICLE_INACCESSIBLE,
 )
 

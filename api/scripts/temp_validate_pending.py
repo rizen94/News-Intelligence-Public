@@ -18,7 +18,7 @@ print("DB_PASSWORD exists:", bool(os.environ.get('DB_PASSWORD', '')))
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-api.shared.database.connection import ephemeral_db_connection_context
+from api.shared.database.connection import ephemeral_db_connection_context
 
 def q(sql, params=None):
     with ephemeral_db_connection_context() as conn:

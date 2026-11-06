@@ -17,7 +17,7 @@ if _API_ROOT not in sys.path:
 
 def _get_db_config():
     """Database config from shared source (DB_* env / .env)."""
-    api.shared.database import get_db_config
+    from api.shared.database import get_db_config
 
     return get_db_config()
 

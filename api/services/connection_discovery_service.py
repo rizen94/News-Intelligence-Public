@@ -9,8 +9,8 @@ from typing import Any
 
 from api.config.runtime import env_bool, env_float, env_int
 from services.discovery_finding_quality import is_bridgeable
-api.shared.database import get_db_connection_context
-api.shared.domain_registry import get_pipeline_active_domain_keys
+from api.shared.database import get_db_connection_context
+from api.shared.domain_registry import get_pipeline_active_domain_keys
 
 logger = logging.getLogger(__name__)
 

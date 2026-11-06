@@ -124,7 +124,8 @@ BACKLOG_SELECTION_CONTRACTS: tuple[BacklogSelectionContract, ...] = (
 
 def _resolve_attr(dotted: str) -> Callable[..., object]:
     mod_name, _, attr = dotted.rpartition(".")
-    mod = __import__(mod_name, fromlist=[attr])
+    import importlib
+    mod = importlib.import_module(mod_name)
     return getattr(mod, attr)
 
 

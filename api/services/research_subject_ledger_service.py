@@ -7,11 +7,12 @@ verdicts. Not linear arc chronicles.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
-api.shared.database import get_db_connection_context, get_ui_db_connection_context
-api.shared.domain_registry import resolve_domain_schema
+from api.shared.database import get_db_connection_context, get_ui_db_connection_context
+from api.shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +121,7 @@ def upsert_research_claim(
                     v,
                     evidence_strength,
                     study_type,
-                    __import__("json").dumps(metadata or {}),
+                    json.dumps(metadata or {}),
                 ),
             )
             new_id = int(cur.fetchone()[0])

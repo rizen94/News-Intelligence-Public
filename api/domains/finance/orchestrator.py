@@ -18,8 +18,8 @@ try:
 except Exception:
     logger = logging.getLogger(__name__)
 
-api.shared.logging.decision_logger import log_decision, log_decision_outcome
-api.shared.logging.trace_logger import span_context
+from api.shared.logging.decision_logger import log_decision, log_decision_outcome
+from api.shared.logging.trace_logger import span_context
 
 from domains.finance.orchestrator_logger import (
     EVAL_FAILED,

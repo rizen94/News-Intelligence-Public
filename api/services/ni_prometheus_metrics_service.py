@@ -156,7 +156,7 @@ def _collect_queue_metrics() -> list[str]:
 
         # Optional v12-style unified intake breakdown when modules exist.
         try:
-            api.shared.pipeline_queue_counts import get_unified_intake_breakdown
+            from api.shared.pipeline_queue_counts import get_unified_intake_breakdown
 
             br = get_unified_intake_breakdown() or {}
             if isinstance(br, dict):
@@ -194,7 +194,7 @@ def _collect_latency_metrics() -> list[str]:
     """Emit intake catchup gauges when shared.intake_catchup_latency is present."""
     lines: list[str] = []
     try:
-        api.shared.intake_catchup_latency import compute_intake_catchup_latency
+        from api.shared.intake_catchup_latency import compute_intake_catchup_latency
 
         snap = compute_intake_catchup_latency(use_cache=True) or {}
         sla = float(snap.get("sla_hours") or _env_float("CATCHUP_SLA_HOURS", 6.0))
@@ -233,7 +233,7 @@ def _collect_latency_metrics() -> list[str]:
 def _collect_inventory_metrics() -> list[str]:
     lines: list[str] = []
     try:
-        api.shared.database import get_ui_db_connection_context
+        from api.shared.database import get_ui_db_connection_context
 
         row_samples: list[tuple[dict[str, str], float]] = []
         size_samples: list[tuple[dict[str, str], float]] = []
@@ -291,8 +291,8 @@ def _collect_rss_metrics() -> list[str]:
     """Light RSS gauges aligned with Homelab scrape (replaces orphan advanced_monitoring names)."""
     lines: list[str] = []
     try:
-        api.shared.database import get_ui_db_connection_context
-        api.shared.domain_registry import iter_url_schema_pairs
+        from api.shared.database import get_ui_db_connection_context
+        from api.shared.domain_registry import iter_url_schema_pairs
 
         feed_samples: list[tuple[dict[str, str], float]] = []
         article_samples: list[tuple[dict[str, str], float]] = []
@@ -443,7 +443,7 @@ def _collect_embeddings_host_metrics() -> list[str]:
             )
         # Recent chunk ingestion (DB) — work-done signal for Grafana (cheap windows only).
         try:
-            api.shared.database import get_db_connection_context
+            from api.shared.database import get_db_connection_context
 
             with get_db_connection_context() as conn:
                 with conn.cursor() as cur:
@@ -481,7 +481,7 @@ def _collect_embeddings_host_metrics() -> list[str]:
 def _collect_content_and_run_metrics() -> list[str]:
     lines: list[str] = []
     try:
-        api.shared.database import get_ui_db_connection_context
+        from api.shared.database import get_ui_db_connection_context
 
         content_samples: list[tuple[dict[str, str], float]] = []
         run_samples: list[tuple[dict[str, str], float]] = []
@@ -717,7 +717,7 @@ def _rebuild_prometheus_body() -> str | None:
             logger.warning("ni prom collector %s timed out after %.1fs", name, timeout)
             # #region agent log
             try:
-                api.shared.debug_session_log import agent_dbg
+                from api.shared.debug_session_log import agent_dbg
 
                 agent_dbg(
                     "C",

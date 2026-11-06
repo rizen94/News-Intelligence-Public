@@ -6,7 +6,7 @@ Bulletproof normalization between inconsistent source returns and orchestrator l
 import logging
 from typing import Any
 
-api.shared.data_result import DataResult
+from api.shared.data_result import DataResult
 
 try:
     from api.config.logging_config import get_component_logger

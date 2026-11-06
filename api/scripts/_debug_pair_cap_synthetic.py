@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import numpy as np
 
-api.shared.debug_session_log import agent_dbg
+from api.shared.debug_session_log import agent_dbg
 from services.ai_storyline_discovery import (
     STORYLINE_DISCOVERY_MAX_PAIRS,
     AIStorylineDiscovery,

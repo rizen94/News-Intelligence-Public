@@ -98,8 +98,8 @@ def main() -> int:
     p.add_argument("--min-confidence", type=float, default=0.65, help="claims only: min ec.confidence")
     args = p.parse_args()
 
-    api.shared.database import get_db_connection
-    api.shared.domain_registry import is_valid_domain_key, resolve_domain_schema
+    from api.shared.database import get_db_connection
+    from api.shared.domain_registry import is_valid_domain_key, resolve_domain_schema
 
     from services.entity_seed_catalog_service import bulk_seed_canonical_entries
 

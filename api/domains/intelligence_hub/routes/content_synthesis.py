@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, Field
 from services.deep_content_synthesis import get_synthesis_service
-api.shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
+from api.shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -617,7 +617,7 @@ Write in encyclopedic, authoritative style."""
 
         exec_summary = ""
         try:
-            api.shared.services.llm_service import ollama_generate_sync
+            from api.shared.services.llm_service import ollama_generate_sync
 
             exec_summary = ollama_generate_sync(
                 exec_prompt,
@@ -625,7 +625,7 @@ Write in encyclopedic, authoritative style."""
                 ollama_base_url=OLLAMA_BASE_URL,
             ).strip()
         except Exception as e:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
 
             if is_ollama_pressure_error(e):
                 raise

@@ -17,7 +17,7 @@ from fastapi import APIRouter, Body, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 from services.domain_knowledge_service import get_domain_knowledge_service
 from services.rag import get_enhanced_rag_service
-api.shared.domain_registry import DOMAIN_PATH_PATTERN, get_active_domain_keys, resolve_domain_schema
+from api.shared.domain_registry import DOMAIN_PATH_PATTERN, get_active_domain_keys, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 

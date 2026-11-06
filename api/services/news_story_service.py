@@ -11,8 +11,8 @@ import json
 import logging
 from typing import Any
 
-api.shared.database import get_ui_db_connection_context
-api.shared.editorial_package_vocab import PRESENTATION_KINDS
+from api.shared.database import get_ui_db_connection_context
+from api.shared.editorial_package_vocab import PRESENTATION_KINDS
 from services.editorial_package_service import (
     _append_decision,
     emit_citation_gap_handoff,
@@ -222,8 +222,8 @@ def create_or_update_draft(
 
 def _scaffold_body_md(package: dict[str, Any]) -> str:
     """Build a starter composer body from summary_stub + citeable members."""
-    api.shared.editorial_package_vocab import provenance_has_citeable_source
-    api.shared.editorial_package_reattach import member_excluded_from_compose
+    from api.shared.editorial_package_vocab import provenance_has_citeable_source
+    from api.shared.editorial_package_reattach import member_excluded_from_compose
 
     stub = str(package.get("summary_stub") or "").strip()
     title = str(package.get("working_title") or "").strip()
@@ -653,7 +653,7 @@ def auto_republish_for_new_members(
     Stub "Update: title" appends are retired — new members must enter the
     full report assembly so the published product stays substantive.
     """
-    api.shared.editorial_package_vocab import provenance_has_citeable_source
+    from api.shared.editorial_package_vocab import provenance_has_citeable_source
     from services.editorial_package_service import (
         _CITATION_MARKER_RE,
         enrich_package_cite_provenance,
@@ -715,7 +715,7 @@ def auto_republish_for_new_members(
             "story_id": int(story["id"]),
         }
 
-    api.shared.link_scoring import auto_republish_enabled
+    from api.shared.link_scoring import auto_republish_enabled
 
     if not auto_republish_enabled():
         return {

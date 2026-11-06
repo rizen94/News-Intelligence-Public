@@ -140,7 +140,7 @@ HIGH_CHURN_PHASE_SPECS: tuple[PhaseSpec, ...] = (
 
 
 def _track_constant(track: str) -> Any:
-    api.shared.catchup_host_metrics import (
+    from api.shared.catchup_host_metrics import (
         TRACK_BUILD,
         TRACK_CHEMISTRY_LOCAL,
         TRACK_DOSSIER_FAST,

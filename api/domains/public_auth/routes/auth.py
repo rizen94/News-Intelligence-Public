@@ -14,9 +14,9 @@ from api.config.settings import (
     news_intel_auth_cookie_secure,
     news_intel_public_web_auth_enabled,
 )
-api.shared.database import get_db_connection
-api.shared.middleware.public_web_auth import attach_public_web_auth_state
-api.shared.services.public_web_auth_service import (
+from api.shared.database import get_db_connection
+from api.shared.middleware.public_web_auth import attach_public_web_auth_state
+from api.shared.services.public_web_auth_service import (
     hash_password,
     issue_session_token_with_exp,
     resolve_session_role,
@@ -25,7 +25,7 @@ api.shared.services.public_web_auth_service import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/public/auth", tags=["Public auth"])
+router = APIRouter(prefix="/public/auth", tags=["Public auth"])
 
 
 class LoginBody(BaseModel):

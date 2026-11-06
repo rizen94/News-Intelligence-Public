@@ -169,7 +169,7 @@ def embed_with_ollama_fallback(text: str) -> tuple[list[float], str] | None:
         model = FINANCE_MODELS.get("embedding", "BAAI/bge-large-en-v1.5")
         return (vec, model)
     try:
-        api.shared.services.llm_service import is_ollama_pressure_error, ollama_embed_sync
+        from api.shared.services.llm_service import is_ollama_pressure_error, ollama_embed_sync
 
         emb = ollama_embed_sync(text[:4000], model="nomic-embed-text")
         if emb:

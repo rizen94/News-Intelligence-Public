@@ -33,7 +33,7 @@ _REPO_ROOT = _API_ROOT.parent
 if str(_API_ROOT) not in sys.path:
     sys.path.insert(0, str(_API_ROOT))
 
-api.shared.catchup_host_metrics import (
+from api.shared.catchup_host_metrics import (
     ResourceSnapshot,
     RoutingContext,
     TRACK_BUILD,
@@ -78,7 +78,7 @@ def _resolve_phase_order(*, use_popos_gpu: bool, explicit_phases: tuple[str, ...
     else:
         phases = MAJOR_PHASE_ORDER
     try:
-        api.shared.pipeline_resource_policy import intake_extraction_suppressed
+        from api.shared.pipeline_resource_policy import intake_extraction_suppressed
 
         if intake_extraction_suppressed():
             phases = tuple(p for p in phases if p != "event_extraction")
@@ -94,7 +94,7 @@ logger = logging.getLogger(__name__)
 
 
 def _load_env() -> None:
-    api.shared.catchup_bootstrap import bootstrap_catchup
+    from api.shared.catchup_bootstrap import bootstrap_catchup
 
     bootstrap_catchup(bulk_active=False)
 
@@ -378,7 +378,7 @@ def _run_dossier_narrative_backfill(batch: int) -> int:
         _dossier_narrative_model,
         backfill_dossier_narratives,
     )
-    api.shared.bulk_catchup_llm_routing import dual_lane_extraction_active
+    from api.shared.bulk_catchup_llm_routing import dual_lane_extraction_active
 
     batch = _clamp_batch(batch)
     gpu_workers = _dossier_narrative_parallel_workers()
@@ -421,7 +421,7 @@ async def _run_story_enhancement(
     limits: dict[str, int], *, facts_only: bool = False
 ) -> dict[str, Any]:
     from services.enhancement_orchestrator_service import run_enhancement_cycle
-    api.shared.pipeline_resource_policy import story_enhancement_run_limits
+    from api.shared.pipeline_resource_policy import story_enhancement_run_limits
 
     shared = story_enhancement_run_limits(facts_only=facts_only)
     fact_batch = int(shared["fact_batch"])
@@ -465,7 +465,7 @@ def _cut_stale_fact_change_log(days: int) -> int:
     """Mark old unprocessed fact_change_log rows processed (drain tail without story updates)."""
     if days <= 0:
         return 0
-    api.shared.database import get_db_connection_context
+    from api.shared.database import get_db_connection_context
 
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
@@ -496,11 +496,11 @@ def _phase_progress(phase: str, result: dict[str, Any]) -> int:
 async def _run_unified_intake_extraction(batch: int, resources: ResourceSnapshot) -> dict[str, Any]:
     """Unified intake extract catch-up (replaces event_extraction when flag enabled)."""
     from api.config.runtime import env_str
-    api.shared.backlog_orchestration import sprint_gpu_only
-    api.shared.database.db_availability import schema_has_table
-    api.shared.domain_registry import get_pipeline_schema_names_active
-    api.shared.pipeline_batch_drain import phase_run_budget_seconds
-    api.shared.unified_intake_extraction_runner import run_unified_intake_extraction_batch_drain
+    from api.shared.backlog_orchestration import sprint_gpu_only
+    from api.shared.database.db_availability import schema_has_table
+    from api.shared.domain_registry import get_pipeline_schema_names_active
+    from api.shared.pipeline_batch_drain import phase_run_budget_seconds
+    from api.shared.unified_intake_extraction_runner import run_unified_intake_extraction_batch_drain
 
     batch = _clamp_batch(batch)
     active_schemas = [s for s in get_pipeline_schema_names_active() if schema_has_table(s, "articles")]
@@ -529,22 +529,22 @@ async def _run_unified_intake_extraction(batch: int, resources: ResourceSnapshot
 
 async def _run_event_extraction(batch: int, resources: ResourceSnapshot) -> dict[str, Any]:
     """One automation-scale batch across active domain schemas."""
-    api.shared.pipeline_resource_policy import intake_extraction_suppressed
+    from api.shared.pipeline_resource_policy import intake_extraction_suppressed
 
     if intake_extraction_suppressed():
         return await _run_unified_intake_extraction(batch, resources)
 
     from api.config.runtime import env_str
-    api.shared.backlog_orchestration import sprint_gpu_only
-    api.shared.database.db_availability import schema_has_table
-    api.shared.domain_registry import get_pipeline_schema_names_active
-    api.shared.recovery.intake_rollback import legacy_intake_rollback_active, load_event_extraction_runner
+    from api.shared.backlog_orchestration import sprint_gpu_only
+    from api.shared.database.db_availability import schema_has_table
+    from api.shared.domain_registry import get_pipeline_schema_names_active
+    from api.shared.recovery.intake_rollback import legacy_intake_rollback_active, load_event_extraction_runner
 
     if not legacy_intake_rollback_active():
         return await _run_unified_intake_extraction(batch, resources)
 
     run_event_extraction_batch_drain = load_event_extraction_runner().run_event_extraction_batch_drain
-    api.shared.pipeline_batch_drain import phase_run_budget_seconds
+    from api.shared.pipeline_batch_drain import phase_run_budget_seconds
 
     batch = _clamp_batch(batch)
     active_schemas = [s for s in get_pipeline_schema_names_active() if schema_has_table(s, "articles")]
@@ -582,7 +582,7 @@ def _execute_phase(
     # Prefer shared drain dispatch (AM / PopOS worker SoT) when applicable.
     if phase in ("entity_profile_build", "entity_dossier_compile") and isinstance(batch, int):
         try:
-            api.shared.phase_drain_dispatch import drain_phase
+            from api.shared.phase_drain_dispatch import drain_phase
 
             out = asyncio.run(drain_phase(phase, articles_per_domain=batch))
             processed = int(
@@ -659,8 +659,8 @@ def _log_resource_line(
 def main() -> int:
     _load_env()
     from api.config.runtime import env_pop, env_set, env_str
-    api.shared.bulk_catchup_pause import clear_pause_marker, write_pause_marker
-    api.shared.pipeline_resource_policy import (
+    from api.shared.bulk_catchup_pause import clear_pause_marker, write_pause_marker
+    from api.shared.pipeline_resource_policy import (
         story_enhancement_facts_only,
         story_enhancement_run_limits,
     )
@@ -761,7 +761,7 @@ def main() -> int:
             env_set("DOSSIER_CATCHUP_GPU_NARRATIVE", "1")
         if narrative_only:
             env_set("DOSSIER_CATCHUP_SKIP_NARRATIVE", "0")
-        api.shared.bulk_catchup_llm_routing import configure_catchup_extraction_routing
+        from api.shared.bulk_catchup_llm_routing import configure_catchup_extraction_routing
 
         configure_catchup_extraction_routing(
             use_popos_gpu=args.use_popos_gpu,

@@ -30,8 +30,8 @@ from services.context_processor_service import (
     sync_context_from_article_after_content_change,
 )
 
-api.shared.pipeline_state_constants import QUEUE_COMPLETED, QUEUE_FAILED, QUEUE_PENDING, QUEUE_PROCESSING
-api.shared.database import get_db_connection_context
+from api.shared.pipeline_state_constants import QUEUE_COMPLETED, QUEUE_FAILED, QUEUE_PENDING, QUEUE_PROCESSING
+from api.shared.database import get_db_connection_context
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ STARTUP_DELAY_SECONDS = 45
 
 def _get_ollama_semaphore() -> asyncio.Semaphore:
     """Shared process-wide Ollama concurrency (matches AutomationManager / LLM hub)."""
-    api.shared.services.llm_service import get_shared_ollama_semaphore
+    from api.shared.services.llm_service import get_shared_ollama_semaphore
 
     return get_shared_ollama_semaphore()
 
@@ -137,7 +137,7 @@ class TopicExtractionQueueWorker:
     async def _process_queue_batch(self) -> bool:
         """Process a batch of queued articles; find unprocessed if queue empty. Returns True if work was done."""
         try:
-            api.shared.services.api_request_tracker import should_yield_to_api
+            from api.shared.services.api_request_tracker import should_yield_to_api
 
             if should_yield_to_api():
                 logger.debug(
@@ -401,7 +401,7 @@ class TopicExtractionQueueWorker:
                     conn = None
 
             except Exception as article_error:
-                api.shared.services.llm_service import is_ollama_pressure_error
+                from api.shared.services.llm_service import is_ollama_pressure_error
 
                 if is_ollama_pressure_error(article_error):
                     # Defer without burning retries — CB/overload is host pressure

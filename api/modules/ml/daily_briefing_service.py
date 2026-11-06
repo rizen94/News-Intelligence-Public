@@ -14,7 +14,12 @@ from api.modules.deduplication.advanced_deduplication_service import (
     AdvancedDeduplicationService,
     get_deduplication_service
 )
-api.shared.database.connection import get_db_connect_kwargs
+from api.shared.database.connection import get_db_connect_kwargs
+
+# Lazy-import helper for domain-aware schema iteration
+def _domain_schemas():
+    from api.shared.services.domain_aware_service import get_domain_data_schemas
+    return get_domain_data_schemas()
 
 logger = logging.getLogger(__name__)
 
@@ -143,24 +148,39 @@ class DailyBriefingService:
             return {"error": str(e)}
     
     def _generate_system_overview(self, briefing_date: datetime) -> dict[str, any]:
-        """Generate system overview section"""
+        """Generate system overview section — aggregates across all domain schemas."""
         try:
             conn = psycopg2.connect(**get_db_connect_kwargs())
             cursor = conn.cursor()
             
-            # Get system statistics
-            cursor.execute("SELECT COUNT(*) FROM articles")
-            total_articles = cursor.fetchone()[0]
+            # Aggregate counts across all domain article tables
+            total_articles = 0
+            today_articles = 0
+            today_updated = 0
+            domains_seen: set[str] = set()
             
-            cursor.execute("SELECT COUNT(*) FROM articles WHERE created_at >= %s", (briefing_date.date(),))
-            today_articles = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM articles WHERE updated_at >= %s", (briefing_date.date(),))
-            today_updated = cursor.fetchone()[0]
-            
-            # Get source count
-            cursor.execute("SELECT COUNT(DISTINCT source) FROM articles WHERE source IS NOT NULL")
-            total_sources = cursor.fetchone()[0]
+            for schema in _domain_schemas():
+                cursor.execute("SELECT COUNT(*) FROM {}.articles", (schema,))
+                total_articles += cursor.fetchone()[0]
+                
+                cursor.execute(
+                    "SELECT COUNT(*) FROM {}.articles WHERE created_at >= %s",
+                    (schema, briefing_date.date())
+                )
+                today_articles += cursor.fetchone()[0]
+                
+                cursor.execute(
+                    "SELECT COUNT(*) FROM {}.articles WHERE updated_at >= %s",
+                    (schema, briefing_date.date())
+                )
+                today_updated += cursor.fetchone()[0]
+                
+                # Track distinct sources per domain to get global unique count later
+                cursor.execute(
+                    "SELECT DISTINCT source FROM {}.articles WHERE source IS NOT NULL",
+                    (schema,)
+                )
+                domains_seen.update(row[0] for row in cursor.fetchall())
             
             conn.close()
             
@@ -168,7 +188,7 @@ class DailyBriefingService:
                 "total_articles": total_articles,
                 "today_new_articles": today_articles,
                 "today_updated_articles": today_updated,
-                "total_sources": total_sources,
+                "total_sources": len(domains_seen),
                 "system_status": "operational",
                 "last_updated": datetime.now().isoformat()
             }
@@ -178,57 +198,80 @@ class DailyBriefingService:
             return {"error": str(e)}
     
     def _generate_content_analysis(self, briefing_date: datetime) -> dict[str, any]:
-        """Generate content analysis section"""
+        """Generate content analysis section — aggregates across all domain schemas."""
         try:
             conn = psycopg2.connect(**get_db_connect_kwargs())
             cursor = conn.cursor()
             
-            # Get content statistics for the day
-            cursor.execute("""
-                SELECT 
-                    category,
-                    COUNT(*) as count,
-                    AVG(COALESCE(quality_score, 0.5)) as avg_quality
-                FROM articles 
-                WHERE created_at >= %s 
-                GROUP BY category 
-                ORDER BY count DESC
-            """, (briefing_date.date(),))
+            # Aggregate category stats across domains
+            cat_stats: dict[str, list[float]] = {}  # cat -> [count, sum_quality]
             
-            category_stats = cursor.fetchall()
+            for schema in _domain_schemas():
+                q = f"""
+                    SELECT 
+                        category,
+                        COUNT(*) as count,
+                        AVG(COALESCE(quality_score, 0.5)) as avg_quality
+                    FROM {schema}.articles 
+                    WHERE created_at >= %s 
+                    GROUP BY category 
+                    ORDER BY count DESC
+                """
+                cursor.execute(q, (briefing_date.date(),))
+                
+                for row in cursor.fetchall():
+                    cat = row[0] or "uncategorized"
+                    n = row[1]
+                    avg_q = float(row[2])
+                    if cat not in cat_stats:
+                        cat_stats[cat] = [0, 0.0]
+                    cat_stats[cat][0] += n
+                    cat_stats[cat][1] += avg_q * n
             
-            # Get top sources for the day
-            cursor.execute("""
-                SELECT 
-                    source,
-                    COUNT(*) as count
-                FROM articles 
-                WHERE created_at >= %s 
-                AND source IS NOT NULL
-                GROUP BY source 
-                ORDER BY count DESC 
-                LIMIT 10
-            """, (briefing_date.date(),))
+            # Aggregate top sources across domains
+            source_stats: dict[str, int] = {}
             
-            source_stats = cursor.fetchall()
+            for schema in _domain_schemas():
+                q = f"""
+                    SELECT 
+                        source,
+                        COUNT(*) as count
+                    FROM {schema}.articles 
+                    WHERE created_at >= %s 
+                    AND source IS NOT NULL
+                    GROUP BY source 
+                    ORDER BY count DESC 
+                    LIMIT 10
+                """
+                cursor.execute(q, (briefing_date.date(),))
+                
+                for row in cursor.fetchall():
+                    src = row[0]
+                    if src not in source_stats:
+                        source_stats[src] = 0
+                    source_stats[src] += row[1]
             
             conn.close()
             
+            # Sort categories by count descending
+            sorted_cats = sorted(cat_stats.items(), key=lambda x: x[1][0], reverse=True)
+            category_distribution = [
+                {
+                    "category": cat,
+                    "count": n,
+                    "avg_quality": round(stats[1] / n, 3) if n else 0
+                }
+                for cat, stats in sorted_cats
+            ]
+            
+            # Top 10 sources by count descending
+            top_sources = sorted(source_stats.items(), key=lambda x: x[1], reverse=True)[:10]
+            
             return {
-                "category_distribution": [
-                    {
-                        "category": row[0] or "uncategorized",
-                        "count": row[1],
-                        "avg_quality": round(float(row[2]), 3)
-                    }
-                    for row in category_stats
-                ],
+                "category_distribution": category_distribution,
                 "top_sources": [
-                    {
-                        "source": row[0],
-                        "count": row[1]
-                    }
-                    for row in source_stats
+                    {"source": src, "count": count}
+                    for src, count in top_sources
                 ],
                 "analysis_date": briefing_date.strftime('%Y-%m-%d')
             }
@@ -279,8 +322,7 @@ class DailyBriefingService:
             content_duplicate_groups = 0
             
             # Query across all domain schemas (same pattern as article_deduplication route)
-            api.shared.services.domain_aware_service import get_domain_data_schemas
-            for sch in get_domain_data_schemas():
+            for sch in _domain_schemas():
                 cursor.execute(f"SELECT COUNT(*) FROM {sch}.articles")
                 total_articles += cursor.fetchone()[0] or 0
                 
@@ -338,62 +380,86 @@ class DailyBriefingService:
             return {"error": str(e)}
     
     def _generate_quality_metrics(self, briefing_date: datetime) -> dict[str, any]:
-        """Generate quality metrics section"""
+        """Generate quality metrics section — aggregates across all domain schemas."""
         try:
             conn = psycopg2.connect(**get_db_connect_kwargs())
             cursor = conn.cursor()
             
-            # Get quality distribution for the day
-            cursor.execute("""
-                SELECT 
-                    CASE 
-                        WHEN COALESCE(quality_score, 0.5) >= 0.8 THEN 'high'
-                        WHEN COALESCE(quality_score, 0.5) >= 0.6 THEN 'medium'
-                        ELSE 'low'
-                    END as quality_level,
-                    COUNT(*) as count
-                FROM articles 
-                WHERE created_at >= %s 
-                GROUP BY quality_level
-                ORDER BY quality_level DESC
-            """, (briefing_date.date(),))
+            # Aggregate quality distribution and category quality across domains
+            quality_levels: dict[str, int] = {"high": 0, "medium": 0, "low": 0}
+            cat_quality: dict[str, list[float]] = {}  # cat -> [sum_avg, count]
             
-            quality_distribution = cursor.fetchall()
-            
-            # Get average quality by category
-            cursor.execute("""
-                SELECT 
-                    category,
-                    AVG(COALESCE(quality_score, 0.5)) as avg_quality,
-                    COUNT(*) as count
-                FROM articles 
-                WHERE created_at >= %s 
-                GROUP BY category 
-                HAVING COUNT(*) >= 3
-                ORDER BY avg_quality DESC
-            """, (briefing_date.date(),))
-            
-            category_quality = cursor.fetchall()
+            for schema in _domain_schemas():
+                q = f"""
+                    SELECT 
+                        CASE 
+                            WHEN COALESCE(quality_score, 0.5) >= 0.8 THEN 'high'
+                            WHEN COALESCE(quality_score, 0.5) >= 0.6 THEN 'medium'
+                            ELSE 'low'
+                        END as quality_level,
+                        COUNT(*) as count
+                    FROM {schema}.articles 
+                    WHERE created_at >= %s 
+                    GROUP BY quality_level
+                    ORDER BY quality_level DESC
+                """
+                cursor.execute(q, (briefing_date.date(),))
+                
+                for row in cursor.fetchall():
+                    level = row[0]
+                    n = row[1]
+                    if level in quality_levels:
+                        quality_levels[level] += n
+                
+                # Average quality by category per domain
+                q2 = f"""
+                    SELECT 
+                        category,
+                        AVG(COALESCE(quality_score, 0.5)) as avg_quality,
+                        COUNT(*) as count
+                    FROM {schema}.articles 
+                    WHERE created_at >= %s 
+                    GROUP BY category 
+                    HAVING COUNT(*) >= 3
+                    ORDER BY avg_quality DESC
+                """
+                cursor.execute(q2, (briefing_date.date(),))
+                
+                for row in cursor.fetchall():
+                    cat = row[0] or "uncategorized"
+                    avg_q = float(row[1])
+                    n = row[2]
+                    if cat not in cat_quality:
+                        cat_quality[cat] = [0.0, 0]
+                    cat_quality[cat][0] += avg_q * n
+                    cat_quality[cat][1] += n
             
             conn.close()
             
+            total = sum(quality_levels.values())
+            # Recompute weighted avg_quality per category across domains
+            cat_quality_sorted = sorted(
+                [
+                    {
+                        "category": cat,
+                        "avg_quality": round(stats[0] / stats[1], 3) if stats[1] else 0,
+                        "count": stats[1]
+                    }
+                    for cat, stats in cat_quality.items()
+                ],
+                key=lambda x: x["avg_quality"],
+                reverse=True
+            )
+            
             return {
                 "quality_distribution": [
-                    {
-                        "level": row[0],
-                        "count": row[1]
-                    }
-                    for row in quality_distribution
+                    {"level": level, "count": count}
+                    for level, count in quality_levels.items()
                 ],
-                "category_quality": [
-                    {
-                        "category": row[0] or "uncategorized",
-                        "avg_quality": round(float(row[1]), 3),
-                        "count": row[2]
-                    }
-                    for row in category_quality
-                ],
-                "overall_quality_score": self._calculate_overall_quality(quality_distribution)
+                "category_quality": cat_quality_sorted,
+                "overall_quality_score": self._calculate_overall_quality(
+                    list(quality_levels.items())
+                )
             }
             
         except Exception as e:

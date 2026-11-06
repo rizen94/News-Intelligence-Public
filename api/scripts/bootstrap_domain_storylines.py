@@ -38,8 +38,8 @@ from domains.storyline_management.services.proactive_detection_service import ( 
     ProactiveDetectionService,
 )
 from services.ai_storyline_discovery import get_discovery_service  # noqa: E402
-api.shared.database import get_db_connection_context  # noqa: E402
-api.shared.domain_registry import resolve_domain_schema  # noqa: E402
+from api.shared.database import get_db_connection_context  # noqa: E402
+from api.shared.domain_registry import resolve_domain_schema  # noqa: E402
 
 
 def _storyline_count(schema: str) -> int:

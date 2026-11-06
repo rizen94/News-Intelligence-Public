@@ -12,7 +12,7 @@ from enum import Enum
 
 from services.content_quality_service import get_content_quality_service
 from services.pipeline_logger import get_pipeline_logger
-api.shared.database import get_db_connection
+from api.shared.database import get_db_connection
 
 logger = logging.getLogger(__name__)
 

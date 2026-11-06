@@ -13,14 +13,14 @@ import time
 from datetime import datetime, timezone
 from typing import Any, NamedTuple
 
-api.shared.database import get_db_connection, get_db_connection_context
-api.shared.domain_registry import (
+from api.shared.database import get_db_connection, get_db_connection_context
+from api.shared.domain_registry import (
     get_pipeline_schema_names_active,
     pipeline_url_schema_pairs,
     resolve_domain_schema,
 )
-api.shared.services.ollama_model_caller import get_ollama_model_caller
-api.shared.services.ollama_model_policy import InvocationKind
+from api.shared.services.ollama_model_caller import get_ollama_model_caller
+from api.shared.services.ollama_model_policy import InvocationKind
 from api.config.runtime import env_bool, env_float, env_int, env_pop, env_set, env_setdefault, env_str
 
 logger = logging.getLogger(__name__)
@@ -125,7 +125,7 @@ def _claim_extraction_strict_seeded_domain_keys() -> frozenset[str]:
         from api.config.feature_registry import is_feature_enabled
 
         if is_feature_enabled("claim_resolvability_gate"):
-            api.shared.domain_registry import get_pipeline_active_domain_keys
+            from api.shared.domain_registry import get_pipeline_active_domain_keys
 
             return frozenset(get_pipeline_active_domain_keys())
     except Exception:
@@ -274,7 +274,7 @@ def _subject_matches_seeded_pool(
 def claim_extraction_gap_fill_sql(alias: str = "c") -> str:
     """When fusion is on, only contexts linked to unified-cleared articles."""
     try:
-        api.shared.spine_phase_order import fused_claim_extraction_gap_fill_only
+        from api.shared.spine_phase_order import fused_claim_extraction_gap_fill_only
 
         if not fused_claim_extraction_gap_fill_only():
             return ""
@@ -298,8 +298,8 @@ def claim_extraction_gap_fill_sql(alias: str = "c") -> str:
 
 def sql_claim_extraction_eligible(alias: str = "c") -> str:
     """Contexts claim_extraction automation would select (min text + pass-null + gap-fill + signal)."""
-    api.shared.article_signal_gate import sql_context_has_full_lane_article
-    api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_context_pass_null
+    from api.shared.article_signal_gate import sql_context_has_full_lane_article
+    from api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_context_pass_null
 
     # Only gate on entity profile staleness when strict seeded domains is active
     # (i.e., CLAIM_EXTRACTION_REQUIRE_SEEDED_DOMAIN_KEYS is set or claim_resolvability_gate is enabled).
@@ -314,7 +314,7 @@ def sql_claim_extraction_eligible(alias: str = "c") -> str:
             from api.config.feature_registry import is_feature_enabled
 
             if is_feature_enabled("claim_resolvability_gate"):
-                api.shared.domain_registry import get_pipeline_active_domain_keys
+                from api.shared.domain_registry import get_pipeline_active_domain_keys
 
                 has_seeded_gate = bool(get_pipeline_active_domain_keys())
         except Exception:
@@ -432,7 +432,7 @@ def get_claims_to_facts_batch_limit() -> int:
         return claim_pipeline_max_fetch()
     default = n
     try:
-        api.shared.adaptive_batch_policy import resolve_adaptive_batch
+        from api.shared.adaptive_batch_policy import resolve_adaptive_batch
 
         tuned, _meta = resolve_adaptive_batch("claims_to_facts", default)
         return max(1, int(tuned))
@@ -506,7 +506,7 @@ def _persist_claims_to_facts_batch_run(
     stats: dict[str, Any] | None = None,
 ) -> None:
     try:
-        api.shared.services.phase_batch_run_history import record_phase_batch_completion
+        from api.shared.services.phase_batch_run_history import record_phase_batch_completion
 
         promoted = int((stats or {}).get("promoted") or 0)
         record_phase_batch_completion(
@@ -790,7 +790,7 @@ def build_claims_to_facts_backlog_where_suffix() -> str:
 
 
 def _claim_domain_key_to_schema(dk: str) -> str:
-    api.shared.domain_registry import domain_key_to_schema
+    from api.shared.domain_registry import domain_key_to_schema
 
     try:
         return domain_key_to_schema(dk)
@@ -860,10 +860,10 @@ def insert_parsed_claims_for_context(
 
     if not claims:
         try:
-            api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_context_phase_pass
+            from api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_context_phase_pass
 
             if phase_backlog_uses_pass_marker("claim_extraction"):
-                api.shared.pipeline_pass_marker import TERMINAL_PROCESSED_EMPTY_LEGITIMATE
+                from api.shared.pipeline_pass_marker import TERMINAL_PROCESSED_EMPTY_LEGITIMATE
 
                 record_context_phase_pass(
                     context_id,
@@ -884,7 +884,7 @@ def insert_parsed_claims_for_context(
     strict_domains = _claim_extraction_strict_seeded_domain_keys()
     strict_seeded = bool(context_domain_key and context_domain_key in strict_domains)
     cred_mult = max(0.0, min(1.0, float(cred_mult)))
-    api.shared.pg_savepoint import execute_with_savepoint
+    from api.shared.pg_savepoint import execute_with_savepoint
 
     try:
         with conn.cursor() as cur:
@@ -939,7 +939,7 @@ def insert_parsed_claims_for_context(
             skipped_unseeded,
         )
     try:
-        api.shared.pipeline_pass_marker import (
+        from api.shared.pipeline_pass_marker import (
             infer_claim_extraction_terminal,
             phase_backlog_uses_pass_marker,
             record_context_phase_pass,
@@ -998,10 +998,10 @@ async def extract_claims_for_context(context_id: int) -> int:
     min_tl = claim_extraction_min_text_len()
     if len(text) < min_tl:
         try:
-            api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_context_phase_pass
+            from api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_context_phase_pass
 
             if phase_backlog_uses_pass_marker("claim_extraction"):
-                api.shared.pipeline_pass_marker import TERMINAL_PROCESSED_EMPTY_LEGITIMATE
+                from api.shared.pipeline_pass_marker import TERMINAL_PROCESSED_EMPTY_LEGITIMATE
 
                 record_context_phase_pass(
                     context_id,
@@ -1041,7 +1041,7 @@ Keep each subject under ~80 characters when possible."""
         # Detect pressure errors (overload / circuit breaker / connect) so we
         # skip the retry counter — a transient spike should not burn retries.
         try:
-            api.shared.services.llm_service import is_ollama_pressure_error
+            from api.shared.services.llm_service import is_ollama_pressure_error
         except ImportError:
             is_ollama_pressure_error = lambda exc: False  # type: ignore[misc,assignment]
         if is_ollama_pressure_error(e):
@@ -1050,7 +1050,7 @@ Keep each subject under ~80 characters when possible."""
         # attempts. After MAX_RETRY_ATTEMPTS failures the context is marked processed to
         # break infinite retry loops when Ollama/LLM is down for a specific prompt pattern.
         try:
-            api.shared.pipeline_pass_marker import (
+            from api.shared.pipeline_pass_marker import (
                 TERMINAL_FAILED_NEEDS_RETRY,
                 record_context_phase_pass,
             )
@@ -1103,10 +1103,10 @@ Keep each subject under ~80 characters when possible."""
     )
     if not claims:
         try:
-            api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_context_phase_pass
+            from api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_context_phase_pass
 
             if phase_backlog_uses_pass_marker("claim_extraction"):
-                api.shared.pipeline_pass_marker import TERMINAL_PROCESSED_EMPTY_LEGITIMATE
+                from api.shared.pipeline_pass_marker import TERMINAL_PROCESSED_EMPTY_LEGITIMATE
 
                 record_context_phase_pass(
                     context_id,
@@ -1126,7 +1126,7 @@ Keep each subject under ~80 characters when possible."""
     skipped_unseeded = 0
     strict_domains = _claim_extraction_strict_seeded_domain_keys()
     strict_seeded = bool(context_domain_key and context_domain_key in strict_domains)
-    api.shared.pg_savepoint import execute_with_savepoint
+    from api.shared.pg_savepoint import execute_with_savepoint
 
     try:
         with conn.cursor() as cur:
@@ -1184,10 +1184,10 @@ Keep each subject under ~80 characters when possible."""
             strict_seeded,
         )
     try:
-        api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_context_phase_pass
+        from api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_context_phase_pass
 
         if phase_backlog_uses_pass_marker("claim_extraction"):
-            api.shared.pipeline_pass_marker import infer_claim_extraction_terminal
+            from api.shared.pipeline_pass_marker import infer_claim_extraction_terminal
 
             terminal, outcome = infer_claim_extraction_terminal(
                 inserted=inserted,
@@ -1413,7 +1413,7 @@ def _persist_claim_extraction_batch_run(
         # Do not spam Monitor with idle drain ticks (contexts_processed=0).
         if int(contexts_processed or 0) <= 0 and int(claims_inserted or 0) <= 0:
             return
-        api.shared.services.phase_batch_run_history import record_phase_batch_completion
+        from api.shared.services.phase_batch_run_history import record_phase_batch_completion
 
         rows = int(claims_inserted or contexts_processed or 0)
         record_phase_batch_completion(
@@ -1445,7 +1445,7 @@ def _automation_claim_batch_limit() -> int | None:
         return None
     default = max(1, n)
     try:
-        api.shared.adaptive_batch_policy import resolve_adaptive_batch
+        from api.shared.adaptive_batch_policy import resolve_adaptive_batch
 
         tuned, _meta = resolve_adaptive_batch("claim_extraction", default)
         return max(1, int(tuned))
@@ -1468,7 +1468,7 @@ async def drain_claim_extraction_for_automation_task(
     Returns (total_claims_inserted, batch_count).
     """
     try:
-        api.shared.article_signal_gate import (
+        from api.shared.article_signal_gate import (
             article_signal_enabled,
             defer_signal_light_claim_contexts_batch,
         )
