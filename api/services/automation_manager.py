@@ -1488,7 +1488,7 @@ class AutomationManager:
             },
             # Hard-retired: editorial_document_generation, editorial_briefing_generation,
             # digest_generation, daily_briefing_synthesis — package projection + morning
-            # briefing manager replace them (see shared.retired_phase_registry).
+            # briefing manager replace them (see shared.automation.phase_suppression).
             # Auto storyline synthesis (Wikipedia-style articles)
             "storyline_synthesis": {
                 "interval": 3600,  # 60 minutes
@@ -1634,11 +1634,40 @@ class AutomationManager:
 
         self._apply_automation_disabled_schedules()
         try:
-            from api.shared.retired_phase_registry import apply_retired_schedule_suppression
+            from api.shared.automation.phase_suppression import (
+                apply_retired_schedule_suppression,
+            )
 
             apply_retired_schedule_suppression(self.schedules)
         except Exception as e:
             logger.warning("apply_retired_schedule_suppression failed: %s", e)
+
+        # ── Auto-wire _EXECUTORS from PHASE_REGISTRY (item 2: wiring) ──────────────
+        self._EXECUTORS: dict[str, Any] = {}
+        try:
+            from services.automation.phase_constants import PHASE_REGISTRY
+
+            for phase in PHASE_REGISTRY:
+                handler_name = f"_execute_{phase.name}"
+                if hasattr(self, handler_name):
+                    self._EXECUTORS[phase.name] = getattr(self, handler_name)
+                else:
+                    logger.debug(
+                        "No handler on %s for phase '%s' — will use dispatch_phase fallback",
+                        type(self).__name__,
+                        phase.name,
+                    )
+
+            if len(self._EXECUTORS) != len(PHASE_REGISTRY):
+                missing = {p.name for p in PHASE_REGISTRY} - set(self._EXECUTORS.keys())
+                logger.info(
+                    "_EXECUTORS wired: %d/%d phases (missing handlers → dispatch_phase fallback: %s)",
+                    len(self._EXECUTORS),
+                    len(PHASE_REGISTRY),
+                    missing,
+                )
+        except Exception as e:
+            logger.exception("Auto-wire _EXECUTORS failed: %s", e)
 
         # Performance metrics
         self.metrics = {
@@ -3587,7 +3616,9 @@ class AutomationManager:
         task.metadata = task.metadata or {}
         heavy_inflight_held = False
         try:
-            from api.shared.retired_phase_registry import is_hard_retired_schedule_phase
+            from api.shared.automation.phase_suppression import (
+                is_hard_retired_schedule_phase,
+            )
 
             if is_hard_retired_schedule_phase(task.name):
                 from api.shared.legacy_editorial_rollback import legacy_editorial_writers_enabled
@@ -3863,139 +3894,18 @@ class AutomationManager:
                 self._collection_cycle_started_at = task.started_at
                 asyncio.create_task(self._run_collection_watchdog(task.started_at))
                 await self._execute_collection_cycle(task)
-            elif task.name == "document_processing":
-                await self._execute_document_processing(task)
-            elif task.name == "research_paper_profiling":
-                await self._execute_research_paper_profiling(task)
-            elif task.name == "claim_evidence_appraisal":
-                await self._execute_claim_evidence_appraisal(task)
-            elif task.name == "storyline_synthesis":
-                await self._execute_storyline_synthesis(task)
-            elif task.name == "daily_briefing_synthesis":
-                await self._execute_daily_briefing_synthesis(task)
-            elif task.name == "nightly_enrichment_context":
-                await self._execute_nightly_enrichment_context(task)
-            elif task.name == "content_enrichment":
-                await self._execute_content_enrichment(task)
-            elif task.name == "context_sync":
-                await self._execute_context_sync(task)
-            elif task.name == "entity_profile_sync":
-                await self._execute_entity_profile_sync(task)
-            elif task.name == "claim_extraction":
-                await self._execute_claim_extraction(task)
-            elif task.name == "legislative_references":
-                await self._execute_legislative_references(task)
-            elif task.name == "claims_to_facts":
-                await self._execute_claims_to_facts(task)
-            elif task.name == "claim_subject_gap_refresh":
-                await self._execute_claim_subject_gap_refresh(task)
-            elif task.name == "extracted_claims_dedupe":
-                await self._execute_extracted_claims_dedupe(task)
-            elif task.name == "event_tracking":
-                await self._execute_event_tracking(task)
-            elif task.name == "investigation_report_refresh":
-                await self._execute_investigation_report_refresh(task)
-            elif task.name == "cross_domain_synthesis":
-                await self._execute_cross_domain_synthesis(task)
-            elif task.name == "event_coherence_review":
-                await self._execute_event_coherence_review(task)
-            elif task.name == "entity_profile_build":
-                await self._execute_entity_profile_build(task)
-            elif task.name == "pattern_recognition":
-                await self._execute_pattern_recognition(task)
-            elif task.name == "embeddings_worker":
-                await self._execute_embeddings_worker(task)
-            elif task.name == "macro_series_refresh":
-                await self._execute_macro_series_refresh(task)
-            elif task.name == "external_events_sync":
-                await self._execute_external_events_sync(task)
-            elif task.name == "sanctions_refresh":
-                await self._execute_sanctions_refresh(task)
-            elif task.name == "quiver_collector":
-                await self._execute_quiver_collector(task)
-            elif task.name == "arc_report_generation":
-                await self._execute_arc_report_generation(task)
-            elif task.name == "longitudinal_matview_refresh":
-                await self._execute_longitudinal_matview_refresh(task)
-            elif task.name == "entity_dossier_compile":
-                await self._execute_entity_dossier_compile(task)
-            elif task.name == "entity_position_tracker":
-                await self._execute_entity_position_tracker(task)
-            elif task.name == "metadata_enrichment":
-                await self._execute_metadata_enrichment(task)
-            elif task.name == "entity_organizer":
-                await self._execute_entity_organizer(task)
-            elif task.name == "graph_connection_distillation":
-                await self._execute_graph_connection_distillation(task)
-            elif task.name == "digest_generation":
-                await self._execute_digest_generation(task)
-            elif task.name == "data_cleanup":
-                await self._execute_data_cleanup(task)
             elif task.name == "health_check":
                 await self._execute_health_check(task)
-            elif task.name == "pending_db_flush":
-                await self._execute_pending_db_flush(task)
-            elif task.name == "rag_enhancement":
-                await self._execute_rag_enhancement(task)
-            elif task.name == "cache_cleanup":
-                await self._execute_cache_cleanup(task)
-            elif task.name == "ml_processing":
-                await self._execute_ml_processing(task)
-            elif task.name == "sentiment_analysis":
-                await self._execute_sentiment_analysis(task)
-            elif task.name == "storyline_processing":
-                await self._execute_storyline_processing(task)
-            elif task.name == "storyline_automation":
-                await self._execute_storyline_automation(task)
-            elif task.name == "storyline_enrichment":
-                await self._execute_storyline_enrichment(task)
-            elif task.name == "entity_extraction":
-                await self._execute_entity_extraction(task)
-            elif task.name == "quality_scoring":
-                await self._execute_quality_scoring(task)
-            elif task.name == "timeline_generation":
-                await self._execute_timeline_generation(task)
-            elif task.name == "topic_clustering":
-                await self._execute_topic_clustering(task)
-            elif task.name == "event_extraction":
-                await self._execute_event_extraction_v5(task)
-            elif task.name == "event_deduplication":
-                await self._execute_event_deduplication_v5(task)
-            elif task.name == "story_continuation":
-                await self._execute_story_continuation_v5(task)
-            elif task.name == "watchlist_alerts":
-                await self._execute_watchlist_alerts_v5(task)
-            elif task.name == "storyline_review_agent":
-                await self._execute_storyline_review_agent(task)
-            elif task.name == "story_enhancement":
-                await self._execute_story_enhancement(task)
-            elif task.name == "content_refinement_queue":
-                await self._execute_content_refinement_queue(task)
-            elif task.name == "entity_enrichment":
-                await self._execute_entity_enrichment(task)
-            elif task.name == "pattern_matching":
-                await self._execute_pattern_matching(task)
-            elif task.name == "research_topic_refinement":
-                await self._execute_research_topic_refinement(task)
-            elif task.name == "editorial_document_generation":
-                await self._execute_editorial_document_generation(task)
-            elif task.name == "editorial_briefing_generation":
-                await self._execute_editorial_briefing_generation(task)
-            elif task.name == "narrative_thread_build":
-                await self._execute_narrative_thread_build(task)
-            elif task.name == "storyline_discovery":
-                await self._execute_storyline_discovery(task)
-            elif task.name == "proactive_detection":
-                await self._execute_proactive_detection(task)
-            elif task.name == "storyline_assembly":
-                await self._execute_storyline_assembly(task)
-            elif task.name == "fact_verification":
-                await self._execute_fact_verification(task)
             else:
-                from services.automation.executor import dispatch_phase
+                # Auto-wired executors from PHASE_REGISTRY; fallback to dispatch_phase for unregistered
+                executor = self._EXECUTORS.get(task.name)
+                if executor is not None:
+                    await executor(task)
+                else:
+                    from services.automation.executor import dispatch_phase
 
-                if not await dispatch_phase(task):
-                    raise ValueError(f"Unknown task type: {task.name}")
+                    if not await dispatch_phase(task):
+                        raise ValueError(f"Unknown task type: {task.name}")
 
             # Mark as completed (or skipped if phase returned early with _was_skipped flag)
             _skipped = task.metadata.get("_was_skipped")

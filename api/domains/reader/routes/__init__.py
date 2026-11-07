@@ -9,7 +9,7 @@ from .vault_hubs import router as vault_hubs_router
 from .articles import router as articles_router
 from .research_subjects import router as research_subjects_router
 
-router = APIRouter(prefix="/api/reader", tags=["Reader"])
+router = APIRouter(prefix="/reader", tags=["Reader"])
 router.include_router(home_router)
 router.include_router(storylines_router)
 router.include_router(vault_notes_router)

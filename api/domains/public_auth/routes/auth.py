@@ -25,7 +25,7 @@ from api.shared.services.public_web_auth_service import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/public/auth", tags=["Public auth"])
+router = APIRouter(tags=["Public auth"])
 
 
 class LoginBody(BaseModel):

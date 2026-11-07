@@ -12,7 +12,7 @@ from fastapi import APIRouter, Body, Query, Request
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/orchestrator",
+    prefix="/orchestrator",
     tags=["Orchestrator"],
     responses={404: {"description": "Not found"}},
 )

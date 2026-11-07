@@ -16,7 +16,7 @@ from api.shared.services.llm_service import TaskType, llm_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/intelligence_hub",
+    prefix="/intelligence_hub",
     tags=["Intelligence Hub"],
     responses={404: {"description": "Not found"}},
 )

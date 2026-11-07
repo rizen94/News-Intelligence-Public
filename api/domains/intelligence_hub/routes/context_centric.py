@@ -40,7 +40,7 @@ def _json_safe(val: Any) -> Any:
     return val
 
 router = APIRouter(
-    prefix="/api",
+    prefix="/intelligence_hub",
     tags=["Context-centric (intelligence)"],
 )
 

@@ -28,6 +28,7 @@ from .connection import (
     get_database_config,
     get_db_config,
     get_db_connect_kwargs,
+    _init_pool,
 )
 
 from .db_availability import (

@@ -90,8 +90,9 @@ RAW_PENDING_COUNT_KEYS = frozenset(
         "metadata_enrichment",
         "ml_processing",
         "entity_extraction",
-        "sentiment_analysis",
-        "quality_scoring",
+        # Archived: output via unified_intake_extraction — backlog will stay 0
+        "sentiment_analysis",  # noqa: ERA001 — archived phase, kept for backward-compat
+        "quality_scoring",     # noqa: ERA001 — archived phase, kept for backward-compat
         "storyline_processing",
         "topic_clustering",
         "timeline_generation",

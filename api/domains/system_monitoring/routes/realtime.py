@@ -12,7 +12,7 @@ from services.realtime_urgent_service import get_streaming_status, process_urgen
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/realtime", tags=["Realtime / urgent ingest"])
+router = APIRouter(tags=["Realtime / urgent ingest"])
 
 
 @router.post("/process_urgent")

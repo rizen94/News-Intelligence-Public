@@ -17,7 +17,7 @@ from fastapi import APIRouter, Query
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/system_monitoring/pipeline_metrics",
+    prefix="/system_monitoring/pipeline_metrics",
     tags=["System Monitoring"],
 )
 

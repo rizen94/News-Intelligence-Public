@@ -874,7 +874,6 @@ app = FastAPI(
         "email": "support@news-intelligence.com",
     },
     license_info={"name": "MIT License", "url": "https://opensource.org/licenses/MIT"},
-    prefix="/api",
 )
 
 # Add request tracking and standardized API logging
@@ -886,7 +885,7 @@ def _request_timeout_seconds(request: Request) -> float:
     path = (request.url.path or "").rstrip("/")
     qs = str(request.url.query or "").lower()
     if path.endswith("/processing_progress"):
-        if "include_pending_metrics=true" in qs:
+        if "pending_metrics=true" in qs or "include_pending_metrics=true" in qs:
             return 300.0
         return 90.0
     if path.endswith("/backlog_status"):
@@ -1019,19 +1018,19 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-# Include domain routers
-app.include_router(public_auth_router)
-app.include_router(reader_router)
-app.include_router(news_aggregation_router)
-app.include_router(politics_router)
-app.include_router(content_analysis_router)
-app.include_router(storyline_management_router)
-app.include_router(intelligence_hub_router)
-# context_centric + report routes are included via intelligence_hub_router (domains/intelligence_hub/routes/__init__.py)
-app.include_router(finance_router)
-app.include_router(user_management_router)
-app.include_router(system_monitoring_router)
-# app.include_router(pipeline_monitoring_router)
+# Include domain routers with /api prefix applied uniformly via include_router
+app.include_router(public_auth_router, prefix="/api")
+app.include_router(reader_router, prefix="/api")
+app.include_router(news_aggregation_router, prefix="/api")
+app.include_router(politics_router, prefix="/api")
+app.include_router(content_analysis_router, prefix="/api")
+app.include_router(storyline_management_router, prefix="/api")
+app.include_router(intelligence_hub_router, prefix="/api")
+
+app.include_router(finance_router, prefix="/api")
+app.include_router(user_management_router, prefix="/api")
+app.include_router(system_monitoring_router, prefix="/api")
+# app.include_router(pipeline_monitoring_router, prefix="/api")
 
 @app.get("/public/demo_config")
 async def public_demo_config(request: Request):

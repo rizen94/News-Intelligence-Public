@@ -12,7 +12,7 @@ from api.shared.services.route_supervisor import get_route_supervisor
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/system_monitoring/route_supervisor",
+    prefix="/system_monitoring/route_supervisor",
     tags=["Route Supervisor"],
     responses={404: {"description": "Not found"}},
 )

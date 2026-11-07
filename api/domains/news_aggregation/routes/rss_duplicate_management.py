@@ -29,7 +29,7 @@ def _find_rss_feed_schema(conn, feed_id: int) -> str | None:
 from scripts.rss_duplicate_detector import RSSDuplicateDetector
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/rss_feeds", tags=["RSS Feed Duplicates"])
+router = APIRouter(tags=["RSS Feed Duplicates"])
 
 
 class DuplicateDetectionResponse(BaseModel):

@@ -1,7 +1,10 @@
 """NlpPipelineExecutor — handles NLP pipeline phases.
 
-Responsible for: entity_extraction, headline_analysis, sentiment_analysis,
-text_summarization (future).
+Responsible for: entity_extraction, headline_analysis, text_summarization (future).
+
+Note: sentiment_analysis and quality_scoring are archived — their output is
+now produced by unified_intake_extraction (fusion) and written directly to
+articles.sentiment_score / articles.quality_score.
 """
 
 from __future__ import annotations
@@ -33,7 +36,6 @@ class NlpPipelineExecutor:
         handlers = {
             "entity_extraction": self._execute_entity_extraction,
             "headline_analysis": self._execute_headline_analysis,
-            "sentiment_analysis": self._execute_sentiment_analysis,
             "text_summarization": self._execute_text_summarization,
         }
         handler = handlers.get(name)
@@ -83,23 +85,6 @@ class NlpPipelineExecutor:
         await self._run_enrichment_step(
             url=url,
             phase="headline_analysis",
-            params=self._params,
-            budget=120.0,  # 2 min default
-        )
-
-    async def _execute_sentiment_analysis(self) -> None:
-        """Perform sentiment analysis on content."""
-        url = self._params.get("url", "")
-        domain = self._params.get("domain", "finance")
-        logger.info("Sentiment analysis: domain=%s url=%s", domain, url)
-
-        if not url:
-            logger.warning("Sentiment analysis: no URL provided")
-            return
-
-        await self._run_enrichment_step(
-            url=url,
-            phase="sentiment_analysis",
             params=self._params,
             budget=120.0,  # 2 min default
         )

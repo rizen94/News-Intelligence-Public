@@ -33,7 +33,7 @@ from api.shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING,
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api", tags=["Content Analysis"], responses={404: {"description": "Not found"}}
+    prefix="/content_analysis", tags=["Content Analysis"], responses={404: {"description": "Not found"}}
 )
 
 

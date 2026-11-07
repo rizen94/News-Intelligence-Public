@@ -53,11 +53,7 @@ _logged_nightly_all_day: bool = False
 
 # Default allowlist when ``NIGHTLY_INGEST_ALLOW`` is unset: ingest + extraction + ML/entity paths that feed them.
 _DEFAULT_NIGHTLY_INGEST_ALLOW = (
-    "nightly_enrichment_context,content_enrichment,health_check,pending_db_flush,collection_cycle,"
-    "claim_extraction,legislative_references,claims_to_facts,claim_subject_gap_refresh,extracted_claims_dedupe,"
-    "event_tracking,topic_clustering,quality_scoring,sentiment_analysis,"
-    "entity_profile_sync,entity_extraction,ml_processing,metadata_enrichment,"
-    "event_extraction,event_deduplication"
+    "nightly_enrichment_context,content_enrichment,health_check,pending_db_flush,collection_cycle,claim_extraction,legislative_references,claims_to_facts,claim_subject_gap_refresh,extracted_claims_dedupe,event_tracking,topic_clustering,entity_profile_sync,entity_extraction,ml_processing,metadata_enrichment,event_extraction,event_deduplication"
 )
 
 
@@ -91,9 +87,8 @@ DEFAULT_NIGHTLY_SEQUENTIAL_PHASES: tuple[str, ...] = (
     "topic_clustering",
     "metadata_enrichment",
     "ml_processing",
+    # quality_scoring / sentiment_analysis — archived, output via unified_intake_extraction (fusion)
     "document_processing",
-    "sentiment_analysis",
-    "quality_scoring",
     "investigation_report_refresh",
     "entity_profile_build",
     "pattern_recognition",

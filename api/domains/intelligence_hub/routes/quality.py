@@ -15,7 +15,7 @@ from services.quality_feedback_service import (
     submit_source_feedback,
 )
 
-router = APIRouter(prefix="/api", tags=["Quality (feedback & source reliability)"])
+router = APIRouter(tags=["Quality (feedback & source reliability)"])
 
 
 @router.post("/quality/claim_feedback")

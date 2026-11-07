@@ -19,7 +19,7 @@ from api.shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING,
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api", tags=["Topic Extraction Queue"], responses={404: {"description": "Not found"}}
+    prefix="/topic_extraction_queue", tags=["Topic Extraction Queue"], responses={404: {"description": "Not found"}}
 )
 
 # Global worker instances (one per domain)

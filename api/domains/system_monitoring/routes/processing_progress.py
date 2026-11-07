@@ -63,7 +63,7 @@ def _json_safe_float(value: Any, *, ndigits: int = 1) -> float | None:
 def compute_processing_progress_response(
     *,
     include_hourly_tick_rows: bool = False,
-    include_pending_metrics: bool = False,
+    pending_metrics: bool = False,
 ) -> dict[str, Any]:
     """
     Build JSON for GET /api/system_monitoring/processing_progress.
@@ -72,7 +72,7 @@ def compute_processing_progress_response(
     hourly bucket rows; set ``hourly_phase_tick_bucket_count`` via a single COUNT query
     so the Monitor page stays light on JSON size and encoding time.
 
-    ``include_pending_metrics``: when False, skip ``backlog_metrics`` (dozens of heavy
+    ``pending_metrics``: when False, skip ``backlog_metrics`` (dozens of heavy
     COUNT queries). Phases still show run/pass history from ``automation_run_history``;
     ``pending_records`` / ``batches_to_drain`` are 0/zeroed. Use for Monitor + reverse
     proxies with ~60s read timeouts; full queues remain on ``GET .../backlog_status``.
@@ -491,7 +491,7 @@ def compute_processing_progress_response(
     except Exception as e:
         logger.debug("processing_progress batch size helper: %s", e)
 
-    if include_pending_metrics:
+    if pending_metrics:
         # Pre-check pool pressure BEFORE acquiring any connections.  The pending/backlog
         # section fires ~42 COUNT queries per call (two calls × phase keys).  If the UI pool
         # is already under load, skip this block entirely to avoid adding waiters behind other
@@ -586,7 +586,7 @@ def compute_processing_progress_response(
             row["batches_to_drain"] = int(math.ceil(pend / bsize))
         else:
             row["batches_to_drain"] = None
-        # Filled below when include_pending_metrics (value tiers / contracts).
+        # Filled below when pending_metrics (value tiers / contracts).
         row["pending_value_tiers"] = None
         phase_dashboard.append(row)
 
@@ -645,7 +645,7 @@ def compute_processing_progress_response(
 
     operator_metrics: dict[str, Any] = {}
     backlog_measurement: dict[str, Any] | None = None
-    if include_pending_metrics:
+    if pending_metrics:
         try:
             from services.backlog_metrics import (
                 get_storyline_review_queue_pending,
@@ -697,7 +697,7 @@ def compute_processing_progress_response(
         "data": {
             "generated_at_utc": now_iso,
             "workload_window_days_note": _BACKLOG_WORKLOAD_WINDOW_DAYS,
-            "pending_metrics_included": include_pending_metrics,
+            "pending_metrics_included": pending_metrics,
             "pending_metrics_merge_error": pending_metrics_merge_error,
             "operator_metrics": operator_metrics,
             "backlog_measurement": backlog_measurement,

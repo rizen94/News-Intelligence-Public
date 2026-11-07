@@ -29,7 +29,8 @@ class PipelineStage(Enum):
     EARLY_QUALITY_GATE = "early_quality_gate"
     ML_SUMMARIZATION = "ml_summarization"
     STORY_CLASSIFICATION = "story_classification"
-    SENTIMENT_ANALYSIS = "sentiment_analysis"
+    # Archived: sentiment analysis now via unified_intake_extraction (fusion)
+    SENTIMENT_ANALYSIS = "sentiment_analysis"  # noqa: ERA001 — kept for backward-compat logging keys
     ENTITY_EXTRACTION = "entity_extraction"
     RAG_ENHANCEMENT = "rag_enhancement"
     MULTI_PERSPECTIVE_ANALYSIS = "multi_perspective_analysis"

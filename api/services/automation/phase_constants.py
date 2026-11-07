@@ -9,6 +9,7 @@ from this module when possible.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import os
 
 # Phases that stay continuously queued (never auto-evicted from queue).
@@ -30,9 +31,6 @@ BATCH_PHASES_CONTINUOUS = {
     "story_enhancement",
     "storyline_discovery",
     "storyline_assembly",
-    # Scientific paper pathway - pick up as soon as CPU slots free (not interval flip)
-    "research_paper_profiling",
-    "claim_evidence_appraisal",
 }
 
 # When these phases have pending >= AUTOMATION_BACKLOG_SEVERE_THRESHOLD, claim_extraction
@@ -222,3 +220,29 @@ _AUTOMATION_DISABLE_DYNAMIC_TASK_SCALING = os.environ.get(
 
 # Collection-cycle watchdog: 60 min after cycle starts, check if any phase should be added to the queue.
 WATCHDOG_SECONDS = int(os.environ.get("COLLECTION_PHASE_WATCHDOG_SECONDS", "3600"))
+
+
+# ──────────────────────────────────────────────
+# PhaseConfig / PHASE_REGISTRY — auto-wired executors
+# ──────────────────────────────────────────────
+
+@dataclass(frozen=True, slots=True)
+class PhaseConfig:
+    """Immutable description of a single automation phase.
+
+    * ``name`` — matches ``task.name`` in AutomationManager dispatch.
+    * ``estimated_duration`` — seconds; also the default queue interval when
+      no explicit schedule entry exists (see ``self.schedules``).
+    """
+    name: str
+    estimated_duration: int
+
+
+# Derive from PHASE_ESTIMATED_DURATION_SECONDS so there's a single source of truth.
+PHASE_REGISTRY: tuple[PhaseConfig, ...] = tuple(
+    PhaseConfig(name=name, estimated_duration=dur)
+    for name, dur in PHASE_ESTIMATED_DURATION_SECONDS.items()
+)
+
+# Convenience access: name → PhaseConfig
+PHASE_CONFIG_MAP: dict[str, PhaseConfig] = {pc.name: pc for pc in PHASE_REGISTRY}

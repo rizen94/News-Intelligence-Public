@@ -18,7 +18,7 @@ from api.shared.database import get_db_connect_kwargs
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/system_monitoring/sql_explorer", tags=["System Monitoring"])
+router = APIRouter(tags=["System Monitoring"])
 
 _MAX_SQL_CHARS = 20_000
 _MAX_ROWS_CAP = 2000

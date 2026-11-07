@@ -84,7 +84,7 @@ def _build_llm_lead_prompt(key_developments: dict[str, Any], domain: str) -> str
     return "\n\n".join(parts) if parts else ""
 
 
-router = APIRouter(prefix="/api", tags=["Intelligence products"])
+router = APIRouter(tags=["Intelligence products"])
 
 
 def _brief_to_content(brief: dict[str, Any]) -> str:

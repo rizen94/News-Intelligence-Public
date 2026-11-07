@@ -20,7 +20,7 @@ from api.shared.services.domain_aware_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api", tags=["Topic Management"], responses={404: {"description": "Not found"}}
+    prefix="/topic_management", tags=["Topic Management"], responses={404: {"description": "Not found"}}
 )
 
 # Database configuration (should match your setup)

@@ -19,7 +19,7 @@ from api.shared.services.public_web_auth_service import hash_password
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/user_management",
+    prefix="",
     tags=["User Management"],
     responses={404: {"description": "Not found"}},
     dependencies=[Depends(require_public_web_admin)],

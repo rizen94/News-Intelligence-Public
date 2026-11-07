@@ -226,8 +226,6 @@ _CATCHUP_DRIVER_PHASES: frozenset[str] = frozenset(
         "stimulus_rag",
         "protein_harden",
         "ml_processing",
-        "sentiment_analysis",
-        "quality_scoring",
         "metadata_enrichment",
     }
 )

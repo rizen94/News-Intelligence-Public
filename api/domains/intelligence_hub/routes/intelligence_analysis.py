@@ -22,7 +22,7 @@ from api.shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schem
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api",
+    prefix="/intelligence_hub",
     tags=["Intelligence Analysis"],
 )
 

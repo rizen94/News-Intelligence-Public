@@ -25,7 +25,6 @@ PERMITTED_SCHEMA_NAMES: frozenset[str] = frozenset(
     {
         "politics",
         "finance",
-        "general_news",
         "intelligence",
         "artificial_intelligence",
         "legal",

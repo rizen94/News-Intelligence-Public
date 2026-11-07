@@ -13,7 +13,7 @@ from api.shared.services.response_cache import cached_response_sync
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/system_monitoring",
+    prefix="/system_monitoring",
     tags=["System Monitoring"],
 )
 

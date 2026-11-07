@@ -45,7 +45,7 @@ from services.wikidata_review_service import list_entities_missing_wikidata_qid
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/intelligence", tags=["Longitudinal Intelligence"])
+router = APIRouter(tags=["Longitudinal Intelligence"])
 
 
 class GenerateReportRequest(BaseModel):

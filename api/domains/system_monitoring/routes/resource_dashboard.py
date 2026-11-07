@@ -69,7 +69,7 @@ def _blend_throughput_per_hour(
 DEFAULT_SSH_TIMEOUT_SECONDS = 12
 
 router = APIRouter(
-    prefix="/api/system_monitoring",
+    prefix="/system_monitoring",
     tags=["System Monitoring - Resource Dashboard"],
 )
 
@@ -1594,13 +1594,13 @@ def get_gpu_metric_history(
 def _build_processing_progress_response(
     *,
     include_hourly_tick_rows: bool,
-    include_pending_metrics: bool,
+    pending_metrics: bool,
 ) -> dict[str, Any]:
     from .processing_progress import compute_processing_progress_response
 
     out = compute_processing_progress_response(
         include_hourly_tick_rows=include_hourly_tick_rows,
-        include_pending_metrics=include_pending_metrics,
+        pending_metrics=pending_metrics,
     )
     if out.get("success") and isinstance(out.get("data"), dict):
         out["data"]["workload_window_days_note"] = BACKLOG_WORKLOAD_WINDOW_DAYS
@@ -1617,8 +1617,9 @@ def get_processing_progress(
             "Default false: only hourly_phase_tick_bucket_count is set (Monitor-friendly)."
         ),
     ),
-    include_pending_metrics: bool = Query(
+    pending_metrics: bool = Query(
         False,
+        alias="include_pending_metrics",
         description=(
             "When false (default), omit backlog_metrics (heavy per-phase DB counts). "
             "Throughput + run history remain; use backlog_status for full queues. "
@@ -1634,7 +1635,7 @@ def get_processing_progress(
     try:
         return _build_processing_progress_response(
             include_hourly_tick_rows=include_hourly_tick_rows,
-            include_pending_metrics=include_pending_metrics,
+            pending_metrics=pending_metrics,
         )
     except Exception as e:
         logger.exception("processing_progress route failed: %s", e)

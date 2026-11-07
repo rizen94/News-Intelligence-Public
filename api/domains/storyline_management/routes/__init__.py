@@ -34,7 +34,7 @@ from .storyline_timeline import router as timeline_router
 from .storyline_watchlist import router as watchlist_router
 
 # Create main router
-router = APIRouter(prefix="/api", tags=["Storyline Management"])
+router = APIRouter(tags=["Storyline Management"])
 
 # Include all sub-routers (discovery/consolidation/automation first for route ordering)
 router.include_router(assembly_router)

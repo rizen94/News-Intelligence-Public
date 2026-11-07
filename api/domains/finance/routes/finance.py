@@ -81,7 +81,7 @@ def _get_recent_finance_articles(
         return []
 
 
-router = APIRouter(prefix="/api", tags=["Finance"], responses={404: {"description": "Not found"}})
+router = APIRouter(tags=["Finance"], responses={404: {"description": "Not found"}})
 
 
 def _check_domain(domain: str) -> None:

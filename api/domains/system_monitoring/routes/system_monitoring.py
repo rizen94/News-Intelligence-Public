@@ -62,7 +62,7 @@ except ImportError as e:
     FILTERING_AVAILABLE = False
 
 router = APIRouter(
-    prefix="/api/system_monitoring",
+    prefix="/system_monitoring",
     tags=["System Monitoring"],
     responses={404: {"description": "Not found"}},
 )
@@ -79,6 +79,26 @@ def _registry_silo_schemas() -> list[str]:
     # DB unavailable or empty: prefer active registry silos (template era), not legacy three.
     fallback = list(get_schema_names_active())
     return fallback if fallback else ["politics", "finance"]
+
+
+def _silo_has_table(siloes: list[str], table_name: str, conn) -> list[str]:
+    """Return only silos from *siloes* that actually contain *table_name*.
+
+    Uses a single round-trip UNIONS query rather than one per silo.
+    """
+    if not siloes:
+        return []
+    conditions = " UNION ALL ".join(
+        f"SELECT '{s}' AS s WHERE EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = '{s}' AND table_name = '{table_name}')"
+        for s in siloes
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT DISTINCT s FROM ({conditions}) q")
+            return [row[0] for row in cur.fetchall()]
+    except Exception:
+        # Fallback: assume all silos have the table (legacy behavior)
+        return list(siloes)
 
 
 def _check_frontend_once() -> dict[str, Any]:
@@ -929,6 +949,64 @@ async def get_startup_readiness(request: Request):
     return JSONResponse(content={"success": True, **payload}, status_code=status_code)
 
 
+@router.get("/restart_metrics")
+async def get_restart_metrics() -> dict[str, Any]:
+    """Recent API restart timing metrics.
+
+    Reads the watchdog-managed JSON file and returns per-restart data:
+    restart_start, restart_ready, duration_sec, attempts, status, reason, timestamp.
+    """
+    from api.shared.services.restart_metrics_reader import get_restart_metrics
+
+    try:
+        metrics = get_restart_metrics(count=50)
+        return {
+            "success": True,
+            "restart_metrics": metrics,
+            "count": len(metrics),
+        }
+    except Exception as e:
+        logger.warning("restart_metrics read failed: %s", e)
+        return {
+            "success": False,
+            "error": str(e)[:200],
+            "restart_metrics": [],
+            "count": 0,
+        }
+
+
+@router.get("/restart_metrics/summary")
+async def get_restart_metrics_summary() -> dict[str, Any]:
+    """Summary statistics for API restart downtime.
+
+    Returns total_restarts, avg/max/min duration_sec, last status,
+    and an estimated uptime percentage.
+    """
+    from api.shared.services.restart_metrics_reader import get_restart_summary
+
+    try:
+        summary = get_restart_summary()
+        return {
+            "success": True,
+            "summary": summary,
+        }
+    except Exception as e:
+        logger.warning("restart_metrics summary read failed: %s", e)
+        return {
+            "success": False,
+            "error": str(e)[:200],
+            "summary": {
+                "total_restarts": 0,
+                "avg_duration_sec": 0,
+                "max_duration_sec": 0,
+                "min_duration_sec": 999,
+                "last_status": None,
+                "uptime_percent": None,
+                "recent_history": [],
+            },
+        }
+
+
 @router.get("/automation/status")
 async def get_automation_status(request: Request) -> dict[str, Any]:
     """
@@ -1052,12 +1130,12 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
             "metadata_enrichment",
         ):
             STAGE_BY_TASK[t] = "Foundation"
+        # Archived phases — no longer independent pipeline steps.
+        # Output now produced by unified_intake_extraction (fusion).
         for t in (
             "claim_extraction",
             "event_tracking",
             "topic_clustering",
-            "quality_scoring",
-            "sentiment_analysis",
         ):
             STAGE_BY_TASK[t] = "Extraction"
         for t in (
@@ -2131,8 +2209,14 @@ def get_system_status():
                     week_ago = datetime.now() - timedelta(days=7)
                     sch_list = _registry_silo_schemas()
                     n = len(sch_list)
+                    # Some silos may lack storylines; filter them out so the query doesn't fail.
+                    story_silos = _silo_has_table(sch_list, "storylines", conn)
                     sub_art = " + ".join(f"(SELECT COUNT(*) FROM {s}.articles)" for s in sch_list)
-                    sub_story = " + ".join(f"(SELECT COUNT(*) FROM {s}.storylines)" for s in sch_list)
+                    sub_story = (
+                        " + ".join(f"(SELECT COUNT(*) FROM {s}.storylines)" for s in story_silos)
+                        if story_silos
+                        else "0"
+                    )
                     sub_feeds = " + ".join(
                         f"(SELECT COUNT(*) FROM {s}.rss_feeds WHERE is_active = true)"
                         for s in sch_list
@@ -2284,8 +2368,14 @@ def get_dashboard_metrics():
                 week_ago = datetime.now() - timedelta(days=7)
                 sch_list = _registry_silo_schemas()
                 n = len(sch_list)
+                # Some silos may lack storylines; filter them out so the query doesn't fail.
+                story_silos = _silo_has_table(sch_list, "storylines", conn)
                 sub_art = " + ".join(f"(SELECT COUNT(*) FROM {s}.articles)" for s in sch_list)
-                sub_story = " + ".join(f"(SELECT COUNT(*) FROM {s}.storylines)" for s in sch_list)
+                sub_story = (
+                    " + ".join(f"(SELECT COUNT(*) FROM {s}.storylines)" for s in story_silos)
+                    if story_silos
+                    else "0"
+                )
                 sub_feeds_all = " + ".join(f"(SELECT COUNT(*) FROM {s}.rss_feeds)" for s in sch_list)
                 sub_feeds_act = " + ".join(
                     f"(SELECT COUNT(*) FROM {s}.rss_feeds WHERE is_active = true)" for s in sch_list

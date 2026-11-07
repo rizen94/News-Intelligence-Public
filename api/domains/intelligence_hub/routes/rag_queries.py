@@ -21,7 +21,7 @@ from api.shared.domain_registry import DOMAIN_PATH_PATTERN, get_active_domain_ke
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", tags=["RAG Queries"])
+router = APIRouter(tags=["RAG Queries"])
 
 
 # =============================================================================

@@ -216,6 +216,32 @@ entity_dossier_compile:
   flags:
     yaml: context_centric.tasks.entity_dossier_compile
 
+
+
+entity_organizer:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  phase_name: entity_organizer
+  modules: [api/services/entity_organizer_service.py, api/services/link_indexer_service.py]
+  flags:
+    env: ENTITY_ORGANIZER_ENABLED
+  notes: >
+    Entity resolution via link_indexer co-mention edges. Schedule-driven at interval (see
+    automation_manager.py) and also invoked by consolidation_scheduler / nightly_idle paths.
+
+entity_position_tracker:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  phase_name: entity_position_tracker
+  modules: [api/services/entity_position_tracker_service.py]
+  flags:
+    env: ENTITY_POSITION_TRACKER_ENABLED
+  notes: >
+    Tracks entity stances, votes, and policy positions across articles into entity_positions.
+    Depends on entity_profile_sync; runs every 2 hours with interval-schedule.
+
 pattern_recognition:
   lifecycle: archived
   enabled: false
@@ -232,6 +258,22 @@ arc_report_generation:
   phase_name: arc_report_generation
   notes: >
     Hard-retired from schedules (longitudinal table empty). Do not re-add schedule.
+
+
+
+research_topic_refinement:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  phase_name: research_topic_refinement
+  modules: [api/services/automation_manager.py]
+  flags:
+    env: RESEARCH_TOPIC_REFINEMENT_ENABLED
+  idle_only: true
+  notes: >
+    Idle-only: picks one finance research topic and submits refinement at low priority.
+    Requires a configured finance orchestrator getter. Runs every hour when no data-load phase
+    has recently run.
 
 longitudinal_matview_refresh:
   lifecycle: archived
@@ -598,6 +640,20 @@ editorial_room_investigation_round:
     Headless draft_investigation → 20_Investigations/. Writer archived; shim no-ops
     unless LEGACY_EDITORIAL_WRITERS_ENABLED / EDITORIAL_ROOM_LOOP_ENABLED.
 
+
+
+data_cleanup:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "10.1.0"
+  phase_name: data_cleanup
+  modules: [api/services/automation_manager.py, api/services/intelligence_cleanup_controller.py]
+  flags:
+    env: DATA_CLEANUP_ENABLED
+  notes: >
+    Daily archival cleanup of articles older than 30 days + stale article-to-context bridges.
+    Also calls IntelligenceCleanupController for intelligence-layer pruning. Low priority, phase 99.
+
 phase_auto_silence:
   lifecycle: incorporated
   enabled: true
@@ -877,6 +933,19 @@ storyline_dual_centroid:
     Trailing-window centroid alongside full history for matching (C8).
     Default off (STORYLINE_DUAL_CENTROID_ENABLED=false).
 
+
+story_continuation:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "12.4.0"
+  phase_name: story_continuation
+  modules: [api/services/story_continuation_service.py]
+  flags:
+    env: STORY_CONTINUATION_ENABLED
+  notes: >
+    Matches incoming articles to existing storylines for continuity updates. Depends on
+    event_deduplication; runs every 10 minutes with interval-schedule. Backlog-driven from UIE.
+
 trading_signal_outcomes:
   lifecycle: staged
   enabled: false
@@ -893,6 +962,20 @@ entity_position_versioned_facts:
   modules: [api/services/entity_position_tracker_service.py]
   notes: >
     Mirror entity_positions into versioned_facts when profile resolvable (A9 deepen).
+
+
+
+cache_cleanup:
+  lifecycle: incorporated
+  enabled: true
+  introduced_in: "12.4.0"
+  phase_name: cache_cleanup
+  modules: [api/services/automation_manager.py, api/services/smart_cache_service.py]
+  flags:
+    env: CACHE_CLEANUP_ENABLED
+  notes: >
+    Hourly cleanup of expired SmartCache entries. Prevents unbounded cache growth. Low priority,
+    phase 10.
 
 # --- Phase 1 public-data collectors (Narrative Enhancement) ---
 # Enable via FEATURE_OVERRIDE_<KEY>=true or env *_COLLECTOR_ENABLED=true.

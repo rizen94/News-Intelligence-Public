@@ -13,7 +13,12 @@ _ai_service: Any = None
 
 
 def get_ai_service() -> "AIProcessingAdapter":
-    """Return the singleton adapter used by entity_extraction, sentiment_analysis, quality_scoring."""
+    """Return the singleton adapter used by entity_extraction.
+
+    Note: sentiment_analysis / quality_scoring are archived — their output
+    is now produced by unified_intake_extraction (fusion). This adapter remains
+    for entity_extraction and other active consumers.
+    """
     global _ai_service
     if _ai_service is None:
         _ai_service = AIProcessingAdapter()

@@ -16,7 +16,7 @@ from api.shared.domain_registry import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", tags=["Report"])
+router = APIRouter(tags=["Report"])
 
 # `tracked_events.domain_keys` may use URL keys, legacy `schema_name`, or mixed forms — normalize via registry.
 

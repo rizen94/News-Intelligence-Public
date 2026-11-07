@@ -14,7 +14,7 @@ from api.shared.database import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/system_monitoring", tags=["System Monitoring"])
+router = APIRouter(tags=["System Monitoring"])
 
 
 class MLQueueRequest(BaseModel):
@@ -208,14 +208,15 @@ async def ml_queue_article(body: MLQueueRequest) -> dict[str, Any]:
 
 @router.get("/feedback_loop/status")
 async def feedback_loop_status() -> dict[str, Any]:
-    """Deprecated — use Monitor → Processing progress (include_pending_metrics) for pipeline health."""
+    """Deprecated — use Monitor → Processing progress (pending_metrics) for pipeline health."""
     return {
         "success": True,
         "running": False,
         "deprecated": True,
         "message": (
             "Feedback loop UI is legacy. Pipeline enrichment runs via AutomationManager; "
-            "see GET /api/system_monitoring/processing_progress?include_pending_metrics=true."
+            "see GET /api/system_monitoring/processing_progress?pending_metrics=true "
+            "(also accepts ?include_pending_metrics=true for backwards compat)."
         ),
     }
 
@@ -242,8 +243,8 @@ async def feedback_loop_stop() -> dict[str, Any]:
 
 @router.post("/ai-analysis/run")
 async def ai_analysis_run() -> dict[str, Any]:
-    """On-demand sentiment batch placeholder — use Monitor → Trigger pipeline for phases."""
+    """On-demand sentiment batch placeholder — DEPRECATED: archived (sentiment/output now via unified_intake_extraction)."""
     return {
-        "success": True,
-        "message": "Use Monitor → Trigger pipeline to run sentiment_analysis (automation phase).",
+        "success": False,
+        "message": "Sentiment analysis and quality scoring are archived — output now produced by unified_intake_extraction. Do not trigger this endpoint.",
     }

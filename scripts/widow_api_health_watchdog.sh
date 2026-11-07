@@ -5,6 +5,9 @@
 # On 2 consecutive health failures (5s curl timeout):
 #   stop secondary → restart (or SIGKILL) API → wait healthy → start secondary
 # 30-minute cooldown after a recovery to avoid flap.
+#
+# Metrics: records per-restart timing to /run/news-intelligence/api_restart_metrics.json
+# using scripts/api_restart_metrics.sh for structured observability.
 
 set -euo pipefail
 
@@ -66,7 +69,32 @@ _wait_health() {
   return 1
 }
 
+# --- Metrics helpers ---
+_METRICS_SCRIPT="${SCRIPTS_DIR:-$(cd "$(dirname "$0")" && pwd)}api_restart_metrics.sh"
+
+_record_start() {
+  if [[ -x "$_METRICS_SCRIPT" ]]; then
+    bash "$_METRICS_SCRIPT" record-start 2>/dev/null || true
+  fi
+}
+
+_record_ready_ok() {
+  local duration=${1:-0}
+  if [[ -x "$_METRICS_SCRIPT" ]]; then
+    bash "$_METRICS_SCRIPT" record-ready 2>/dev/null || true
+  fi
+}
+
+_record_ready_fail() {
+  local reason="${1:-unknown}"
+  log "RECOVERY: recording failed restart (reason=$reason)"
+}
+
+# --- Recovery function (with metrics integration) ---
 _recycle_api() {
+  # Step 1: Record when we START the recovery process (beginning of downtime)
+  _record_start
+
   log "RECOVERY: stopping ${SECONDARY_UNIT}"
   systemctl stop "$SECONDARY_UNIT" 2>/dev/null || true
 
@@ -90,8 +118,15 @@ _recycle_api() {
       log "RECOVERY: FAILED — API still unhealthy; leaving secondary stopped"
       touch "$COOLDOWN_FILE"
       _write_streak 0
+      _record_ready_fail "api_unhealthy_after_retries"
       return 1
     fi
+  fi
+
+  # Record ready time (now that health is confirmed, wait for readiness)
+  log "RECOVERY: recording restart timing metrics..."
+  if ! _record_ready_ok; then
+    log "WARNING: Failed to record readiness metrics (non-fatal)"
   fi
 
   log "RECOVERY: API healthy — starting ${SECONDARY_UNIT}"

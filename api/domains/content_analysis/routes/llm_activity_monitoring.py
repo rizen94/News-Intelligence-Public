@@ -14,7 +14,7 @@ from api.shared.pipeline_state_constants import QUEUE_PENDING, QUEUE_PROCESSING,
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api", tags=["LLM Activity Monitoring"], responses={404: {"description": "Not found"}}
+    prefix="/llm_activity_monitoring", tags=["LLM Activity Monitoring"], responses={404: {"description": "Not found"}}
 )
 
 

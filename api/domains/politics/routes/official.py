@@ -21,7 +21,7 @@ from api.shared.services.congress_gov_client import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/politics/official",
+    prefix="/politics/official",
     tags=["Politics — official sources"],
     responses={404: {"description": "Not found"}},
 )

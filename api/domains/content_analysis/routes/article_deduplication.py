@@ -18,7 +18,7 @@ from api.shared.services.domain_aware_service import (
 )
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/articles", tags=["Article Deduplication"])
+router = APIRouter(tags=["Article Deduplication"])
 
 
 class DeduplicationResponse(BaseModel):
