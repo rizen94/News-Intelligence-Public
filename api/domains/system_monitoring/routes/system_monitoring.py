@@ -2707,7 +2707,7 @@ def get_pipeline_status():
                     cur.execute("SET LOCAL statement_timeout = '15s'")
                 except Exception:
                     pass
-                # Get pipeline trace statistics (using correct column names)
+                # Get pipeline trace statistics (correct columns: success bool, error_stage varchar)
                 # Table has: success (boolean), error_stage (varchar), not status/stage
                 cur.execute("""
                     SELECT
@@ -2785,11 +2785,7 @@ def get_pipeline_status():
                     )
 
                 # Sum article stats across pipeline silos (includes template silos when in pipeline)
-                _schemas = get_pipeline_schema_names_active() or get_schema_names_active() or (
-                    "politics",
-                    "finance",
-                    "artificial_intelligence",
-                )
+                _schemas = get_pipeline_schema_names_active()
                 _sum_total = " + ".join(f"(SELECT COUNT(*) FROM {s}.articles)" for s in _schemas)
                 _sum_sent = " + ".join(
                     f"(SELECT COUNT(*) FROM {s}.articles WHERE sentiment_score IS NOT NULL)"
