@@ -1866,3 +1866,122 @@ BACKLOG_HIGH_THRESHOLD = batch_limits.BACKLOG_HIGH_THRESHOLD
 BACKLOG_MODE_INTERVAL = batch_limits.BACKLOG_MODE_INTERVAL
 # When any backlog > 0, use this so we don't wait full interval between runs (run as soon as eligible)
 BACKLOG_ANY_INTERVAL = batch_limits.BACKLOG_ANY_INTERVAL
+
+
+def get_all_phase_pending_statuses(
+    phase_names: set[str],
+) -> dict[str, bool | None]:
+    """Check pending-work status for multiple phases in one pass.
+
+    Uses the pipeline-phase pass-marker registry for an efficient single-pass query.
+    For any requested phase *not* covered by a registered marker (legacy gap), falls back to that
+    phase's individual legacy count function and maps ``count > 0`` to ``True``.
+    """
+    from services.pipeline_phase_registry import (
+        get_markers_for_phases,
+        get_pass_marker_check_sql_by_schema,
+    )
+
+    markers = get_markers_for_phases(phase_names, marker_kind="pending_work")
+    covered: set[str] = set()
+    result: dict[str, bool | None] = {}
+
+    if markers:
+        sql_clauses: list[str] = []
+        for m in markers:
+            ph = m["phase_name"]
+            if ph not in phase_names:
+                continue
+            clauses_by_schema = get_pass_marker_check_sql_by_schema(m, "exists")
+            for _schema, clause in clauses_by_schema.items():
+                sql_clauses.append(clause)
+
+        if sql_clauses:
+            combined = " OR ".join(f"({c})" for c in sql_clauses)
+            query = f"""
+                SELECT COUNT(*) FROM (
+                    SELECT 1 WHERE {combined}
+                ) q
+            """
+            try:
+                conn = _get_conn()
+                if conn:
+                    with conn.cursor() as cur:
+                        cur.execute("SET LOCAL statement_timeout = '5s'")
+                        cur.execute(query)
+                        row = cur.fetchone()
+                        has_any = bool(int(row[0] or 0)) if row else False
+                        for m in markers:
+                            ph = m["phase_name"]
+                            if ph in phase_names:
+                                covered.add(ph)
+                                result[ph] = has_any if sql_clauses else None
+            except Exception as e:
+                logger.debug("get_all_phase_pending_statuses pass-marker query failed: %s", e)
+
+    legacy_counts = {}
+    to_check_legacy: set[str] = phase_names - covered
+    if to_check_legacy:
+        legacy_counts = _dispatch_legacy_pending(to_check_legacy)
+
+    for ph in phase_names:
+        if ph not in result and ph not in covered:
+            count_val = legacy_counts.get(ph)
+            if isinstance(count_val, int):
+                result[ph] = count_val > 0
+            else:
+                result[ph] = None
+
+    return result
+
+
+def _dispatch_legacy_pending(phase_names: set[str]) -> dict[str, int | None]:
+    """Dispatch individual legacy ``_count_*_pending`` callers for uncovered phases."""
+    _legacy_dispatch: dict[str, tuple] = {
+        "claim_extraction": (_count_claim_extraction_pending, ("domain_key",)),
+        "entity_profile_build": (_count_entity_profile_build_pending, ("is_valid",)),
+        "investigative_refresh": (_count_investigative_report_refresh_pending, ()),
+        "pending_db_flush": (_count_pending_db_flush_pending, ("table_name",)),
+        "nightly_enrichment_context": (_count_nightly_enrichment_context_pending, ("last_processed",)),
+        "metadata_enrichment": (_count_metadata_enrichment_pending, (),),
+        "ml_processing": (_count_ml_processing_pending, ("processed",)),
+        "entity_extraction": (_count_entity_extraction_pending, ()),
+        "sentiment_analysis": (_count_sentiment_analysis_pending, ()),
+        "quality_scoring": (_count_quality_scoring_pending, ()),
+        "storyline_processing": (_count_storyline_processing_pending, ()),
+        "topic_clustering": (_count_topic_clustering_pending, ()),
+        "timeline_generation": (_count_timeline_generation_pending, ()),
+        "storyline_discovery": (_count_storyline_discovery_pending, ()),
+        "proactive_detection": (_count_proactive_detection_pending, ()),
+        "storyline_assembly": (_count_storyline_assembly_pending, ()),
+        "storyline_automation": (_count_storyline_automation_pending, ("automation_enabled",)),
+        "rag_enhancement": (_count_rag_enhancement_pending, ()),
+        "event_extraction": (_count_event_extraction_pending, ()),
+        "claims_to_facts": (_count_claims_to_facts_pending, ()),
+        "legislative_references": (_count_legislative_references_pending, ()),
+        "entity_profile_sync": (_count_entity_profile_sync_pending, ("is_valid",)),
+        "entity_enrichment": (_count_entity_enrichment_pending, (),),
+        "entity_dossier_compile": (_count_entity_dossier_compile_pending, ("domain_key",)),
+        "story_enhancement": (_count_story_enhancement_pending, (),),
+        "storyline_synthesis": (_count_storyline_synthesis_pending, ()),
+        "graph_connection_distillation": (_count_graph_connection_distillation_pending, (),),
+        "extracted_claims_dedupe": (_count_extracted_claims_dedupe_pending, ()),
+        "event_deduplication": (_count_event_deduplication_pending, ()),
+        "story_continuation": (_count_story_continuation_pending, (),),
+        "event_coherence_review": (_count_event_coherence_review_pending, ()),
+        "research_paper_profiling": (_count_research_paper_profiling_pending, ()),
+        "claim_evidence_appraisal": (_count_claim_evidence_appraisal_pending, ()),
+    }
+
+    result: dict[str, int | None] = {}
+    for ph in phase_names:
+        entry = _legacy_dispatch.get(ph)
+        if entry is None:
+            continue
+        fn, _args = entry
+        try:
+            result[ph] = fn()
+        except Exception as e:
+            logger.debug("backlog legacy count for %s failed: %s", ph, e)
+            result[ph] = None
+    return result

@@ -130,10 +130,12 @@ try:
         SKIP_WHEN_EMPTY,
         get_all_backlog_counts,
         get_all_pending_counts,
+        get_all_phase_pending_statuses,
     )
 except ImportError:
     get_all_backlog_counts = None
     get_all_pending_counts = None
+    get_all_phase_pending_statuses = lambda: {}  # type: ignore[assignment]
     SKIP_WHEN_EMPTY = frozenset()
 
 BACKLOG_HIGH_THRESHOLD = _bl.BACKLOG_HIGH_THRESHOLD
@@ -4068,23 +4070,27 @@ class AutomationManager:
                             task.name,
                             self._max_requeue_per_window,
                         )
-                    elif await self._has_pending_work(task.name):
-                        if (
-                            self._scheduled_enqueue_paused()
-                            and task.name not in QUEUE_PAUSE_ALLOW_SCHEDULED
-                        ):
-                            logger.debug(
-                                "Queue soft cap: skip continuous re-queue for %s (depth=%s)",
-                                task.name,
-                                self._automation_queue_depth(),
-                            )
-                        elif (
-                            automation_should_defer_new_scheduled_work(task.name)
-                            # Keep enrichment draining: pool is often hot *because* of the
-                            # just-finished batch; skipping here opened 10–25m idle gaps.
-                            and task.name != "content_enrichment"
-                        ):
-                            logger.debug(
+                    else:
+                        # Batch-check pending for all continuous batch phases + research nudge targets
+                        _batch_phases = BATCH_PHASES_CONTINUOUS | {
+                            "research_paper_profiling",
+                            "claim_evidence_appraisal",
+                        }
+                        _batch_pending = get_all_phase_pending_statuses(_batch_phases)
+                        # Only re-enqueue if we have definitive "no pending" data or batch says has-work.
+                        # Unknown (None) → treat as "has work" to be safe.
+                        phase_pending = _batch_pending.get(task.name, True)
+                        has_pending = phase_pending if phase_pending is not None else True
+                        
+                        if has_pending:
+                            if self._scheduled_enqueue_paused() and task.name not in QUEUE_PAUSE_ALLOW_SCHEDULED:
+                                logger.debug(
+                                    "Queue soft cap: skip continuous re-queue for %s (depth=%s)",
+                                    task.name,
+                                    self._automation_queue_depth(),
+                                )
+                            elif automation_should_defer_new_scheduled_work(task.name) and task.name != "content_enrichment":
+                                logger.debug(
                                 "DB worker pool pressure — skip continuous re-queue for %s",
                                 task.name,
                             )
@@ -4135,14 +4141,20 @@ class AutomationManager:
                 try:
                     peer_still_pending = False
                     if task.name in BATCH_PHASES_CONTINUOUS:
-                        peer_still_pending = await self._has_pending_work(task.name)
+                        _batch_phases = (
+                            BATCH_PHASES_CONTINUOUS | {"research_paper_profiling", "claim_evidence_appraisal"}
+                        )
+                        _batch_pending = get_all_phase_pending_statuses(_batch_phases)
+                        peer_still_pending = _batch_pending.get(task.name, False) or False
                     else:
                         pc = getattr(self, "_pending_counts", None) or {}
                         peer_still_pending = int(pc.get(task.name, 0) or 0) > 0
                     if not peer_still_pending and research_llm_backlog_pending(max_age_s=15.0) > 0:
-                        if await self._has_pending_work("research_paper_profiling"):
+                        rpp_pending = _batch_pending.get("research_paper_profiling", True)
+                        cea_pending = _batch_pending.get("claim_evidence_appraisal", True)
+                        if rpp_pending or rpp_pending is None:
                             self.request_phase("research_paper_profiling")
-                        if await self._has_pending_work("claim_evidence_appraisal"):
+                        if cea_pending or cea_pending is None:
                             self.request_phase("claim_evidence_appraisal")
                 except Exception as e:
                     logger.debug("Research pickup nudge after %s: %s", task.name, e)
@@ -6397,7 +6409,14 @@ class AutomationManager:
             conn.close()
 
     async def _execute_sentiment_analysis(self, task: Task):
-        """Execute sentiment analysis task"""
+        """Execute sentiment analysis task.
+
+        Refactored to avoid pool exhaustion: all scored articles are collected in memory
+        during the AI analysis phase (no DB writes), then committed in a single batched
+        UPDATE per schema using a VALUES clause + correlated subquery. This reduces
+        connection pressure from O(100 × schemas) open/close cycles to exactly 2 connections
+        per schema (1 read + 1 write).
+        """
         from services.ai_processing_service import get_ai_service
         from api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_article_phase_pass, sql_article_pass_null
 
@@ -6410,7 +6429,7 @@ class AutomationManager:
             pass_clause = f" AND ({sql_article_pass_null('sentiment_analysis', 'a')}) "
         _ord = sql_order_created_at()
         for schema in get_pipeline_schema_names_active():
-            # Fetch candidates quickly, then close transaction before awaited LLM work.
+            # --- Phase 1: Read candidates (close connection immediately) ---
             conn = await self._get_db_connection()
             try:
                 with conn.cursor() as cursor:
@@ -6427,6 +6446,11 @@ class AutomationManager:
             finally:
                 conn.close()
 
+            if not articles:
+                continue
+
+            # --- Phase 2: Analyze all articles (no DB writes during analysis) ---
+            scored_articles: list[tuple[int, float, str]] = []  # (id, score, label)
             for article_id, content in articles:
                 try:
                     sentiment = await ai_service.analyze_sentiment(content)
@@ -6434,26 +6458,7 @@ class AutomationManager:
                         continue
                     score = sentiment.get("score", 0)
                     label = sentiment.get("label", "")
-
-                    # Persist each result in a short-lived transaction.
-                    write_conn = await self._get_db_connection()
-                    try:
-                        with write_conn.cursor() as write_cur:
-                            write_cur.execute(
-                                f"""
-                                UPDATE {schema}.articles
-                                SET sentiment_score = %s,
-                                    sentiment_label = COALESCE(%s, sentiment_label),
-                                    updated_at = CURRENT_TIMESTAMP
-                                WHERE id = %s
-                            """,
-                                (score, label or None, article_id),
-                            )
-                            write_conn.commit()
-                        record_article_phase_pass(schema, article_id, "sentiment_analysis", "scored")
-                        analyzed_count += 1
-                    finally:
-                        write_conn.close()
+                    scored_articles.append((article_id, float(score), str(label)))
                 except Exception as e:
                     logger.error(
                         "Error analyzing sentiment for article %s (%s): %s", article_id, schema, e
@@ -6465,6 +6470,42 @@ class AutomationManager:
                         error=e,
                         default_max_attempts=3,
                     )
+
+            # --- Phase 3: Batch-write results (one connection, single transaction) ---
+            if scored_articles:
+                batch_conn = await self._get_db_connection()
+                try:
+                    with batch_conn.cursor() as batch_cur:
+                        # Build VALUES clause: (id1, score1, label1), ...
+                        values_clause = ",".join(f"(%s,%s,%s)" for _ in scored_articles)
+
+                        # Single UPDATE: sets sentiment_score, sentiment_label, updated_at
+                        batch_cur.execute(
+                            f"""
+                            UPDATE {schema}.articles
+                            SET sentiment_score   = sub.score::numeric,
+                                sentiment_label   = COALESCE(sub.label, sentiment_label),
+                                updated_at         = CURRENT_TIMESTAMP
+                            FROM (VALUES {values_clause}) AS sub(article_id, score, label)
+                            WHERE {schema}.articles.id = sub.article_id
+                              AND {schema}.articles.sentiment_score IS NULL
+                        """,
+                            [(sid, sc, lb) for sid, sc, lb in scored_articles],
+                        )
+                        batch_conn.commit()
+
+                        # Record phase pass after successful write
+                        for sid in [s[0] for s in scored_articles]:
+                            record_article_phase_pass(schema, sid, "sentiment_analysis", "scored")
+                        analyzed_count += len(scored_articles)
+                except Exception as e:
+                    logger.error(
+                        "Batch write sentiment score failed for %s (%s): %s", schema, len(scored_articles), e
+                    )
+                    try:
+                        batch_conn.rollback()
+                    except Exception:
+                        pass
 
         logger.info(f"Sentiment analysis completed: {analyzed_count} articles analyzed")
 
@@ -7334,7 +7375,17 @@ class AutomationManager:
             logger.warning("storyline_review_agent failed: %s", e)
 
     async def _execute_quality_scoring(self, task: Task):
-        """Execute quality scoring task"""
+        """Execute quality scoring task.
+
+        Refactored to avoid pool exhaustion: all scored articles are collected in memory
+        during the AI scoring phase (no DB writes), then committed in a single batched
+        UPDATE per schema using a VALUES clause + correlated subquery. This reduces
+        connection pressure from O(50 × schemas) open/close cycles to exactly 2 connections
+        per schema (1 read + 1 write).
+
+        Additionally sets pipeline_status = 'completed' and current_phase = 'quality_scoring'
+        on successfully scored articles so downstream consumers don't reprocess them.
+        """
         from services.ai_processing_service import get_ai_service
 
         ai_service = get_ai_service()
@@ -7343,7 +7394,7 @@ class AutomationManager:
         ml_ready = sql_ml_ready_and_content_bounds()
         _ord = sql_order_created_at()
         for schema in get_pipeline_schema_names_active():
-            # Fetch candidates quickly, then close transaction before awaited LLM work.
+            # --- Phase 1: Read candidates (close connection immediately) ---
             conn = await self._get_db_connection()
             try:
                 with conn.cursor() as cursor:
@@ -7359,26 +7410,20 @@ class AutomationManager:
             finally:
                 conn.close()
 
+            if not articles:
+                continue
+
+            # --- Phase 2: Score all articles (no DB writes during scoring) ---
+            scored_articles: list[tuple[int, float]] = []
             for article_id, content, title in articles:
                 try:
                     quality = await ai_service.score_article_quality(content, title)
                     if not isinstance(quality, dict):
                         continue
-                    write_conn = await self._get_db_connection()
-                    try:
-                        with write_conn.cursor() as write_cur:
-                            write_cur.execute(
-                                f"""
-                                UPDATE {schema}.articles
-                                SET quality_score = %s, updated_at = CURRENT_TIMESTAMP
-                                WHERE id = %s
-                            """,
-                                (quality.get("score", 0), article_id),
-                            )
-                            write_conn.commit()
-                        scored_count += 1
-                    finally:
-                        write_conn.close()
+                    score = quality.get("score", 0)
+                    if score is None:
+                        continue
+                    scored_articles.append((article_id, float(score)))
                 except Exception as e:
                     logger.error(
                         "Error scoring quality for article %s (%s): %s", article_id, schema, e
@@ -7390,6 +7435,41 @@ class AutomationManager:
                         error=e,
                         default_max_attempts=3,
                     )
+
+            # --- Phase 3: Batch-write results (one connection, single transaction) ---
+            if scored_articles:
+                batch_conn = await self._get_db_connection()
+                try:
+                    with batch_conn.cursor() as batch_cur:
+                        # Build VALUES clause: (id1, score1), (id2, score2), ...
+                        values_clause = ",".join(f"(%s,%s)" for _ in scored_articles)
+                        ids  = [a[0] for a in scored_articles]
+                        scores = [a[1] for a in scored_articles]
+
+                        # Single UPDATE: sets quality_score, updated_at, pipeline_status and current_phase
+                        batch_cur.execute(
+                            f"""
+                            UPDATE {schema}.articles
+                            SET quality_score    = sub.score::numeric,
+                                updated_at      = CURRENT_TIMESTAMP,
+                                pipeline_status  = 'completed',
+                                current_phase    = 'quality_scoring'
+                            FROM (VALUES {values_clause}) AS sub(article_id, score)
+                            WHERE {schema}.articles.id = sub.article_id
+                              AND {schema}.articles.quality_score IS NULL
+                        """,
+                            list(zip(ids, scores)),
+                        )
+                        batch_conn.commit()
+                        scored_count += len(scored_articles)
+                except Exception as e:
+                    logger.error(
+                        "Batch write quality score failed for %s (%s): %s", schema, len(scored_articles), e
+                    )
+                    try:
+                        batch_conn.rollback()
+                    except Exception:
+                        pass
 
         logger.info(f"Quality scoring completed: {scored_count} articles scored")
 
@@ -7851,8 +7931,6 @@ class AutomationManager:
             if last_run and collection_started_at and last_run >= collection_started_at:
                 continue
             has_work = (pending_counts.get(phase_name) or 0) > 0
-            if not has_work and phase_name in BATCH_PHASES_CONTINUOUS:
-                has_work = await self._has_pending_work(phase_name)
             if (
                 not has_work
                 and phase_name not in pending_counts
@@ -7868,249 +7946,249 @@ class AutomationManager:
         if requested:
             logger.info("Collection watchdog: requested phases (add to queue) %s", requested)
 
-    async def _has_pending_work(self, phase_name: str) -> bool:
-        """Quick check: is there still work for this phase in any domain? Used to re-enqueue for continuous run."""
-        if phase_name not in BATCH_PHASES_CONTINUOUS:
-            return False
-        try:
-            conn = await self._get_db_connection()
-            if not conn:
-                return False
-            cur = conn.cursor()
-            try:
-                if phase_name == "content_enrichment":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.articles
-                                WHERE (enrichment_status IS NULL OR enrichment_status IN ({ARTICLE_PENDING!r}, {ARTICLE_FAILED!r}, 'pull_deferred'))
-                                  AND COALESCE(enrichment_attempts, 0) < 3
-                                  AND url IS NOT NULL AND url != ''
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "ml_processing":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.articles
-                                WHERE ml_processed = FALSE AND content IS NOT NULL AND LENGTH(content) > 100
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "entity_extraction":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.articles
-                                WHERE (entities IS NULL OR entities = '{{}}') AND content IS NOT NULL AND LENGTH(content) > 100
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "sentiment_analysis":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.articles
-                                WHERE sentiment_score IS NULL AND content IS NOT NULL AND LENGTH(content) > 50
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "storyline_processing":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.storylines s
-                                WHERE s.status = 'active'
-                                  AND EXISTS (
-                                      SELECT 1 FROM {schema}.storyline_articles sa
-                                      WHERE sa.storyline_id = s.id
-                                  )
-                                  AND LENGTH(
-                                      TRIM(
-                                          COALESCE(s.analysis_summary, '')
-                                          || COALESCE(s.master_summary, '')
-                                      )
-                                  ) < 100
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "rag_enhancement":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.storylines
-                                WHERE rag_enhanced_at IS NULL
-                                   OR rag_enhanced_at < CURRENT_TIMESTAMP - INTERVAL '1 hour'
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "storyline_automation":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.storylines
-                                WHERE automation_enabled = true
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "entity_profile_build":
-                    cur.execute(
-                        """
-                        SELECT 1 FROM intelligence.entity_profiles ep
-                        WHERE (ep.sections IS NULL OR ep.sections::text IN ('[]', '{}', 'null'))
-                        AND EXISTS (
-                            SELECT 1 FROM intelligence.context_entity_mentions cem
-                            WHERE cem.entity_profile_id = ep.id
-                        )
-                        LIMIT 1
-                        """
-                    )
-                    if cur.fetchone():
-                        return True
-                elif phase_name == "quality_scoring":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.articles
-                                WHERE quality_score IS NULL AND content IS NOT NULL AND LENGTH(content) > 100
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "timeline_generation":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.storylines
-                                WHERE timeline_summary IS NULL OR LENGTH(timeline_summary) < 100
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "topic_clustering":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.articles a
-                                WHERE a.content IS NOT NULL AND LENGTH(a.content) > 100
-                                AND NOT EXISTS (
-                                    SELECT 1 FROM {schema}.article_topic_assignments ata
-                                    WHERE ata.article_id = a.id
-                                )
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "event_extraction":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""SELECT 1 FROM {schema}.articles
-                                WHERE processing_status = {ML_COMPLETED!r} AND timeline_processed = false
-                                AND content IS NOT NULL AND LENGTH(content) > 100
-                                LIMIT 1"""
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "content_refinement_queue":
-                    from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
 
-                    if in_nightly_pipeline_window_est():
-                        return False
-                    cur.execute(
-                        f"""
-                        SELECT 1 FROM intelligence.content_refinement_queue
-                        WHERE status = {QUEUE_PENDING!r}
-                        LIMIT 1
-                        """
-                    )
-                    if cur.fetchone():
-                        return True
-                elif phase_name == "story_enhancement":
-                    cur.execute(
-                        """
-                        SELECT 1 FROM intelligence.fact_change_log
-                        WHERE processed = FALSE
-                        LIMIT 1
-                        """
-                    )
-                    if cur.fetchone():
-                        return True
-                    cur.execute(
-                        """
-                        SELECT 1 FROM intelligence.story_update_queue
-                        WHERE processed = FALSE
-                        LIMIT 1
-                        """
-                    )
-                    if cur.fetchone():
-                        return True
-                elif phase_name == "storyline_discovery":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""
-                            SELECT 1 FROM {schema}.articles a
-                            WHERE NOT EXISTS (
-                                SELECT 1 FROM {schema}.storyline_articles sa
-                                WHERE sa.article_id = a.id
-                            )
-                            LIMIT 1
-                            """
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "storyline_assembly":
-                    for schema in get_pipeline_schema_names_active():
-                        cur.execute(
-                            f"""
-                            SELECT 1 FROM {schema}.articles a
-                            WHERE a.created_at > NOW() - INTERVAL '7 days'
-                              AND NOT EXISTS (
-                                SELECT 1 FROM {schema}.storyline_articles sa
-                                WHERE sa.article_id = a.id
-                              )
-                            LIMIT 1
-                            """
-                        )
-                        if cur.fetchone():
-                            return True
-                elif phase_name == "research_paper_profiling":
-                    cur.execute(
-                        f"""
-                        SELECT 1 FROM intelligence.research_paper_profiles
-                        WHERE extraction_status IN ({ARTICLE_PENDING!r}, {ARTICLE_FAILED!r})
-                        LIMIT 1
-                        """
-                    )
-                    if cur.fetchone():
-                        return True
-                elif phase_name == "claim_evidence_appraisal":
-                    try:
-                        from services.claim_evidence_appraisal_service import is_enabled
 
-                        if not is_enabled():
-                            return False
-                    except Exception:
-                        return False
-                    cur.execute(
-                        """
-                        SELECT 1 FROM intelligence.processed_documents pd
-                        WHERE NOT EXISTS (
-                            SELECT 1 FROM intelligence.claim_evidence_appraisal a
-                            WHERE a.document_id = pd.id
-                        )
-                        AND (
-                            COALESCE(pd.metadata->>'literature', '') IN ('true', '1')
-                            OR pd.source_type IN ('europepmc', 'pubmed', 'literature')
-                        )
-                        LIMIT 1
-                        """
-                    )
-                    if cur.fetchone():
-                        return True
-            finally:
-                cur.close()
-                conn.close()
-        except Exception as e:
-            logger.debug("_has_pending_work %s: %s", phase_name, e)
-        return False
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     def get_status(self, include_pending: bool = False) -> dict[str, Any]:
         """Get automation status. Includes backlog_counts when backlog_metrics is available.
