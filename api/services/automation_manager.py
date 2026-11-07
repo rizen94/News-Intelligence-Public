@@ -122,11 +122,11 @@ logger = logging.getLogger(__name__)
 
 
 # Backlog-driven scheduling: skip empty cycles, run more often when backlog is high
+# Batch limits are the source of truth (always importable — no DB deps)
+from api.shared import batch_limits as _bl
+
 try:
     from services.backlog_metrics import (
-        BACKLOG_ANY_INTERVAL,
-        BACKLOG_HIGH_THRESHOLD,
-        BACKLOG_MODE_INTERVAL,
         SKIP_WHEN_EMPTY,
         get_all_backlog_counts,
         get_all_pending_counts,
@@ -135,9 +135,10 @@ except ImportError:
     get_all_backlog_counts = None
     get_all_pending_counts = None
     SKIP_WHEN_EMPTY = frozenset()
-    BACKLOG_HIGH_THRESHOLD = 200
-    BACKLOG_MODE_INTERVAL = 300
-    BACKLOG_ANY_INTERVAL = 30
+
+BACKLOG_HIGH_THRESHOLD = _bl.BACKLOG_HIGH_THRESHOLD
+BACKLOG_MODE_INTERVAL = _bl.BACKLOG_MODE_INTERVAL
+BACKLOG_ANY_INTERVAL = _bl.BACKLOG_ANY_INTERVAL
 
 
 # Persist each automation run to DB so "last 24h" is based on wall-clock time, not API restart
@@ -152,8 +153,8 @@ from api.shared.services.automation_run_history_writer import (
 # When these phases have pending ≥ AUTOMATION_BACKLOG_SEVERE_THRESHOLD, claim_extraction
 # yields workers (cap 1 + longer cooldown) so spine work can run.
 # SEVERE_BACKLOG_PEER_PHASES — extracted to services.automation.phase_constants (imported above).
-# Default when governance YAML omits key: 0 = unlimited (see __init__ for env override).
-MAX_REQUEUE_PER_WINDOW = 0
+# Default when governance YAML omits key: 3 re-enqueues per window (see __init__ for env override).
+MAX_REQUEUE_PER_WINDOW = 3
 
 # Phases that enter the Ollama yield / GPU throttle / semaphore path in ``_execute_task``.
 OLLAMA_AUTOMATION_PHASES = frozenset(
@@ -3309,7 +3310,6 @@ class AutomationManager:
             cooldown_sec = WORKLOAD_MIN_COOLDOWN
             resource_class = self._phase_resource_class(task_name)
             try:
-                from services.backlog_metrics import BATCH_SIZE_PER_TASK
                 from services.workload_balancer import (
                     effective_workload_cooldown_seconds,
                     workload_balancer_enabled,
@@ -3317,7 +3317,7 @@ class AutomationManager:
                 )
 
                 if workload_balancer_enabled() and task_name in workload_balancer_phase_names():
-                    _bs = BATCH_SIZE_PER_TASK.get(task_name, 30)
+                    _bs = batch_limits.BATCH_SIZE_PER_TASK.get(task_name, 30)
                     cooldown_sec = effective_workload_cooldown_seconds(
                         task_name,
                         pending,

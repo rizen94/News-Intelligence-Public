@@ -374,9 +374,9 @@ def ensure_phase_bounds(phase_key: str, default: int) -> dict[str, Any]:
         return existing
     base = max(1, int(default or 10))
     try:
-        from services.backlog_metrics import BATCH_SIZE_PER_TASK
+        from api.shared import batch_limits
 
-        mon = BATCH_SIZE_PER_TASK.get(key)
+        mon = batch_limits.BATCH_SIZE_PER_TASK.get(key)
         if mon is not None and int(mon) > 0:
             base = int(mon)
     except Exception:

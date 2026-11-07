@@ -88,13 +88,14 @@ def sample_effective_cooldowns(
 ) -> dict[str, int]:
     """For monitoring: map phase name → effective cooldown given current pending."""
     try:
-        from services.backlog_metrics import BATCH_SIZE_PER_TASK
+        from api.shared import batch_limits
+        _BATCH_SIZE_PER_TASK = batch_limits.BATCH_SIZE_PER_TASK
     except Exception:
-        BATCH_SIZE_PER_TASK = {}
+        _BATCH_SIZE_PER_TASK = {}
     out: dict[str, int] = {}
     for name in sorted(workload_balancer_phase_names()):
         p = int(pending_counts.get(name, 0) or 0)
-        bs = int(BATCH_SIZE_PER_TASK.get(name, 30) or 30)
+        bs = int(_BATCH_SIZE_PER_TASK.get(name, 30) or 30)
         out[name] = effective_workload_cooldown_seconds(
             name, p, base_cooldown=base_cooldown, batch_size=bs
         )

@@ -38,6 +38,7 @@ from api.shared.pipeline_pass_marker import (
     sql_context_pass_null,
 )
 from api.shared.pipeline_article_selection import sql_order_created_at
+from api.shared import batch_limits
 
 logger = logging.getLogger(__name__)
 
@@ -55,52 +56,12 @@ BACKLOG_CACHE_TTL = _backlog_cache_ttl_seconds()
 _backlog_cache: dict[str, int] = {}
 _backlog_cache_time: float = 0
 
-# How many items each task processes per run.  Pending counts at or below this
-# are normal throughput, not a backlog.  Anything above triggers backlog mode.
-BATCH_SIZE_PER_TASK: dict[str, int] = {
-    "content_enrichment": 60,
-    "context_sync": 100,
-    "event_tracking": 300,
-    "claim_extraction": 50,
-    "entity_profile_build": 25,  # v8
-    "investigation_report_refresh": 8,
-    "document_processing": 10,
-    "content_refinement_queue": 4,
-    # Unified nightly phase: enrichment + context_sync + refinement queue
-    "nightly_enrichment_context": 0,
-    # Per-run throughput (automation_manager batch limits × domain count where applicable)
-    "metadata_enrichment": 15,  # order-of-magnitude per domain batch
-    "ml_processing": 150,  # 50 × 3 schemas
-    "entity_extraction": 60,  # 20 × 3
-    "sentiment_analysis": 300,  # 100 × 3
-    "quality_scoring": 150,  # 50 × 3
-    "storyline_processing": 24,  # ~8 storylines worth of summary work per full pass
-    "topic_clustering": 60,  # ~20 × 3 standard domains (approximates automation)
-    "timeline_generation": 36,  # 12 × 3
-    "storyline_discovery": 50,  # unlinked-in-newest-N proxy (see _count_storyline_discovery_pending)
-    "proactive_detection": 1000,  # proactive candidate pool cap per domain
-    "storyline_automation": 5,  # automation_manager LIMIT storylines per domain per tick
-    "rag_enhancement": 9,  # few storylines enhanced per tick per domain
-    "event_extraction": 90,  # 30 × 3
-    "claims_to_facts": 10_000,  # overridden by get_claims_to_facts_batch_limit() when available
-    "legislative_references": 8,  # articles scanned per domain per run (Congress.gov rate limits)
-    "entity_profile_sync": 40,  # canonical rows mapped per domain batch (approx)
-    "entity_enrichment": 20,  # run_enrichment_batch limit
-    "entity_dossier_compile": 20,  # _run_scheduled_dossier_compiles max per run
-    "story_enhancement": 50,  # fact_change_log + story_update_queue proxy per cycle
-    "storyline_synthesis": 16,  # ~4 storylines × active domains per _execute_storyline_synthesis tick
-    "graph_connection_distillation": 12,  # GRAPH_CONNECTION_DISTILLATION_BATCH proposals per run
-    "pending_db_flush": 200,  # rough lines replayed per successful flush (order-of-magnitude)
-    "extracted_claims_dedupe": 500,  # dedupe batch size order-of-magnitude
-    "event_deduplication": 100,  # EventDeduplicationService.deduplicate_recent default
-    "story_continuation": 90,  # ~30 events × active schemas
-    "event_coherence_review": 5,  # LLM-heavy; few events per tick
-    "research_paper_profiling": 2,  # trickle batch when pending ≫ threshold (see research_paper_profile_service)
-    "claim_evidence_appraisal": 5,  # CLAIM_EVIDENCE_APPRAISAL_BATCH default
-}
-
-# Phases where backlog = pending (orchestrator / not row-batched in this model).
-NO_BACKLOG_BATCH_SUBTRACT_PHASES = frozenset({"nightly_enrichment_context"})
+# nightly_enrichment_context is in SKIP_WHEN_EMPTY but not RAW_PENDING_COUNT_KEYS
+# because it's interval-based, not pending-driven (see original set)
+RAW_PENDING_COUNT_KEYS = frozenset({
+    *batch_limits.RAW_PENDING_COUNT_KEYS,
+    "nightly_enrichment_context",
+})
 
 
 def _default_batch_for_unknown_phase() -> int:
@@ -272,7 +233,7 @@ def invalidate_backlog_metrics_cache() -> None:
 
 def _per_run_batch_size(task: str) -> int:
     """Align backlog subtraction with actual automation batch sizes (env-tunable for claim phases)."""
-    if task in NO_BACKLOG_BATCH_SUBTRACT_PHASES:
+    if task in batch_limits.NO_BACKLOG_BATCH_SUBTRACT_PHASES:
         return 0
     if task == "entity_extraction":
         try:
@@ -322,9 +283,9 @@ def _per_run_batch_size(task: str) -> int:
                 + int(limits["build_limit"])
             )
         except Exception:
-            return int(BATCH_SIZE_PER_TASK["story_enhancement"])
-    if task in BATCH_SIZE_PER_TASK:
-        return int(BATCH_SIZE_PER_TASK[task])
+            return int(batch_limits.BATCH_SIZE_PER_TASK["story_enhancement"])
+    if task in batch_limits.BATCH_SIZE_PER_TASK:
+        return int(batch_limits.BATCH_SIZE_PER_TASK[task])
     return _default_batch_for_unknown_phase()
 
 
@@ -626,15 +587,15 @@ def _count_claim_extraction_backlog() -> int:
 def _count_entity_profile_build_backlog() -> int:
     """Profiles selectable for build — aligned with ``get_entity_profile_ids_to_build``.
 
-    Uses needs_build + CEM exists + upstream-cleared gate when that gate is enabled.
-    Fact-only profiles without CEM are inventory, not actionable builder work.
+    Counts only profiles that need_build + CEM exists (unconditional).  Profiles without
+    CEM are inventory, not actionable build work — they never enter the builder queue
+    regardless of gate state.
     """
     conn = _get_conn()
     if not conn:
         return 0
     try:
         from services.entity_profile_builder_service import (
-            _entity_profile_upstream_gate_for_select,
             sql_entity_profile_upstream_cleared_exists,
         )
         from api.shared.entity_profile_eligibility import sql_entity_profile_selectable_for_build
@@ -646,12 +607,16 @@ def _count_entity_profile_build_backlog() -> int:
         )
         if not domain_keys:
             return 0
-        upstream_sql = ""
+
+        # Always apply upstream-cleared-exists filter.  The gate controls which
+        # profiles get selected next batch; the backlog count must only include
+        # profiles that actually have CEM data (otherwise they are inventory,
+        # not actionable build work).  Gate state does NOT change what counts.
         try:
-            if _entity_profile_upstream_gate_for_select():
-                upstream_sql = f" AND ({sql_entity_profile_upstream_cleared_exists()}) "
+            upstream_sql = f" AND ({sql_entity_profile_upstream_cleared_exists()}) "
         except Exception:
-            upstream_sql = ""
+            upstream_sql = ""  # fall back gracefully if the func raises
+
         with conn.cursor() as cur:
             # Mention-gate EXISTS can exceed 8s on large cem; keep Monitor honest.
             cur.execute("SET LOCAL statement_timeout = '20s'")
@@ -1896,8 +1861,8 @@ if _missing_skip_pending:
     )
 
 # When backlog exceeds this, use backlog-mode interval so we run more often
-BACKLOG_HIGH_THRESHOLD = 200
+BACKLOG_HIGH_THRESHOLD = batch_limits.BACKLOG_HIGH_THRESHOLD
 # Effective min interval (seconds) when in backlog mode (high backlog)
-BACKLOG_MODE_INTERVAL = 300
+BACKLOG_MODE_INTERVAL = batch_limits.BACKLOG_MODE_INTERVAL
 # When any backlog > 0, use this so we don't wait full interval between runs (run as soon as eligible)
-BACKLOG_ANY_INTERVAL = 30
+BACKLOG_ANY_INTERVAL = batch_limits.BACKLOG_ANY_INTERVAL
