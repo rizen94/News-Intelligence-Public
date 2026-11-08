@@ -51,7 +51,11 @@ export function usePagedFeed(section: FeedSection, pageSize = 12) {
     // Drop stale rows immediately so ?page=2 never paints page-1 headlines.
     setItems([]);
     setPagination(null);
-    fetchReaderHome(domain, { page, pageSize, section })
+    
+    // Ensure domain is properly handled - if null (all domains), use default politics
+    const effectiveDomain = domain || 'politics';
+    
+    fetchReaderHome(effectiveDomain, { page, pageSize, section })
       .then(res => {
         if (cancelled) return;
         const key = SECTION_KEY[section];
@@ -59,7 +63,7 @@ export function usePagedFeed(section: FeedSection, pageSize = 12) {
           ...it,
           href: withDomainQuery(
             it.href || `/storylines/${it.domain}/${it.storyline_id}`,
-            it.domain || domain
+            it.domain || effectiveDomain
           ),
         }));
         const pag =
