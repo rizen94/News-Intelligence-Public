@@ -159,7 +159,7 @@ def _phase_runs(cur, phase: str, days: int = 7) -> dict:
         SELECT COUNT(*),
                COUNT(*) FILTER (WHERE success = true),
                MAX(finished_at)
-        FROM public.automation_run_history
+        FROM infrastructure.automation_run_history
         WHERE phase_name = %s
           AND started_at >= NOW() - make_interval(days => %s)
         """,

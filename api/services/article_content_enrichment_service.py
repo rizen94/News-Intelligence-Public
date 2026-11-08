@@ -204,6 +204,94 @@ def _fetch_arxiv_full_text(url: str) -> str:
     return ""
 
 
+def fetch_arxiv_categories(arxiv_id: str | None = None, url: str | None = None) -> list[str]:
+    """Return ArXiv category string(s) for a paper via the metadata service.
+
+    Uses arxiv.org's metadata XML endpoint which returns structured category
+    information (e.g. 'cs.AI, cs.LG, stat.ML'). Falls back gracefully when
+    the metadata service is unavailable or the ID cannot be parsed.
+
+    Args:
+        arxiv_id: Bare ArXiv identifier (e.g. '2608.17176', '2608.17176v1').
+        url: Full ArXiv URL from which to extract the ID as a fallback.
+
+    Returns:
+        List of category strings (e.g. ['cs.AI', 'cs.LG', 'stat.ML']).
+        Empty list when no categories can be resolved.
+    """
+    aid = arxiv_id or arxiv_id_from_url(url or "")
+    if not aid:
+        return []
+
+    # Strip version suffix for metadata endpoint (metadata is version-agnostic)
+    aid_base = re.sub(r"v\d+$", "", aid)
+    meta_url = f"https://export.arxiv.org/api/query?id_list={aid_base}"
+
+    try:
+        import urllib.request
+
+        req = urllib.request.Request(meta_url, headers={"User-Agent": "NewsIntelligence/1.0"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            xml_body = resp.read().decode("utf-8")
+    except Exception:
+        return []
+
+    # Parse <category term="..."> tags from ATOM feed
+    categories: list[str] = []
+    for m in re.finditer(r'<category\s+term="([^"]+)"\s*/?>', xml_body):
+        cat = m.group(1)
+        if cat and cat not in categories:
+            categories.append(cat)
+
+    return categories
+
+
+def enrich_article_content_for_research(url: str, content: str | None) -> dict[str, Any]:
+    """Enrich article content for research profiling: full text + categories.
+
+    When an article is an ArXiv paper with abstract-only stored content, this
+    helper fetches the full paper body and attaches ArXiv category metadata
+    in one call — avoiding two separate API round-trips during profile drain.
+
+    Args:
+        url: Article URL (must be an ArXiv abs/pdf link for enrichment to apply).
+        content: Currently stored article body/content.
+
+    Returns:
+        Dict with keys:
+            - 'content': enriched full-text string (original if no enrichment needed)
+            - 'categories': list of ArXiv category strings (may be empty)
+            - 'enriched': bool indicating whether full text was fetched
+            - 'arxiv_id': bare ArXiv ID or None
+    """
+    aid = arxiv_id_from_url(url)
+    is_arxiv = bool(is_arxiv_abs_url(url) or aid)
+
+    if not is_arxiv:
+        return {
+            "content": (content or ""),
+            "categories": [],
+            "enriched": False,
+            "arxiv_id": None,
+        }
+
+    needs_fulltext = needs_arxiv_fulltext(url, content)
+    categories = fetch_arxiv_categories(arxiv_id=aid, url=url)
+    enriched_content = (content or "") if not needs_fulltext else ""
+
+    if needs_fulltext:
+        full_text = _fetch_arxiv_full_text(url)
+        if full_text:
+            enriched_content = full_text
+
+    return {
+        "content": enriched_content,
+        "categories": categories,
+        "enriched": needs_fulltext and bool(enriched_content),
+        "arxiv_id": aid,
+    }
+
+
 def _make_fast_config():
     """Trafilatura config with 10s timeout so we move on quickly from slow/dead URLs."""
     try:

@@ -2207,7 +2207,7 @@ class AutomationManager:
             try:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "SELECT value FROM public.automation_state WHERE key = %s",
+                        "SELECT value FROM infrastructure.automation_state WHERE key = %s",
                         ("pending_collection_queue",),
                     )
                     row = cur.fetchone()
@@ -2238,7 +2238,7 @@ class AutomationManager:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        INSERT INTO public.automation_state (key, value, updated_at)
+                        INSERT INTO infrastructure.automation_state (key, value, updated_at)
                         VALUES ('pending_collection_queue', %s::jsonb, NOW())
                         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
                         """,
@@ -2367,7 +2367,7 @@ class AutomationManager:
                         """
                         SELECT DISTINCT ON (phase_name)
                                phase_name, COALESCE(finished_at, started_at) AS ts
-                        FROM public.automation_run_history
+                        FROM infrastructure.automation_run_history
                         WHERE phase_name = ANY(%s)
                           AND success IS TRUE
                         ORDER BY phase_name, COALESCE(finished_at, started_at) DESC
@@ -4513,6 +4513,21 @@ class AutomationManager:
                 await self._execute_rss_processing(dummy)
             except Exception as e:
                 logger.warning(f"Collection cycle RSS step failed: {e}")
+        # Post-RSS inline enrichment — fetch full text for newly ingested articles
+        # that didn't get trafilatura content during collection (longer titles, RSS
+        # summaries already above MIN_CONTENT_TO_ENRICH, etc.). This ensures downstream
+        # phases work with enriched content rather than truncated RSS summaries.
+        try:
+            _need_enrichment = get_all_pending_counts()
+            if _need_enrichment and _need_enrichment.get(ARTICLE_PENDING, 0) > 0:
+                from services.article_content_enrichment_service import (
+                    enrich_articles_batch,
+                )
+
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, lambda: enrich_articles_batch(batch_size=20))
+        except Exception as e:
+            logger.debug("Collection cycle inline enrichment: %s", e)
         # Lift auto-silence after RSS so controller can schedule downstream drains.
         try:
             from services.phase_retry_silence_service import lift_auto_silences

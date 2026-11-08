@@ -1,5 +1,5 @@
 """
-Persist automation phase runs to public.automation_run_history (survives API restart).
+Persist automation phase runs to infrastructure.automation_run_history (survives API restart).
 Used by AutomationManager, optional cron heartbeat, and monitoring.
 """
 

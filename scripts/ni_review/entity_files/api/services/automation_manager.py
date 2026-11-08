@@ -987,7 +987,7 @@ class AutomationManager:
             try:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "SELECT value FROM public.automation_state WHERE key = %s",
+                        "SELECT value FROM infrastructure.automation_state WHERE key = %s",
                         ("pending_collection_queue",),
                     )
                     row = cur.fetchone()
@@ -1018,7 +1018,7 @@ class AutomationManager:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        INSERT INTO public.automation_state (key, value, updated_at)
+                        INSERT INTO infrastructure.automation_state (key, value, updated_at)
                         VALUES ('pending_collection_queue', %s::jsonb, NOW())
                         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
                         """,

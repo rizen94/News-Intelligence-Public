@@ -85,7 +85,7 @@ Scheduling is **not** “as fast as possible”; it is **controlled** so DB and 
 
 ## 5. Periodic audits (hot loops today)
 
-**Wall time:** completed runs in `public.automation_run_history`:
+**Wall time:** completed runs in `infrastructure.automation_run_history`:
 
 ```bash
 PYTHONPATH=api uv run python scripts/automation_run_analysis.py --hours 24

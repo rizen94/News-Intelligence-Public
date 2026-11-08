@@ -534,7 +534,7 @@ def record_intake_catchup_latency_sample(snapshot: dict[str, Any] | None = None)
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT value FROM public.automation_state WHERE key = %s",
+                    "SELECT value FROM infrastructure.automation_state WHERE key = %s",
                     (_STATE_KEY,),
                 )
                 row = cur.fetchone()
@@ -553,7 +553,7 @@ def record_intake_catchup_latency_sample(snapshot: dict[str, Any] | None = None)
                 hist = hist[-keep:]
                 cur.execute(
                     """
-                    INSERT INTO public.automation_state (key, value, updated_at)
+                    INSERT INTO infrastructure.automation_state (key, value, updated_at)
                     VALUES (%s, %s::jsonb, NOW())
                     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
                     """,

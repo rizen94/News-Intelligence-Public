@@ -1891,19 +1891,22 @@ def collect_rss_feeds() -> dict:
                             if hasattr(entry, "updated_parsed") and entry.updated_parsed:
                                 feed_updated_dt = _utc_aware(datetime(*entry.updated_parsed[:6]))
 
+                            # Inline full-text fetch (enrich article body from source URL)
+                            fetched_content, inline_fetched, inline_footnote_added = _maybe_inline_fetch_article_body(content, url)
+                            
                             # Accumulate candidate for post-loop batch processing
                             created_at_ins = datetime.now(timezone.utc)
                             raw_bias = calculate_domain_bias_score(
-                                domain_key, title, content, feed_name
+                                domain_key, title, fetched_content, feed_name
                             )
                             bias_score = (raw_bias + 1) / 2 if raw_bias is not None else 0.5
                             bias_score = max(0.0, min(1.0, bias_score))
                             quality_score_clamped = max(0.0, min(1.0, quality_score))
-                            # Determine enrichment status (will be finalized after full-text fetch)
-                            enrichment_status = "pending"
-                            enrichment_attempts = 0
+                            # Enrichment status reflects inline fetch result
+                            enrichment_status = "complete" if inline_fetched else "pending"
+                            enrichment_attempts = 1 if inline_fetched else 0
                             new_candidates.append((
-                                url, title, content, published_date, created_at_ins,
+                                url, title, fetched_content, published_date, created_at_ins,
                                 feed_name, quality_score_clamped, bias_score,
                                 enrichment_status, enrichment_attempts, domain_key,
                                 feed_updated_dt,
@@ -2338,15 +2341,18 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 quality_score_clamped = max(0.0, min(1.0, quality_score))
                 created_at_ins = datetime.now(timezone.utc)
 
-                # Compute bias and enrichment tracking (deferred until batch time in plural function; here: eager)
-                raw_bias = calculate_domain_bias_score(domain_key, title, content, feed_name)
+                # Inline full-text fetch (enrich article body from source URL)
+                fetched_content, inline_fetched, inline_footnote_added = _maybe_inline_fetch_article_body(content, url)
+
+                # Compute bias and enrichment tracking (uses inline-fetched content if available)
+                raw_bias = calculate_domain_bias_score(domain_key, title, fetched_content, feed_name)
                 bias_score = (raw_bias + 1) / 2 if raw_bias is not None else 0.5
                 bias_score = max(0.0, min(1.0, bias_score))
-                enrichment_status = "pending"
-                enrichment_attempts = 0
+                enrichment_status = "complete" if inline_fetched else "pending"
+                enrichment_attempts = 1 if inline_fetched else 0
 
                 new_candidates.append((
-                    url, title, content, published_date, created_at_ins, feed_name,
+                    url, title, fetched_content, published_date, created_at_ins, feed_name,
                     quality_score_clamped, bias_score, enrichment_status, enrichment_attempts,
                     domain_key, None,  # feed_updated_dt = None for single-feed path
                 ))

@@ -148,7 +148,7 @@ def main() -> int:
             cur.execute(
                 """
                 SELECT COUNT(*) AS total
-                FROM public.automation_run_history
+                FROM infrastructure.automation_run_history
                 WHERE finished_at >= %s
                 """,
                 (since,),
@@ -174,7 +174,7 @@ def main() -> int:
                          FILTER (WHERE started_at IS NOT NULL) AS min_s,
                        MAX(EXTRACT(EPOCH FROM (finished_at - started_at)))
                          FILTER (WHERE started_at IS NOT NULL) AS max_s
-                FROM public.automation_run_history
+                FROM infrastructure.automation_run_history
                 WHERE finished_at >= %s
                 GROUP BY phase_name
                 ORDER BY runs DESC, phase_name
@@ -209,7 +209,7 @@ def main() -> int:
                            100
                        ) AS err_sample,
                        COUNT(*) AS cnt
-                FROM public.automation_run_history
+                FROM infrastructure.automation_run_history
                 WHERE finished_at >= %s
                   AND (
                         success IS NOT TRUE
@@ -244,7 +244,7 @@ def main() -> int:
                        COUNT(*) AS runs,
                        COUNT(*) FILTER (WHERE success IS TRUE) AS ok,
                        AVG(EXTRACT(EPOCH FROM (finished_at - started_at))) AS avg_s
-                FROM public.automation_run_history
+                FROM infrastructure.automation_run_history
                 WHERE finished_at >= %s
                   AND started_at IS NOT NULL
                 GROUP BY phase_name

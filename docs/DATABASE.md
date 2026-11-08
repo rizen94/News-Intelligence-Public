@@ -44,7 +44,7 @@ News Intelligence **owns** the `news_intel` database on Widow. HomeLab AI Stack 
 | **Intelligence core** | `intelligence.contexts`, `intelligence.entity_profiles`, `intelligence.versioned_facts`, `intelligence.content_refinement_queue` |
 | **Intelligence longitudinal** | `intelligence.reference_events`, `intelligence.macro_series_observations`, `intelligence.sanctions_actions`, `intelligence.arc_definitions`, `intelligence.arc_reports` |
 | **Intelligence cross-domain** | `intelligence.tracked_events`, `intelligence.graph_connection_links`, `intelligence.graph_connection_proposals` |
-| **Automation** | `public.automation_run_history` |
+| **Automation** | `infrastructure.automation_run_history` |
 | **Pipeline** | `pipeline_traces`, `pipeline_checkpoints`, `public.doc_index` |
 
 ---

@@ -101,7 +101,7 @@ def main():
                            COUNT(*) FILTER (WHERE success) AS ok_runs,
                            MAX(finished_at) FILTER (WHERE success) AS last_ok,
                            MAX(finished_at) FILTER (WHERE NOT success) AS last_fail
-                    FROM public.automation_run_history
+                    FROM infrastructure.automation_run_history
                     WHERE finished_at >= %s
                     GROUP BY phase_name
                     ORDER BY phase_name

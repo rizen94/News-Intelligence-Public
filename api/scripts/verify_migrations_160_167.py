@@ -8,9 +8,9 @@ Run from project root (requires DB_PASSWORD and network to DB):
 Checks:
   133  public.chronological_events (is_ongoing, date_precision)
   160  intelligence.processed_documents
-  161  public.automation_run_history
+  161  infrastructure.automation_run_history (migrated from public via migration 230)
   164–166 sample politics; 167 enrichment columns on articles for each public.domains schema that has articles
-  168  public.automation_state
+  168  infrastructure.automation_state
   169  intelligence.storyline_rag_context
   170  intelligence.wikipedia_knowledge + politics.entity_canonical.description
   171  intelligence.tracked_events.storyline_id
@@ -122,9 +122,9 @@ def main():
 
         # --- 161 ---
         if check_table(cur, "public", "automation_run_history"):
-            ok.append("161: public.automation_run_history")
+            ok.append("161: infrastructure.automation_run_history")
         else:
-            missing.append("161: public.automation_run_history")
+            missing.append("161: infrastructure.automation_run_history")
 
         # --- 164–167 (domain samples) ---
         if check_column(cur, "politics", "articles", "quality_tier"):
@@ -157,9 +157,9 @@ def main():
 
         # --- 168 ---
         if check_table(cur, "public", "automation_state"):
-            ok.append("168: public.automation_state")
+            ok.append("168: infrastructure.automation_state")
         else:
-            missing.append("168: public.automation_state")
+            missing.append("168: infrastructure.automation_state")
 
         # --- 169 ---
         if check_table(cur, "intelligence", "storyline_rag_context"):

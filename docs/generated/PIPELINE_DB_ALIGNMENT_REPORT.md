@@ -22,8 +22,8 @@ This report compares **live PostgreSQL objects** to tables/columns the v8 automa
 | `politics.rss_feeds` | OK | 47 | RSS / collection [politics] |
 | `politics.topic_extraction_queue` | OK | 17,425 | topic_extraction_queue (after enrich) [politics] |
 | `public.applied_migrations` | OK | 2 | applied_migrations ledger |
-| `public.automation_run_history` | OK | 16,968 | automation_run_history |
-| `public.automation_state` | OK | 1 | automation_state |
+| `infrastructure.automation_run_history` | OK | 16,968 | automation_run_history |
+| `infrastructure.automation_state` | OK | 1 | automation_state |
 | `public.chronological_events` | OK | 342 | event_deduplication; event_extraction INSERT |
 | `science_tech.article_entities` | OK | 10,629 | entity_extraction [science_tech] |
 | `science_tech.articles` | OK | 2,470 | RSS / collection → articles [science_tech]; content_enrichment [science_tech]; event_extraction gates + UPDATE [science_tech] |

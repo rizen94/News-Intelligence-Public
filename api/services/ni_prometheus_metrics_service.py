@@ -34,7 +34,7 @@ _INVENTORY_RELATIONS: tuple[tuple[str, str], ...] = (
     ("finance", "articles"),
     ("finance", "storylines"),
     ("finance", "rss_feeds"),
-    ("public", "automation_run_history"),
+    ("infrastructure", "automation_run_history"),
     ("intelligence", "tracked_events"),
     ("intelligence", "extracted_claims"),
     ("intelligence", "embedding_chunks"),
@@ -546,7 +546,7 @@ def _collect_content_and_run_metrics() -> list[str]:
                                  WHERE started_at >= NOW() - interval '24 hours'
                                    AND success IS FALSE
                                )::bigint AS fail_24h
-                        FROM public.automation_run_history
+                        FROM infrastructure.automation_run_history
                         WHERE phase_name IS NOT NULL
                           AND started_at >= NOW() - interval '24 hours'
                         GROUP BY phase_name

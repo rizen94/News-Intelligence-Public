@@ -15,6 +15,7 @@ from typing import Any
 
 from api.shared.database import get_db_connection_context
 from api.shared.domain_registry import domain_key_to_schema, resolve_domain_schema
+from services.article_content_enrichment_service import fetch_arxiv_categories
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +193,16 @@ def upsert_literature_document_from_paper(
                 pub = _pub_date(published_at)
                 abstract_only = not bool((content or "").strip()) or len((content or "").strip()) < 2000
                 meta["abstract_only"] = abstract_only
+
+                # Attach ArXiv categories if available from profile/article, or fetch via API
+                _cats = prof.get("arxiv_categories") or art_meta.get("arxiv_categories")
+                if not _cats and meta.get("arxiv_id"):
+                    try:
+                        _cats = fetch_arxiv_categories(arxiv_id=meta["arxiv_id"])
+                    except Exception:
+                        _cats = []
+                if _cats:
+                    meta["arxiv_categories"] = _cats
 
                 cur.execute(
                     """

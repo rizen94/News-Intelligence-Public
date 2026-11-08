@@ -127,7 +127,7 @@ def main() -> int:
                 """
                 SELECT COUNT(*), COUNT(*) FILTER (WHERE success), COUNT(*) FILTER (WHERE NOT success),
                        MAX(finished_at)
-                FROM public.automation_run_history
+                FROM infrastructure.automation_run_history
                 WHERE phase_name = %s AND finished_at >= %s
                 """,
                 (phase_name, since),

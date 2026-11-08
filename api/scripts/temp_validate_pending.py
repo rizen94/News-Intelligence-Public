@@ -58,7 +58,7 @@ if rows[0][0] > 0:
 
 # 3. Automation run history summary
 print("\n=== 3. Top automation phases by run count ===")
-cols, rows = q("SELECT phase, COUNT(*) as cnt FROM public.automation_run_history GROUP BY phase ORDER BY cnt DESC LIMIT 15")
+cols, rows = q("SELECT phase, COUNT(*) as cnt FROM infrastructure.automation_run_history GROUP BY phase ORDER BY cnt DESC LIMIT 15")
 for r in rows:
     print(f"  {r['phase']}: {r['cnt']} runs")
 

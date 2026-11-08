@@ -37,7 +37,7 @@ if not os.environ.get("DB_PASSWORD") and os.path.exists(
 
 TARGETS = [
     "public.chronological_events",
-    "public.automation_run_history",
+    "infrastructure.automation_run_history",
     "politics.articles",
     "finance.articles",
     "science_tech.articles",

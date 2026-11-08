@@ -192,7 +192,7 @@ def refresh_monitor_backlog_snapshot(*, force: bool = False) -> dict[str, Any] |
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO public.automation_state (key, value, updated_at)
+                    INSERT INTO infrastructure.automation_state (key, value, updated_at)
                     VALUES (%s, %s::jsonb, NOW())
                     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
                     """,
@@ -236,7 +236,7 @@ def read_monitor_backlog_snapshot(*, allow_stale: bool = False) -> dict[str, Any
         with get_ui_db_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT value, updated_at FROM public.automation_state WHERE key = %s",
+                    "SELECT value, updated_at FROM infrastructure.automation_state WHERE key = %s",
                     (_STATE_KEY,),
                 )
                 row = cur.fetchone()

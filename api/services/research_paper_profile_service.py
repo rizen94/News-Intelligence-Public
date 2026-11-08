@@ -17,6 +17,7 @@ from api.shared.database import get_db_connection, get_db_connection_context
 from api.shared.domain_registry import domain_key_to_schema, pipeline_url_schema_pairs
 from api.shared.llm_text_sanitize import parse_llm_json_response
 
+from services.article_content_enrichment_service import enrich_article_content_for_research, fetch_arxiv_categories
 from services.research_paper_classifier import (
     CONTENT_KIND_RESEARCH_PAPER,
     classify_research_paper,
@@ -251,6 +252,22 @@ async def extract_profile_for_article(domain_key: str, article_id: int) -> dict[
                 )
                 meta.update(patch)
 
+                # Attach ArXiv category labels to the article metadata when available
+                _arx_id = meta.get("arxiv_id")
+                if _arx_id:
+                    _cats = fetch_arxiv_categories(arxiv_id=_arx_id)
+                    if _cats:
+                        cur.execute(
+                            f"""
+                            UPDATE {schema}.articles
+                            SET metadata = COALESCE(metadata, '{{}}'::jsonb) || %s::jsonb,
+                                updated_at = NOW()
+                            WHERE id = %s
+                            """,
+                            (json.dumps({"arxiv_categories": _cats}), article_id),
+                        )
+                        meta["arxiv_categories"] = _cats
+
             cur.execute(
                 """
                 UPDATE intelligence.research_paper_profiles
@@ -263,19 +280,61 @@ async def extract_profile_for_article(domain_key: str, article_id: int) -> dict[
 
     body = (content or "").strip()
     if len(body) < 200:
-        with get_db_connection_context() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE intelligence.research_paper_profiles
-                    SET extraction_status = 'failed', extraction_error = 'content_too_short',
-                        updated_at = NOW()
-                    WHERE domain_key = %s AND article_id = %s
-                    """,
-                    (domain_key, article_id),
+        # Try fetching full text for papers whose content is too short
+        from api.services.article_content_enrichment_service import looks_like_arxiv_abstract_only
+
+        url_str = (url or "").strip()
+        if looks_like_arxiv_abstract_only(url_str):
+            try:
+                enriched = enrich_article_content_for_research(
+                    url=url_str, article_id=article_id, source_domain=source_domain or ""
                 )
-            conn.commit()
-        return {"ok": False, "error": "content_too_short"}
+                full_text = enriched.get("content", "")
+                arxiv_cats = enriched.get("categories", [])
+                if full_text and len(full_text.strip()) >= 200:
+                    body = full_text.strip()
+                    meta["enriched_from_arxiv"] = True
+                    if arxiv_cats:
+                        patch2 = {"arxiv_categories": arxiv_cats, "enriched_from_arxiv": True}
+                        cur.execute(
+                            f"""
+                            UPDATE {schema}.articles
+                            SET content = %s, metadata = COALESCE(metadata, '{{}}'::jsonb) || %s::jsonb,
+                                updated_at = NOW()
+                            WHERE id = %s
+                            """,
+                            (full_text, json.dumps(patch2), article_id),
+                        )
+                        meta.update(patch2)
+                    else:
+                        cur.execute(
+                            f"""
+                            UPDATE {schema}.articles
+                            SET content = %s, updated_at = NOW()
+                            WHERE id = %s
+                            """,
+                            (full_text, article_id),
+                        )
+                else:
+                    # Enrichment didn't yield usable text — fall through to failure
+                    pass
+            except Exception as _e:
+                logger.debug("ArXiv enrichment failed for article %s: %s", article_id, _e)
+
+        if len(body) < 200:
+            with get_db_connection_context() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE intelligence.research_paper_profiles
+                        SET extraction_status = 'failed', extraction_error = 'content_too_short',
+                            updated_at = NOW()
+                        WHERE domain_key = %s AND article_id = %s
+                        """,
+                        (domain_key, article_id),
+                    )
+                conn.commit()
+            return {"ok": False, "error": "content_too_short"}
 
     prompt = _build_prompt(domain_key, title or "", body)
     raw_text = ""

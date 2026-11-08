@@ -76,7 +76,7 @@ SELECT 'article_duplicate_sources', count(*), min(first_seen_at), max(last_seen_
 FROM intelligence.article_duplicate_sources
 UNION ALL
 SELECT 'automation_run_history', count(*), min(started_at), max(started_at)
-FROM public.automation_run_history
+FROM infrastructure.automation_run_history
 ORDER BY relation_name;
 
 -- @section pack_1a_contexts_by_domain
@@ -215,7 +215,7 @@ SELECT phase,
        round(avg(extract(epoch FROM (completed_at - started_at)))
              FILTER (WHERE started_at > now() - interval '24 hours' AND completed_at IS NOT NULL))::numeric, 1)
            AS avg_duration_s_24h
-FROM public.automation_run_history
+FROM infrastructure.automation_run_history
 WHERE started_at > now() - interval '7 days'
 GROUP BY phase
 ORDER BY runs_24h DESC NULLS LAST, runs_7d DESC;
@@ -223,7 +223,7 @@ ORDER BY runs_24h DESC NULLS LAST, runs_7d DESC;
 -- @section pack_3a_automation_recent_failures
 -- Interpretation: phases failing in last 24h.
 SELECT phase, count(*) AS failures_24h
-FROM public.automation_run_history
+FROM infrastructure.automation_run_history
 WHERE started_at > now() - interval '24 hours'
   AND NOT success
 GROUP BY phase
@@ -312,6 +312,6 @@ SELECT
      HAVING count(*) > 1
    ) g) AS claim_duplicate_groups,
   (SELECT round(100.0 * avg(CASE WHEN success THEN 1.0 ELSE 0.0 END), 1)
-   FROM public.automation_run_history
+   FROM infrastructure.automation_run_history
    WHERE started_at > now() - interval '24 hours') AS automation_success_pct_24h,
-  (SELECT max(started_at) FROM public.automation_run_history) AS latest_automation_run;
+  (SELECT max(started_at) FROM infrastructure.automation_run_history) AS latest_automation_run;

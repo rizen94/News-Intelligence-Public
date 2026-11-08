@@ -81,7 +81,7 @@ For each run, **success** means: *the phase consumed a bounded batch of eligible
 
 - **Config vs DB:** `PYTHONPATH=api uv run python api/scripts/validate_pipeline_rss_alignment.py` — pipeline vs RSS vs active feeds.
 - **Metadata coverage:** `api/scripts/report_metadata_enrichment_status.py`.
-- **Phase completions:** `public.automation_run_history`; Monitor backlog — compare pending to `BATCH_SIZE_PER_TASK` for “healthy throughput vs backlog.”
+- **Phase completions:** `infrastructure.automation_run_history`; Monitor backlog — compare pending to `BATCH_SIZE_PER_TASK` for “healthy throughput vs backlog.”
 
 ---
 
@@ -222,7 +222,7 @@ Below: **Task** = scheduler key in `schedules`. **Backlog key** = name in `backl
 2. **Batch sizes** in `BATCH_SIZE_PER_TASK` define “normal throughput” vs “backlog” — tuning analysis should compare pending counts to these floors.
 3. **Dependencies** prevent upstream starvation (e.g. `claim_extraction` after `context_sync`); removing a dependency in code without shifting data flow can cause empty extracts.
 4. **Cross-domain vs silo:** Domain tables hold raw + ML; **`intelligence.*`** holds cross-cutting claims/events/contexts — improvement work should state which layer is targeted.
-5. **Observability:** `public.automation_run_history` (phase completions), `pipeline_traces` / `pipeline_checkpoints` (stage timing), Monitor UI backlog — use for before/after comparisons when changing methodology.
+5. **Observability:** `infrastructure.automation_run_history` (phase completions), `pipeline_traces` / `pipeline_checkpoints` (stage timing), Monitor UI backlog — use for before/after comparisons when changing methodology.
 
 ---
 

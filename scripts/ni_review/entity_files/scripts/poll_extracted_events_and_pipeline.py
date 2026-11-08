@@ -191,7 +191,7 @@ def main() -> int:
             cur.execute(
                 """
                 SELECT COUNT(*), MAX(finished_at), BOOL_OR(success)
-                FROM public.automation_run_history
+                FROM infrastructure.automation_run_history
                 WHERE phase_name = %s AND finished_at >= %s
                 """,
                 (phase, since),

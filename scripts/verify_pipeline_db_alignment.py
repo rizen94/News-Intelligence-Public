@@ -190,7 +190,7 @@ def main() -> int:
         out(f"| `chronological_events` last 7d | {recent_ev:,} rows with recent extraction_timestamp |")
         cur.execute(
             """
-            SELECT COUNT(*) FROM public.automation_run_history
+            SELECT COUNT(*) FROM infrastructure.automation_run_history
             WHERE finished_at > NOW() - INTERVAL '24 hours' AND success = true
             """
         )

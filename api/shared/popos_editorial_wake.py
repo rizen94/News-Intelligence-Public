@@ -36,7 +36,7 @@ def request_popos_editorial_wake(
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO public.automation_state (key, value, updated_at)
+                    INSERT INTO infrastructure.automation_state (key, value, updated_at)
                     VALUES (%s, %s::jsonb, NOW())
                     ON CONFLICT (key) DO UPDATE SET
                         value = EXCLUDED.value,
@@ -56,7 +56,7 @@ def consume_popos_editorial_wake(backoff: PhaseIdleBackoff | None = None) -> lis
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT value FROM public.automation_state WHERE key = %s",
+                    "SELECT value FROM infrastructure.automation_state WHERE key = %s",
                     (WAKE_KEY,),
                 )
                 row = cur.fetchone()
@@ -75,7 +75,7 @@ def consume_popos_editorial_wake(backoff: PhaseIdleBackoff | None = None) -> lis
                     if str(p).strip()
                 ]
                 cur.execute(
-                    "DELETE FROM public.automation_state WHERE key = %s",
+                    "DELETE FROM infrastructure.automation_state WHERE key = %s",
                     (WAKE_KEY,),
                 )
             conn.commit()

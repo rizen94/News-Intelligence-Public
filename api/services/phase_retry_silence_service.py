@@ -226,7 +226,7 @@ def reset_failing_streak(phase_name: str) -> None:
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT value FROM public.automation_state WHERE key = %s",
+                    "SELECT value FROM infrastructure.automation_state WHERE key = %s",
                     ("phase_failing_streaks",),
                 )
                 row = cur.fetchone()
@@ -239,7 +239,7 @@ def reset_failing_streak(phase_name: str) -> None:
                 data.pop(phase_name, None)
                 cur.execute(
                     """
-                    UPDATE public.automation_state
+                    UPDATE infrastructure.automation_state
                     SET value = %s::jsonb, updated_at = NOW()
                     WHERE key = %s
                     """,
@@ -387,7 +387,7 @@ def _bump_failing_streak(phase: str, *, status: str) -> int:
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT value FROM public.automation_state WHERE key = %s",
+                    "SELECT value FROM infrastructure.automation_state WHERE key = %s",
                     (key,),
                 )
                 row = cur.fetchone()
@@ -403,7 +403,7 @@ def _bump_failing_streak(phase: str, *, status: str) -> int:
                 data[phase] = entry
                 cur.execute(
                     """
-                    INSERT INTO public.automation_state (key, value, updated_at)
+                    INSERT INTO infrastructure.automation_state (key, value, updated_at)
                     VALUES (%s, %s::jsonb, NOW())
                     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
                     """,

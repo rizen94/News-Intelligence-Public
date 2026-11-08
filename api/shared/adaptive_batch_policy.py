@@ -504,7 +504,7 @@ def _load_persisted_state(phase: str) -> dict[str, Any]:
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT value FROM public.automation_state WHERE key = %s",
+                    "SELECT value FROM infrastructure.automation_state WHERE key = %s",
                     (_state_key(phase),),
                 )
                 row = cur.fetchone()
@@ -542,7 +542,7 @@ def _persist_batch(phase: str, batch: int, meta: dict[str, Any]) -> None:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO public.automation_state (key, value, updated_at)
+                    INSERT INTO infrastructure.automation_state (key, value, updated_at)
                     VALUES (%s, %s::jsonb, NOW())
                     ON CONFLICT (key) DO UPDATE
                       SET value = EXCLUDED.value, updated_at = NOW()
@@ -596,7 +596,7 @@ def record_adaptive_batch_yield(
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO public.automation_state (key, value, updated_at)
+                    INSERT INTO infrastructure.automation_state (key, value, updated_at)
                     VALUES (%s, %s::jsonb, NOW())
                     ON CONFLICT (key) DO UPDATE
                       SET value = EXCLUDED.value, updated_at = NOW()
@@ -737,7 +737,7 @@ def apply_adaptive_batch_yield_gate(phase: str) -> tuple[int, dict[str, Any]]:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        INSERT INTO public.automation_state (key, value, updated_at)
+                        INSERT INTO infrastructure.automation_state (key, value, updated_at)
                         VALUES (%s, %s::jsonb, NOW())
                         ON CONFLICT (key) DO UPDATE
                           SET value = EXCLUDED.value, updated_at = NOW()

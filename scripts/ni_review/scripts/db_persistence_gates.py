@@ -60,7 +60,7 @@ def main() -> int:
 
     checks = [
         ("public.chronological_events", "SELECT COUNT(*) FROM public.chronological_events"),
-        ("public.automation_run_history", "SELECT COUNT(*) FROM public.automation_run_history"),
+        ("infrastructure.automation_run_history", "SELECT COUNT(*) FROM infrastructure.automation_run_history"),
         ("politics.articles", "SELECT COUNT(*) FROM politics.articles"),
     ]
 
@@ -77,7 +77,7 @@ def main() -> int:
 
             cur.execute(
                 """
-                SELECT COUNT(*) FROM public.automation_run_history
+                SELECT COUNT(*) FROM infrastructure.automation_run_history
                 WHERE finished_at >= %s AND success = true
                 """,
                 (cutoff,),

@@ -2432,7 +2432,7 @@ These files handle entity processing, Wikipedia enrichment, task queuing
       L20: ML[ml_processing_entity_extraction_etc]
       L37: These **phase numbers** in `automation_manager` are **logical buckets** (not strictly sequential wall-clock order for ev
       L44: | **4–5** | `entity_extraction`, `ml_processing`, `topic_clustering`, `quality_scoring`, `sentiment_analysis` | Per-arti
-      L53: 1. **Find the task name** in the Monitor UI or `public.automation_run_history` (if enabled).
+      L53: 1. **Find the task name** in the Monitor UI or `infrastructure.automation_run_history` (if enabled).
   docs/API_REFERENCE.md (score: 2)
       L54: | GET | `/api/{domain}/content_analysis/topics/cluster/status` | Cluster job status. |
       L64: | GET | `/api/{domain}/content_analysis/topics/queue/status` | Topic queue status. |
@@ -2695,7 +2695,7 @@ These files handle entity processing, Wikipedia enrichment, task queuing
       L20: ML[ml_processing_entity_extraction_etc]
       L37: These **phase numbers** in `automation_manager` are **logical buckets** (not strictly sequential wall-clock order for ev
       L44: | **4–5** | `entity_extraction`, `ml_processing`, `topic_clustering`, `quality_scoring`, `sentiment_analysis` | Per-arti
-      L53: 1. **Find the task name** in the Monitor UI or `public.automation_run_history` (if enabled).
+      L53: 1. **Find the task name** in the Monitor UI or `infrastructure.automation_run_history` (if enabled).
   scripts/ni_review/scripts/backfill_entity_descriptions.py (score: 2)
       L3: Backfill entity_canonical.description and wikipedia_page_id from local Wikipedia knowledge.
       L5: Run after migration 170. If intelligence.wikipedia_knowledge is empty, use --api-fallback to

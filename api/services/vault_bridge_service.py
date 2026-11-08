@@ -161,7 +161,7 @@ def sync_cursors_to_automation_state(cursors: dict[str, Any]) -> None:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO public.automation_state (key, value, updated_at)
+                    INSERT INTO infrastructure.automation_state (key, value, updated_at)
                     VALUES ('vault_work_queue', %s, NOW())
                     ON CONFLICT (key) DO UPDATE
                     SET value = EXCLUDED.value, updated_at = NOW()
