@@ -61,7 +61,9 @@ The following are blocked without explicit human approval:
 - Deleting files outside `archive/` or `docs/archive/`
 - Modifying `api/shared/database/connection.py` (the single pool)
 - Changing `.clinerules/` workflow rules themselves
-- Any change that touches production deployment (systemd services, Docker compose)
+- **Inventing** production deploy steps (undocumented `systemctl`, hand-rolled `rsync`)
+
+**When the user authorizes deploy/ship/Widow:** you **must run** **`./scripts/deploy_to_widow.sh`** via run_commands — see **`ni-deploy.md`**. That is not blocked; refusal boilerplate is wrong for this workspace.
 
 ## Investigation Policy (PERMISSIVE)
 

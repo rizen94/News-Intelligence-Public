@@ -28,7 +28,7 @@ Collect database data from News Intelligence's `news_intel` DB and diagnose why 
 
 ### 4. Persist findings to Obsidian vault as we go
 
-Before each significant finding, **append to** `00_Inbox/handoffs/2026-10-28-pending-items-triage.md`:
+Follow **`ni-session-vault.md`** (vault MCP). Before each significant finding, **append to** `00_Inbox/handoffs/2026-10-28-pending-items-triage.md` (or job slug for today):
 - What you found and why it matters
 - SQL queries that produced results (with outputs)
 - Patterns or anomalies noticed

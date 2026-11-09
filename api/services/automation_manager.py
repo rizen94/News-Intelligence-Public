@@ -7371,13 +7371,13 @@ class AutomationManager:
                         ids  = [a[0] for a in scored_articles]
                         scores = [a[1] for a in scored_articles]
 
-                        # Single UPDATE: sets quality_score, updated_at, pipeline_status and current_phase
+                        # Single UPDATE: sets quality_score, updated_at, processing_status and current_phase
                         batch_cur.execute(
                             f"""
                             UPDATE {schema}.articles
                             SET quality_score    = sub.score::numeric,
                                 updated_at      = CURRENT_TIMESTAMP,
-                                pipeline_status  = 'completed',
+                                processing_status  = 'completed',
                                 current_phase    = 'quality_scoring'
                             FROM (VALUES {values_clause}) AS sub(article_id, score)
                             WHERE {schema}.articles.id = sub.article_id

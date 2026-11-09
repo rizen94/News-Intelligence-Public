@@ -33,13 +33,22 @@ DB_URI = os.environ.get("NEWS_INTEL_DATABASE_URI") or \
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("batch_rescore")
 
-DOMAINS_SCHEMA = [
-    ("artificial_intelligence", "storylines"),
-    ("legal", "storylines"),
-    ("medicine", "storylines"),
-    ("neurodiversity", "storylines"),
-    ("public", "storylines"),
-]
+def get_all_active_domains():
+    """Fetch all active domains from the database."""
+    try:
+        conn = psycopg2.connect(DB_URI)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT domain_key, schema_name FROM public.domains WHERE is_active = true ORDER BY domain_key"
+            )
+            domains = [(row[0], row[1]) for row in cur.fetchall()]
+        conn.close()
+        return domains
+    except Exception as e:
+        logger.error(f"Failed to fetch active domains: {e}")
+        raise
+
+DOMAINS_SCHEMA = get_all_active_domains()
 
 
 def _str(val):

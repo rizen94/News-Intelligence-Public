@@ -25,10 +25,13 @@ def check_nas_database():
     print("1. NAS Database (via SSH tunnel localhost:5433)")
     print("=" * 60)
     try:
-        from shared.database.connection import get_db_connection
-        conn = get_db_connection()
+        from shared.database.connection import get_db_connect_kwargs
+        # Use ephemeral connection for verification script
+        import psycopg2
+        kwargs = get_db_connect_kwargs()
+        conn = psycopg2.connect(**kwargs)
         if not conn:
-            print("   FAILED: get_db_connection() returned None")
+            print("   FAILED: psycopg2.connect() returned None")
             return False
         with conn.cursor() as cur:
             cur.execute("SELECT 1")
@@ -66,7 +69,7 @@ def check_ollama():
         req = urllib.request.Request("http://localhost:11434/api/version")
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = resp.read().decode()
-        print(f"   OK: Ollama reachable")
+        print("   OK: Ollama reachable")
         return True
     except Exception as e:
         print(f"   FAILED: {e}")

@@ -3,13 +3,11 @@
 ## Before Making Changes
 When starting any task that involves modifying code, understanding architecture, or debugging:
 
-1. **First, pack the codebase** using the repomix MCP tool's `pack_codebase` with:
-   - directory: /home/pete/Documents/projects/News Intelligence
-   - compress: true
-   - includePatterns: "**/*.py,**/*.yaml,**/*.yml,docker-compose*.yml"
-   - ignorePatterns: "scripts/ni_review/**,api/database/migrations/archive/**,docs/archive/**,diagnostics/**,**/__pycache__/**"
+0. **Session vault** — open or create `00_Inbox/handoffs/YYYY-MM-DD-<slug>.md`; append findings as you go (**`ni-session-vault.md`**). Do not balloon chat context.
 
-2. **Then search before editing.** Before modifying any file, use `grep_repomix_output` to find:
+1. **Search before editing** (default). Use Cline **search/grep** on `~/Documents/projects/news_intelligence`. **Do not** run `pack_codebase` unless the user asks or the symbol is unreachable after targeted search — packing blows the context window.
+
+2. **If you already packed**, use `grep_repomix_output` to find:
    - All imports of the module you're about to change
    - All files that call functions you're modifying
    - Related route definitions, service classes, or database models
@@ -24,6 +22,6 @@ This is a Python/FastAPI project with domain-based organization. Key patterns:
 - Docker orchestration via docker-compose files at project root
 
 ## Rules
-- Never modify a file without first checking what depends on it via grep_repomix_output
-- If a task is ambiguous, pack and search before asking me clarifying questions
+- Never modify a file without checking callers (search/grep or repomix grep if pack already exists)
+- If a task is ambiguous, **vault_append_note** the question and use postgres-mcp + one file read — avoid pack-first
 - When you find circular imports or tight coupling, flag it
