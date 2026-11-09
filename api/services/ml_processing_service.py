@@ -516,6 +516,27 @@ Create a narrative that shows how these individual story elements combine to tel
                 db.commit()
 
                 logger.info(f"Updated storyline {storyline_id} with narrative summary")
+                
+                # Also update processing status of all articles in this storyline to completed
+                # This ensures that individual items show as processed rather than pending
+                if schema.replace("_", "").isalnum():
+                    article_update_query = text(f"""
+                        UPDATE {schema}.articles 
+                        SET processing_status = 'completed',
+                            processing_completed_at = CURRENT_TIMESTAMP
+                        WHERE id IN (
+                            SELECT article_id 
+                            FROM {schema}.storyline_articles 
+                            WHERE storyline_id = :storyline_id
+                        )
+                    """)
+                    
+                    db.execute(article_update_query, {"storyline_id": storyline_id})
+                    db.commit()
+                    
+                    logger.info(f"Updated processing status of articles in storyline {storyline_id} to completed")
+                else:
+                    logger.warning(f"Invalid schema name '{schema}' - skipping article status updates")
             finally:
                 db.close()
         except Exception as e:
