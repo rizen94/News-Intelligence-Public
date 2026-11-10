@@ -126,13 +126,30 @@ class APIConnectionManager {
       // Use same base as request interceptor: origin for global-style routes so path stays /api/...
       const base = getCurrentApiUrl();
       const origin = getApiOrigin();
-      const healthBase = origin !== '' ? origin : base;
-      const healthUrl = !healthBase
-        ? '/api/system_monitoring/health'
-        : `${healthBase.replace(/\/$/, '')}/api/system_monitoring/health`;
-      const response = await axios.get(healthUrl, { timeout: 15000 });
+
+      // Empty base → relative /api/... (Vite proxy / same-origin nginx).
+      // Non-empty base → origin-only prefix so we never double-prefix domain paths.
+      let healthUrl = '/api/system_monitoring/health';
+      if (base && base !== '') {
+        const healthBase = origin !== '' ? origin : base;
+        if (healthBase) {
+          healthUrl = `${healthBase.replace(/\/$/, '')}/api/system_monitoring/health`;
+        }
+      }
+
+      const response = await this.apiInstance.get(healthUrl, { timeout: 15000 });
       return response.status === 200;
     } catch (err: unknown) {
+      return false;
+    }
+  }
+
+  public async testHealth(): Promise<boolean> {
+    try {
+      const healthUrl = '/api/system_monitoring/health';
+      const response = await this.apiInstance.get(healthUrl, { timeout: 15000 });
+      return response.status === 200;
+    } catch {
       return false;
     }
   }
