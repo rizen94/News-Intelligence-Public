@@ -347,7 +347,7 @@ def compute_processing_progress_response(
                         WHERE finished_at >= NOW() - INTERVAL '24 hours'
                           AND started_at IS NOT NULL
                     ) AS avg_s
-                FROM automation_run_history
+                FROM infrastructure.automation_run_history
                 WHERE finished_at >= NOW() - INTERVAL '7 days'
                   AND NOT (phase_name = ANY(%s))
                 GROUP BY phase_name
@@ -418,7 +418,7 @@ def compute_processing_progress_response(
                            phase_name,
                            COUNT(*) AS runs,
                            SUM(CASE WHEN success IS TRUE THEN 0 ELSE 1 END) AS fails
-                    FROM automation_run_history
+                    FROM infrastructure.automation_run_history
                     WHERE finished_at >= NOW() - INTERVAL '72 hours'
                       AND NOT (phase_name = ANY(%s))
                     GROUP BY hr, phase_name
@@ -449,7 +449,7 @@ def compute_processing_progress_response(
                     """
                     SELECT COUNT(*)::bigint FROM (
                         SELECT 1
-                        FROM automation_run_history
+                        FROM infrastructure.automation_run_history
                         WHERE finished_at >= NOW() - INTERVAL '72 hours'
                           AND NOT (phase_name = ANY(%s))
                         GROUP BY date_trunc('hour', finished_at), phase_name

@@ -114,7 +114,7 @@ def _get_phase_names_cached(window_hrs: int) -> list[str]:
         with get_ui_db_connection_context() as conn:
             cur = conn.cursor()
             cur.execute(
-                "SELECT DISTINCT phase_name FROM automation_run_history WHERE started_at >= NOW() - INTERVAL %s ORDER BY phase_name;",
+                "SELECT DISTINCT phase_name FROM infrastructure.automation_run_history WHERE started_at >= NOW() - INTERVAL %s ORDER BY phase_name;",
                 (f"{window_hrs} hours",),
             )
             rows = cur.fetchall()

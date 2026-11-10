@@ -589,7 +589,7 @@ def get_backlog_status() -> dict[str, Any]:
                 """
                 SELECT phase_name, started_at, finished_at, success,
                        LEFT(COALESCE(error_message, ''), 200)
-                FROM automation_run_history
+                FROM infrastructure.automation_run_history
                 WHERE phase_name = 'nightly_enrichment_context'
                 ORDER BY COALESCE(finished_at, started_at) DESC NULLS LAST
                 LIMIT 14

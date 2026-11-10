@@ -37,7 +37,7 @@ def record_phase_heartbeat(
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO public.pipeline_phase_heartbeats
+                    INSERT INTO pipeline.pipeline_phase_heartbeats
                         (phase_name, scheduler_path, last_run_at, last_success,
                          items_processed, detail, updated_at)
                     VALUES (%s, %s, NOW(), %s, %s, %s::jsonb, NOW())
@@ -73,7 +73,7 @@ def list_phase_heartbeats() -> list[dict[str, Any]]:
                     """
                     SELECT phase_name, scheduler_path, last_run_at, last_success,
                            items_processed, detail
-                    FROM public.pipeline_phase_heartbeats
+                    FROM pipeline.pipeline_phase_heartbeats
                     ORDER BY phase_name
                     """
                 )

@@ -538,7 +538,7 @@ def _fetch_phase_avg_durations_from_db(phase_names: list[str]) -> dict[str, floa
                         ROW_NUMBER() OVER (
                             PARTITION BY phase_name ORDER BY finished_at DESC
                         ) AS rn
-                    FROM automation_run_history
+                    FROM infrastructure.automation_run_history
                     WHERE success = TRUE
                       AND finished_at IS NOT NULL
                       AND started_at IS NOT NULL
@@ -911,7 +911,7 @@ def _get_last_run_from_db(phase_name: str) -> datetime | None:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT finished_at FROM automation_run_history WHERE phase_name = %s ORDER BY finished_at DESC LIMIT 1",
+                    "SELECT finished_at FROM infrastructure.automation_run_history WHERE phase_name = %s ORDER BY finished_at DESC LIMIT 1",
                     (phase_name,),
                 )
                 row = cur.fetchone()

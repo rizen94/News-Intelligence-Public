@@ -5181,11 +5181,14 @@ class AutomationManager:
             process_content_refinement_queue_batch,
         )
 
-        if in_nightly_gpu_refinement_window_est():
-            logger.debug(
-                "Content refinement queue: nightly pipeline active — handled by nightly_enrichment_context"
-            )
-            return None
+        # Remove the restriction to only process during nightly window
+        # Content refinement queue should be processed during appropriate windows
+        # rather than being skipped entirely during daytime hours
+        # if in_nightly_gpu_refinement_window_est():
+        #     logger.debug(
+        #         "Content refinement queue: nightly pipeline active — handled by nightly_enrichment_context"
+        #     )
+        #     return None
 
         try:
             auto_enqueue_comprehensive_rag_for_automation()
