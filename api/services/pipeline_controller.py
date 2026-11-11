@@ -614,7 +614,7 @@ def assess_phase_health(
         return PhaseHealth(phase, "slow", "drain in-flight")
 
     if len(hist) >= 2 and pend > 0:
-        if all(h == pend for h in hist[-stall_backlog_unchanged_replans() :]):
+        if all(h == pend for h in hist[-stall_backlog_unchanged_replans():]):
             if run_history_rows:
                 zero_runs = 0
                 measurable = 0
@@ -673,7 +673,7 @@ def _recent_run_history(phase: str, limit: int = 5) -> list[dict[str, Any]]:
                 cur.execute(
                     """
                     SELECT success, error_message, metadata
-                    FROM automation_run_history
+                    FROM infrastructure.automation_run_history
                     WHERE phase_name = %s
                       AND COALESCE(metadata->>'status', '') NOT IN %s
                     ORDER BY finished_at DESC NULLS LAST

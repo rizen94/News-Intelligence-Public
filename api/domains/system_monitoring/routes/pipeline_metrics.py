@@ -137,7 +137,7 @@ def _recently_processed(phase: str) -> int:
             cur.execute(
                 """\
 SELECT COUNT(*) AS processed
-FROM automation_run_history
+FROM infrastructure.automation_run_history
 WHERE phase_name = %s
   AND started_at >= NOW() - INTERVAL '6 hours'
   AND finished_at >= NOW() - INTERVAL '6 hours'

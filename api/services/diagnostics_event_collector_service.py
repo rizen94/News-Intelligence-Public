@@ -60,7 +60,7 @@ def _collect_automation_failures(
             cur.execute(
                 """
                 SELECT phase_name, started_at, finished_at, success, error_message
-                FROM automation_run_history
+                FROM infrastructure.automation_run_history
                 WHERE finished_at >= %s
                   AND (success = false OR (error_message IS NOT NULL AND btrim(error_message) <> ''))
                 ORDER BY finished_at DESC

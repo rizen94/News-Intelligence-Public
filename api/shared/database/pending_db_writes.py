@@ -169,7 +169,7 @@ def flush_pending_writes() -> dict[str, Any]:
                         with conn.cursor() as cur:
                             cur.execute(
                                 """
-                                INSERT INTO automation_run_history (
+                                INSERT INTO infrastructure.automation_run_history (
                                     phase_name, started_at, finished_at, success, error_message, metadata
                                 )
                                 VALUES (%s, %s, %s, %s, %s, COALESCE(%s::jsonb, '{}'::jsonb))

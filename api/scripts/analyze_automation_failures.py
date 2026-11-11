@@ -55,7 +55,7 @@ def main() -> int:
                        COALESCE(left(error_message, 400), '') AS err_snip,
                        count(*)::bigint AS cnt,
                        max(finished_at) AS last_finished
-                FROM automation_run_history
+                FROM infrastructure.automation_run_history
                 WHERE finished_at >= %s
                   AND (success = false OR (error_message IS NOT NULL AND btrim(error_message) <> ''))
                 GROUP BY phase_name, success, COALESCE(left(error_message, 400), '')
@@ -71,7 +71,7 @@ def main() -> int:
                 SELECT phase_name,
                        count(*) FILTER (WHERE success = true) AS ok,
                        count(*) FILTER (WHERE success = false) AS failed
-                FROM automation_run_history
+                FROM infrastructure.automation_run_history
                 WHERE finished_at >= %s
                 GROUP BY phase_name
                 HAVING count(*) FILTER (WHERE success = false) > 0

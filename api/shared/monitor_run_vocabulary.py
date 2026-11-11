@@ -258,7 +258,7 @@ def query_measured_rows_per_run_by_phase(cur, *, window_hours: int = 24) -> dict
                 COUNT(*) FILTER (
                     WHERE COALESCE(metadata->>'status', '') IN ({terminal})
                 )::int AS terminal_count
-            FROM automation_run_history
+            FROM infrastructure.automation_run_history
             WHERE finished_at >= NOW() - INTERVAL '{int(window_hours)} hours'
               AND success IS TRUE
               AND metadata IS NOT NULL

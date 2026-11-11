@@ -3289,7 +3289,7 @@ def get_process_run_summary(
                 cur.execute(
                     """
                     SELECT phase_name, MAX(finished_at) AS last_finished
-                    FROM automation_run_history
+                    FROM infrastructure.automation_run_history
                     WHERE finished_at >= %s
                     GROUP BY phase_name
                     """,
@@ -3300,7 +3300,7 @@ def get_process_run_summary(
                 cur.execute(
                     """
                     SELECT phase_name, MAX(finished_at) AS last_finished
-                    FROM automation_run_history
+                    FROM infrastructure.automation_run_history
                     GROUP BY phase_name
                     """
                 )
