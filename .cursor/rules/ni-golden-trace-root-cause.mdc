@@ -1,0 +1,18 @@
+---
+description: NI product/pipeline fixes require golden RSS→reader trace—not superficial patches
+alwaysApply: true
+---
+
+# Root cause — golden trace (News Intelligence)
+
+When work touches **reader feed**, **briefs**, **RSS → user-visible content**, or **pipeline processing** (not ops-only Grafana/infra):
+
+1. Read **`docs/GOLDEN_RSS_TO_READER.md`** and follow **`.clinerules/skills/ni-golden-trace/SKILL.md`**.
+2. Name a **`golden_article_id`** and run stage SQL **before** large code changes.
+3. Fix the **first broken stage** only (intake → enrichment → storyline → editorial → reader).
+4. **Do not** claim *fixed* for product bugs after monitoring/scheduling-only changes unless the golden row advanced or you document stage N blocker + log evidence.
+5. Widow product claims: **`./scripts/deploy_to_widow.sh`** when authorized, then re-check **same** `article_id` + `GET /api/reader/home` as in the doc.
+
+Ops-only tasks (metrics, run history schema, dashboards) are exempt when the user scoped them that way.
+
+Cursor/Cline shared: **Cline** hooks inject `NI_GOLDEN_TRACE` on matching prompts; **Cursor** uses this rule + `AGENTS.md`.

@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Cline UserPromptSubmit — mode binding + pipeline skill nudge.
+set -euo pipefail
+
+input="$(cat)"
+
+python3 -c '
+import json, re, sys
+
+raw = sys.stdin.read()
+try:
+    payload = json.loads(raw) if raw.strip() else {}
+except json.JSONDecodeError:
+    print(json.dumps({"cancel": False}))
+    raise SystemExit(0)
+
+prompt = (payload.get("prompt") or payload.get("userPrompt") or "")
+prompt_l = prompt.lower()
+roots = payload.get("workspaceRoots") or []
+ni = any("news_intelligence" in str(r) for r in roots)
+
+out = {"cancel": False}
+if not ni or not prompt:
+    print(json.dumps(out))
+    raise SystemExit(0)
+
+ACT_RE = re.compile(
+    r"\b("
+    r"cline_act|ni_cline_mode:\s*act|act\s+mode|deploy\s+authorized|"
+    r"ni-ship-widow|implement\s+now|execute\s+handoff|authorized\s+widow|"
+    r"patch\s+and\s+deploy|ship\s+to\s+widow"
+    r")\b",
+    re.I,
+)
+PLAN_RE = re.compile(
+    r"\b("
+    r"ni_cline_mode:\s*plan|plan\s+mode|investigate\s+only|handoff\s+only|plan\s+only"
+    r")\b",
+    re.I,
+)
+
+chunks = []
+
+if ACT_RE.search(prompt):
+    chunks.append(
+        "NI_CLINE_MODE: act — this message. Binding: ni-agent-act.md. "
+        "Implement; do not defer to Plan or re-investigate without a failed verify step."
+    )
+elif PLAN_RE.search(prompt):
+    chunks.append(
+        "NI_CLINE_MODE: plan — this message. Binding: ni-agent-plan.md. "
+        "No writes/deploy; end with ni-plan-handoff."
+    )
+
+PRODUCT_RE = re.compile(
+    r"\b("
+    r"reader/home|home\s+feed|brief|broadsheet|storyunit|rss\b|"
+    r"articles?\s+not\s+show|empty\s+news|readable|ingested|golden\s+trace|"
+    r"root\s+cause|superficial|patch"
+    r")\b",
+    re.I,
+)
+pipeline_hint = re.search(
+    r"\b(pipeline|heartbeat|automation_manager|widow|tier.?1|phase.?monitor|storyline|grafana|reader/home)\b",
+    prompt_l,
+)
+
+if PRODUCT_RE.search(prompt):
+    chunks.append(
+        "NI_GOLDEN_TRACE: BINDING — ni-golden-trace + docs/GOLDEN_RSS_TO_READER.md. "
+        "golden_article_id + first broken stage; no monitoring-only done on product tickets."
+    )
+elif pipeline_hint and "ni-pipeline-debug" not in prompt_l and not ACT_RE.search(prompt):
+    chunks.append(
+        "Pipeline/runtime: activate skill ni-pipeline-debug (Plan: through step 5; Act: minimal re-check only)."
+    )
+
+if chunks:
+    out["contextModification"] = " ".join(chunks)
+
+print(json.dumps(out))
+' <<<"$input"

@@ -62,10 +62,11 @@ echo "=========================================="
 echo "Post-deploy: migrations, schema audit, API restart"
 echo "=========================================="
 
-ssh "${WIDOW_USER}@${WIDOW_HOST}" "bash -s" <<REMOTE
+ssh "${WIDOW_USER}@${WIDOW_HOST}" "bash -s" <<'REMOTE'
 set -euo pipefail
-cd ${REMOTE_DIR}
-export PYTHONPATH=api
+REMOTE_DIR="/opt/news-intelligence"
+cd "${REMOTE_DIR}"
+export PYTHONPATH="${REMOTE_DIR}"
 
 # Source .env for DB credentials (credential-sourcing migration).
 if [ ! -f .env ]; then
@@ -124,9 +125,9 @@ fi
 listen_cwd="\$(readlink -f /proc/\${listen_pid}/cwd 2>/dev/null || true)"
 echo "API listener pid=\${listen_pid} cwd=\${listen_cwd}"
 case "\${listen_cwd}" in
-  ${REMOTE_DIR}/*|${REMOTE_DIR}) ;;
+  /opt/news-intelligence/*|/opt/news-intelligence) ;;
   *)
-    echo "FAIL: :8000 cwd is not under ${REMOTE_DIR} (got \${listen_cwd}). Stop workspace uvicorn." >&2
+    echo "FAIL: :8000 cwd is not under /opt/news-intelligence (got \${listen_cwd}). Stop workspace uvicorn." >&2
     exit 1
     ;;
 esac

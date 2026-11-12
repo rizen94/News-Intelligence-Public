@@ -92,6 +92,12 @@ Use this index for **current** documentation. See **[../PROJECT_STATUS.md](../PR
 
 | Doc | Purpose |
 |-----|---------|
+| [GOLDEN_RSS_TO_READER.md](GOLDEN_RSS_TO_READER.md) | **Product closure** — golden `article_id` trace RSS→reader; root-cause “done” for agents (not Grafana-only). |
+| [RUNTIME_PIPELINE_TROUBLESHOOTING.md](RUNTIME_PIPELINE_TROUBLESHOOTING.md) | **Widow pipeline ops** — repomix symbol map, evidence ladder, symptom matrix (runtime, not coding-agent vault). |
+| [GRAPHIFY_PIPELINE_SLICE.md](GRAPHIFY_PIPELINE_SLICE.md) | **Pipeline call graph** — graphify corpus, MCP for Cline, refresh script. |
+| [CLINE_BASELINE.md](CLINE_BASELINE.md) | **Cline setup** — skills, hooks; thin rules. |
+| [CLINE_RULES_INDEX.md](CLINE_RULES_INDEX.md) | Active vs retired rule paths. |
+| [PILOT_CODE_INTEL.md](PILOT_CODE_INTEL.md) | Graphify++, ast-grep, Serena MCP pilots. |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common issues (incl. Ollama CB reset vs API restart). |
 | [EVENTS_ZERO_AND_HOW_TO_POPULATE.md](EVENTS_ZERO_AND_HOW_TO_POPULATE.md) | Populate `tracked_events`. |
 | [MONITOR_BLOCKAGES_AND_GPU.md](MONITOR_BLOCKAGES_AND_GPU.md) | Monitor / GPU blockages. |

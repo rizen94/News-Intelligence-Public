@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# Cline TaskStart — NI: mode binding (act/plan) + workspace skills.
+set -euo pipefail
+
+input="$(cat)"
+
+python3 -c '
+import json, re, sys
+from datetime import date
+
+raw = sys.stdin.read()
+try:
+    payload = json.loads(raw) if raw.strip() else {}
+except json.JSONDecodeError:
+    print(json.dumps({"cancel": False}))
+    raise SystemExit(0)
+
+roots = payload.get("workspaceRoots") or []
+ni = any("news_intelligence" in str(r) for r in roots)
+
+out = {"cancel": False}
+if not ni:
+    print(json.dumps(out))
+    raise SystemExit(0)
+
+def _initial_task_text() -> str:
+    ts = payload.get("taskStart") or {}
+    meta = ts.get("taskMetadata") or {}
+    for key in ("initialTask", "task", "prompt"):
+        v = meta.get(key) or payload.get(key)
+        if isinstance(v, str) and v.strip():
+            return v
+    return ""
+
+
+initial = _initial_task_text()
+blob = (initial or "").lower()
+
+ACT_RE = re.compile(
+    r"\b("
+    r"cline_act|ni_cline_mode:\s*act|act\s+mode|deploy\s+authorized|"
+    r"ni-ship-widow|implement\s+now|execute\s+handoff|authorized\s+widow"
+    r")\b",
+    re.I,
+)
+PLAN_RE = re.compile(
+    r"\b("
+    r"ni_cline_mode:\s*plan|plan\s+mode|investigate\s+only|"
+    r"handoff\s+only|ni-plan-handoff\s+end|plan\s+only"
+    r")\b",
+    re.I,
+)
+
+mode = None
+if ACT_RE.search(blob):
+    mode = "act"
+elif PLAN_RE.search(blob):
+    mode = "plan"
+
+today = date.today().isoformat()
+handoff_glob = f"00_Inbox/handoffs/{today}-*.md"
+
+parts = ["WORKSPACE: news_intelligence."]
+
+if mode == "act":
+    parts.append(
+        "NI_CLINE_MODE: act — BINDING. Follow ni-agent-act.md. "
+        "Edits, shell, ni-ship-widow allowed when user authorized. "
+        "Do not ni-plan-handoff or full re-triage; execute handoff Approved plan if present."
+    )
+    parts.append(
+        "Coding: ni-repomix-grep → implement → ni-verify-change → ni-ship-widow when prod."
+    )
+elif mode == "plan":
+    parts.append(
+        "NI_CLINE_MODE: plan — BINDING. Follow ni-agent-plan.md. "
+        "No writes, deploy, or shell. End ni-plan-handoff."
+    )
+    parts.append(
+        f"Pipeline: ni-pipeline-debug. On resume: vault_read_note ({handoff_glob})."
+    )
+else:
+    parts.append(
+        "NI_CLINE_MODE: unknown — infer from tools: edits/shell OK ⇒ act (ni-agent-act.md); "
+        "blocked ⇒ new task in Act. Enable ni-agent-act.md or ni-agent-plan.md in Cline per mode."
+    )
+    parts.append(
+        "Pipeline/runtime: ni-pipeline-debug. Coding: ni-repomix-grep → ni-verify-change."
+    )
+    parts.append(f"Handoff path pattern: {handoff_glob}")
+
+parts.append("Fixed = deploy + §2 re-check (ni-ship-widow) — not local diff alone.")
+
+PRODUCT_RE = re.compile(
+    r"\b("
+    r"reader/home|home\s+feed|brief|broadsheet|storyunit|rss\b|"
+    r"articles?\s+not\s+show|empty\s+news|pipeline.*reader|golden\s+trace|"
+    r"readable|ingested|storyline"
+    r")\b",
+    re.I,
+)
+if PRODUCT_RE.search(blob):
+    parts.append(
+        "NI_GOLDEN_TRACE: BINDING — skill ni-golden-trace + docs/GOLDEN_RSS_TO_READER.md. "
+        "Name golden_article_id; fix first broken stage; no superficial monitoring-only done."
+    )
+
+out["contextModification"] = " ".join(parts)
+print(json.dumps(out))
+' <<<"$input"

@@ -1,32 +1,21 @@
-# Agent Guidance
+# Agent Guidance — News Intelligence
 
-> Read `.clinerules/workflow.md` for how to approach problems. This file is for project-specific reference points only.
+**How to work:** `.clinerules/ni-agent.md` (principles, vault + MemPalace + grep, Plan/Act).
 
----
+**Code/migrations:** `.clinerules/workflow.md`.
 
-## Key Directories
+**Product pipeline (RSS → reader):** `docs/GOLDEN_RSS_TO_READER.md` + skill `.clinerules/skills/ni-golden-trace/SKILL.md` — **required** for feed/brief/RSS fixes; no “done” without a golden `article_id` trace (Cursor rule: `.cursor/rules/ni-golden-trace-root-cause.mdc`).
+
+**Runtime pipeline on Widow (ops):** `docs/RUNTIME_PIPELINE_TROUBLESHOOTING.md` — refresh `./scripts/repomix_pack_ni.sh`, then `grep_repomix_output` / `rg` before opening large services.
+
+## Key paths
 
 | Area | Location |
 |------|----------|
-| API layer | `api/` — domain routes, services, DB connection module |
-| Frontend | `web/src/` — SPA app code (entry: `App.tsx`) |
-| Database migrations | `api/database/migrations/` |
-| Config / env | `.env*`, `.env.example` at project root; PopOS workers use `.env.popos_worker` |
-| Docs | `docs/` — design docs, runbooks |
-| Archive (cold) | `archive/` — retired code, old UI |
+| API | `api/` |
+| Frontend | `web/src/` |
+| Migrations | `api/database/migrations/` |
+| Deploy (Widow) | `./scripts/deploy_to_widow.sh` |
+| Code pack (grep) | `./scripts/repomix_pack_ni.sh` → `repomix-output.xml` |
 
-## Runtime Reference
-
-| Role | Path / Host |
-|------|-------------|
-| Dev workspace | See current working directory |
-| Production runtime | Project-specific — check deployment notes |
-| Database | Check `api/shared/database/connection.py` for pool config |
-
-## Product Roots
-
-Check `web/src/` entry points for route mapping. See `.clinerules/workflow.md` for agent workflow rules.
-
----
-
-*Keep this file minimal — add entries only when a path or host comes up repeatedly.*
+DB live: Widow `news_intel` via homelab **`postgres-mcp`** (not PopOS homelab Postgres).

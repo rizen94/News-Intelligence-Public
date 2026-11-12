@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Cline PreToolUse — block known-bad MemPalace tool names and fictional MCP servers.
+set -euo pipefail
+
+input="$(cat)"
+
+python3 -c '
+import json, re, sys
+
+FORBIDDEN_TOOLS = {
+    "query_memories",
+    "check_memories",
+    "save_memory",
+    "get_memory",
+}
+
+FORBIDDEN_SERVERS = re.compile(
+    r"(news-intel-server|mempalace-server|news_intel_mcp)",
+    re.I,
+)
+
+raw = sys.stdin.read()
+try:
+    payload = json.loads(raw) if raw.strip() else {}
+except json.JSONDecodeError:
+    print(json.dumps({"cancel": False}))
+    raise SystemExit(0)
+
+blob = json.dumps(payload)
+tool = payload.get("tool") or payload.get("toolName") or ""
+params = payload.get("parameters") or payload.get("toolInput") or payload
+
+def cancel(msg: str):
+    print(json.dumps({"cancel": True, "errorMessage": msg}))
+
+for name in FORBIDDEN_TOOLS:
+    if name in blob:
+        cancel(
+            f"Tool {name!r} is not registered. Use mempalace_* (skill mempalace-tools) "
+            f"e.g. mempalace_search with query in arguments."
+        )
+        raise SystemExit(0)
+
+if FORBIDDEN_SERVERS.search(blob):
+    cancel(
+        "Fictional MCP server name. Use connected IDs: postgres-mcp, obsidian-vault, "
+        "graphify-ni-pipeline, unified-search, homelab-env-manager."
+    )
+    raise SystemExit(0)
+
+# MCP wrapper often nests server + tool in parameters
+if isinstance(params, dict):
+    nested_tool = params.get("tool_name") or params.get("toolName") or params.get("name")
+    if isinstance(nested_tool, str) and nested_tool in FORBIDDEN_TOOLS:
+        cancel(f"Use mempalace_* tools only (mempalace_search, etc.).")
+        raise SystemExit(0)
+
+print(json.dumps({"cancel": False}))
+' <<<"$input"
