@@ -95,6 +95,7 @@ MAINTENANCE_PRIORITY: tuple[str, ...] = (
     "storyline_membership_review",
     # Durable queued RAG/narrative jobs (auto-enqueue or UI) — not only postprocess mode.
     "content_refinement_queue",
+    "content_enrichment",
     "rss_feed_health",
     "collection_cycle",
 )
