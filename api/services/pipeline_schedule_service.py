@@ -16,7 +16,7 @@ Env:
   PIPELINE_SCHEDULE_TZ (or NIGHTLY_PIPELINE_TZ)
   PIPELINE_NIGHTLY_START_HOUR / PIPELINE_NIGHTLY_END_HOUR (fallback: NIGHTLY_PIPELINE_*)
   PIPELINE_DAYTIME_START_HOUR / PIPELINE_DAYTIME_END_HOUR (default 7 / 16)
-  PIPELINE_QUIET_ALLOWED_PHASES (default health_check,pending_db_flush,vault_morning_prime)
+  PIPELINE_QUIET_ALLOWED_PHASES (default health_check,pending_db_flush,vault_morning_prime,storyline_automation,entity_profile_build,story_continuation)
   PIPELINE_QUIET_HOURS_DISABLED (true) — allow PopOS GPU at all hours (operator override)
   REFINEMENT_DESK_START_HOUR / REFINEMENT_DESK_END_HOUR (default 2 / 9) — ~70b
     content_refinement_queue desk window (aliases CONTENT_REFINEMENT_DESK_*)
@@ -175,15 +175,29 @@ def in_pipeline_quiet_window(now_local: datetime | None = None) -> bool:
     """
     Pipeline paused: daily 16:00–00:00 and weekend 07:00–16:00.
     Mutually exclusive with nightly_heavy and weekday_daytime when configured as 0–7 / 7–16.
+    
+    Corrected behavior:
+    - Weekdays (Mon-Fri): 16:00–00:00 (8 hours)
+    - Weekends (Sat/Sun): 07:00–16:00 (9 hours)
     """
     if now_local is None:
         now_local = datetime.now(pipeline_schedule_tz())
     hour = now_local.hour
-    if hour >= daytime_end_hour():
-        return True
-    if now_local.weekday() >= 5 and hour >= daytime_start_hour():
-        return True
-    return False
+    
+    # Weekend quiet hours (Saturday and Sunday)
+    if now_local.weekday() >= 5:  # Saturday (5) or Sunday (6)
+        # Weekend quiet: 07:00–16:00
+        return 7 <= hour < 16
+    else:
+        # Weekday quiet hours: 16:00–00:00 (covers Friday evening to Saturday morning)
+        if hour >= 16:
+            return True
+        # Special case: If it's Friday and we're before the nightly start, 
+        # but after daytime ends, it's still quiet
+        elif now_local.weekday() == 4 and hour < nighttime_start_hour():
+            return True
+        else:
+            return False
 
 
 def active_pipeline_window(now_local: datetime | None = None) -> str:
