@@ -9,16 +9,50 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_THEMES: dict[str, list[tuple[str, str]]] = {
-    "finance": [
-        ("markets_macro", "Markets & macro"),
-        ("commodities_energy", "Commodities & energy"),
-    ],
-    "politics": [
-        ("governance_policy", "Governance & policy"),
-        ("geopolitics_conflict", "Geopolitics & conflict"),
-    ],
-}
+def _slug_to_display(slug: str) -> str:
+    """Derive a human-readable display name from a domain_key or schema_name slug."""
+    return " ".join(word.capitalize() for word in slug.split("_"))
+
+
+def get_default_rolling_arc_themes() -> list[tuple[str, str]]:
+    """Auto-discover rolling-arc themes from all pipeline-active domains.
+
+    Returns a flat list of (theme_key, title) tuples — one arc per active domain,
+    derived dynamically so no YAML or code changes are needed when new domains
+    are added to the registry.
+    """
+    try:
+        from api.shared.domain_registry import get_pipeline_active_domain_keys, iter_url_schema_pairs
+    except ImportError:
+        # Fallback: if DB isn't available at startup, return empty so refresh_rolling_arcs
+        # can still run (it will pick up domains on next call after config is loaded).
+        logger.warning("domain_registry unavailable; rolling arcs deferred")
+        return []
+
+    themes: list[tuple[str, str]] = []
+    seen_domains: set[str] = set()
+
+    for domain_key in get_pipeline_active_domain_keys():
+        if domain_key in seen_domains:
+            continue
+        seen_domains.add(domain_key)
+
+        # Derive theme key and display title from schema_name (preferred) or domain_key.
+        schema = None
+        try:
+            for dk, sch in iter_url_schema_pairs():
+                if dk == domain_key:
+                    schema = sch
+                    break
+        except Exception:
+            schema = None
+
+        theme_key = f"arc_{(schema or domain_key).replace('-', '_')}"
+        display = _slug_to_display(schema) if schema else _slug_to_display(domain_key)
+        title = f"{display} arc"
+        themes.append((theme_key, title))
+
+    return themes
 
 
 def list_rolling_arcs(
@@ -244,13 +278,18 @@ def refresh_rolling_arc(
 
 
 def refresh_default_rolling_arcs() -> dict[str, Any]:
-    """Nightly planner entry: ensure finance + politics rolling arcs exist."""
+    """Nightly planner entry: ensure rolling arcs exist for all pipeline-active domains."""
     refreshed: list[int] = []
-    for domain, themes in _DEFAULT_THEMES.items():
-        for theme_key, title in themes:
-            aid = refresh_rolling_arc(domain, theme_key, title)
-            if aid:
-                refreshed.append(aid)
+    # Auto-discover themes from registry; fallback to empty if unavailable.
+    domain_themes = get_default_rolling_arc_themes()
+    if not domain_themes:
+        logger.warning("No rolling arcs refreshed — auto-discovery returned nothing")
+        return {"refreshed_arc_ids": [], "latent_proposals": 0}
+
+    for theme_key, title in domain_themes:
+        aid = refresh_rolling_arc(theme_key, theme_key, title)
+        if aid:
+            refreshed.append(aid)
     latent = propose_latent_co_arc_links(limit=20)
     return {"refreshed_arc_ids": refreshed, "latent_proposals": latent}
 
