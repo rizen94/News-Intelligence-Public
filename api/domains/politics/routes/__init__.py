@@ -4,9 +4,11 @@ from fastapi import APIRouter
 
 from .official import router as official_router
 from .quiver_trades import router as quiver_trades_router
+from .eu_uk_relationships import router as eu_uk_router
 
 router = APIRouter(tags=["Politics"])
 router.include_router(official_router)
 router.include_router(quiver_trades_router)
+router.include_router(eu_uk_router)
 
 __all__ = ["router"]

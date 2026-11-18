@@ -35,8 +35,8 @@ DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 # Default workspace configuration
 DEFAULT_WORKSPACES = {
     "news_intelligence": {
-        "path": str(Path.home() / "Documents/projects/News Intelligence"),
-        "name": "News Intelligence",
+        "path": str(Path.home() / "Documents/projects/news_intelligence"),
+        "name": "news_intelligence",
         "config": "repomix.config.json"
     }
 }

@@ -14,16 +14,21 @@
     "**/*.toml",
     "**/*.sh",
     "**/*.sql",
+    "api/database/migrations/*.sql",
     "**/Dockerfile",
     "docker-compose*.yml",
     "requirements*.txt",
     "pyproject.toml",
-    "README.md"
+    "README.md",
+    "AGENTS.md"
   ],
   "ignore": {
     "useGitignore": true,
     "useDefaultPatterns": true,
     "customPatterns": [
+      ".git/**",
+      ".cursor/**",
+      "**/worktrees/**",
       "docs/archive/**",
       "docs/_archive/**",
       "diagnostics/**",
@@ -36,9 +41,15 @@
       "**/node_modules/**",
       "*.jsonl",
       "*.log",
+      "api.log",
       "*.bak*",
       ".env*",
-      "repomix-output.*"
+      "repomix-output.*",
+      "\"/**",
+      "{[*",
+      "chroma_data/**",
+      "News-Intelligence-Archive/**",
+      "web/node_modules/**"
     ]
   },
   "security": {

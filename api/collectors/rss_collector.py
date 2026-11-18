@@ -11,8 +11,9 @@ import logging
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import feedparser
 import requests
@@ -405,6 +406,151 @@ def _rss_fetch_timeout() -> int:
         return 30
 
 
+def _rss_env_int(name: str, default: int, lo: int, hi: int) -> int:
+    try:
+        n = int(os.environ.get(name, str(default)).strip() or default)
+    except ValueError:
+        n = default
+    return max(lo, min(hi, n))
+
+
+def _rss_feed_process_timeout_sec() -> int:
+    """Wall clock for one feed including parse + inline fetches (RSS_FEED_PROCESS_TIMEOUT_SEC)."""
+    return _rss_env_int("RSS_FEED_PROCESS_TIMEOUT_SEC", 45, 10, 300)
+
+
+def _rss_cycle_deadline_sec() -> int:
+    """Stop starting new feeds so the 10-minute secondary loop can sleep (RSS_CYCLE_DEADLINE_SEC)."""
+    return _rss_env_int("RSS_CYCLE_DEADLINE_SEC", 480, 60, 3600)
+
+
+# Reader production silos — round-robin these ahead of legal/neurodiversity clones.
+_RSS_PRODUCTION_DOMAIN_ORDER = (
+    "politics",
+    "finance",
+    "artificial-intelligence",
+    "medicine",
+)
+
+
+def _rss_domain_rank(domain_key: str) -> int:
+    k = (domain_key or "").strip().lower().replace("_", "-")
+    try:
+        return _RSS_PRODUCTION_DOMAIN_ORDER.index(k)
+    except ValueError:
+        return 100
+
+
+def _interleave_feeds_round_robin(feeds_by_domain: list[list]) -> list:
+    """Mix silos so one domain cannot consume the whole cycle deadline."""
+    lists = [list(x) for x in feeds_by_domain if x]
+    if not lists:
+        return []
+    out: list = []
+    remaining = True
+    while remaining:
+        remaining = False
+        for lst in lists:
+            if lst:
+                out.append(lst.pop(0))
+                remaining = True
+    return out
+
+
+def _rss_inline_fail_streak_limit() -> int:
+    """Give up inline HTTP for the rest of a feed after this many failed fetches."""
+    return _rss_env_int("RSS_INLINE_FAIL_STREAK", 2, 1, 20)
+
+
+def _rss_inline_fulltext_enabled() -> bool:
+    v = os.environ.get("RSS_INLINE_FULLTEXT", "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
+
+
+# Hosts whose article HTML is a cookie/login wall. RSS XML is still ingested; skip inline fetch.
+_INLINE_SKIP_HOSTS = (
+    "nature.com",
+    "idp.nature.com",
+)
+
+
+def _host_blocks_inline_fetch(url: str | None) -> bool:
+    """True when fetching the article URL cannot yield public HTML (cookie wall / login idp)."""
+    if not url:
+        return False
+    raw = str(url).strip().lower()
+    if "cookies_not_supported" in raw:
+        return True
+    try:
+        host = (urlparse(raw).hostname or "").lower()
+    except Exception:
+        return False
+    if host.startswith("www."):
+        host = host[4:]
+    if not host:
+        return False
+    for suffix in _INLINE_SKIP_HOSTS:
+        if host == suffix or host.endswith("." + suffix):
+            return True
+    return False
+
+
+class _RssInlineBudget:
+    """Per-feed cap on inline HTTP so a paywall publisher cannot stall the RSS cycle."""
+
+    def __init__(
+        self,
+        deadline_mono: float | None = None,
+        fail_streak_limit: int | None = None,
+    ):
+        timeout = _rss_feed_process_timeout_sec()
+        self.deadline_mono = (
+            time.monotonic() + timeout if deadline_mono is None else deadline_mono
+        )
+        self.fail_streak_limit = (
+            _rss_inline_fail_streak_limit()
+            if fail_streak_limit is None
+            else fail_streak_limit
+        )
+        self.fail_streak = 0
+        self.gave_up = False
+
+    def remaining(self) -> bool:
+        if time.monotonic() >= self.deadline_mono:
+            self.gave_up = True
+            return False
+        return True
+
+    def allow_fetch(self, url: str | None) -> bool:
+        if not self.remaining():
+            return False
+        if self.fail_streak >= self.fail_streak_limit:
+            self.gave_up = True
+            return False
+        if _host_blocks_inline_fetch(url):
+            return False
+        return True
+
+    def record_attempt(self, success: bool) -> None:
+        if success:
+            self.fail_streak = 0
+            return
+        self.fail_streak += 1
+        if self.fail_streak >= self.fail_streak_limit:
+            self.gave_up = True
+
+
+def _rss_summary_from_body(html_or_text: str | None, *, max_len: int = 400) -> str:
+    """Plain excerpt for articles.summary at ingest (home dek); enrichment may replace later."""
+    if not html_or_text:
+        return ""
+    t = re.sub(r"<[^>]+>", " ", html_or_text)
+    t = re.sub(r"\s+", " ", t).strip()
+    if len(t) <= max_len:
+        return t
+    return t[: max_len - 1].rsplit(" ", 1)[0] + "…"
+
+
 def _rss_plain_text_len(html_or_text: str | None) -> int:
     """Approximate visible text length (strip tags) for deciding snippet vs full body."""
     if not html_or_text:
@@ -429,17 +575,21 @@ def _rss_fulltext_fetch_threshold() -> int:
 def _rss_should_fetch_fulltext(body: str | None, url: str | None) -> bool:
     if not url or not str(url).strip():
         return False
-    if os.environ.get("RSS_ALWAYS_FETCH_FULLTEXT", "").strip().lower() in ("1", "true", "yes"):
-        return True
-    # arXiv abs/HTML pages ship abstracts (~1–2k chars) that would otherwise skip enrichment.
+    if _host_blocks_inline_fetch(url):
+        return False
     try:
         from services.article_content_enrichment_service import needs_arxiv_fulltext
 
-        if needs_arxiv_fulltext(url, body):
-            return True
+        arxiv = bool(needs_arxiv_fulltext(url, body))
     except Exception:
-        if "arxiv.org" in str(url).lower():
-            return True
+        arxiv = "arxiv.org" in str(url).lower()
+    if not _rss_inline_fulltext_enabled() and not arxiv:
+        return False
+    if os.environ.get("RSS_ALWAYS_FETCH_FULLTEXT", "").strip().lower() in ("1", "true", "yes"):
+        return True
+    # arXiv abs/HTML pages ship abstracts (~1–2k chars) that would otherwise skip enrichment.
+    if arxiv:
+        return True
     return _rss_plain_text_len(body) < _rss_fulltext_fetch_threshold()
 
 
@@ -455,14 +605,15 @@ def _rss_entry_savepoint_release(feed_cur) -> None:
 
 
 def _rss_entry_savepoint_rollback(feed_cur, feed_conn) -> None:
-    """Undo failed entry so the connection is not left in aborted state."""
+    """Undo failed entry so the connection is not left in aborted state.
+
+    Do not ``connection.rollback()`` when no savepoint exists — that closes
+    the feed cursor and aborts the later batch INSERT (``cursor already closed``).
+    """
     try:
         feed_cur.execute("ROLLBACK TO SAVEPOINT sp_article")
     except Exception:
-        try:
-            feed_conn.rollback()
-        except Exception:
-            pass
+        pass
 
 
 def _rss_release_before_slow_io(feed_cur, feed_conn) -> None:
@@ -511,21 +662,30 @@ def _extract_rss_entry_body(entry) -> str:
     return candidates[0][1]
 
 
-def _maybe_inline_fetch_article_body(rss_body: str, url: str | None) -> tuple[str, bool, bool]:
+def _maybe_inline_fetch_article_body(
+    rss_body: str, url: str | None, budget: _RssInlineBudget | None = None
+) -> tuple[str, bool, bool]:
     """
     Optionally fetch full article text from URL when the feed body looks like a snippet.
     Returns (body_for_store, trafilatura_attempted, trafilatura_ok).
     """
+    if budget is not None and not budget.allow_fetch(url):
+        return rss_body, False, False
     if not _rss_should_fetch_fulltext(rss_body, url):
         return rss_body, False, False
     try:
         from services.article_content_enrichment_service import enrich_article_content
 
         full_text, ok = enrich_article_content(url)
-        if ok and full_text:
+        success = bool(ok and full_text)
+        if budget is not None:
+            budget.record_attempt(success)
+        if success:
             return full_text, True, True
         return rss_body, True, False
     except Exception:
+        if budget is not None:
+            budget.record_attempt(False)
         return rss_body, True, False
 
 
@@ -1283,6 +1443,7 @@ def is_advertisement(title: str, content: str, url: str = "") -> bool:
         return True
 
     # Advertisement indicators
+    # Substrings only — never bare "deal"/"sale"/"marketing" (politics/finance news).
     ad_indicators = [
         "sponsored",
         "sponsored content",
@@ -1294,20 +1455,12 @@ def is_advertisement(title: str, content: str, url: str = "") -> bool:
         "shop now",
         "limited time offer",
         "special offer",
-        "discount",
-        "sale",
         "promo code",
         "coupon",
-        "deal",
-        "deals",
-        r"save \d+%",
         "click here to",
         "order now",
         "get yours",
         "shop here",
-        "promotional",
-        "promotion",
-        "marketing",
         "advertorial",
     ]
 
@@ -1644,6 +1797,7 @@ def collect_rss_feeds() -> dict:
         from api.shared.domain_registry import pipeline_url_schema_pairs, url_schema_pairs
 
         feeds = []
+        feeds_by_domain: list[tuple[str, list]] = []
         skip_dk = get_rss_ingest_excluded_domain_keys()
         base_pairs = (
             list(pipeline_url_schema_pairs())
@@ -1669,15 +1823,24 @@ def collect_rss_feeds() -> dict:
                     SELECT id, feed_name, feed_url, %s::text AS domain_key, %s::text AS schema_name
                     FROM {schema_name}.rss_feeds
                     WHERE is_active = true
+                    ORDER BY last_fetched_at ASC NULLS FIRST, id ASC
                 """,
                     (domain_key, schema_name),
                 )
-                domain_feeds = cur.fetchall()
-                feeds.extend(domain_feeds)
+                domain_feeds = list(cur.fetchall() or [])
+                feeds_by_domain.append((domain_key, domain_feeds))
                 logger.info(f"Found {len(domain_feeds)} active feeds in {domain_key} domain")
             except Exception as e:
                 logger.warning(f"Error querying feeds from {schema_name} schema: {e}")
                 continue
+
+        feeds_by_domain.sort(key=lambda pair: (_rss_domain_rank(pair[0]), pair[0]))
+        feeds = _interleave_feeds_round_robin([lst for _dk, lst in feeds_by_domain])
+        logger.info(
+            "RSS feed order: round-robin silos (production first: %s); %d feeds",
+            ", ".join(_RSS_PRODUCTION_DOMAIN_ORDER),
+            len(feeds),
+        )
 
         total_articles_added = 0
         total_articles_updated = 0
@@ -1820,11 +1983,19 @@ def collect_rss_feeds() -> dict:
 
                 try:
                     _cap = _rss_max_entries_per_feed()
+                    inline_budget = _RssInlineBudget()
 
                     for entry in feed.entries[:_cap]:
+                        if not inline_budget.remaining():
+                            logger.warning(
+                                "⏱️ Feed time budget exhausted for %s — inserting %d candidates collected so far",
+                                feed_name,
+                                len(new_candidates),
+                            )
+                            break
                         try:
-                            title = entry.get("title", "")[:500]
-                            url = entry.get("link", "")[:500]
+                            title = (entry.get("title") or "")[:500]
+                            url = (entry.get("link") or "")[:500]
                             content = _extract_rss_entry_body(entry)
 
                             # Filter excluded content (sports/entertainment/pop culture + domain-specific)
@@ -1892,8 +2063,18 @@ def collect_rss_feeds() -> dict:
                                 feed_updated_dt = _utc_aware(datetime(*entry.updated_parsed[:6]))
 
                             # Inline full-text fetch (enrich article body from source URL)
-                            fetched_content, inline_fetched, inline_footnote_added = _maybe_inline_fetch_article_body(content, url)
-                            
+                            fetched_content, inline_attempted, inline_ok = (
+                                _maybe_inline_fetch_article_body(
+                                    content, url, budget=inline_budget
+                                )
+                            )
+                            if inline_budget.gave_up and inline_attempted and not inline_ok:
+                                logger.warning(
+                                    "Skipping remaining inline fetches for %s after %d consecutive failures",
+                                    feed_name,
+                                    inline_budget.fail_streak,
+                                )
+
                             # Accumulate candidate for post-loop batch processing
                             created_at_ins = datetime.now(timezone.utc)
                             raw_bias = calculate_domain_bias_score(
@@ -1902,14 +2083,15 @@ def collect_rss_feeds() -> dict:
                             bias_score = (raw_bias + 1) / 2 if raw_bias is not None else 0.5
                             bias_score = max(0.0, min(1.0, bias_score))
                             quality_score_clamped = max(0.0, min(1.0, quality_score))
-                            # Enrichment status reflects inline fetch result
-                            enrichment_status = "complete" if inline_fetched else "pending"
-                            enrichment_attempts = 1 if inline_fetched else 0
+                            quality_tier_val = _quality_score_to_tier(quality_score_clamped)
+                            # Complete only when full text actually arrived; failed HTTP stays pending.
+                            enrichment_status = "complete" if inline_ok else "pending"
+                            enrichment_attempts = 1 if inline_attempted else 0
                             new_candidates.append((
                                 url, title, fetched_content, published_date, created_at_ins,
                                 feed_name, quality_score_clamped, bias_score,
                                 enrichment_status, enrichment_attempts, domain_key,
-                                feed_updated_dt,
+                                feed_updated_dt, quality_tier_val,
                             ))
 
                         except Exception as e:
@@ -1945,7 +2127,7 @@ def collect_rss_feeds() -> dict:
                                 f"SELECT url FROM {schema_name}.articles WHERE url = ANY(%s)",
                                 (urls,),
                             )
-                            existing_urls = {row[0] for row in cur.fetchall()}
+                            existing_urls = {row[0] for row in feed_cur.fetchall()}
 
                             # Filter to new URLs only
                             insert_candidates = [c for c in new_candidates if c[0] not in existing_urls]
@@ -1975,7 +2157,7 @@ def collect_rss_feeds() -> dict:
                                         title,       # title
                                         url,         # url
                                         body_text,   # content
-                                        "",          # summary (empty)
+                                        _rss_summary_from_body(body_text),  # dek until enrichment
                                         pub_dt,      # published_at
                                         created_ins, # created_at
                                         _feed_name,  # source_domain
@@ -2144,10 +2326,36 @@ def collect_rss_feeds() -> dict:
 
         # Process feeds sequentially — one at a time to keep DB connections and memory low.
         # Spreads work out steadily instead of spiking the connection pool.
+        # Cycle deadline: a hung/paywalled feed must not eat the next 10-minute slot.
         logger.info(f"📡 Processing {len(feeds)} feeds sequentially (one-at-a-time)...")
         results = []
-        for feed in feeds:
-            results.append(process_single_feed(feed))
+        cycle_deadline = time.monotonic() + _rss_cycle_deadline_sec()
+        deferred = 0
+        for i, feed in enumerate(feeds):
+            if time.monotonic() >= cycle_deadline:
+                deferred = len(feeds) - i
+                logger.warning(
+                    "RSS cycle deadline reached after %d/%d feeds; %d deferred "
+                    "(those keep older last_fetched_at and run first next cycle)",
+                    i,
+                    len(feeds),
+                    deferred,
+                )
+                break
+            try:
+                results.append(process_single_feed(feed))
+            except Exception as feed_err:
+                fname = feed[1] if len(feed) > 1 else feed
+                logger.error("❌ Uncaught error processing feed %s: %s", fname, feed_err)
+                results.append(
+                    {
+                        "articles_added": 0,
+                        "articles_updated": 0,
+                        "duplicates": 0,
+                        "excluded": 0,
+                        "error": str(feed_err),
+                    }
+                )
 
         # Aggregate results from sequential processing + collect errors
         errors_seen: list[str] = []
@@ -2280,11 +2488,19 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
 
         # Accumulate candidates for batch processing
         new_candidates: list[tuple] = []  # (url, title, content, published_date, created_at_ins, feed_name, quality_score_clamped, bias_score, enrichment_status, enrichment_attempts, domain_key, feed_updated_dt)
+        single_inline_budget = _RssInlineBudget()
 
         for entry in feed.entries[: _rss_max_entries_per_feed()]:
+            if not single_inline_budget.remaining():
+                logger.warning(
+                    "⏱️ Feed time budget exhausted for %s — inserting %d candidates collected so far",
+                    feed_name,
+                    len(new_candidates),
+                )
+                break
             try:
-                title = entry.get("title", "")[:500]
-                url = entry.get("link", "")[:500]
+                title = (entry.get("title") or "")[:500]
+                url = (entry.get("link") or "")[:500]
                 content = _extract_rss_entry_body(entry)
 
                 if is_excluded_content(
@@ -2342,14 +2558,16 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 created_at_ins = datetime.now(timezone.utc)
 
                 # Inline full-text fetch (enrich article body from source URL)
-                fetched_content, inline_fetched, inline_footnote_added = _maybe_inline_fetch_article_body(content, url)
+                fetched_content, inline_attempted, inline_ok = _maybe_inline_fetch_article_body(
+                    content, url, budget=single_inline_budget
+                )
 
                 # Compute bias and enrichment tracking (uses inline-fetched content if available)
                 raw_bias = calculate_domain_bias_score(domain_key, title, fetched_content, feed_name)
                 bias_score = (raw_bias + 1) / 2 if raw_bias is not None else 0.5
                 bias_score = max(0.0, min(1.0, bias_score))
-                enrichment_status = "complete" if inline_fetched else "pending"
-                enrichment_attempts = 1 if inline_fetched else 0
+                enrichment_status = "complete" if inline_ok else "pending"
+                enrichment_attempts = 1 if inline_attempted else 0
 
                 new_candidates.append((
                     url, title, fetched_content, published_date, created_at_ins, feed_name,
@@ -2388,7 +2606,7 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
 
                     # Build bulk INSERT with multi-row VALUES clause
                     placeholders_sql = ", ".join(
-                        f"(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                        f"(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
                         for _ in insert_candidates
                     )
 
@@ -2407,7 +2625,7 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                             title,       # title
                             url,         # url
                             body_text,   # content
-                            "",          # summary (empty)
+                            _rss_summary_from_body(body_text),
                             pub_dt,      # published_at
                             created_ins, # created_at
                             _feed_name,  # source_domain
@@ -2417,6 +2635,8 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                             e_attempts,  # enrichment_attempts
                             pub_dt or created_ins,  # event_date
                             created_ins,            # ingestion_date
+                            'rss_heuristic',        # quality_version
+                            quality_tier_val,       # quality_tier
                         ])
 
                     insert_sql = f"""

@@ -462,33 +462,52 @@ class AIStorylineDiscovery:
         conn = self.get_db_connection()
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                if hours is not None and hours > 0:
-                    cur.execute(
-                        f"""
-                        SELECT a.id, a.title, COALESCE(a.content, '') as content, a.created_at,
-                               a.embedding_vector, a.embedding_model, a.extracted_entities, a.metadata
-                        FROM {schema}.articles a
-                        WHERE a.created_at > NOW() - (%s * INTERVAL '1 hour')
-                          AND COALESCE(a.metadata->>'content_kind', '') <> 'research_paper'
-                          {sig}
-                        ORDER BY a.created_at {_ord}
-                        LIMIT %s
-                        """,
-                        (hours, limit),
+                def _fetch(signal_sql: str) -> None:
+                    if hours is not None and hours > 0:
+                        cur.execute(
+                            f"""
+                            SELECT a.id, a.title, COALESCE(a.content, '') as content, a.created_at,
+                                   a.embedding_vector, a.embedding_model, a.extracted_entities, a.metadata
+                            FROM {schema}.articles a
+                            WHERE a.created_at > NOW() - (%s * INTERVAL '1 hour')
+                              AND COALESCE(a.metadata->>'content_kind', '') <> 'research_paper'
+                              {signal_sql}
+                            ORDER BY a.created_at {_ord}
+                            LIMIT %s
+                            """,
+                            (hours, limit),
+                        )
+                    else:
+                        cur.execute(
+                            f"""
+                            SELECT a.id, a.title, COALESCE(a.content, '') as content, a.created_at,
+                                   a.embedding_vector, a.embedding_model, a.extracted_entities, a.metadata
+                            FROM {schema}.articles a
+                            WHERE COALESCE(a.metadata->>'content_kind', '') <> 'research_paper'
+                              {signal_sql}
+                            ORDER BY a.created_at {_ord}
+                            LIMIT %s
+                            """,
+                            (limit,),
+                        )
+
+                try:
+                    _fetch(sig)
+                except Exception as fetch_exc:
+                    if "topic_cluster" not in str(fetch_exc).lower() and "cluster_id" not in str(
+                        fetch_exc
+                    ).lower():
+                        raise
+                    logger.warning(
+                        "[%s] storyline discovery article fetch dropped signal-first filter: %s",
+                        domain,
+                        fetch_exc,
                     )
-                else:
-                    cur.execute(
-                        f"""
-                        SELECT a.id, a.title, COALESCE(a.content, '') as content, a.created_at,
-                               a.embedding_vector, a.embedding_model, a.extracted_entities, a.metadata
-                        FROM {schema}.articles a
-                        WHERE COALESCE(a.metadata->>'content_kind', '') <> 'research_paper'
-                          {sig}
-                        ORDER BY a.created_at {_ord}
-                        LIMIT %s
-                        """,
-                        (limit,),
-                    )
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    _fetch("")
 
                 articles = []
                 for row in cur.fetchall():
@@ -1533,15 +1552,14 @@ Reply with ONLY a JSON object:
                 story_centroid=centroid,
                 story_ref_time=story_ref,
             )
-            if ms.rejected or float(ms.combined) < floor:
-                logger.debug(
-                    "discovery skip article %s score=%.3f rejected=%s reason=%s",
-                    aid,
-                    ms.combined,
-                    ms.rejected,
-                    ms.reject_reason,
-                )
+            if ms.rejected and ms.reject_reason in ("article_missing",):
                 continue
+            # Cluster members already passed similarity clustering. Scoring them
+            # against an empty new episode yields combined ≪ discovery_seed_floor
+            # and left politics/finance storylines with article_count>0 and 0 links.
+            seed_score = float(ms.combined or 0.0)
+            if seed_score < floor:
+                seed_score = floor
             ok, _reason = membership_admit(
                 conn,
                 domain_key=domain,
@@ -1549,13 +1567,28 @@ Reply with ONLY a JSON object:
                 episode_id=int(storyline_id),
                 article_id=aid,
                 intent=MembershipIntent.DISCOVERY_SEED,
-                blend_score=float(ms.combined),
+                blend_score=seed_score,
                 added_by="storyline_discovery",
                 score_parts=ms.as_metadata(),
                 recompute_score=False,
             )
             if ok:
                 admitted += 1
+            elif _reason:
+                logger.debug(
+                    "discovery admit fail article %s storyline %s: %s",
+                    aid,
+                    storyline_id,
+                    _reason,
+                )
+        if admitted == 0:
+            n = sum(1 for a in cluster.articles if a.article_id > 0)
+            logger.warning(
+                "[%s] discovery admitted 0/%s articles to storyline %s",
+                domain,
+                n,
+                storyline_id,
+            )
         return admitted
 
     def _add_cluster_articles_to_storyline(

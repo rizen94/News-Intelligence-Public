@@ -67,6 +67,14 @@ _MAX_FINISHER_PER_CYCLE = int(
         os.environ.get("CONTENT_REFINEMENT_MAX_FINISHER_JOBS_PER_CYCLE", "1"),
     )
 )
+
+# ML-layer exceptions that are retryable (transient failures)
+_ML_RETRYABLE_ERRORS: frozenset = frozenset({
+    "timeout",
+    "rate_limit_exceeded",
+    "resource_unavailable",
+})
+
 _MAX_JOBS_PER_CYCLE = int(os.environ.get("CONTENT_REFINEMENT_MAX_JOBS_PER_CYCLE", "4"))
 # Claim enough pending rows to sort by "initial master narrative" vs refresh before applying caps
 _CLAIM_BATCH = int(os.environ.get("CONTENT_REFINEMENT_CLAIM_BATCH", "32"))
@@ -108,6 +116,45 @@ def in_nightly_gpu_refinement_window_est() -> bool:
         return False
 
 
+def _classify_error(exc: Exception, job_type: str | None = None) -> dict[str, str]:
+    """Classify a caught exception into structured error metadata.
+
+    Returns a dict with keys ``error_code`` and optional ``retryable``,
+    ``detail``.  Used by the queue service to record failure diagnostics
+    without leaking stack traces into the database or stats counters.
+    """
+    exc_type = type(exc).__name__
+    message = str(exc).strip()
+
+    # Transient ML-layer errors (API timeouts, rate limits, etc.)
+    if isinstance(exc, Exception):
+        msg_lower = message.lower() if message else ""
+        if any(kw in msg_lower for kw in ("timeout", "timed out", "deadline_exceeded")):
+            return {"error_code": "ml_timeout", "retryable": "true", "detail": f"{exc_type}: {message}"}
+        if any(kw in msg_lower for kw in ("rate limit", "too many requests", "429")):
+            return {"error_code": "rate_limit_exceeded", "retryable": "true", "detail": f"{exc_type}: {message}"}
+        if any(kw in msg_lower for kw in ("resource unavailable", "503", "service unavailable")):
+            return {"error_code": "resource_unavailable", "retryable": "true", "detail": f"{exc_type}: {message}"}
+
+    # Known LLM API exception types
+    if exc_type in ("APIConnectionError", "Timeout", "RateLimitError"):
+        code = {
+            "APIConnectionError": "ml_connection_error",
+            "Timeout": "ml_timeout",
+            "RateLimitError": "rate_limit_exceeded",
+        }.get(exc_type, "ml_api_error")
+        return {"error_code": code, "retryable": "true", "detail": f"{exc_type}: {message}"}
+
+    # JSON parsing / content extraction failures
+    if exc_type in ("JSONDecodeError", "json.JSONDecodeError"):
+        preview = message[:200] if message else "empty or malformed response"
+        return {"error_code": "invalid_json_response", "retryable": "false", "detail": f"{exc_type}: {preview}"}
+
+    # Fallback: generic error, not retryable (no stack trace)
+    safe_msg = message[:500] if message else exc_type
+    return {"error_code": "unknown_error", "retryable": "false", "detail": f"{exc_type}: {safe_msg}"}
+
+
 def _default_nightly_pipeline_window_active() -> bool:
     return in_nightly_gpu_refinement_window_est()
 
@@ -139,6 +186,20 @@ def enqueue_content_refinement(
         return {"success": False, "error": "invalid_job_type"}
     if priority not in ("high", "medium", "low"):
         return {"success": False, "error": "invalid_priority"}
+
+    # Apply three-plane capacity admission control
+    try:
+        admission_result = _content_refinement_queue_capacity_admission_control()
+        if not admission_result["should_enqueue"]:
+            logger.debug(f"Capacity control blocking enqueue: {admission_result['reason']}")
+            return {
+                "success": False,
+                "error": "queue_capacity_exceeded",
+                "reason": admission_result["reason"],
+                "metrics": admission_result["metrics"]
+            }
+    except Exception as e:
+        logger.debug(f"Failed to check capacity control: {e}")
 
     conn = get_db_connection()
     if not conn:
@@ -728,6 +789,88 @@ def count_content_refinement_pending() -> int:
             pass
 
 
+def _content_refinement_queue_capacity_admission_control() -> dict[str, Any]:
+    """
+    Three-plane capacity admission control for content refinement queue.
+    
+    Returns a dictionary with:
+    - 'should_enqueue': bool indicating if new jobs should be enqueued
+    - 'reason': str explaining the decision
+    - 'metrics': dict of relevant metrics for debugging
+    """
+    # Initialize metrics
+    metrics = {
+        "pending_jobs": count_content_refinement_pending(),
+        "db_pool_pressure": False,
+        "ollama_circuit_shedding": False,
+        "max_pending_override": None
+    }
+    
+    # 1. Check database pool pressure (CPU-bound)
+    try:
+        from api.services.automation_manager import automation_db_pool_should_defer_phase
+        metrics["db_pool_pressure"] = automation_db_pool_should_defer_phase("content_refinement_queue")
+    except Exception as e:
+        logger.debug("Failed to check DB pool pressure: %s", e)
+    
+    # 2. Check Ollama circuit shedding (GPU-bound)  
+    try:
+        from api.services.automation_manager import automation_ollama_circuit_shedding
+        metrics["ollama_circuit_shedding"] = automation_ollama_circuit_shedding()
+    except Exception as e:
+        logger.debug("Failed to check Ollama circuit shedding: %s", e)
+    
+    # 3. Apply capacity limits based on job types and system pressure
+    
+    # Get current pending jobs count
+    pending_count = metrics["pending_jobs"]
+    
+    # Check if we should override the limit based on environment variables
+    max_pending_override = os.environ.get("CONTENT_REFINEMENT_MAX_PENDING_OVERRIDE")
+    if max_pending_override is not None:
+        try:
+            max_pending_override = int(max_pending_override)
+            metrics["max_pending_override"] = max_pending_override
+        except ValueError:
+            max_pending_override = None
+    
+    # Default limits
+    default_max_pending = 200  # Conservative default
+    
+    # Apply override if set
+    if max_pending_override is not None:
+        max_pending = max_pending_override
+    else:
+        # Use different limits based on system pressure
+        if metrics["db_pool_pressure"] or metrics["ollama_circuit_shedding"]:
+            # Reduce capacity when under pressure
+            max_pending = int(default_max_pending * 0.3)  # 30% of normal capacity
+        else:
+            max_pending = default_max_pending
+    
+    # Determine if we should allow new jobs
+    should_enqueue = True
+    reason = "Normal operation - capacity available"
+    
+    if pending_count >= max_pending:
+        should_enqueue = False
+        reason = f"Pending queue full ({pending_count} >= {max_pending})"
+        
+    elif metrics["db_pool_pressure"]:
+        should_enqueue = False
+        reason = "DB pool pressure detected - reducing capacity"
+        
+    elif metrics["ollama_circuit_shedding"]:
+        should_enqueue = False
+        reason = "Ollama circuit shedding active - reducing capacity"
+    
+    return {
+        "should_enqueue": should_enqueue,
+        "reason": reason,
+        "metrics": metrics
+    }
+
+
 def _claim_pending_batch(conn, limit: int) -> list[tuple[Any, ...]]:
     with conn.cursor() as cur:
         cur.execute(
@@ -737,6 +880,15 @@ def _claim_pending_batch(conn, limit: int) -> list[tuple[Any, ...]]:
                 FROM intelligence.content_refinement_queue
                 WHERE status = 'pending'
                 ORDER BY
+                    CASE 
+                        WHEN job_type = 'narrative_finisher' 
+                        AND EXISTS (
+                            SELECT 1 FROM storylines s 
+                            WHERE s.id = storyline_id 
+                            AND (s.canonical_narrative IS NULL OR TRIM(s.canonical_narrative) = '')
+                        ) THEN 0
+                        ELSE 1
+                    END,
                     CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
                     created_at ASC
                 LIMIT %s
@@ -797,6 +949,48 @@ def _complete_job(
                     """,
                     ((err or "unknown")[:8000], job_id),
                 )
+        
+        # Log to automation run history for tracking
+        from datetime import date
+        try:
+            # Get job details to determine phase name
+            cur.execute(
+                """
+                SELECT job_type FROM intelligence.content_refinement_queue 
+                WHERE id = %s
+                """,
+                (job_id,)
+            )
+            job_details = cur.fetchone()
+            if job_details:
+                job_type = job_details[0]
+                phase_name = f"content_refinement_{job_type}"
+                
+                # Insert into automation run history daily
+                cur.execute(
+                    """
+                    INSERT INTO infrastructure.automation_run_history_daily 
+                    (day, phase_name, run_count, success_count, failure_count)
+                    VALUES (%s, %s, 1, %s, %s)
+                    ON CONFLICT (day, phase_name) DO UPDATE
+                    SET 
+                        run_count = automation_run_history_daily.run_count + 1,
+                        success_count = automation_run_history_daily.success_count + CASE WHEN %s THEN 1 ELSE 0 END,
+                        failure_count = automation_run_history_daily.failure_count + CASE WHEN %s THEN 1 ELSE 0 END,
+                        updated_at = NOW()
+                    """,
+                    (
+                        date.today(),
+                        phase_name,
+                        1 if ok else 0,  # success_count
+                        0 if ok else 1,  # failure_count
+                        1 if ok else 0,  # success_count for update
+                        0 if ok else 1   # failure_count for update
+                    )
+                )
+        except Exception as e:
+            logger.debug("Failed to log to automation run history: %s", e)
+        
         conn.commit()
     finally:
         conn.close()
@@ -919,9 +1113,11 @@ async def _run_headline_refiner(domain_key: str, storyline_id: int) -> None:
                 raise RuntimeError("storyline_not_found")
             draft_title = row[0] or ""
             draft_desc = row[1] or ""
+            from services.article_content_enrichment_service import article_evidence_text
+
             cur.execute(
                 f"""
-                SELECT a.title, COALESCE(a.summary, '') AS summary
+                SELECT a.title, a.summary, a.content
                 FROM {schema}.articles a
                 JOIN {schema}.storyline_articles sa ON sa.article_id = a.id
                 WHERE sa.storyline_id = %s
@@ -933,8 +1129,12 @@ async def _run_headline_refiner(domain_key: str, storyline_id: int) -> None:
             )
             for r in cur.fetchall() or []:
                 bt = (r[0] or "").strip()
-                sm = (r[1] or "").strip()
-                line = f"{bt[:400]} — {sm[:400]}".strip(" —")
+                # Handle case where both summary and content might be None/empty
+                sm = article_evidence_text(r[1], r[2], max_len=800)
+                if sm:
+                    line = f"{bt[:400]} — {sm[:800]}".strip(" —")
+                else:
+                    line = bt[:400]
                 if line:
                     evidence_lines.append(line)
     finally:

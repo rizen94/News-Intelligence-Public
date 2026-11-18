@@ -44,7 +44,7 @@ def test_table_structure():
         cur.execute("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' 
+                WHERE table_schema = 'pipeline' 
                 AND table_name = 'pipeline_automation_status'
             );
         """)
@@ -57,7 +57,7 @@ def test_table_structure():
             cur.execute("""
                 SELECT column_name, data_type, is_nullable 
                 FROM information_schema.columns 
-                WHERE table_schema = 'public' 
+                WHERE table_schema = 'pipeline' 
                 AND table_name = 'pipeline_automation_status'
                 ORDER BY ordinal_position;
             """)
@@ -85,7 +85,7 @@ def populate_test_data():
         cur = conn.cursor()
         
         # Check current row count
-        cur.execute("SELECT COUNT(*) FROM public.pipeline_automation_status;")
+        cur.execute("SELECT COUNT(*) FROM pipeline.pipeline_automation_status;")
         current_count = cur.fetchone()[0]
         print(f"Current rows in pipeline_automation_status: {current_count}")
         

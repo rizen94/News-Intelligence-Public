@@ -42,7 +42,10 @@ _ALL_DIRS = [
     FINANCE_CHROMA_DIR,
 ]
 for d in _ALL_DIRS:
-    d.mkdir(parents=True, exist_ok=True)
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.warning("Failed to create directory %s: %s", d, e)
 
 # GPU and resource limits (RTX 5090 32GB, 62GB RAM)
 GPU_DEVICE = 0

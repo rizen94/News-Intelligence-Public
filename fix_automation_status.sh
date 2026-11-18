@@ -27,7 +27,7 @@ conn = psycopg2.connect(
     password='your_password_here'
 )
 cur = conn.cursor()
-cur.execute(\"SELECT COUNT(*) FROM public.pipeline_automation_status;\")
+cur.execute(\"SELECT COUNT(*) FROM pipeline.pipeline_automation_status;\")
 count = cur.fetchone()[0]
 print(f'Current pipeline_automation_status records: {count}')
 cur.execute(\"SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'pipeline_automation_status';\")

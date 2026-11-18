@@ -32,6 +32,8 @@ LIMIT 5;
 
 Record `golden_article_id` in the handoff / first chat proof block.
 
+**Current golden (politics, 2026-11-11):** **`401605`** — title starts “OpenAI president Greg Brockman…”; `content` populated, `summary` empty, not in `storyline_articles`. Re-pick if this id is gone.
+
 ## Stage SQL (template — `politics` / `:id`)
 
 ```sql

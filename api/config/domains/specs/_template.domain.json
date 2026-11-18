@@ -7,19 +7,29 @@
   "display_order": 10,
   "is_active": false,
   "database": {
-        "clone_from": "politics",
+    "clone_from": "politics",
     "include_article_topic_clusters": true,
     "migration_ref": null
   },
   "rss": {
     "seed_feed_category": "General",
-    "feeds": []
+    "feeds": [
+      {
+        "feed_url": "https://example.com/rss",
+        "feed_name": "Example Feed",
+        "fetch_interval_seconds": 3600,
+        "arc_relevance": ["technology", "innovation"]
+      }
+    ]
   },
-  "focus_areas": [],
-  "llm_prompt_guidance": "",
+  "focus_areas": [
+    "Technology",
+    "Innovation"
+  ],
+  "llm_prompt_guidance": "Focus on emerging technologies and their societal impact.",
   "workload_assumptions": {
-    "expected_active_feeds": 0,
-    "rough_new_articles_per_day": 0,
+    "expected_active_feeds": 5,
+    "rough_new_articles_per_day": 20,
     "llm_heavy_phases_enabled": true
   }
 }

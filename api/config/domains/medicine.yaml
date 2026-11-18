@@ -13,7 +13,6 @@ data_sources:
     - https://www.thelancet.com/rssfeed/lancet_current.xml
     - https://jamanetwork.com/feeds/journals/jama
     - https://www.bmj.com/content/current.rss
-    - https://www.nature.com/nm.rss
     - https://www.who.int/rss-feeds/news-english.xml
     - https://www.who.int/feeds/entity/csr/don/en/rss.xml
     - https://pubmed.ncbi.nlm.nih.gov/rss/create/saved_searches/?term=hantavirus%5BTitle%2FAbstract%5D&limit=50

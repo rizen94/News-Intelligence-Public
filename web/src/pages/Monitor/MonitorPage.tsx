@@ -321,8 +321,6 @@ export default function MonitorPage() {
     yield_window_seconds?: number;
   } | null>(null);
   const [pendingMetricsLoading, setPendingMetricsLoading] = useState(false);
-  /** True after the *initial* pending-metrics enrichment completes (success or fail). */
-  const [pendingMetricsReady, setPendingMetricsReady] = useState<boolean>(false);
 
   const refreshOverview = useCallback(async () => {
     const ov = await apiService.getMonitoringOverview();
@@ -435,8 +433,6 @@ export default function MonitorPage() {
       /* getProcessingProgress returns { success: false } on failure */
     } finally {
       setPendingMetricsLoading(false);
-      /** Gate the phase queue chart so it never renders with stale partial data. */
-      setPendingMetricsReady(true);
     }
   }, []);
 
@@ -1124,7 +1120,7 @@ export default function MonitorPage() {
       </Typography>
       <Card variant='outlined' sx={{ mb: 3 }}>
         <CardContent sx={{ py: 1.5 }}>
-          {pendingMetricsReady && processingPulse?.success && processingPulse.data ? (
+          {processingPulse?.success && processingPulse.data ? (
             <Box>
               {processingPulse.data.pending_metrics_included === false && (
                 <Alert severity='info' sx={{ py: 0.5, mb: 1.5 }}>

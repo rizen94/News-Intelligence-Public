@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,10 @@ from .domain_registry_constants import validate_schema_name  # noqa: E402
 
 
 _VALID_SCHEMA_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_REJECTED_SCHEMA_KEYS: set[str] = set()
+_ENTRIES_CACHE: list[dict[str, Any]] | None = None
+_ENTRIES_CACHE_AT = 0.0
+_ENTRIES_CACHE_TTL_SEC = 60.0
 
 
 def _strip_doc_keys(data: dict[str, Any]) -> dict[str, Any]:
@@ -90,6 +95,10 @@ def _load_domain_entries_from_db() -> list[dict[str, Any]] | None:
                 """
             )
             rows = cur.fetchall()
+        try:
+            conn.commit()
+        except Exception:
+            pass
     except Exception as e:
         logger.warning("domain_registry: could not read public.domains: %s", e)
         return None
@@ -125,8 +134,14 @@ def _validate_entry(entry: dict[str, Any]) -> dict[str, Any]:
         validated = validate_schema_name(sch)
         entry["schema_name"] = validated
     except ValueError as e:
-        logger.error("domain_registry: rejecting domain %r — invalid schema name: %s", entry.get("domain_key"), e)
-        # Do not expose unvalidated schemas — skip this domain entirely.
+        key = str(entry.get("domain_key") or "")
+        if key not in _REJECTED_SCHEMA_KEYS:
+            _REJECTED_SCHEMA_KEYS.add(key)
+            logger.error(
+                "domain_registry: rejecting domain %r — invalid schema name: %s",
+                key,
+                e,
+            )
         return {}
     return entry
 
@@ -136,6 +151,11 @@ def get_domain_entries() -> list[dict[str, Any]]:
     All domains: **DB first**, merged with YAML for matching ``domain_key``.
     If ``public.domains`` is empty/unavailable, active YAML files only (bootstrap).
     """
+    global _ENTRIES_CACHE, _ENTRIES_CACHE_AT
+    now = time.monotonic()
+    if _ENTRIES_CACHE is not None and (now - _ENTRIES_CACHE_AT) < _ENTRIES_CACHE_TTL_SEC:
+        return _ENTRIES_CACHE
+
     db_rows = _load_domain_entries_from_db()
     yaml_docs = _load_yaml_domain_files()
     yaml_by_key = {d["domain_key"]: d for d in yaml_docs if d.get("domain_key")}
@@ -147,9 +167,17 @@ def get_domain_entries() -> list[dict[str, Any]]:
         if v and v.get("schema_name"):
             valid_yaml.append(v)
 
+    def _store(result: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        global _ENTRIES_CACHE, _ENTRIES_CACHE_AT
+        _ENTRIES_CACHE = result
+        _ENTRIES_CACHE_AT = time.monotonic()
+        return result
+
     if db_rows is not None and len(db_rows) > 0:
         by_key: dict[str, dict[str, Any]] = {}
         for e in db_rows:
+            if not e.get("is_active", True):
+                continue
             v = _validate_entry(dict(e))
             if v and v.get("schema_name"):
                 by_key[e["domain_key"]] = v
@@ -158,16 +186,16 @@ def get_domain_entries() -> list[dict[str, Any]]:
                 continue
             merged = {**y, **by_key[k]}
             by_key[k] = merged
-        return sorted(by_key.values(), key=lambda x: (x.get("display_order", 99), x["domain_key"]))
+        return _store(sorted(by_key.values(), key=lambda x: (x.get("display_order", 99), x["domain_key"])))
 
     # Bootstrap: no DB rows — use YAML-only (tests / pre-migration dev).
     if not valid_yaml:
         logger.warning(
             "domain_registry: public.domains is empty and no active YAML domains; registry is empty"
         )
-        return []
+        return _store([])
     logger.info("domain_registry: using YAML-only domain list (public.domains empty or unreachable)")
-    return sorted(valid_yaml, key=lambda x: (x.get("display_order", 99), x["domain_key"]))
+    return _store(sorted(valid_yaml, key=lambda x: (x.get("display_order", 99), x["domain_key"])))
 
 
 def first_active_domain_key(fallback: str = "politics") -> str:

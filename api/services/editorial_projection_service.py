@@ -197,10 +197,14 @@ def resolve_package_storyline_targets(package: dict[str, Any]) -> list[tuple[str
                             """,
                             (article_ids,),
                         )
-                        for (sid,) in cur.fetchall():
-                            _add(dk, int(sid))
+                        results = cur.fetchall()
+                        # Handle case where fetchall() might return None or empty
+                        if results is not None:
+                            for (sid,) in results:
+                                _add(dk, int(sid))
             except Exception as e:
                 logger.debug("storyline resolve via articles %s: %s", dk, e)
+                # Continue with other domains instead of failing completely
 
     return found[:12]
 

@@ -65,7 +65,19 @@ pipeline_hint = re.search(
     prompt_l,
 )
 
-if PRODUCT_RE.search(prompt):
+SCHEMA_RE = re.compile(
+    r"\b("
+    r"schema\s+mismatch|golden\s+path|public\.articles|wrong\s+table|"
+    r"storyline_article_suggestions|data_path"
+    r")\b",
+    re.I,
+)
+if SCHEMA_RE.search(prompt):
+    chunks.append(
+        "NI_DB_GOLDEN_PATH: BINDING — ni-db-golden-path + docs/GOLDEN_PATH_DATABASE.md + "
+        "docs/SCHEMA_MISMATCH_REMEDIATION.md. No public.articles writers."
+    )
+elif PRODUCT_RE.search(prompt):
     chunks.append(
         "NI_GOLDEN_TRACE: BINDING — ni-golden-trace + docs/GOLDEN_RSS_TO_READER.md. "
         "golden_article_id + first broken stage; no monitoring-only done on product tickets."

@@ -49,7 +49,7 @@ try:
         unified_intake_legacy_aware_backlog_enabled,
     )
     from api.shared.services.llm_service import pop_llm_execution_lane, push_llm_execution_lane
-except ImportError as _uie_deps_err:
+except (ImportError, OSError) as _uie_deps_err:
     logger.error("unified_intake_extraction_runner dependency import failed: %s", _uie_deps_err)
     raise
 

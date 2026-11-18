@@ -339,6 +339,8 @@ _BODY_BOILERPLATE_SUBSTRINGS: tuple[str, ...] = (
 
 # Phrases that indicate the extracted "content" is a paywall/subscription block instead of the article
 _PAYWALL_PHRASES = (
+    "cookies_not_supported",
+    "preview of subscription content",
     "subscribe to unlock",
     "try unlimited access",
     "only $1 for 4 weeks",
@@ -462,6 +464,73 @@ def format_article_content_excerpt(raw: str | None, max_len: int) -> str | None:
     if not out:
         return None
     return out[:max_len] if len(out) > max_len else out
+
+
+def article_evidence_text(
+    summary: str | None,
+    content: str | None,
+    *,
+    max_len: int = 4000,
+    summary_min_chars: int = 80,
+) -> str:
+    """
+    Body text for LLM / storyline evidence blocks.
+
+    Enrichment fills ``content`` but often leaves ``summary`` empty; callers must not
+    pass summary alone or the finisher sees headline-only stubs.
+    """
+    sm = (summary or "").strip()
+    body = (content or "").strip()
+    
+    # Handle case where both are None/empty
+    if not sm and not body:
+        return ""
+    
+    # If we have a summary that's sufficiently long and not false enriched, use it
+    if (
+        sm
+        and len(re.sub(r"\W+", "", sm)) >= summary_min_chars
+        and not is_false_enriched_body(sm, min_chars=40)
+    ):
+        return sm[:max_len]
+    
+    # If we have body content that's not false enriched, use excerpt or full body
+    if body and not is_false_enriched_body(body):
+        ex = format_article_content_excerpt(body, min(max_len, 4000))
+        if ex:
+            return ex[:max_len]
+        return body[:max_len]
+    
+    # If we have body content but it's false enriched, fall back to summary
+    if body:
+        return body[:max_len]
+    
+    # Fallback to summary (this handles the case where summary exists but was deemed insufficient)
+    return sm[:max_len]
+
+
+def reader_summary_seed_from_body(raw_body: str | None, *, max_len: int = 480) -> str | None:
+    """First-paragraph dek for reader home when RSS left summary thin."""
+    if not raw_body or not str(raw_body).strip():
+        return None
+    ex = format_article_content_excerpt(str(raw_body), max_len)
+    if not ex or is_false_enriched_body(ex, min_chars=60):
+        return None
+    return ex
+
+
+def seed_reader_summary_if_empty(cur, schema_name: str, article_id: int, body_text: str) -> None:
+    """After enrichment, populate articles.summary when missing so home_feed deks have substance."""
+    seed = reader_summary_seed_from_body(body_text)
+    if not seed:
+        return
+    cur.execute(
+        f"""UPDATE {schema_name}.articles
+           SET summary = %s
+           WHERE id = %s
+             AND (summary IS NULL OR LENGTH(TRIM(summary)) < 60)""",
+        (seed, article_id),
+    )
 
 
 def format_article_body_paragraphs(text: str) -> str:
@@ -975,6 +1044,7 @@ def _enrich_articles_batch_parallel(*, batch_size: int, parallel: int) -> int:
                            WHERE id = %s""",
                         (text, article_id),
                     )
+                    seed_reader_summary_if_empty(cur, schema_name, article_id, text)
                     cur.execute(
                         f"""UPDATE {schema_name}.articles SET entities = NULL WHERE id = %s""",
                         (article_id,),
@@ -1247,6 +1317,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                             f"""UPDATE {schema_name}.articles SET content = %s, enrichment_status = 'enriched', processing_status = 'ml_processed', updated_at = NOW() WHERE id = %s""",
                             (text, article_id),
                         )
+                        seed_reader_summary_if_empty(cur, schema_name, article_id, text)
                         cur.execute(
                             f"""UPDATE {schema_name}.articles SET entities = NULL WHERE id = %s""",
                             (article_id,),
@@ -1495,6 +1566,7 @@ def fetch_full_content_for_article(domain_key: str, article_id: int) -> dict[str
                     updated_at = NOW() WHERE id = %s""",
                     (text, article_id),
                 )
+                seed_reader_summary_if_empty(cur, schema_name, article_id, text)
                 cur.execute(
                     f"UPDATE {schema_name}.articles SET entities = NULL WHERE id = %s",
                     (article_id,),

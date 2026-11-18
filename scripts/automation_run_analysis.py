@@ -174,7 +174,7 @@ def main() -> int:
             cur.execute(
                 """
                 SELECT phase_name, started_at, finished_at, success, error_message
-                FROM automation_run_history
+                FROM infrastructure.automation_run_history
                 WHERE finished_at >= %s
                 ORDER BY finished_at ASC
                 """,

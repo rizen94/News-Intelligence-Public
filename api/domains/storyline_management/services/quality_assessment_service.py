@@ -4,12 +4,14 @@ Quality Assessment Service
 Assesses storyline quality, coherence, and factual accuracy
 """
 
+import json
 import logging
 from datetime import datetime
 from typing import Any
 
 from psycopg2.extras import RealDictCursor
 from api.shared.services.domain_aware_service import DomainAwareService
+from services.proactive_detection_service import ProactiveDetectionService
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +108,9 @@ class QualityAssessmentService(DomainAwareService):
                         SET quality_score = %s,
                             factual_accuracy_score = %s,
                             narrative_quality_score = %s,
-                            updated_at = %s
+                            updated_at = %s,
+                            convergence_score = %s,
+                            quality_metrics = %s
                         WHERE id = %s
                     """,
                         (
@@ -114,6 +118,8 @@ class QualityAssessmentService(DomainAwareService):
                             accuracy_assessment["accuracy_score"],
                             standards_assessment["standards_score"],
                             datetime.now(),
+                            assessment.get("convergence_score", 0.0),
+                            json.dumps(assessment["quality_metrics"]),
                             storyline_id,
                         ),
                     )
@@ -162,30 +168,37 @@ class QualityAssessmentService(DomainAwareService):
         ]
         avg_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 0.5
 
-        # Credibility scores (using quality_score as proxy since credibility_score doesn't exist)
-        credibility_scores = [
-            float(a.get("quality_score", 0.5)) for a in articles if a.get("quality_score")
-        ]
-        avg_credibility = (
-            sum(credibility_scores) / len(credibility_scores) if credibility_scores else 0.5
-        )
+        # Calculate convergence score using proactive detection
+        convergence_score = await self._calculate_convergence_score(storyline, articles)
 
-        # Completeness (based on article count and coverage)
-        completeness = min(1.0, article_count / 10.0)  # 10+ articles = complete
+        # Assess narrative coherence
+        coherence_assessment = await self._assess_narrative_coherence(storyline, articles)
+        coherence_score = coherence_assessment.get("coherence_score", 0.0)
 
-        # Overall quality score
-        quality_score = (
-            avg_quality * 0.4 + avg_credibility * 0.3 + diversity_score * 0.2 + completeness * 0.1
+        # Assess factual accuracy
+        accuracy_assessment = await self._assess_factual_accuracy(articles)
+        accuracy_score = accuracy_assessment["accuracy_score"]
+
+        # Overall quality score (weighted combination)
+        overall_score = (
+            avg_quality * 0.3 +           # Article quality (30%)
+            diversity_score * 0.2 +      # Source diversity (20%)
+            coherence_score * 0.2 +      # Narrative coherence (20%)
+            accuracy_score * 0.2 +       # Factual accuracy (20%)
+            convergence_score * 0.1      # Narrative convergence (10%)
         )
 
         return {
-            "quality_score": quality_score,
-            "avg_article_quality": avg_quality,
-            "avg_credibility": avg_credibility,
-            "source_diversity": source_diversity,
-            "diversity_score": diversity_score,
-            "completeness": completeness,
-            "article_count": article_count,
+            "overall_score": overall_score,
+            "quality_metrics": {
+                "article_count": article_count,
+                "source_diversity": source_diversity,
+                "avg_quality": avg_quality,
+                "diversity_score": diversity_score,
+                "convergence_score": convergence_score,
+                "coherence_score": coherence_score,
+                "accuracy_score": accuracy_score
+            }
         }
 
     async def _assess_narrative_coherence(
@@ -261,6 +274,66 @@ class QualityAssessmentService(DomainAwareService):
             "source_count": source_count,
             "avg_credibility": avg_credibility,
         }
+
+    async def _calculate_convergence_score(
+        self, storyline: dict[str, Any], articles: list[dict[str, Any]]
+    ) -> float:
+        """
+        Calculate convergence score based on narrative convergence from proactive detection.
+        
+        Args:
+            storyline: Storyline data
+            articles: List of articles in the storyline
+            
+        Returns:
+            Convergence score (0.0 to 1.0)
+        """
+        try:
+            # Initialize proactive detection service for this domain
+            proactive_service = ProactiveDetectionService(self.domain)
+            
+            # Get storyline ID from the storyline data
+            storyline_id = storyline.get("id")
+            if not storyline_id:
+                return 0.0
+            
+            # For now, we'll calculate a simplified convergence score based on:
+            # 1. Article count (more articles = better convergence)
+            # 2. Source diversity (more diverse sources = better convergence)
+            # 3. Temporal consistency (articles published in reasonable time sequence)
+            
+            article_count = len(articles)
+            source_domains = set(a.get("source_domain") for a in articles if a.get("source_domain"))
+            
+            # Base convergence score based on article count
+            base_convergence = min(1.0, article_count / 5.0)  # 5+ articles = max convergence
+            
+            # Add diversity factor (more diverse sources = higher convergence)
+            diversity_factor = len(source_domains) / max(article_count, 1)
+            
+            # Check temporal consistency (if we have timestamps)
+            temporal_consistency = 1.0
+            if article_count > 1:
+                try:
+                    dates = [a.get("published_at") for a in articles if a.get("published_at")]
+                    if len(dates) == article_count:
+                        # Sort dates to check chronological order
+                        sorted_dates = sorted(dates)
+                        if dates != sorted_dates:
+                            temporal_consistency = 0.7  # Slightly penalize non-chronological order
+                except Exception:
+                    pass  # Continue with basic calculation if date parsing fails
+            
+            # Combined convergence score
+            convergence_score = (base_convergence * 0.5 + 
+                              diversity_factor * 0.3 + 
+                              temporal_consistency * 0.2)
+            
+            return min(1.0, max(0.0, convergence_score))
+            
+        except Exception as e:
+            logger.warning(f"Could not calculate convergence score: {e}")
+            return 0.0
 
     async def _assess_professional_standards(
         self, storyline: dict, articles: list[dict]

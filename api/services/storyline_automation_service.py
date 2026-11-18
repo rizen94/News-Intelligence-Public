@@ -1545,7 +1545,7 @@ class StorylineAutomationService(DomainAwareService):
                 # Count stale items before cleanup (for logging/monitoring)
                 count_cur = conn.cursor()
                 count_rows = count_cur.execute(
-                    "SELECT count(*) FROM pipeline.storyline_article_suggestions WHERE status = 'pending' AND expires_at < NOW()"
+                    "SELECT count(*) FROM public.storyline_article_suggestions WHERE status = 'pending' AND expires_at < NOW()"
                 )
                 stale_before = count_rows.fetchone()[0] if count_rows else 0
 
@@ -1555,10 +1555,10 @@ class StorylineAutomationService(DomainAwareService):
                     update_cur = conn.cursor()
                     update_cur.execute(
                         """
-                        UPDATE pipeline.storyline_article_suggestions
+                        UPDATE public.storyline_article_suggestions
                         SET status = 'expired'
                         WHERE ctid IN (
-                            SELECT ctid FROM pipeline.storyline_article_suggestions
+                            SELECT ctid FROM public.storyline_article_suggestions
                             WHERE status = 'pending' AND expires_at < NOW()
                             LIMIT %s
                         )

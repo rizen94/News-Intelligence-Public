@@ -146,7 +146,21 @@ function App() {
       environment: import.meta.env.MODE || 'development',
       publicOrigin: 'https://news-intelligence-ag.duckdns.org',
     });
-    return () => getAPIConnectionManager().cleanup();
+    
+    // Health check effect
+    const healthCheckInterval = setInterval(async () => {
+      try {
+        const connectionManager = getAPIConnectionManager();
+        await connectionManager.testHealth();
+      } catch (error) {
+        console.warn('Health check failed:', error);
+      }
+    }, 30000); // 30 seconds
+    
+    return () => {
+      clearInterval(healthCheckInterval);
+      getAPIConnectionManager().cleanup();
+    };
   }, []);
 
   return (

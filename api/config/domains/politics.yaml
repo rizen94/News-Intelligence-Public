@@ -102,10 +102,6 @@ data_sources:
       feed_name: E&E News
       arc_relevance:
       - resource_geopolitics
-    - feed_url: https://www.nature.com/nclimate.rss
-      feed_name: Nature Climate
-      arc_relevance:
-      - resource_geopolitics
     - feed_url: https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml
       feed_name: NYT Politics
       arc_relevance:

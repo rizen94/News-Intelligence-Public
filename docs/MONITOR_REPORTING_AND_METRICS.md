@@ -101,6 +101,27 @@ curl -sS -X POST http://127.0.0.1:8000/api/system_monitoring/circuit_breakers/re
 
 ---
 
+## Circuit breaker reset endpoint
+
+**Endpoint:** `POST /api/system_monitoring/circuit_breakers/reset`
+
+**Purpose:** Reset Ollama circuit breakers after a host recovery from hard shed. This is the Monitor escape hatch that allows the system to recover from overload conditions without restarting the API service.
+
+**Body parameters:**
+- Optional body: `{"name": "ollama_gpu"}` to reset one key
+- Omit body to reset all `OLLAMA_CB_KEYS` (ollama, ollama_gpu, ollama_cpu, ollama_pop_os)
+
+**Usage examples:**
+```bash
+# After Ollama is reachable again — close hard shed without restarting uvicorn
+curl -sS -X POST http://127.0.0.1:8000/api/system_monitoring/circuit_breakers/reset \
+  -H 'Content-Type: application/json' -d '{}'
+
+# Optional: one key only
+curl -sS -X POST http://127.0.0.1:8000/api/system_monitoring/circuit_breakers/reset \
+  -H 'Content-Type: application/json' -d '{"name":"ollama_gpu"}'
+```
+
 ## Scripts (not automatically scheduled in-repo)
 
 These are **operator-run** unless you install cron/systemd yourself:

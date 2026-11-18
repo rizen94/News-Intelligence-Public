@@ -12,7 +12,7 @@ SoT: `api/database/migrations/README.md` · runbook: `docs/DB_PRODUCTION_MAINTEN
 
 ## New migration
 
-1. Add **`api/database/migrations/NNN_description.sql`** — next number after highest **active** file (not `archive/historical/` unless policy says so).
+1. Add **`api/database/migrations/NNN_description.sql`** — next number after highest **active** file **and** after `public.applied_migrations` (never reuse an id already in the ledger; e.g. **263** is `graph_pattern_refusal_and_link_status`).
 2. Add or extend **`api/scripts/run_migration_NNN.py`** using `resolve_migration_sql_file(...)` from `shared.migration_sql_paths`.
 3. **Never rewrite** an already-applied migration — add a new `NNN`.
 4. Domain silo post-SQL (RSS YAML, `domains.is_active`): see README § “YAML-onboarded silo” and `run_migration_180.py` pattern.

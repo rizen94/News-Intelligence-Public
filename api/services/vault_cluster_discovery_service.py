@@ -292,7 +292,7 @@ def _topic_overlap_boost(
     try:
         cur.execute(
             f"""
-            SELECT sa.storyline_id, atc.cluster_id
+            SELECT sa.storyline_id, atc.topic_cluster_id
             FROM {schema}.storyline_articles sa
             JOIN {schema}.article_topic_clusters atc ON atc.article_id = sa.article_id
             WHERE sa.storyline_id = ANY(%s)

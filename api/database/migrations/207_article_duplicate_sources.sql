@@ -27,3 +27,9 @@ CREATE INDEX IF NOT EXISTS idx_article_dup_source_domain
 
 COMMENT ON TABLE intelligence.article_duplicate_sources IS
     'Duplicate-source links to canonical per-domain articles; used for trust/verification reporting without reprocessing duplicate rows.';
+
+-- Add source_ids_used column to pattern_matches table for integrated pattern matching with source tracking
+ALTER TABLE intelligence.pattern_matches 
+ADD COLUMN IF NOT EXISTS source_ids_used TEXT[];
+COMMENT ON TABLE intelligence.article_duplicate_sources IS
+    'Duplicate-source links to canonical per-domain articles; used for trust/verification reporting without reprocessing duplicate rows.';

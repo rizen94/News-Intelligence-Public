@@ -93,6 +93,8 @@ Use this index for **current** documentation. See **[../PROJECT_STATUS.md](../PR
 | Doc | Purpose |
 |-----|---------|
 | [GOLDEN_RSS_TO_READER.md](GOLDEN_RSS_TO_READER.md) | **Product closure** — golden `article_id` trace RSS→reader; root-cause “done” for agents (not Grafana-only). |
+| [GOLDEN_PATH_DATABASE.md](GOLDEN_PATH_DATABASE.md) | **Table contract** — which schemas to read/write per stage; deprecated objects. |
+| [SCHEMA_MISMATCH_REMEDIATION.md](SCHEMA_MISMATCH_REMEDIATION.md) | **Cline Act checklist** — ordered code/DB fixes for schema drift. |
 | [RUNTIME_PIPELINE_TROUBLESHOOTING.md](RUNTIME_PIPELINE_TROUBLESHOOTING.md) | **Widow pipeline ops** — repomix symbol map, evidence ladder, symptom matrix (runtime, not coding-agent vault). |
 | [GRAPHIFY_PIPELINE_SLICE.md](GRAPHIFY_PIPELINE_SLICE.md) | **Pipeline call graph** — graphify corpus, MCP for Cline, refresh script. |
 | [CLINE_BASELINE.md](CLINE_BASELINE.md) | **Cline setup** — skills, hooks; thin rules. |

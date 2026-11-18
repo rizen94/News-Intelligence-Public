@@ -342,6 +342,10 @@ class EventDeduplicationService:
         finally:
             cursor.close()
 
+        # Add null check to prevent NoneType await error
+        if actor_names is None or not isinstance(actor_names, list):
+            return None
+
         canonical = self._match_by_entities(event_id, actor_names, event_date, "year")
         if canonical:
             return (event_id, int(canonical))

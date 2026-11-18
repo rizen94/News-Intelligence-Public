@@ -36,7 +36,6 @@
       { "feed_url": "https://www.carbonbrief.org/feed", "feed_name": "Carbon Brief", "arc_relevance": ["resource_geopolitics"] },
       { "feed_url": "https://www.climate.gov/rss.xml", "feed_name": "Climate.gov", "arc_relevance": ["resource_geopolitics"] },
       { "feed_url": "https://www.eenews.net/articles/feed/", "feed_name": "E&E News", "arc_relevance": ["resource_geopolitics"] },
-      { "feed_url": "https://www.nature.com/nclimate.rss", "feed_name": "Nature Climate", "arc_relevance": ["resource_geopolitics"] },
       { "feed_url": "https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml", "feed_name": "NYT Politics", "arc_relevance": ["political_tensions_multipolar"] },
       { "feed_url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml", "feed_name": "NYT World", "arc_relevance": ["political_tensions_multipolar"] },
       { "feed_url": "https://www.whitehouse.gov/news/feed/", "feed_name": "White House Briefing Room", "arc_relevance": ["political_tensions_multipolar"] },

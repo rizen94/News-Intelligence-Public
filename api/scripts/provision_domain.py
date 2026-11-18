@@ -251,6 +251,11 @@ def main() -> None:
         action="store_true",
         help="Do not UPDATE public.domains SET is_active=TRUE after successful run (default activates)",
     )
+    parser.add_argument(
+        "--auto-sql",
+        action="store_true",
+        help="Generate SQL migration from domain spec instead of requiring a pre-existing SQL file",
+    )
     args = parser.parse_args()
 
     if args.require_backup_ack and not args.ack_backup:
@@ -268,6 +273,44 @@ def main() -> None:
 
     if not schema_name.replace("_", "").isalnum() or not schema_name.islower():
         raise SystemExit("schema_name must be lowercase snake_case alphanumerics only")
+    
+    # Handle auto-sql mode - generate SQL from spec if needed
+    if args.auto_sql and args.spec:
+        # Generate the SQL migration using the spec file
+        try:
+            from api.shared.domain_spec import DomainSpec
+            spec = DomainSpec.from_json_file(args.spec)
+            
+            # We need to determine a migration number - use the next available one
+            import glob
+            migration_files = glob.glob(str(_REPO_ROOT / "api/database/migrations" / "[0-9][0-9][0-9]_*.sql"))
+            if not migration_files:
+                migration_number = 250  # Start from a reasonable number
+            else:
+                latest_migration = max([int(f.split('/')[-1].split('_')[0]) for f in migration_files])
+                migration_number = latest_migration + 1
+            
+            # Generate the SQL migration
+            sql_content = spec.render_sql_migration(migration_number)
+            
+            # Write to a temporary file
+            import tempfile
+            temp_sql_file = tempfile.NamedTemporaryFile(mode='w', suffix='.sql', delete=False)
+            temp_sql_file.write(sql_content)
+            temp_sql_file.flush()
+            args.sql = Path(temp_sql_file.name)
+            
+            print(f"Generated SQL migration {migration_number:03d}_{spec.schema_name}_domain_silo.sql")
+            print("Migration content:")
+            print("-" * 50)
+            print(sql_content[:1000] + ("..." if len(sql_content) > 1000 else ""))
+            print("-" * 50)
+            
+        except Exception as e:
+            raise SystemExit(f"Failed to generate SQL from spec: {e}") from e
+    elif args.auto_sql and not args.spec:
+        raise SystemExit("--auto-sql requires --spec to be provided")
+
     if domain_key == "science-tech":
         raise SystemExit(
             "Refusing: retired domain key science-tech — use artificial-intelligence, medicine, or other YAML silos."
@@ -356,6 +399,16 @@ def main() -> None:
         print_post_provision_checklist(
             domain_key, schema_name, config_path=str(config_path.resolve())
         )
+        
+        # Clean up temporary SQL file if auto-sql was used
+        if args.auto_sql and args.spec and hasattr(args, 'sql') and args.sql:
+            try:
+                import os
+                if os.path.exists(args.sql):
+                    os.unlink(args.sql)
+                    print(f"Cleaned up temporary SQL file: {args.sql}")
+            except Exception as e:
+                print(f"Warning: Could not clean up temporary SQL file: {e}")
     finally:
         conn.close()
 

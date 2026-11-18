@@ -1548,6 +1548,17 @@ def apply_membership_action(action_id: int, *, approve: bool) -> dict[str, Any]:
                     quarantine=True,
                     domain_key=domain_key,
                 )
+            elif action == "split":
+                # Handle storyline split action
+                result = self._action_split(
+                    cur,
+                    domain_key=domain_key,
+                    storyline_id=storyline_id,
+                    article_id=article_id,
+                    metadata=metadata,
+                    rationale=rationale,
+                )
+                applied = result.get("success", False)
             else:
                 cur.execute(
                     """
@@ -1607,15 +1618,135 @@ def apply_membership_action(action_id: int, *, approve: bool) -> dict[str, Any]:
                 except Exception:
                     pass
             return {"success": True, "status": "applied" if applied else "skipped"}
-    except Exception as e:
-        logger.exception("apply_membership_action: %s", e)
+    
+    def _action_split(
+        self,
+        cur,
+        domain_key: str,
+        storyline_id: int,
+        article_id: int | None,
+        metadata: dict[str, Any],
+        rationale: str,
+    ) -> dict[str, Any]:
+        """
+        Handle the split action for storyline membership.
+        
+        When a storyline is split, one group of articles stays with the original storyline
+        while new storylines are created for other article groups. The original storyline 
+        keeps its ID and title, while new storylines get created with proper lineage tracking.
+        
+        Args:
+            cur: Database cursor
+            domain_key: Domain key for the storyline
+            storyline_id: Original storyline ID
+            article_id: Article ID (if single article split)
+            metadata: JSON metadata containing article group information
+            rationale: Reason for the split action
+            
+        Returns:
+            Dictionary with success status and details
+        """
         try:
-            conn.rollback()
-        except Exception:
-            pass
-        return {"success": False, "error": str(e)[:300]}
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+            # Extract article groups from metadata
+            article_groups = metadata.get("groups", [])
+            
+            if not article_groups or not isinstance(article_groups, list):
+                return {"success": False, "error": "Invalid metadata: 'groups' must be a list of article ID lists"}
+            
+            schema = resolve_domain_schema(domain_key)
+            
+            # Get the original storyline details
+            cur.execute(
+                f"SELECT title, description, parent_storyline_id FROM {schema}.storylines WHERE id = %s",
+                (storyline_id,),
+            )
+            storyline_row = cur.fetchone()
+            
+            if not storyline_row:
+                return {"success": False, "error": "Original storyline not found"}
+            
+            original_title = storyline_row[0]
+            original_description = storyline_row[1]
+            parent_storyline_id = storyline_row[2]
+            
+            # Create new storylines for each article group (except the first one which stays with original)
+            created_storyline_ids = []
+            
+            # Process each group - first group stays with original, others get new storylines
+            for i, article_group in enumerate(article_groups):
+                if not isinstance(article_group, list):
+                    continue
+                    
+                # Skip empty groups
+                if len(article_group) == 0:
+                    continue
+                    
+                # For the first group, we keep it with the original storyline (no need to create new)
+                if i == 0:
+                    # Just update the articles to be associated with the original storyline
+                    cur.execute(
+                        f"UPDATE {schema}.storyline_articles SET storyline_id = %s WHERE article_id = ANY(%s)",
+                        (storyline_id, article_group),
+                    )
+                    continue
+                
+                # Create a new storyline for this group
+                new_storyline_title = self._generate_split_storyline_title(original_title, i)
+                
+                # Insert new storyline with parent reference
+                cur.execute(
+                    f"""
+                    INSERT INTO {schema}.storylines (title, description, parent_storyline_id, status, created_at, updated_at)
+                    VALUES (%s, %s, %s, 'active', NOW(), NOW())
+                    RETURNING id
+                    """,
+                    (new_storyline_title, original_description, storyline_id),
+                )
+                
+                new_storyline_id = cur.fetchone()[0]
+                created_storyline_ids.append(new_storyline_id)
+                
+                # Associate articles with the new storyline
+                cur.execute(
+                    f"UPDATE {schema}.storyline_articles SET storyline_id = %s WHERE article_id = ANY(%s)",
+                    (new_storyline_id, article_group),
+                )
+            
+            # Update the original storyline's parent_storyline_id to point to itself (it becomes the root)
+            if parent_storyline_id is None:
+                cur.execute(
+                    f"UPDATE {schema}.storylines SET parent_storyline_id = %s WHERE id = %s",
+                    (storyline_id, storyline_id),
+                )
+            
+            # Update the membership fingerprint to reflect changes
+            self._mark_storyline_reviewed(
+                cur,
+                domain_key=domain_key,
+                storyline_id=storyline_id,
+                schema=schema,
+            )
+            
+            return {
+                "success": True,
+                "message": f"Split completed successfully. Created {len(created_storyline_ids)} new storylines.",
+                "created_storyline_ids": created_storyline_ids
+            }
+            
+        except Exception as e:
+            logger.exception("Error in _action_split: %s", e)
+            return {"success": False, "error": str(e)}
+    
+    def _generate_split_storyline_title(self, original_title: str, group_index: int) -> str:
+        """
+        Generate a title for a split storyline.
+        
+        Args:
+            original_title: The original storyline title
+            group_index: Index of the article group (1-based)
+            
+        Returns:
+            New title for the split storyline
+        """
+        # Simple approach: append "Part N" to the original title
+        return f"{original_title} - Part {group_index}"

@@ -548,7 +548,11 @@ def admit(
             )
             return True, f"episode_events:{n_ev}"
 
-        if mode == MembershipMode.EPISODE_EEL or intent in _floor_intents:
+        # Discovery seeds RSS clusters before event extraction has run. Blocking
+        # bag writes here left politics/finance storylines with 0 storyline_articles.
+        if (
+            mode == MembershipMode.EPISODE_EEL or intent in _floor_intents
+        ) and intent != MembershipIntent.DISCOVERY_SEED:
             reason = f"episode_no_events:{attach_reason}"
             with conn.cursor() as cur:
                 _record_attach_block(cur, schema=schema, episode_id=eid, reason=reason)
@@ -561,6 +565,40 @@ def admit(
                 reason=reason,
             )
             return False, reason
+
+        if intent == MembershipIntent.DISCOVERY_SEED:
+            with conn.cursor() as cur:
+                inserted = _insert_bag_row(
+                    cur,
+                    schema=schema,
+                    storyline_id=eid,
+                    article_id=aid,
+                    relevance_score=float(effective_score or 0.0),
+                    added_by=added_by,
+                    relationship_type="related",
+                    metadata={
+                        **row_meta,
+                        "thin_seed": attach_reason,
+                        "membership_role": "discovery_seed",
+                    },
+                )
+            _log_admit(
+                intent=intent,
+                outcome="bag_seed" if inserted else "bag_noop",
+                mode=mode,
+                episode_id=eid,
+                article_id=aid,
+                reason=str(attach_reason),
+            )
+            if inserted:
+                _maybe_enqueue_finisher_after_admit(
+                    domain_key=domain_key,
+                    episode_id=eid,
+                    article_id=aid,
+                    intent=intent,
+                    membership_changed=True,
+                )
+            return inserted, f"discovery_seed_bag:{attach_reason}"
 
         # DUAL_WRITE + HITL/manual only: thin bag seed when no CE yet
         try:

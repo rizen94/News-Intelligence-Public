@@ -60,7 +60,8 @@ def persist_automation_run_history(
     """
     err, meta_json = _split_run_history_fields(error_message, metadata)
     if pool is None:
-        pool = "health" if phase_name == "health_check" else "worker"
+        # Short INSERT must not wait on the worker pool (that is how run history went silent).
+        pool = "health"
 
     sleeps_before_attempt = (0.0, 0.15, 0.5, 1.0)
     last_err: Exception | None = None

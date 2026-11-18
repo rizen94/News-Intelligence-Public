@@ -118,6 +118,41 @@ def _build_dossier_tree(entities: list[dict[str, Any]], relationships: list[dict
     return roots
 
 
+def _get_merged_storyline_target(domain: str, storyline_id: int) -> dict[str, Any] | None:
+    """Check if a storyline was merged into another one and return the target storyline."""
+    schema = resolve_domain_schema(domain)
+    
+    with get_ui_db_connection_context() as conn:
+        try:
+            cur = conn.cursor()
+            # Check if this storyline exists and was merged into another one
+            cur.execute(
+                f"""
+                SELECT id, merged_into_id 
+                FROM {schema}.storylines 
+                WHERE id = %s AND merged_into_id IS NOT NULL
+                """,
+                (storyline_id,),
+            )
+            row = cur.fetchone()
+            if row:
+                return {"id": row[0], "merged_into_id": row[1]}
+        except Exception:
+            pass
+    return None
+
+
+def _fetch_merged_storyline_content(domain: str, target_storyline_id: int) -> dict[str, Any] | None:
+    """Fetch content from a merged storyline's target."""
+    try:
+        # Call the same function recursively to get the target storyline content
+        # This ensures we handle any further merges in the chain
+        return build_storyline_reader_pack(domain, target_storyline_id)
+    except Exception:
+        # If we can't fetch the target, return None so original error handling kicks in
+        return None
+
+
 def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any]:
     if not validate_domain(domain):
         raise ValueError(f"Invalid or inactive domain: {domain}")
@@ -185,6 +220,11 @@ def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any
             )
             row = cur.fetchone()
             if not row:
+                # Check if this storyline was merged into another one
+                merged_target = _get_merged_storyline_target(domain, storyline_id)
+                if merged_target:
+                    # Raise a specific error that indicates the storyline was merged
+                    raise LookupError(f"storyline {storyline_id} was merged into storyline {merged_target['merged_into_id']}")
                 raise LookupError(f"Storyline {storyline_id} not found in {domain}")
 
             (

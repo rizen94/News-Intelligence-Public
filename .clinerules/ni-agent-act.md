@@ -27,3 +27,5 @@ If you catch yourself writing “in Plan mode I would…” — stop and **imple
 4. Deploy when authorized → `docs/RUNTIME_PIPELINE_TROUBLESHOOTING.md` §2 + **`docs/GOLDEN_RSS_TO_READER.md`** stage SQL + `/api/reader/home` when reader is in scope.
 
 **Forbidden “done”:** patch did not move the golden row; only monitoring/scheduling changed on a reader/feed ticket.
+
+**Schema work:** skill **`ni-db-golden-path`** — complete `docs/SCHEMA_MISMATCH_REMEDIATION.md` items touched; run `scripts/golden_path_db_audit.sh` after DB changes.

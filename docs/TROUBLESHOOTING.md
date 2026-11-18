@@ -2,6 +2,8 @@
 
 **Last Updated**: September 26, 2025
 
+> **Pipeline on Widow (automation, heartbeats, intake, pools):** use **[RUNTIME_PIPELINE_TROUBLESHOOTING.md](RUNTIME_PIPELINE_TROUBLESHOOTING.md)** first — repomix symbol map, postgres evidence ladder, and 2026-11 known failures. This file is the broader API/DB/Ollama catalog.
+
 ## 🚨 Quick Diagnostics
 
 ### **Database assessment & alignment**

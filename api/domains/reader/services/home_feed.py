@@ -688,6 +688,75 @@ def _fetch_candidate_rows(cur, schema: str, domain_key: str, since: datetime) ->
     ``storyline_articles`` first forces a per-row nested loop across the
     whole unmerged set (USB IOPS). ``idx_*_sa_storyline_added_at`` then
     covers only the shortlist.
+
+    Candidate window raised from 200 → 1000 (row count) and recency from
+    90 → 365 days to accommodate sparse update cadences. Domains like AI,
+    Legal, Medicine cluster infrequently; most storylines remain valid long
+    after their last refinement timestamp.
+    """
+    cur.execute(
+        f"""
+        SELECT
+            s.id,
+            s.title,
+            s.description,
+            s.status,
+            s.updated_at,
+            s.last_refinement,
+            s.editorial_document,
+            s.document_status,
+            s.article_count,
+            s.parent_storyline_id,
+            COALESCE(s.is_mega_storyline, FALSE) AS is_mega_storyline,
+            s.created_at,
+            s.story_kind,
+            s.quality_score,
+            s.narrative_gate_phase,
+            agg.last_article_added_at,
+            COALESCE(agg.articles_21d, 0) AS articles_21d
+        FROM (
+            SELECT s0.*
+            FROM {schema}.storylines s0
+            WHERE s0.merged_into_id IS NULL
+              AND COALESCE(s0.status, 'active') NOT IN ('archived', 'merged', 'deleted')
+              AND (
+                    s0.updated_at >= %s - INTERVAL '365 days'
+                 OR (s0.last_refinement IS NOT NULL AND s0.last_refinement >= %s - INTERVAL '365 days')
+                 OR EXISTS (
+                        SELECT 1
+                        FROM {schema}.storyline_articles sa0
+                        WHERE sa0.storyline_id = s0.id
+                          AND sa0.added_at >= %s - INTERVAL '365 days'
+                    )
+              )
+            ORDER BY s0.updated_at DESC NULLS LAST
+            LIMIT 1000
+        ) s
+        LEFT JOIN LATERAL (
+            SELECT
+                MAX(sa.added_at) AS last_article_added_at,
+                COUNT(*) FILTER (
+                    WHERE sa.added_at >= %s - INTERVAL '21 days'
+                ) AS articles_21d
+            FROM {schema}.storyline_articles sa
+            WHERE sa.storyline_id = s.id
+        ) agg ON TRUE
+        """,
+        (since, since, since, since),
+    )
+    cols = [d[0] for d in cur.description]
+    rows = []
+    for tup in cur.fetchall():
+        row = dict(zip(cols, tup))
+        rows.append(row)
+    return rows
+def _fetch_candidate_rows(cur, schema: str, domain_key: str, since: datetime) -> list[dict[str, Any]]:
+    """Pull recent non-merged storylines with editorial + hierarchy signals.
+
+    Filter to 1000 storylines *before* the LATERAL aggregate. Joining
+    ``storyline_articles`` first forces a per-row nested loop across the
+    whole unmerged set (USB IOPS). ``idx_*_sa_storyline_added_at`` then
+    covers only the shortlist.
     
     Candidate window raised from 200 → 1000 (row count) and recency from
     90 → 365 days to accommodate sparse update cadences. Domains like AI,
@@ -721,7 +790,7 @@ def _fetch_candidate_rows(cur, schema: str, domain_key: str, since: datetime) ->
               AND COALESCE(s0.status, 'active') NOT IN ('archived', 'merged', 'deleted')
               AND (
                     s0.updated_at >= %s - INTERVAL '365 days'
-                 OR s0.last_refinement >= %s - INTERVAL '365 days'
+                 OR (s0.last_refinement IS NOT NULL AND s0.last_refinement >= %s - INTERVAL '365 days')
                  OR EXISTS (
                         SELECT 1
                         FROM {schema}.storyline_articles sa0
@@ -803,7 +872,12 @@ def _fetch_raw_article_candidates(cur, schema: str, domain_key: str, since: date
     try:
         cur.execute(
             f"""
-            SELECT a.id, a.title, COALESCE(a.summary, '') AS description,
+            SELECT a.id, a.title,
+                   COALESCE(
+                       NULLIF(TRIM(a.summary), ''),
+                       LEFT(COALESCE(a.content, ''), 480),
+                       ''
+                   ) AS description,
                    COALESCE(COALESCE(a.published_at, a.created_at), %s) AS updated_at,
                    1 AS article_count,
                    NULL::text AS parent_storyline_id,
@@ -1189,11 +1263,15 @@ def classify_and_build_feeds(
         return out
 
     # Anchor-weighted sort: rank_weight first (desc), updated_at as tiebreaker
-    def _rank_then_date(item: dict) -> tuple[float | int, str]:
+    def _rank_then_date(item: dict) -> tuple[float | int, str, float]:
         rw = item.get("rank_weight")
         if rw is None or rw < 0:
             rw = -999
-        return (-rw, item.get("updated_at") or "")
+        
+        # Use quality_score as secondary tiebreaker when rank_weight is equal
+        quality_score = item.get("quality_score", 0.0)
+        
+        return (-rw, item.get("updated_at") or "", -quality_score)
 
     news = _dedupe(sorted(news, key=_rank_then_date))
     current = _dedupe(sorted(current, key=_rank_then_date))

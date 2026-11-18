@@ -82,7 +82,7 @@ def invalidate_cache() -> None:
 
 _SQL_PHASE_RUN_COUNT = f"""\
 SELECT COUNT(*) AS runs
-FROM automation_run_history
+FROM infrastructure.automation_run_history
 WHERE phase_name = %s
   AND started_at >= NOW() - INTERVAL '{WINDOW_HOURS} hours'
   AND success = true;
@@ -90,7 +90,7 @@ WHERE phase_name = %s
 
 _SQL_PHASE_AVG_DURATION = f"""\
 SELECT AVG(EXTRACT(EPOCH FROM (finished_at - started_at))) AS avg_dur
-FROM automation_run_history
+FROM infrastructure.automation_run_history
 WHERE phase_name = %s
   AND started_at >= NOW() - INTERVAL '{WINDOW_HOURS} hours'
   AND success = true;
@@ -99,7 +99,7 @@ WHERE phase_name = %s
 _SQL_PHASE_STDDEV = f"""\
 SELECT CASE WHEN COUNT(*) > 1 THEN STDDEV(EXTRACT(EPOCH FROM (finished_at - started_at)))
             ELSE 0 END AS stddev
-FROM automation_run_history
+FROM infrastructure.automation_run_history
 WHERE phase_name = %s
   AND started_at >= NOW() - INTERVAL '{WINDOW_HOURS} hours'
   AND success = true;
@@ -107,14 +107,14 @@ WHERE phase_name = %s
 
 _SQL_ALL_PHASES = """\
 SELECT DISTINCT phase_name
-FROM automation_run_history
+FROM infrastructure.automation_run_history
 WHERE started_at >= NOW() - INTERVAL '%d hours'
 ORDER BY phase_name;
 """
 
 _SQL_PHASE_LAST_6H_PROCESSED = """\
 SELECT COUNT(*) AS processed
-FROM automation_run_history
+FROM infrastructure.automation_run_history
 WHERE phase_name = %s
   AND started_at >= NOW() - INTERVAL '6 hours'
   AND finished_at >= NOW() - INTERVAL '6 hours'

@@ -77,6 +77,7 @@ Run on Widow (SSH) or via **postgres-mcp** against `news_intel` (Widow, not Home
 | Health `database: connection timeout` | [PGBOUNCER_AND_CONNECTION_BUDGET.md](PGBOUNCER_AND_CONNECTION_BUDGET.md) | `get_db_connection_context`, pool stats in logs | Check `DB_HOST=127.0.0.1` `DB_PORT=6432`; journal for `pool timeout` / `uncommitted tx` |
 | Phases stale (heartbeats days old) | PIPELINE_AND_AUTOMATION § Scheduling | `AutomationManager`, `PipelineController` | Heartbeats query (§2D); check API was running, not stuck `deactivating` |
 | No new articles | PIPELINE_OPERATIONS § Quiet windows | `collect_rss_feeds`, `pipeline_schedule_service` | Article counts §2E; RSS quiet is **expected** weekday daytime |
+| `MAX(created_at)` days stale while `newsplatform-secondary` is `active` | This doc §4; `journalctl -u newsplatform-secondary.service -f` | `rss_collector` sequential loop + inline fetch | Head-of-line: one paywall/slow feed. Quiet windows do **not** explain a week-long gap |
 | `InvalidTextRepresentation` `tier_1` on `quality_tier` | This doc §5 | `article_signal_gate.py` | `quality_tier` is **smallint** `1/2/3`, not `'tier_1'` strings |
 | Log spam `rejecting domain 'general'` | DOMAIN_EXTENSION_TEMPLATE | `domain_registry`, `validate_schema_name` | `SELECT domain_key, is_active FROM public.domains` — deactivate or fix schema |
 | Ollama / GPU deferrals | MONITOR_REPORTING_AND_METRICS | `llm_service`, circuit breakers | Health JSON `circuit_breakers`; reset per TROUBLESHOOTING |
@@ -92,8 +93,9 @@ systemctl is-active news-intelligence-api-public.service newsplatform-secondary.
 curl -sS --max-time 15 http://127.0.0.1:8000/api/system_monitoring/health | python3 -m json.tool | head -40
 
 # If API hung stopping (deactivating / stop-sigterm): see TROUBLESHOOTING → API restart
-# journal tail
+# journal tail — API (phases/pool) AND secondary (RSS). Secondary is the intake owner.
 journalctl -u news-intelligence-api-public.service -n 50 --no-pager | grep -iE 'ERROR|pool|tier_1|phase'
+journalctl -u newsplatform-secondary.service -n 80 --no-pager
 ```
 
 Deploy path: `/opt/news-intelligence` — compare `BUILD_INFO` / git SHA to dev tree after `./scripts/deploy_to_widow.sh`.

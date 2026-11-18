@@ -366,7 +366,7 @@ def load_finisher_bundle_from_db(
 
                 cur.execute(
                     f"""
-                    SELECT a.id, a.title, a.url, a.source_domain, a.published_at, a.summary
+                    SELECT a.id, a.title, a.url, a.source_domain, a.published_at, a.summary, a.content
                     FROM {schema}.articles a
                     JOIN {schema}.storyline_articles sa ON a.id = sa.article_id
                     WHERE sa.storyline_id = %s
@@ -379,11 +379,14 @@ def load_finisher_bundle_from_db(
                 article_rows = list(cur.fetchall())
                 article_rows.reverse()
 
+                from services.article_content_enrichment_service import article_evidence_text
+
                 article_summaries: list[dict[str, Any]] = []
                 article_ids: list[int] = []
                 for r in article_rows:
-                    aid, atitle, url, source_domain, published_at, summary = r
+                    aid, atitle, url, source_domain, published_at, summary, content = r
                     article_ids.append(int(aid))
+                    evidence = article_evidence_text(summary, content, max_len=4000)
                     article_summaries.append(
                         {
                             "id": aid,
@@ -391,7 +394,8 @@ def load_finisher_bundle_from_db(
                             "url": url,
                             "source_domain": source_domain,
                             "published_at": published_at.isoformat() if published_at else None,
-                            "summary": (summary or "")[:4000],
+                            "summary": evidence,
+                            "content_excerpt": evidence[:1200] if evidence else "",
                         }
                     )
 
@@ -892,6 +896,7 @@ def persist_narrative_finish_to_db(
         return True
     except Exception as e:
         logger.exception("persist_narrative_finish_to_db: %s", e)
+        # The context manager handles connection cleanup, but we should ensure proper logging
         return False
 
 

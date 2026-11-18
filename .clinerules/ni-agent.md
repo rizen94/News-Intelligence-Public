@@ -33,6 +33,7 @@ Graded on: **correctness** (evidence-backed), **continuity** (vault handoff), **
 | Situation | Start with |
 |-----------|------------|
 | Reader feed, briefs, RSS → UI, “articles stuck” | **`ni-golden-trace`** → then **`ni-pipeline-debug`** (bounded) |
+| Schema / wrong table / `public.articles` / golden path DB | **`ni-db-golden-path`** → `docs/GOLDEN_PATH_DATABASE.md` |
 | Pipeline / automation / heartbeats / Widow runtime (ops) | **`ni-pipeline-debug`** |
 | Feature, refactor, API change, find callers | **`ni-repomix-grep`** → end with **`ni-verify-change`** |
 | Schema / migration / ledger | **`ni-migrations`** |

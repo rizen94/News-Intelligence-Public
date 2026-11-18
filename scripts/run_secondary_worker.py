@@ -91,7 +91,12 @@ def main():
         cycle += 1
         logger.info("=== Cycle %d ===", cycle)
         count = run_rss_collection()
-        logger.info("RSS cycle %d: %d activity (new + updated)", cycle, count)
+        activity = (
+            int(count.get("activity") or 0)
+            if isinstance(count, dict)
+            else int(count or 0)
+        )
+        logger.info("RSS cycle %d: %d activity (new + updated)", cycle, activity)
         logger.info("Sleeping %ds until next run", INTERVAL_SEC)
         time.sleep(INTERVAL_SEC)
 

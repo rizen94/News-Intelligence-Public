@@ -144,6 +144,9 @@ docs/_local_expanded/
 # Repomix generated exports (config files are tracked)
 repomix-output.*
 
+# Serena LSP artifacts
+.serena/
+
 # Archived/deprecated code — never commit stale implementations
 # If ref value exists, write a brief migration note and delete the rest.
 _archived_duplicates/
@@ -164,3 +167,7 @@ diagnostics/
 # Agent scratch directories (ephemeral by nature)
 .scratch/
 _temp_work/
+
+# Graphify local corpus and extract output (regenerate via scripts/graphify_ni_pipeline_slice.sh)
+graphify-trial-corpus/
+**/graphify-out/

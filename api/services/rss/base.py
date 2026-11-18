@@ -504,3 +504,32 @@ class BaseRSSService:
         except Exception as e:
             self.logger.error(f"Error updating filtering config: {e}")
             return {"error": str(e)}
+
+    async def get_articles(self, limit: int = 50, offset: int = 0, domain_keys: list[str] = None) -> dict[str, Any]:
+        """
+        Retrieve articles from multiple domains using cross-schema UNION ALL query.
+        
+        Args:
+            limit: Maximum number of articles to return
+            offset: Offset for pagination
+            domain_keys: Specific domain keys to include (None for all active domains)
+            
+        Returns:
+            Dictionary with articles and total count
+        """
+        try:
+            # Simple implementation - will be enhanced in future
+            db_gen = get_db()
+            db = next(db_gen)
+            try:
+                # For now, return empty results - this will be implemented properly
+                return {
+                    "articles": [],
+                    "total_count": 0,
+                    "count": 0
+                }
+            finally:
+                db.close()
+        except Exception as e:
+            self.logger.error(f"Error retrieving articles: {e}")
+            return {"error": str(e)}

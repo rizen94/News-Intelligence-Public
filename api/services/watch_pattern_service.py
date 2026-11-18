@@ -11,6 +11,7 @@ from typing import Any
 
 from api.shared.database import get_db_connection
 from api.shared.domain_registry import get_active_domain_keys, resolve_domain_schema
+from api.services.nlp_pattern_matching_service import nlp_pattern_matching_service
 
 logger = logging.getLogger(__name__)
 
@@ -99,13 +100,23 @@ def match_content(text: str, story_type: str) -> list[tuple[str, str, float]]:
     """
     Match text against default keywords for story_type.
     Returns list of (pattern_type, matched_text, significance_score).
+    
+    This function now integrates NLP capabilities for enhanced matching.
     """
+    # First try keyword matching
     keywords = (
         PATTERN_KEYWORDS_BY_STORY_TYPE.get(story_type)
         or PATTERN_KEYWORDS_BY_STORY_TYPE.get(DEFAULT_STORY_TYPE)
         or []
     )
     matches = _match_keywords(text, keywords)
+    
+    # If we have NLP capabilities and no keyword matches, try semantic matching
+    if nlp_pattern_matching_service.model and not matches:
+        semantic_matches = nlp_pattern_matching_service.match_content_with_contextual_scoring(text, story_type)
+        return semantic_matches
+    
+    # Return keyword matches with pattern type "keyword"
     return [("keyword", m[0], m[1]) for m in matches]
 
 
@@ -327,3 +338,49 @@ def run_pattern_matching_all_domains(limit_per_domain: int = 30) -> dict[str, An
             combined.get("alerts_skipped_not_on_watchlist", 0),
         )
     return combined
+
+def create_pattern_match_with_source_tracking(
+    domain_key: str,
+    storyline_id: int,
+    content_ref_type: str,
+    content_ref_id: int,
+    matched_text: str,
+    significance_score: float,
+    source_ids_used: list[str],
+    story_type: str = "person_tenure"
+) -> bool:
+    """
+    Create a pattern match record with explicit source tracking.
+    
+    This is the integrated pipeline function that connects pattern matching with 
+    historic context source selection and tracking.
+    """
+    conn = get_db_connection()
+    if not conn:
+        return False
+        
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO intelligence.pattern_matches (
+                    domain_key, storyline_id, content_ref_type, content_ref_id,
+                    matched_text, significance_score, source_ids_used, pattern_type
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    domain_key, storyline_id, content_ref_type, content_ref_id,
+                    matched_text, significance_score, source_ids_used, story_type
+                ),
+            )
+        conn.commit()
+        return True
+        
+    except Exception as e:
+        logger.debug("create pattern match with source tracking failed: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False

@@ -493,14 +493,15 @@ async def process_storyline_rag_analysis(
         if description:
             context_parts.append(f"Description: {description}")
 
+        from services.article_content_enrichment_service import article_evidence_text
+
         context_parts.append("\nArticles in storyline:")
         for article in articles:
             article_id, article_title, content, summary, published_at, source, url = article
             context_parts.append(f"\n- {article_title} ({source}, {published_at})")
-            if summary:
-                context_parts.append(f"  Summary: {summary}")
-            else:
-                context_parts.append(f"  Content: {content[:500]}...")
+            body = article_evidence_text(summary, content, max_len=2000)
+            if body:
+                context_parts.append(f"  Body: {body}")
 
         storyline_context = "\n".join(context_parts)
 

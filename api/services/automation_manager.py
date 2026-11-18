@@ -947,6 +947,14 @@ class AutomationManager:
                     collection_interval = int(raw)
                 except ValueError:
                     pass
+        self._collection_cycle_started_at: datetime | None = None
+        self._last_completed_at_by_phase: dict[str, datetime] = {}
+
+        # Force cycle functionality
+        self._force_cycle_active = False
+        self._force_cycle_end_time = None
+
+        # ... rest of existing code ...
         if collection_interval is None:
             collection_interval = cc.get("interval_seconds", 7200)
 
@@ -2840,10 +2848,14 @@ class AutomationManager:
                     from services.content_refinement_queue_service import (
                         maybe_auto_enqueue_comprehensive_rag_from_scheduler,
                     )
+                    from domains.content_analysis.services.topic_extraction_queue_worker import (
+                        maybe_auto_enqueue_topic_extraction_from_scheduler,
+                    )
 
                     maybe_auto_enqueue_comprehensive_rag_from_scheduler()
+                    maybe_auto_enqueue_topic_extraction_from_scheduler()
                 except Exception as e:
-                    logger.debug("scheduler auto_enqueue comprehensive_rag: %s", e)
+                    logger.debug("scheduler auto_enqueue: %s", e)
 
                 # Drain coordinator-driven phase requests (thread-safe)
                 try:
@@ -6977,7 +6989,7 @@ class AutomationManager:
                 except Exception as e:
                     logger.debug("entity_extraction post-sync mentions %s: %s", domain_key, e)
 
-    async def _execute_event_extraction_v5(self, task: Task):
+    async def _execute_event_extraction(self, task: Task):
         """v5.0 -- Extract structured events with temporal grounding from domain articles."""
         try:
             from services.event_extraction_service import EventExtractionService
@@ -8380,6 +8392,46 @@ class AutomationManager:
 
         except Exception as e:
             logger.error("Error during pending cleanup: %s", e, exc_info=True)
+
+    def force_nightly_cycle(self, duration_hours: int = 24) -> bool:
+        """
+        Force all automation phases to run during what would normally be the nightly pipeline window.
+        
+        This temporarily bypasses normal nightly pipeline restrictions, allowing full collection
+        cycle to run for the specified duration.
+        
+        Args:
+            duration_hours (int): Duration to keep force active in hours (default 24)
+            
+        Returns:
+            bool: True if force was successfully activated
+        """
+        try:
+            from services.nightly_ingest_window_service import force_nightly_window_active
+            
+            result = force_nightly_window_active(duration_hours)
+            if result:
+                self._force_cycle_active = True
+                self._force_cycle_end_time = datetime.now() + timedelta(hours=duration_hours)
+                logger.info(f"Force-activated full automation cycle for {duration_hours} hours")
+            
+            return result
+        except Exception as e:
+            logger.error(f"Failed to force nightly cycle: {e}")
+            return False
+            
+    def is_force_cycle_active(self) -> bool:
+        """Check if the temporary force cycle is currently active."""
+        if not self._force_cycle_active:
+            return False
+            
+        # Check if force has expired
+        if self._force_cycle_end_time and datetime.now() >= self._force_cycle_end_time:
+            self._force_cycle_active = False
+            self._force_cycle_end_time = None
+            return False
+            
+        return True
 
 
 # Global instance

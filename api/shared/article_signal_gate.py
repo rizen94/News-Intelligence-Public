@@ -73,14 +73,59 @@ def _cred_tier_sql(alias: str) -> str:
     return f"COALESCE({alias}.metadata->'source_credibility'->>'tier', 'tier_3')"
 
 
+_ATC_FK_CACHE: dict[str, str] = {}
+
+
+def article_topic_cluster_fk_column(schema: str) -> str:
+    """FK column on ``{schema}.article_topic_clusters`` → ``topic_clusters.id``.
+
+    Older politics/finance tables used ``cluster_id``; AI/medicine use ``topic_cluster_id``.
+    """
+    if schema in _ATC_FK_CACHE:
+        return _ATC_FK_CACHE[schema]
+    col = "topic_cluster_id"
+    try:
+        from api.shared.database import get_ui_db_connection
+
+        conn = get_ui_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = %s
+                      AND table_name = 'article_topic_clusters'
+                      AND column_name IN ('topic_cluster_id', 'cluster_id')
+                    """,
+                    (schema,),
+                )
+                names = {str(r[0]) for r in (cur.fetchall() or [])}
+            try:
+                conn.commit()
+            except Exception:
+                pass
+        finally:
+            conn.close()
+        if "topic_cluster_id" in names:
+            col = "topic_cluster_id"
+        elif "cluster_id" in names:
+            col = "cluster_id"
+    except Exception as e:
+        logger.debug("article_topic_cluster_fk_column(%s): %s", schema, e)
+    _ATC_FK_CACHE[schema] = col
+    return col
+
+
 def sql_trending_cluster_ids_subquery(schema: str, top_n: int | None = None) -> str:
     """Subquery returning topic_cluster ids in the trending window."""
     n = top_n if top_n is not None else article_signal_trending_top_n()
     hours = article_signal_trending_hours()
+    fk = article_topic_cluster_fk_column(schema)
     return f"""
         SELECT tc.id
         FROM {schema}.topic_clusters tc
-        JOIN {schema}.article_topic_clusters atc ON tc.id = atc.topic_cluster_id
+        JOIN {schema}.article_topic_clusters atc ON tc.id = atc.{fk}
         JOIN {schema}.articles ar ON ar.id = atc.article_id
         WHERE ar.created_at >= NOW() - ({hours} || ' hours')::interval
         GROUP BY tc.id
@@ -91,10 +136,11 @@ def sql_trending_cluster_ids_subquery(schema: str, top_n: int | None = None) -> 
 
 def sql_article_in_trending_cluster(schema: str, alias: str = "a") -> str:
     sub = sql_trending_cluster_ids_subquery(schema)
+    fk = article_topic_cluster_fk_column(schema)
     return f"""EXISTS (
         SELECT 1 FROM {schema}.article_topic_clusters atc
         WHERE atc.article_id = {alias}.id
-          AND atc.topic_cluster_id IN ({sub})
+          AND atc.{fk} IN ({sub})
     )"""
 
 
@@ -118,10 +164,10 @@ def sql_article_signal_full_lane_filter(
     min_q = article_signal_full_min_quality()
     qt = _quality_tier_sql(alias)
     trending = sql_article_in_trending_cluster(schema, alias)
-    # Tier-based gate: tier_1 always passes; tier_2 needs quality_score >= threshold
+    # quality_tier is smallint: 1 = tier_1, 2 = tier_2, 3+ = tier_3
     return f"""(
-        {qt} = 'tier_1'
-        OR ({qt} = 'tier_2' AND COALESCE({alias}.quality_score, 0) >= {min_q})
+        {qt} = 1
+        OR ({qt} = 2 AND COALESCE({alias}.quality_score, 0) >= {min_q})
         OR COALESCE({alias}.quality_score, 0) >= {min_q}
         OR ({trending})
     )"""
@@ -238,13 +284,14 @@ def load_trending_article_ids(schema: str) -> set[int]:
         from api.shared.database import get_db_connection_context
 
         sub = sql_trending_cluster_ids_subquery(schema)
+        fk = article_topic_cluster_fk_column(schema)
         with get_db_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
                     SELECT DISTINCT atc.article_id
                     FROM {schema}.article_topic_clusters atc
-                    WHERE atc.topic_cluster_id IN ({sub})
+                    WHERE atc.{fk} IN ({sub})
                     """
                 )
                 ids = {int(r[0]) for r in cur.fetchall()}

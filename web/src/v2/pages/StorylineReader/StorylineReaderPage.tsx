@@ -84,6 +84,34 @@ export default function StorylineReaderPage() {
     let cancelled = false;
     setError(null);
     setPack(null);
+  useEffect(() => {
+    if (!domain || !id) return;
+    let cancelled = false;
+    setError(null);
+    setPack(null);
+    fetchReaderStoryline(id, domain)
+      .then(res => {
+        if (!cancelled) setPack(res);
+      })
+      .catch(err => {
+        if (!cancelled) {
+          // Check if this is a merged storyline error
+          if (err?.message?.includes('was merged into storyline')) {
+            // Extract the target storyline ID from the error message
+            const match = err.message.match(/was merged into storyline (\d+)/);
+            if (match && match[1]) {
+              // Redirect to the merged storyline
+              window.location.href = `/storylines/${domain}/${match[1]}`;
+              return;
+            }
+          }
+          setError(err?.message || 'Failed to load storyline');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [domain, id]);
     fetchReaderStoryline(id, domain)
       .then(res => {
         if (!cancelled) setPack(res);

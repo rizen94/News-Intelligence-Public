@@ -284,6 +284,7 @@ All under `/api` unless noted.
 | GET | `/api/system_monitoring/sources_collected` | Sources collected. |
 | POST | `/api/system_monitoring/monitoring/trigger_phase` | Trigger phase. |
 | GET | `/api/system_monitoring/logs/realtime` | Realtime logs. |
+| POST | `/api/system_monitoring/circuit_breakers/reset` | Reset Ollama circuit breakers (Monitor escape hatch after hard shed). Body optional: `{"name": "ollama_gpu"}` to reset one key; omit to reset all `OLLAMA_CB_KEYS` (ollama, ollama_gpu, ollama_cpu, ollama_pop_os). |
 
 ### 6.2 Orchestrator (`/api/orchestrator`)
 

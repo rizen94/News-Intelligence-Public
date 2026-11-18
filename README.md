@@ -15,6 +15,16 @@ AI-powered news aggregation and analysis: RSS ingestion, storyline tracking, ent
 | [docs/SETUP_ENV_AND_RUNTIME.md](docs/SETUP_ENV_AND_RUNTIME.md) | Install, env, startup |
 | [../PROJECT_BOUNDARIES.md](../PROJECT_BOUNDARIES.md) | NI vs HomeLab AI Stack split |
 
+## Features
+
+### Nightly Force Cycle
+A temporary mechanism to bypass nightly pipeline restrictions and force all automation phases to run during catchup scenarios.
+
+**Endpoint:** `/force_nightly_cycle?duration_hours=24`
+**Usage:** `curl -X POST "http://localhost:8000/force_nightly_cycle?duration_hours=24"`
+
+This feature is useful when you need to process backlog items that would normally be skipped during the nightly pipeline window.
+
 ## Stack
 
 - **Backend:** FastAPI (`api/`)
