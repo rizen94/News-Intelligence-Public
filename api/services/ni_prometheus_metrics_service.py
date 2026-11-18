@@ -115,9 +115,9 @@ def _collect_queue_metrics() -> list[str]:
         # Never block the scrape on sequential COUNT(*) — prefer cache; if cold,
         # kick a background refresh and emit nothing this tick (Grafana keeps last).
         try:
-            max_stale_s = float(os.environ.get("NI_PROMETHEUS_QUEUE_MAX_STALE_S", "600") or 600)
+            max_stale_s = float(os.environ.get("NI_PROMETHEUS_QUEUE_MAX_STALE_S", "30") or 30)
         except (TypeError, ValueError):
-            max_stale_s = 600.0
+            max_stale_s = 30.0
 
         depths = (
             get_all_pending_counts(
@@ -153,6 +153,43 @@ def _collect_queue_metrics() -> list[str]:
                 [({"phase": str(p)}, float(v or 0)) for p, v in backlog.items()],
             )
         )
+
+        # Add unified pipeline backlog metric with proper labels (standardizing schema)
+        # This fixes Grafana panel matching issues mentioned in IMPLEMENTATION_PLAN.md
+        backlog_items = []
+        total_pending = 0
+        
+        # Process pending counts (depths)
+        for phase, count in depths.items():
+            if isinstance(count, (int, float)) and count > 0:
+                backlog_items.append(({"phase": str(phase), "status": "pending"}, float(count)))
+                total_pending += float(count)
+        
+        # Process backlog counts
+        for phase, count in backlog.items():
+            if isinstance(count, (int, float)) and count > 0:
+                backlog_items.append(({"phase": str(phase), "status": "backlog"}, float(count)))
+                total_pending += float(count)
+        
+        # Add the unified metric with proper labels
+        if backlog_items:
+            lines.extend(
+                _gauge(
+                    "ni_pipeline_backlog_total",
+                    "Pipeline backlog and pending work by phase.",
+                    backlog_items,
+                )
+            )
+        
+        # Add total pending metric (unified aggregate)
+        if total_pending > 0:
+            lines.extend(
+                _gauge(
+                    "ni_pipeline_backlog_total",
+                    "Total pipeline backlog and pending work.",
+                    [({"status": "pending"}, float(total_pending))],
+                )
+            )
 
         # Optional v12-style unified intake breakdown when modules exist.
         try:

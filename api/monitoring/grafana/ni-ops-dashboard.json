@@ -6,7 +6,7 @@
     "tags": ["news-intelligence", "ni-ops", "homelab"],
     "timezone": "browser",
     "schemaVersion": 39,
-    "version": 1,
+    "version": 2,
     "refresh": "1m",
     "time": { "from": "now-24h", "to": "now" },
     "annotations": { "list": [] },
@@ -20,9 +20,15 @@
         "datasource": { "type": "prometheus", "uid": "${datasource}" },
         "targets": [
           {
-            "expr": "ni_queue_depth",
-            "legendFormat": "{{phase}}",
+            "expr": "ni_pipeline_backlog_total{status=\"pending\",phase=~\".+\"}",
+            "legendFormat": "{{phase}} pending",
             "refId": "A"
+          },
+          {
+            "expr": "ni_queue_depth",
+            "legendFormat": "{{phase}} (legacy)",
+            "refId": "B",
+            "hide": true
           }
         ],
         "fieldConfig": {
@@ -40,9 +46,15 @@
         "datasource": { "type": "prometheus", "uid": "${datasource}" },
         "targets": [
           {
-            "expr": "ni_scheduling_backlog",
-            "legendFormat": "{{phase}}",
+            "expr": "ni_pipeline_backlog_total{status=\"backlog\",phase=~\".+\"}",
+            "legendFormat": "{{phase}} backlog",
             "refId": "A"
+          },
+          {
+            "expr": "ni_scheduling_backlog",
+            "legendFormat": "{{phase}} (legacy)",
+            "refId": "B",
+            "hide": true
           }
         ],
         "fieldConfig": {
