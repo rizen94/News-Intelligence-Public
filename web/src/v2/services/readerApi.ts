@@ -2,7 +2,6 @@
  * v2 reader API client — additive /api/reader/* endpoints.
  */
 import { getApi } from '../../services/api/client';
-import { isValidDomain } from '../../utils/domainHelper';
 
 export type StoryUnit = {
   section_label: string;
@@ -108,7 +107,7 @@ export type ReaderPackResponse = {
     entities?: Array<Record<string, unknown>>;
     tree?: Array<Record<string, unknown>>;
     hierarchy?: Record<string, unknown>;
-  } | null;
+  };
   vault_context_pack?: {
     ok?: boolean;
     note_count?: number;
@@ -159,15 +158,86 @@ export async function fetchReaderStoryline(
   storylineId: number | string,
   domain: string
 ): Promise<ReaderPackResponse> {
-  // Validate domain before making request
-  if (!isValidDomain(domain)) {
-    throw new Error(`Invalid domain: ${domain}`);
-  }
-  
   const api = getApi();
   const { data } = await api.get<ReaderPackResponse>(
     `/api/reader/storylines/${storylineId}`,
     { params: { domain } }
+  );
+  return data;
+}
+
+export type VaultHubPackResponse = {
+  ok: boolean;
+  hub: {
+    id: number;
+    cluster_key?: string;
+    title?: string;
+    domain_key: string;
+    vault_path?: string;
+    member_storyline_ids?: number[];
+    seed_entity_ids?: number[];
+    href?: string;
+    tags?: string[];
+    updated_at?: string | null;
+    current_brief?: string | null;
+    brief_updated_at?: string | null;
+    brief_fingerprint?: string | null;
+    brief_refreshed?: boolean;
+    surface_kind?: string;
+  };
+  current_brief?: string | null;
+  brief_updated_at?: string | null;
+  note?: Record<string, unknown>;
+  vault_context_pack?: ReaderPackResponse['vault_context_pack'];
+  members?: Array<{
+    storyline_id: number;
+    domain: string;
+    headline: string;
+    dek?: string;
+    article_count?: number;
+    updated_at?: string | null;
+    href?: string;
+    surface_kind?: string;
+  }>;
+  timeline?: Array<{
+    published_at?: string | null;
+    title: string;
+    article_id: number;
+    storyline_id: number;
+    url?: string | null;
+  }>;
+  sibling_hubs?: Array<{
+    id: number;
+    cluster_key?: string;
+    title?: string;
+    href?: string;
+    member_count?: number;
+    current_brief?: string | null;
+  }>;
+};
+
+export async function fetchVaultHubs(domain?: string | null): Promise<{
+  ok: boolean;
+  hubs: Array<Record<string, unknown>>;
+  count: number;
+}> {
+  const api = getApi();
+  const params: Record<string, string> = {};
+  if (domain) params.domain = domain;
+  const { data } = await api.get('/api/reader/vault-hubs', { params });
+  return data;
+}
+
+export async function fetchVaultHub(
+  idOrSlug: string,
+  domain?: string | null
+): Promise<VaultHubPackResponse> {
+  const api = getApi();
+  const params: Record<string, string> = {};
+  if (domain) params.domain = domain;
+  const { data } = await api.get<VaultHubPackResponse>(
+    `/api/reader/vault-hubs/${encodeURIComponent(idOrSlug)}`,
+    { params }
   );
   return data;
 }
