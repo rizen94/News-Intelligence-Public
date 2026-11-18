@@ -85,12 +85,12 @@ echo "Schema audit (politics/finance)..."
 python3 api/scripts/audit_politics_finance_schemas.py --strict || exit 1
 
 echo "Checking tracked_events.global_narrative column..."
-psql -h 127.0.0.1 -U newsapp -d news_intel -tAc \\
-  "SELECT 1 FROM information_schema.columns WHERE table_schema='intelligence' AND table_name='tracked_events' AND column_name='global_narrative'" \\
+psql -h 127.0.0.1 -U newsapp -d news_intel -tAc \
+  "SELECT 1 FROM information_schema.columns WHERE table_schema='intelligence' AND table_name='tracked_events' AND column_name='global_narrative'" \
   | grep -q 1 || { echo "FAIL: migration 196 (global_narrative) not applied"; exit 1; }
 
 echo "Ensuring tracked_events(updated_at) index..."
-psql -h 127.0.0.1 -U newsapp -d news_intel -v ON_ERROR_STOP=1 -c \\
+psql -h 127.0.0.1 -U newsapp -d news_intel -v ON_ERROR_STOP=1 -c \
   "CREATE INDEX IF NOT EXISTS idx_tracked_events_updated_at ON intelligence.tracked_events (updated_at DESC)"
 
 for mig in 167 196 231 232; do
