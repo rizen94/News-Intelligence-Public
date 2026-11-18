@@ -73,7 +73,10 @@ if [ ! -f .env ]; then
   echo "❌ .env not found — cannot set DB_PASSWORD. Add it before retrying."
   exit 1
 fi
-export $(grep -v '^#' .env | xargs) || true
+set -a
+# shellcheck source=/dev/null
+source .env
+set +a
 DB_PASSWORD="${DB_PASSWORD:-}"
 if [ -z "$DB_PASSWORD" ]; then
   echo "❌ DB_PASSWORD not set in .env. Add it before retrying."
@@ -94,13 +97,13 @@ psql -h 127.0.0.1 -U newsapp -d news_intel -v ON_ERROR_STOP=1 -c \
   "CREATE INDEX IF NOT EXISTS idx_tracked_events_updated_at ON intelligence.tracked_events (updated_at DESC)"
 
 for mig in 167 196 231 232; do
-  if [ -f "api/database/migrations/\${mig}"*.sql ]; then
-    file=\$(ls api/database/migrations/\${mig}*.sql | head -1)
-    applied=\$(psql -h 127.0.0.1 -U newsapp -d news_intel -tAc "SELECT 1 FROM public.applied_migrations WHERE migration_id='\${mig}'" 2>/dev/null || true)
-    if [ "\${applied}" != "1" ]; then
-      echo "Applying migration \${mig}..."
-      python3 api/scripts/run_migration.py "\${mig}" || psql -h 127.0.0.1 -U newsapp -d news_intel -v ON_ERROR_STOP=1 -f "\$file"
-      python3 api/scripts/register_applied_migration.py "\${mig}" --notes "deploy_to_widow.sh" --file "\$file" 2>/dev/null || true
+  if compgen -G "api/database/migrations/${mig}"*.sql > /dev/null; then
+    file="$(ls api/database/migrations/${mig}"*.sql | head -1)"
+    applied="$(psql -h 127.0.0.1 -U newsapp -d news_intel -tAc "SELECT 1 FROM public.applied_migrations WHERE migration_id='${mig}'" 2>/dev/null || true)"
+    if [ "${applied}" != "1" ]; then
+      echo "Applying migration ${mig}..."
+      python3 api/scripts/run_migration.py "${mig}" || psql -h 127.0.0.1 -U newsapp -d news_intel -v ON_ERROR_STOP=1 -f "$file"
+      PYTHONPATH="${REMOTE_DIR}" python3 api/scripts/register_applied_migration.py "${mig}" --notes "deploy_to_widow.sh" --file "$file" 2>/dev/null || true
     fi
   fi
 done
@@ -117,17 +120,17 @@ else
 fi
 
 # :8000 must be systemd /opt — not workspace uvicorn
-listen_pid="\$(ss -ltnp 2>/dev/null | awk '/:8000/ {print}' | grep -oP 'pid=\\K[0-9]+' | head -1 || true)"
-if [[ -z "\${listen_pid:-}" ]]; then
+listen_pid="$(ss -ltnp 2>/dev/null | awk '/:8000/ {print}' | grep -oP 'pid=\K[0-9]+' | head -1 || true)"
+if [[ -z "${listen_pid:-}" ]]; then
   echo "FAIL: nothing listening on :8000" >&2
   exit 1
 fi
-listen_cwd="\$(readlink -f /proc/\${listen_pid}/cwd 2>/dev/null || true)"
-echo "API listener pid=\${listen_pid} cwd=\${listen_cwd}"
-case "\${listen_cwd}" in
+listen_cwd="$(readlink -f "/proc/${listen_pid}/cwd" 2>/dev/null || true)"
+echo "API listener pid=${listen_pid} cwd=${listen_cwd}"
+case "${listen_cwd}" in
   /opt/news-intelligence/*|/opt/news-intelligence) ;;
   *)
-    echo "FAIL: :8000 cwd is not under /opt/news-intelligence (got \${listen_cwd}). Stop workspace uvicorn." >&2
+    echo "FAIL: :8000 cwd is not under /opt/news-intelligence (got ${listen_cwd}). Stop workspace uvicorn." >&2
     exit 1
     ;;
 esac
