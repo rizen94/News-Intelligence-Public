@@ -11,7 +11,7 @@ from typing import Any
 
 from psycopg2.extras import RealDictCursor
 from api.shared.services.domain_aware_service import DomainAwareService
-from services.proactive_detection_service import ProactiveDetectionService
+from .proactive_detection_service import ProactiveDetectionService
 
 logger = logging.getLogger(__name__)
 
