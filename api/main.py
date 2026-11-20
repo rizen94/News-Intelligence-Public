@@ -653,6 +653,19 @@ async def lifespan(app: FastAPI):
 
     app.state.backlog_prewarm_task = asyncio.create_task(_backlog_prewarm_loop())
 
+    async def _reader_home_prewarm_loop():
+        """Warm politics/finance reader keys so first /api/reader/home hits are cache-fast."""
+        await asyncio.sleep(8)
+        try:
+            from api.domains.reader.services.home_feed import warm_home_cache
+
+            await warm_home_cache()
+            logger.info("✅ Reader home cache pre-warm finished")
+        except Exception as exc:
+            logger.debug("reader home pre-warm skipped: %s", exc)
+
+    app.state.reader_prewarm_task = asyncio.create_task(_reader_home_prewarm_loop())
+
     yield
 
     prewarm = getattr(app.state, "backlog_prewarm_task", None)
@@ -660,6 +673,14 @@ async def lifespan(app: FastAPI):
         prewarm.cancel()
         try:
             await prewarm
+        except asyncio.CancelledError:
+            pass
+
+    reader_prewarm = getattr(app.state, "reader_prewarm_task", None)
+    if reader_prewarm and not reader_prewarm.done():
+        reader_prewarm.cancel()
+        try:
+            await reader_prewarm
         except asyncio.CancelledError:
             pass
 
@@ -901,6 +922,9 @@ def _request_timeout_seconds(request: Request) -> float:
         return 60.0
     if path.endswith("/sql_explorer/query"):
         return 120.0
+    # Home cascades fan out on the client; cold builds can exceed default 30s under pool pressure.
+    if "/reader/home" in path or path.endswith("/reader/home"):
+        return 90.0
     return float(REQUEST_TIMEOUT_SECONDS)
 
 

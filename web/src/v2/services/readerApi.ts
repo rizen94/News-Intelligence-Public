@@ -150,7 +150,10 @@ export async function fetchReaderHome(
   if (opts?.page) params.page = opts.page;
   if (opts?.pageSize) params.page_size = opts.pageSize;
   if (opts?.section) params.section = opts.section;
-  const { data } = await api.get<ReaderHomeResponse>('/api/reader/home', { params });
+  const { data } = await api.get<ReaderHomeResponse>('/api/reader/home', {
+    params,
+    timeout: 90000,
+  });
   return data;
 }
 

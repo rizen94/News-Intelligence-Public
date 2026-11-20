@@ -1,8 +1,9 @@
 """
 Reader home feed: News / Current Events / One-offs with StoryUnit fields.
 
-News = material narrative update in last 48h with a real dek — NOT membership-only
-``last_article_added_at`` bumps.
+News = storyline material updates when the bridge is healthy; otherwise (and always
+alongside) recent domain articles with a usable dek. Storyline rows still exclude
+membership-only ``last_article_added_at`` bumps.
 """
 
 from __future__ import annotations
@@ -31,6 +32,14 @@ logger = logging.getLogger(__name__)
 
 NEWS_WINDOW_HOURS = 72
 READ_WPM = 220
+# Recent articles always merged into News (lookback + classify window for raw rows).
+READER_RECENT_ARTICLE_HOURS = float(os.environ.get("READER_RECENT_ARTICLE_HOURS", "168") or "168")
+# Section=news only: skip vault/morning/briefing injects (latency under DB pool pressure).
+READER_HOME_LIGHT_NEWS = (os.environ.get("READER_HOME_LIGHT_NEWS", "1") or "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
 # Artificial Intelligence: one paper (or a thin 1–2 article cluster) is an explainer
 # one-off, not an evolving storyline. Multi-source arcs stay on News/Current.
 AI_RESEARCH_ONE_OFF_MAX_ARTICLES = 2
@@ -64,13 +73,17 @@ def _home_cache_hot_keys() -> list[str]:
     These are the top-traffic combos that readers hit first after a restart —
     the default News view, Current Events, One-offs and Research pages.
     """
-    return [
+    keys = [
         "*|all|1|12",  # default news/current/one-off/research combo page
         "*|news|1|12",
         "*|current_events|1|12",
         "*|one_offs|1|12",
         "*|research|1|12",
     ]
+    for dk in ("politics", "finance", "legal", "medicine", "artificial-intelligence"):
+        for sec in ("news", "current_events", "one_offs", "research"):
+            keys.append(f"{dk}|{sec}|1|12")
+    return keys
 
 
 def _cache_key(domain: str | None, section: str | None, page: int, page_size: int) -> str:
@@ -125,11 +138,17 @@ def key_to_section(key: str) -> str | None:
     Returns ``"all"`` (treated as default/None) for the combo page, else the
     section token so we can pass it to :func:`build_reader_home`.
     """
+    return _parse_cache_key(key)[1]
+
+
+def _parse_cache_key(key: str) -> tuple[str | None, str | None, int, int]:
     parts = key.split("|")
-    if len(parts) >= 2:
-        sec = parts[1]
-        return None if sec == "all" else sec
-    return None
+    domain = None if not parts or parts[0] in ("", "*") else parts[0]
+    sec_raw = parts[1] if len(parts) >= 2 else "all"
+    section = None if sec_raw in ("", "all") else sec_raw
+    page = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else 1
+    page_size = int(parts[3]) if len(parts) >= 4 and parts[3].isdigit() else 12
+    return domain, section, page, page_size
 
 
 async def warm_home_cache() -> None:
@@ -143,19 +162,19 @@ async def warm_home_cache() -> None:
 
     keys = _home_cache_hot_keys()
     for key in keys:
-        section = key_to_section(key)
         try:
-            await asyncio.to_thread(_warm_single_internal, key, section)
+            await asyncio.to_thread(_warm_single_internal, key)
         except Exception as exc:
             logger.debug("home-cache pre-warm %s skipped: %s", key, exc)
 
 
-def _warm_single_internal(key: str, section: str | None) -> None:
+def _warm_single_internal(key: str) -> None:
     """Warm a single key on the event-loop executor thread."""
     from contextlib import suppress
 
+    domain, section, page, page_size = _parse_cache_key(key)
     with suppress(Exception):
-        result = build_reader_home(section=section)
+        result = build_reader_home(domain, page=page, page_size=page_size, section=section)
         cache_set_public(key, result)
 
 
@@ -823,50 +842,13 @@ def _fetch_candidate_rows(cur, schema: str, domain_key: str, since: datetime) ->
 
 
 def _fetch_raw_article_candidates(cur, schema: str, domain_key: str, since: datetime) -> list[dict[str, Any]]:
-    """Fallback for silos without storylines infrastructure.
+    """Recent domain articles for News — always loaded alongside storyline candidates.
 
-    When a domain has no ``storyline_articles`` bridge ,
-    the storyline-only query in ``_fetch_candidate_rows`` returns nothing.
-    This method queries raw ``{schema}.articles`` directly and wraps each row
-    into the same dict format so ``classify_and_build_feeds`` can process it.
-
-    Only returns articles that are NOT already linked to an existing storyline
-    (to avoid duplicates).  The returned dicts contain all keys expected by
-    ``classify_and_build_feeds``, with storyline-specific fields set to sensible
-    defaults (no parent, no mega tag, article_count=1).
+    Wraps ``{schema}.articles`` into storyline-shaped dicts for ``classify_and_build_feeds``.
+    Unbridged articles are preferred (NOT EXISTS on ``storyline_articles``) to limit duplicates.
     """
-    # Skip silos that actually have a storylines table with active data.
-    try:
-        cur.execute(
-            "SELECT EXISTS ("
-            "  SELECT FROM information_schema.tables "
-            "  WHERE table_schema = %s AND table_name = 'storylines'"
-            ") AS has_table",
-            (schema,),
-        )
-        if not int(cur.fetchone()[0]):
-            pass  # no storylines table — proceed to raw fetch
-        else:
-            # Silo has a storylines table; check if it has active articles
-            cur.execute(
-                f"""SELECT COALESCE(MAX(updated_at), MIN(created_at))
-                    FROM {schema}.storylines s0
-                    WHERE s0.merged_into_id IS NULL
-                      AND COALESCE(s0.status, 'active') NOT IN ('archived', 'merged', 'deleted')
-                      AND (s0.updated_at >= %s - INTERVAL '180 days'
-                           OR EXISTS (
-                               SELECT 1 FROM {schema}.storyline_articles sa2
-                               WHERE sa2.storyline_id = s0.id
-                                 AND sa2.added_at >= %s - INTERVAL '365 days'
-                           ))
-                """,
-                (since, since),
-            )
-            has_active = cur.fetchone()[0]
-            if has_active:
-                return []  # silo is already served by storylines
-    except Exception:
-        pass  # fall through to raw fetch regardless
+    lookback_h = max(1.0, float(READER_RECENT_ARTICLE_HOURS))
+    lookback_interval = f"{int(lookback_h)} hours"
 
     # Fetch recent articles not yet bridged to any storyline.
     try:
@@ -881,23 +863,23 @@ def _fetch_raw_article_candidates(cur, schema: str, domain_key: str, since: date
                    COALESCE(COALESCE(a.published_at, a.created_at), %s) AS updated_at,
                    1 AS article_count,
                    NULL::text AS parent_storyline_id,
-                   TRUE AS is_mega_storyline,
-                   %s AS created_at,
+                   FALSE AS is_mega_storyline,
+                   COALESCE(a.created_at, %s) AS created_at,
                    '' AS story_kind,
                    NULL::float AS quality_score,
                    '' AS narrative_gate_phase
             FROM {schema}.articles a
-            WHERE COALESCE(a.published_at, a.created_at) >= %s - INTERVAL '180 days'
+            WHERE COALESCE(a.published_at, a.created_at) >= NOW() - %s::interval
               AND NOT EXISTS (
                   SELECT 1 FROM {schema}.storyline_articles sa
                   WHERE sa.article_id = a.id
-                    AND sa.added_at >= %s - INTERVAL '365 days'
+                    AND sa.added_at >= NOW() - INTERVAL '365 days'
               )
               AND (a.title IS NOT NULL AND LENGTH(a.title) > 3)
             ORDER BY COALESCE(a.published_at, a.created_at) DESC NULLS LAST
-            LIMIT 200
+            LIMIT 80
             """,
-            (since, since, since, since),
+            (since, since, lookback_interval),
         )
     except Exception as e:
         logger.debug("raw article candidates query failed for %s: %s", schema, e)
@@ -912,26 +894,24 @@ def _fetch_raw_article_candidates(cur, schema: str, domain_key: str, since: date
         if not title or len(title) < 5:
             continue
         row = dict(zip(cols, tup))
-        # Normalize to the keys expected by classify_and_build_feeds.
-        # Map raw-article columns → storyline-equivalent keys.
+        parent = row.get("parent_storyline_id")
         mapped = {
             "id": art_id,
             "title": title,
-            "description": str(tup[2] or ""),
+            "description": str(row.get("description") or ""),
             "status": "active",
-            "updated_at": _as_aware(tup[3]),
+            "updated_at": _as_aware(row.get("updated_at")),
             "last_refinement": None,
             "editorial_document": None,
             "document_status": None,
-            "article_count": int(tup[4]) if tup[4] else 1,
-            "parent_storyline_id": int(tup[5]) if tup[5] else None,
+            "article_count": int(row.get("article_count") or 1),
+            "parent_storyline_id": int(parent) if parent not in (None, "") else None,
             "is_mega_storyline": False,
-            "created_at": _as_aware(tup[6]) or now_utc,
-            "story_kind": str(tup[7] or "").strip() or "",
-            "quality_score": None,
-            "narrative_gate_phase": "",
+            "created_at": _as_aware(row.get("created_at")) or now_utc,
+            "story_kind": str(row.get("story_kind") or "").strip() or "",
+            "quality_score": row.get("quality_score"),
+            "narrative_gate_phase": str(row.get("narrative_gate_phase") or ""),
             "domain": domain_key,
-            # Raw-article extras for dedup / display.
             "_is_raw_article": True,
         }
         rows.append(mapped)
@@ -1080,20 +1060,31 @@ def classify_and_build_feeds(
         
         # --- Priority 3: Hard quality cutoff (tiered filtering) ---
         min_tier = MIN_QUALITY_TIER
-        if qscore_f is not None and quality_tier_int < min_tier:
+        # Tier 1 = best, 4 = worst — skip tier 4 only (inverted tier numbering).
+        is_raw = bool(row.get("_is_raw_article"))
+        if qscore_f is not None and quality_tier_int >= min_tier and not is_raw:
             skip_news, skip_current, skip_one_off = True, True, (article_count > 0)
         else:
             skip_news = skip_current = skip_one_off = False
-
-        is_news = bool(
-            material_at
-            and material_at >= news_cutoff
-            and dek
-            and len(dek) >= 6
-            and not is_mega
-            and status not in ("dormant", "watching", "concluded", "completed", "failed")
-            and not is_phase_blocked
-        )
+        recent_cutoff = now - timedelta(hours=READER_RECENT_ARTICLE_HOURS)
+        if is_raw:
+            is_news = bool(
+                material_at
+                and material_at >= recent_cutoff
+                and dek
+                and len(dek) >= 6
+                and not skip_news
+            )
+        else:
+            is_news = bool(
+                material_at
+                and material_at >= news_cutoff
+                and dek
+                and len(dek) >= 6
+                and not is_mega
+                and status not in ("dormant", "watching", "concluded", "completed", "failed")
+                and not is_phase_blocked
+            )
         # Reject shells / membership-only (material_at already excludes last_article_added_at alone)
         if is_news and article_count <= 0 and not editorial.get("lede"):
             is_news = False
@@ -1196,7 +1187,14 @@ def classify_and_build_feeds(
         if is_ai_research_one_off:
             badges = ["Paper"] if article_count <= 1 else ["Papers"]
 
+        is_raw = bool(row.get("_is_raw_article"))
+        surface = "recent_article" if is_raw else "news"
         if include_news and is_news and not skip_news:
+            if is_raw:
+                badges = ["Latest"]
+                article_href = f"/{domain}/articles/{sid}"
+            else:
+                article_href = None
             news.append(
                 _story_unit(
                     section_label="NEWS",
@@ -1207,9 +1205,10 @@ def classify_and_build_feeds(
                     updated_at=material_at,
                     article_count=article_count,
                     badges=badges,
-                    surface_kind="news",
+                    surface_kind=surface,
                     quality_score=qscore_f,
                     rank_weight=rank_weight_val,
+                    href=article_href,
                 )
             )
 
@@ -1274,6 +1273,14 @@ def classify_and_build_feeds(
         return (-rw, item.get("updated_at") or "", -quality_score)
 
     news = _dedupe(sorted(news, key=_rank_then_date))
+    # Surface freshest material first (articles + storylines); editorial rank is secondary.
+    news.sort(
+        key=lambda it: (
+            it.get("updated_at") or "",
+            float(it.get("rank_weight") or 0),
+        ),
+        reverse=True,
+    )
     current = _dedupe(sorted(current, key=_rank_then_date))
     one_offs = _dedupe(
         sorted(
@@ -1492,7 +1499,7 @@ def build_reader_home(
                         logger.warning("reader home skip domain %s: %s", domain_key, exc)
                         conn.rollback()
 
-                # -- Raw-article fallback for silos without storyline_articles bridges --
+                # -- Recent unbridged articles (always merged into News) --
                 for domain_key, schema in pairs:
                     try:
                         all_rows.extend(_fetch_raw_article_candidates(cur, schema, domain_key, now))
@@ -1530,22 +1537,24 @@ def build_reader_home(
     current = feeds["current_events"][:80]
     one_offs = feeds["one_offs"][:80]
 
-    # Inject vault cluster hubs + demote near-dupe members under hubs
-    try:
-        news = _apply_vault_hub_feed_hygiene(news, domain_filter=domain)
-        current = _apply_vault_hub_feed_hygiene(current, domain_filter=domain, inject_hubs=False)
-    except Exception as hub_exc:
-        logger.debug("vault hub feed hygiene: %s", hub_exc)
+    light_news = READER_HOME_LIGHT_NEWS and section_key == "news"
+    if not light_news:
+        # Inject vault cluster hubs + demote near-dupe members under hubs
+        try:
+            news = _apply_vault_hub_feed_hygiene(news, domain_filter=domain)
+            current = _apply_vault_hub_feed_hygiene(current, domain_filter=domain, inject_hubs=False)
+        except Exception as hub_exc:
+            logger.debug("vault hub feed hygiene: %s", hub_exc)
 
-    # Morning expansion catalog for News (new-of-note) — not a briefing article
-    try:
-        news = _inject_morning_expansion_catalog(news)
-    except Exception as cat_exc:
-        logger.debug("morning expansion catalog: %s", cat_exc)
-    try:
-        news = _inject_daily_briefing_lead(news)
-    except Exception as brief_exc:
-        logger.debug("daily briefing strip: %s", brief_exc)
+        # Morning expansion catalog for News (new-of-note) — not a briefing article
+        try:
+            news = _inject_morning_expansion_catalog(news)
+        except Exception as cat_exc:
+            logger.debug("morning expansion catalog: %s", cat_exc)
+        try:
+            news = _inject_daily_briefing_lead(news)
+        except Exception as brief_exc:
+            logger.debug("daily briefing strip: %s", brief_exc)
     # Current Events: ongoing morning expansions as storyline articles
     try:
         current = _inject_morning_ongoing_into_current(current)

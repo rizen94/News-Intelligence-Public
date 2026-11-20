@@ -34,6 +34,19 @@ RETIRED_AUTOMATION_SCHEDULE_PHASES: frozenset[str] = frozenset(
         "longitudinal_matview_refresh",
         # Archived service (on-demand loader only; never scheduled)
         "relationship_extraction",
+        # Retired from governance configuration's retired_scheduled_phases
+        "proactive_detection",
+        "storyline_discovery",
+        "narrative_thread_build",
+        "pattern_matching",
+        "storyline_synthesis",
+        "storyline_enrichment",
+        "storyline_processing",
+        "investigation_report_refresh",
+        "story_enhancement",
+        "event_coherence_review",
+        "timeline_generation",
+        "entity_position_tracker",
     }
 )
 
