@@ -14,6 +14,8 @@
 
 - One sentence what + why before edits.
 - Commits: `type(scope): description`.
+- **Operating principles:** `docs/OPERATING_PRINCIPLES.md` — smallest correct diff; no new COUNT paths for metrics; golden trace or spine contract for “done”.
+- **MCP/services:** `docs/AVAILABLE_SERVICES_AND_MCP.md` — use `postgres-mcp` for evidence SQL; do not invent server IDs.
 
 ## Blocked without explicit approval
 

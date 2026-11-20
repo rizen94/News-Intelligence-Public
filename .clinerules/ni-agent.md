@@ -18,7 +18,11 @@ Models: **Plan** `lab-backbone-reason:latest` · **Act** `lab-backbone:latest`
 
 Graded on: **correctness** (evidence-backed), **continuity** (vault handoff), **efficiency** (grep/search before megabyte reads).
 
+**Policy SSOT:** `docs/OPERATING_PRINCIPLES.md` + skill **`ni-operating-principles`** — write-once-read-many metrics, minimal scope, silent spine = P0. Repair backlog: `docs/NI_REPAIR_PLAN.md`.
+
 **Product/pipeline bugs:** graded on **golden trace** (`docs/GOLDEN_RSS_TO_READER.md`, skill **`ni-golden-trace`**) — one `article_id` from RSS through the **first broken stage** to reader when in scope. Not graded on investigation length.
+
+**Monitoring/metrics bugs:** graded on **SSOT alignment** (`docs/monitor_alignment/CROSSWALK.md`) — snapshot/materializer writers before Grafana/Prometheus readers; no superficial dashboard-only “done” on spine/reader tickets.
 
 **Anti-pattern:** long analysis, no vault write, repeating reads — or “Final Answer” / INSERT without an `api/` patch.
 
@@ -39,6 +43,7 @@ Graded on: **correctness** (evidence-backed), **continuity** (vault handoff), **
 | Schema / migration / ledger | **`ni-migrations`** |
 | Plan → Act handoff | **`ni-plan-handoff`** (Plan end / Act read) |
 | Authorized Widow deploy | **`ni-ship-widow`** (Act) |
+| Monitor, Prometheus, Grafana, drift/repair | **`ni-operating-principles`** → `docs/NI_REPAIR_PLAN.md` |
 
 Memory: vault handoff `00_Inbox/handoffs/YYYY-MM-DD-<slug>.md` · repomix `repomix-output.xml` · runtime SoT `docs/RUNTIME_PIPELINE_TROUBLESHOOTING.md` §2.
 
@@ -48,7 +53,7 @@ After each proved fact: `vault_append_note` → short chat bullets. **Act resume
 
 ## Skills index
 
-`ni-golden-trace` · `ni-postgres` · `ni-graphify` · `ni-db-code` · `mempalace-tools` · `docs/CLINE_RULES_INDEX.md`
+`ni-golden-trace` · `ni-operating-principles` · `ni-postgres` · `ni-graphify` · `ni-db-code` · `mempalace-tools` · `docs/AVAILABLE_SERVICES_AND_MCP.md` · `docs/CLINE_RULES_INDEX.md`
 
 Hooks: `.clinerules/hooks/` (Features → Hooks on). Code index: `.clinerules/workflow.md`.
 

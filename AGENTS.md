@@ -2,6 +2,10 @@
 
 **How to work:** `.clinerules/ni-agent.md` (principles, vault + MemPalace + grep, Plan/Act).
 
+**Anti-drift / repair:** `docs/OPERATING_PRINCIPLES.md` · `docs/NI_REPAIR_PLAN.md` · skill `ni-operating-principles` · `docs/monitor_alignment/CROSSWALK.md`.
+
+**MCP & homelab:** `docs/AVAILABLE_SERVICES_AND_MCP.md` · global `~/Documents/Cline/Rules/00-connected-mcp-server-ids.md`.
+
 **Code/migrations:** `.clinerules/workflow.md`.
 
 **Product pipeline (RSS → reader):** `docs/GOLDEN_RSS_TO_READER.md` + skill `.clinerules/skills/ni-golden-trace/SKILL.md` — **required** for feed/brief/RSS fixes; no “done” without a golden `article_id` trace (Cursor rule: `.cursor/rules/ni-golden-trace-root-cause.mdc`).

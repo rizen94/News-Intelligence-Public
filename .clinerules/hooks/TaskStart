@@ -105,6 +105,21 @@ if PRODUCT_RE.search(blob):
         "Name golden_article_id; fix first broken stage; no superficial monitoring-only done."
     )
 
+MONITOR_RE = re.compile(
+    r"\b("
+    r"grafana|prometheus|ni_\*|metrics?\s+materializer|backlog\s+snapshot|"
+    r"monitor\s*v2|observability|technical\s+drift|repair\s+plan|write[-\s]once|"
+    r"spine\s+silent|ni-ops|ni_pipeline_backlog"
+    r")\b",
+    re.I,
+)
+if MONITOR_RE.search(blob):
+    parts.append(
+        "NI_OPERATING_PRINCIPLES: BINDING — skill ni-operating-principles + "
+        "docs/OPERATING_PRINCIPLES.md; crosswalk monitor_alignment/CROSSWALK.md; "
+        "cite docs/NI_REPAIR_PLAN.md IDs; writers before readers; no COUNT-on-scrape."
+    )
+
 out["contextModification"] = " ".join(parts)
 print(json.dumps(out))
 ' <<<"$input"

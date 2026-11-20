@@ -1,0 +1,16 @@
+---
+description: NI anti-drift — operating principles, observability SSOT, repair plan IDs
+globs:
+  - api/services/*prometheus*
+  - api/services/monitor_backlog*
+  - api/services/backlog_metrics*
+  - api/monitoring/**
+  - docs/monitor_alignment/**
+---
+
+Before editing monitoring/metrics code or claiming observability fixes:
+
+1. Read `docs/OPERATING_PRINCIPLES.md` and `docs/monitor_alignment/CROSSWALK.md`.
+2. Prefer snapshot/materializer **writers** before Prometheus/Monitor/Grafana **readers** — no new COUNT-on-scrape paths.
+3. Product/spine tickets still require golden trace when reader is in scope.
+4. Reference `docs/NI_REPAIR_PLAN.md` item IDs (e.g. OBS-1) in handoffs and commits when applicable.

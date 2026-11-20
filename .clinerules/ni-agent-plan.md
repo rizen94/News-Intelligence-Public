@@ -23,3 +23,5 @@ Load with **`ni-agent.md`**. Hooks set **`NI_CLINE_MODE: plan`** on Plan tasks �
 Skill **`ni-pipeline-debug`** through step 5 (SQL/log evidence). Step 6 = **`plan_code_change`** only — not `replace_in_file` / editor.
 
 Handoff must include: `golden_article_id`, stage 1–5 table (pass/fail), no “recommendations only” without stage N.
+
+**Platform/monitor tickets:** skill **`ni-operating-principles`** — cite `docs/NI_REPAIR_PLAN.md` IDs in Approved plan; name SSOT writer vs reader; no Plan-time dashboard-only fixes.

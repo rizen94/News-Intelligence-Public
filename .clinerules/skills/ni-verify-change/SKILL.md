@@ -46,6 +46,10 @@ Typecheck via `npm run build` when types/routes changed.
 
 Local diff alone is not Widow runtime. Authorized prod → skill **`ni-ship-widow`** + `docs/RUNTIME_PIPELINE_TROUBLESHOOTING.md` §2 re-check.
 
+## Observability / metrics claims
+
+Also skill **`ni-operating-principles`**: prove the **same SSOT** readers use (e.g. `read_monitor_backlog_snapshot`, not a one-off COUNT). After Grafana JSON change, note manual Homelab import (`api/monitoring/grafana/README.md`). Tag fulfilled `docs/NI_REPAIR_PLAN.md` IDs when applicable.
+
 ## Reader / feed / RSS → UI (product)
 
 Also skill **`ni-golden-trace`**: same `golden_article_id` stage SQL before/after + `GET /api/reader/home` when claiming feed/brief fixes. Ops-only tickets exempt if user scoped them.

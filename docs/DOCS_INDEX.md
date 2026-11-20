@@ -23,6 +23,10 @@ Use this index for **current** documentation. See **[../PROJECT_STATUS.md](../PR
 | [CODEBASE_MAP.md](CODEBASE_MAP.md) | Directory map — API / web / scripts layout. |
 | [PIPELINE_AND_AUTOMATION.md](PIPELINE_AND_AUTOMATION.md) | Pipeline phases, automation, order of operations; Ollama CB defer/shed/overload. |
 | [MONITOR_REPORTING_AND_METRICS.md](MONITOR_REPORTING_AND_METRICS.md) | Monitor vs Grafana; health/`ni_*`; **Ollama backpressure** + CB reset. |
+| [OPERATING_PRINCIPLES.md](OPERATING_PRINCIPLES.md) | **Agent SSOT** — done criteria, write-once-read-many, deploy gate (Cline + Cursor). |
+| [NI_REPAIR_PLAN.md](NI_REPAIR_PLAN.md) | Prioritized platform repair (OBS, spine, pool, materializer). |
+| [AVAILABLE_SERVICES_AND_MCP.md](AVAILABLE_SERVICES_AND_MCP.md) | Coding MCP profile + homelab services for NI. |
+| [monitor_alignment/CROSSWALK.md](monitor_alignment/CROSSWALK.md) | Monitor/Prometheus/Grafana writer–reader map. |
 | [WIDOW_BOOT_RESILIENCE.md](WIDOW_BOOT_RESILIENCE.md) | **Reboot / systemd runbook** — boot stack, verify, troubleshooting. |
 | [PIPELINE_OPERATIONS_WIDOW.md](PIPELINE_OPERATIONS_WIDOW.md) | **Widow operator checklist** — schedulers, full phase list, `.env`. |
 | [CODE_REVIEW_AND_RUN_CAVEATS.md](CODE_REVIEW_AND_RUN_CAVEATS.md) | Run requirements and ops caveats. |

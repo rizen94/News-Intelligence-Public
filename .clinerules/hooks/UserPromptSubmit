@@ -87,6 +87,19 @@ elif pipeline_hint and "ni-pipeline-debug" not in prompt_l and not ACT_RE.search
         "Pipeline/runtime: activate skill ni-pipeline-debug (Plan: through step 5; Act: minimal re-check only)."
     )
 
+MONITOR_RE = re.compile(
+    r"\b("
+    r"grafana|prometheus|ni_\*|materializer|backlog\s+snapshot|monitor\s*v2|"
+    r"observability|drift|repair\s+plan|write[-\s]once|spine\s+silent|ni-ops"
+    r")\b",
+    re.I,
+)
+if MONITOR_RE.search(prompt):
+    chunks.append(
+        "NI_OPERATING_PRINCIPLES: BINDING — ni-operating-principles + docs/OPERATING_PRINCIPLES.md "
+        "+ monitor_alignment/CROSSWALK.md; tag NI_REPAIR_PLAN.md item IDs."
+    )
+
 if chunks:
     out["contextModification"] = " ".join(chunks)
 

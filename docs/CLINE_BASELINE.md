@@ -28,7 +28,9 @@ Retired globals live in `~/Documents/Cline/Rules/_retired/` (not loaded).
 
 ## Skills (invoke or auto-match)
 
-`ni-golden-trace` · `ni-pipeline-debug` · `ni-repomix-grep` · `ni-verify-change` · `ni-migrations` · `ni-plan-handoff` · `ni-ship-widow` · `ni-postgres` · `ni-graphify` · `ni-db-code` · `mempalace-tools` · `ni-serena-symbols`
+`ni-golden-trace` · `ni-operating-principles` · `ni-pipeline-debug` · `ni-repomix-grep` · `ni-verify-change` · `ni-migrations` · `ni-plan-handoff` · `ni-ship-widow` · `ni-postgres` · `ni-graphify` · `ni-db-code` · `mempalace-tools` · `ni-serena-symbols`
+
+Policy: `docs/OPERATING_PRINCIPLES.md` · repair: `docs/NI_REPAIR_PLAN.md` · MCP map: `docs/AVAILABLE_SERVICES_AND_MCP.md`
 
 Product closure doc: `docs/GOLDEN_RSS_TO_READER.md`
 
