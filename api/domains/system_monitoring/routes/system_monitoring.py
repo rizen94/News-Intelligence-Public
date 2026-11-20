@@ -1061,32 +1061,41 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
     automation = getattr(request.app.state, "automation", None)
     thread_alive = _automation_thread_alive(request)
     if automation is None or not hasattr(automation, "get_status"):
+        # Try to get automation manager from services if app state is not available
         try:
-            from services.pipeline_schedule_service import pipeline_schedule_info
+            from services.automation_manager import get_automation_manager
+            automation = get_automation_manager()
+        except Exception as e:
+            logger.warning(f"Failed to get automation manager: {e}")
+            automation = None
+            
+        if automation is None or not hasattr(automation, "get_status"):
+            try:
+                from services.pipeline_schedule_service import pipeline_schedule_info
 
-            schedule_info = pipeline_schedule_info()
-        except Exception:
-            schedule_info = {}
-        disabled = []
-        if automation and hasattr(automation, "get_disabled_schedule_names"):
-            disabled = automation.get_disabled_schedule_names()
-        return {
-            "success": True,
-            "data": {
-                "is_running": False,
-                "queue_size": 0,
-                "active_workers": 0,
-                "phases": [],
-                "automation_thread_alive": thread_alive,
-                "disabled_schedules": disabled,
-                "pipeline_schedule": schedule_info,
-                "startup_ready": False,
-                "resource_router": _live_db_pressure_block(),
-                "message": "Automation manager not available"
-                if automation is None
-                else "Automation thread not running",
-            },
-        }
+                schedule_info = pipeline_schedule_info()
+            except Exception:
+                schedule_info = {}
+            disabled = []
+            if automation and hasattr(automation, "get_disabled_schedule_names"):
+                disabled = automation.get_disabled_schedule_names()
+            return {
+                "success": True,
+                "data": {
+                    "is_running": False,
+                    "queue_size": 0,
+                    "active_workers": 0,
+                    "phases": [],
+                    "automation_thread_alive": thread_alive,
+                    "disabled_schedules": disabled,
+                    "pipeline_schedule": schedule_info,
+                    "startup_ready": False,
+                    "resource_router": _live_db_pressure_block(),
+                    "message": "Automation manager not available"
+                    if automation is None
+                    else "Automation thread not running",
+                },
+            }
     if not thread_alive:
         return {
             "success": True,

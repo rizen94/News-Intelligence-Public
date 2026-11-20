@@ -103,6 +103,26 @@ def _gauge(name: str, help_text: str, samples: list[tuple[dict[str, str], float]
     return out
 
 
+def _queue_metrics_from_monitor_snapshot() -> tuple[dict[str, int], dict[str, int]] | None:
+    """Read precomputed queue depths from automation_state (OBS-1 — no COUNT on scrape)."""
+    try:
+        from services.monitor_backlog_snapshot_service import read_monitor_backlog_snapshot
+
+        snap = read_monitor_backlog_snapshot(allow_stale=True)
+        if not snap:
+            return None
+        depths_raw = snap.get("queue_depths") or snap.get("pending") or {}
+        backlog_raw = snap.get("scheduling_backlog") or snap.get("backlog") or {}
+        if not depths_raw:
+            return None
+        depths = {str(k): int(v or 0) for k, v in depths_raw.items()}
+        backlog = {str(k): int(v or 0) for k, v in backlog_raw.items()}
+        return depths, backlog
+    except Exception as e:
+        logger.debug("prometheus snapshot queue metrics: %s", e)
+        return None
+
+
 def _collect_queue_metrics() -> list[str]:
     lines: list[str] = []
     try:
@@ -112,24 +132,38 @@ def _collect_queue_metrics() -> list[str]:
             kick_backlog_cache_refresh,
         )
 
-        # Never block the scrape on sequential COUNT(*) — prefer cache; if cold,
-        # kick a background refresh and emit nothing this tick (Grafana keeps last).
+        # Never block the scrape on sequential COUNT(*) — prefer monitor snapshot, then cache;
+        # if cold, kick a background refresh and emit nothing this tick (Grafana keeps last).
         try:
             max_stale_s = float(os.environ.get("NI_PROMETHEUS_QUEUE_MAX_STALE_S", "30") or 30)
         except (TypeError, ValueError):
             max_stale_s = 30.0
 
-        depths = (
-            get_all_pending_counts(
-                prefer_stale=True,
-                max_stale_s=max_stale_s,
-                skip_refresh_if_empty=True,
+        snap_queues = _queue_metrics_from_monitor_snapshot()
+        if snap_queues:
+            depths, backlog = snap_queues
+        else:
+            depths = (
+                get_all_pending_counts(
+                    prefer_stale=True,
+                    max_stale_s=max_stale_s,
+                    skip_refresh_if_empty=True,
+                )
+                or {}
             )
-            or {}
-        )
+            backlog = {}
         if not depths:
             kick_backlog_cache_refresh(budget_s=45.0)
             return lines
+        if not backlog:
+            backlog = (
+                get_all_backlog_counts(
+                    prefer_stale=True,
+                    max_stale_s=max_stale_s,
+                    skip_refresh_if_empty=True,
+                )
+                or {}
+            )
 
         lines.extend(
             _gauge(
@@ -137,14 +171,6 @@ def _collect_queue_metrics() -> list[str]:
                 "Per-phase actionable queue_depth (Monitor SSOT).",
                 [({"phase": str(p)}, float(v or 0)) for p, v in depths.items()],
             )
-        )
-        backlog = (
-            get_all_backlog_counts(
-                prefer_stale=True,
-                max_stale_s=max_stale_s,
-                skip_refresh_if_empty=True,
-            )
-            or {}
         )
         lines.extend(
             _gauge(

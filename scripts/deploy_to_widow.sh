@@ -141,7 +141,7 @@ if [[ -f BUILD_INFO ]]; then
 fi
 
 echo "Smoke tests..."
-curl -sf --max-time 15 http://127.0.0.1:8000/api/ping | head -c 80
+curl -sf --max-time 15 http://127.0.0.1:8000/ping | head -c 80
 echo
 curl -sf --max-time 30 "http://127.0.0.1:8000/api/politics/report?lead_limit=1" | head -c 80
 echo

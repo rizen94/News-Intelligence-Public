@@ -33,6 +33,22 @@ DECISION_LOG_IDLE_THROTTLE_SECONDS = 300  # Log "no_action"/"idle" at most every
 DECISION_LOG_PHASE_THROTTLE_SECONDS = 120  # Log same "process_phase"/"queued" at most every 2 min
 
 
+def _rss_collection_activity_count(result: Any) -> int:
+    """Normalize collect_rss_feeds() return (stats dict, int, or 0 on connection failure)."""
+    if result is None:
+        return 0
+    if isinstance(result, dict):
+        for key in ("activity", "articles_added", "articles_updated"):
+            val = result.get(key)
+            if isinstance(val, (int, float)):
+                return int(val)
+        return 0
+    try:
+        return max(0, int(result))
+    except (TypeError, ValueError):
+        return 0
+
+
 class OrchestratorCoordinator:
     """
     Master coordination loop: assess state, plan next action, execute one task,
@@ -156,10 +172,11 @@ class OrchestratorCoordinator:
                             )
                             try:
                                 loop = asyncio.get_event_loop()
-                                observations_count = await loop.run_in_executor(
+                                raw_rss = await loop.run_in_executor(
                                     self._executor,
                                     self._collect_rss_feeds_fn,
                                 )
+                                observations_count = _rss_collection_activity_count(raw_rss)
                             except Exception as rss_exc:
                                 logger.warning(
                                     "Orchestrator RSS collect failed: %s", rss_exc
@@ -519,12 +536,19 @@ class OrchestratorCoordinator:
         """Run one collection now (rss or finance topic). Used by manual_override API."""
         if source == SOURCE_RSS and self._collect_rss_feeds_fn:
             loop = asyncio.get_event_loop()
-            count = await loop.run_in_executor(self._executor, self._collect_rss_feeds_fn)
+            raw = await loop.run_in_executor(self._executor, self._collect_rss_feeds_fn)
+            count = _rss_collection_activity_count(raw)
             self._collection_governor.record_fetch_result(
                 SOURCE_RSS, success=True, observations_count=count
             )
             self._resource_governor.record_usage(RESOURCE_API_CALLS, 1.0)
-            return {"source": "rss", "rss_activity": count, "articles_collected": count}
+            stats = raw if isinstance(raw, dict) else {}
+            return {
+                "source": "rss",
+                "rss_activity": count,
+                "articles_collected": count,
+                "rss_stats": stats,
+            }
         handler, topic = self._collection_handler_and_topic(source)
         if handler == "finance" and self._get_finance_orchestrator:
             orch = self._get_finance_orchestrator()

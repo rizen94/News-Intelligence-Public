@@ -5831,7 +5831,7 @@ class AutomationManager:
     async def _execute_editorial_document_generation(self, task: Task):
         """Generate/refine editorial_document for active storylines across all domains."""
         from services.editorial_document_service import generate_storyline_editorial
-        from services.content_validation_service import content_validation_service
+        from services.content_validation_service import ContentValidationService
 
         for domain in get_pipeline_active_domain_keys():
             try:
@@ -5866,7 +5866,7 @@ class AutomationManager:
                         # Validate that these storylines have sufficient content
                         for row in storylines:
                             sid, title, description, analysis_summary, existing_doc, doc_version, last_refined, updated_at = row
-                            storyline_validation = await content_validation_service.validate_storyline_content_requirements(domain, sid)
+                            storyline_validation = await ContentValidationService.validate_storyline_content_requirements(domain, sid)
                             if not storyline_validation.get("valid", False):
                                 logger.warning(f"Skipping storyline {sid} in domain {domain} - insufficient content")
                                 continue
@@ -6457,7 +6457,7 @@ class AutomationManager:
             StorylineService as DomainStorylineService,
         )
         from api.shared.database import get_db_connection
-        from services.content_validation_service import content_validation_service
+        from services.content_validation_service import ContentValidationService
 
         processed_count = 0
         for domain, schema in pipeline_url_schema_pairs():
@@ -6494,7 +6494,7 @@ class AutomationManager:
                     summary_for_check = analysis_summary or master_summary
 
                     # Validate content before proceeding with processing
-                    storyline_validation = await content_validation_service.validate_storyline_content_requirements(domain, sid)
+                    storyline_validation = await ContentValidationService.validate_storyline_content_requirements(domain, sid)
                     if not storyline_validation.get("valid", False):
                         logger.warning("Skipping storyline %s/%s: insufficient content", domain, sid)
                         continue
