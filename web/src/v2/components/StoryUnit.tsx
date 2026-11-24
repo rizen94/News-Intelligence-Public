@@ -37,6 +37,8 @@ function surfaceLabel(kind: string | undefined): string | null {
       return 'One-off';
     case 'daily_briefing':
       return 'Briefing';
+    case 'recent_article':
+      return 'Latest';
     default:
       return null;
   }

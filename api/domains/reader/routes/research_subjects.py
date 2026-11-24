@@ -23,6 +23,37 @@ def _assertion_counts(profile: dict) -> dict[str, int]:
     }
 
 
+def _assertion_total(counts: dict) -> int:
+    return int(counts.get("is", 0) or 0) + int(counts.get("is_not", 0) or 0) + int(
+        counts.get("open", 0) or 0
+    )
+
+
+def _prefer_subject_card(existing: dict, candidate: dict) -> bool:
+    """True when candidate should replace existing (same curated title, different entity)."""
+    ex_c = existing.get("assertion_counts") or {}
+    cand_c = candidate.get("assertion_counts") or {}
+    ex_tot = _assertion_total(ex_c)
+    cand_tot = _assertion_total(cand_c)
+    if cand_tot != ex_tot:
+        return cand_tot > ex_tot
+    ex_pub = existing.get("status") == "published"
+    cand_pub = candidate.get("status") == "published"
+    if cand_pub != ex_pub:
+        return cand_pub and not ex_pub
+    ex_mu = existing.get("material_updated_at")
+    cand_mu = candidate.get("material_updated_at")
+    if ex_mu and cand_mu and ex_mu != cand_mu:
+        return cand_mu > ex_mu
+    if existing.get("profile_id") and not candidate.get("profile_id"):
+        return False
+    if candidate.get("profile_id") and not existing.get("profile_id"):
+        return True
+    return int(candidate.get("canonical_entity_id") or 0) < int(
+        existing.get("canonical_entity_id") or 0
+    )
+
+
 @router.get("/research/subjects")
 async def list_research_subjects(
     domain: str | None = Query(None, description="Filter to one research domain"),
@@ -49,11 +80,12 @@ async def list_research_subjects(
 
     fallback_map = domain_fallback_subjects()
     subjects: list[dict] = []
-    seen: set[tuple[str, int]] = set()
+    seen_ids: set[tuple[str, int]] = set()
 
     for dk in domains:
         curated = list(fallback_map.get(dk) or [])
         curated_lower = {n.lower(): n for n in curated}
+        by_curated_title: dict[tuple[str, str], dict] = {}
 
         try:
             profiles = list_profiles(domain_key=dk, status=None, limit=max(limit, 100))
@@ -63,32 +95,42 @@ async def list_research_subjects(
 
         for p in profiles:
             title = (p.get("title") or "").strip()
-            if title.lower() not in curated_lower:
+            title_key = title.lower()
+            if title_key not in curated_lower:
                 continue
             status = (p.get("status") or "").strip()
             if status not in ("published", "draft"):
                 continue
             eid = int(p["canonical_entity_id"])
-            seen.add((dk, eid))
             counts = _assertion_counts(p)
-            subjects.append(
-                {
-                    "domain_key": dk,
-                    "canonical_entity_id": eid,
-                    "profile_id": p.get("id"),
-                    "title": curated_lower.get(title.lower(), title),
-                    "status": status,
-                    "material_updated_at": p.get("material_updated_at"),
-                    "assertion_counts": counts,
-                    "href": f"/research/subjects/{dk}/{eid}",
-                }
-            )
+            card = {
+                "domain_key": dk,
+                "canonical_entity_id": eid,
+                "profile_id": p.get("id"),
+                "title": curated_lower.get(title_key, title),
+                "status": status,
+                "material_updated_at": p.get("material_updated_at"),
+                "assertion_counts": counts,
+                "href": f"/research/subjects/{dk}/{eid}",
+            }
+            key = (dk, title_key)
+            prev = by_curated_title.get(key)
+            if prev is None or _prefer_subject_card(prev, card):
+                by_curated_title[key] = card
+
+        for card in by_curated_title.values():
+            subjects.append(card)
+            seen_ids.add((dk, int(card["canonical_entity_id"])))
+        profile_titles = set(by_curated_title.keys())
 
         try:
             schema = resolve_domain_schema(dk)
             with get_ui_db_connection_context() as conn:
                 with conn.cursor() as cur:
                     for name in curated:
+                        title_key = name.lower()
+                        if (dk, title_key) in profile_titles:
+                            continue
                         cur.execute(
                             f"""
                             SELECT id, canonical_name
@@ -106,9 +148,9 @@ async def list_research_subjects(
                         if not row:
                             continue
                         eid = int(row[0])
-                        if (dk, eid) in seen:
+                        if (dk, eid) in seen_ids:
                             continue
-                        seen.add((dk, eid))
+                        seen_ids.add((dk, eid))
                         subjects.append(
                             {
                                 "domain_key": dk,

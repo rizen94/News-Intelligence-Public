@@ -409,6 +409,7 @@ def discover_and_upsert_cluster_hubs(
 ) -> dict[str, Any]:
     from services.vault_cluster_hub_service import (
         list_cluster_hubs,
+        resolve_active_hub_member_ids,
         vault_cluster_hubs_enabled,
         write_cluster_hub,
     )
@@ -507,7 +508,11 @@ def discover_and_upsert_cluster_hubs(
         merge_hub = None
         member_set = set(members)
         for h in existing:
-            exist_members = set(int(x) for x in (h.get("member_storyline_ids") or []))
+            exist_members = set(
+                resolve_active_hub_member_ids(
+                    domain_key, list(h.get("member_storyline_ids") or [])
+                )
+            )
             exist_seeds = set(int(x) for x in (h.get("seed_entity_ids") or []))
             mem_overlap = len(member_set & exist_members) / max(
                 1.0, float(min(len(member_set), len(exist_members) or 1))
@@ -539,10 +544,12 @@ def discover_and_upsert_cluster_hubs(
                 continue
 
         if merge_hub:
-            merged_members = sorted(
-                set(int(x) for x in (merge_hub.get("member_storyline_ids") or []))
-                | member_set
+            exist_active = set(
+                resolve_active_hub_member_ids(
+                    domain_key, list(merge_hub.get("member_storyline_ids") or [])
+                )
             )
+            merged_members = sorted(exist_active | member_set)
             merged_seeds = sorted(
                 set(int(x) for x in (merge_hub.get("seed_entity_ids") or []))
                 | set(seed_ids)
@@ -597,6 +604,15 @@ def run_cluster_hub_discovery_cycle(
 
     domains = domain_keys or list(get_pipeline_active_domain_keys())
     out: dict[str, Any] = {"ok": True, "domains": {}}
+    try:
+        from services.vault_cluster_hub_service import reconcile_all_hub_member_registries
+
+        out["member_reconcile"] = reconcile_all_hub_member_registries(
+            limit=500, dry_run=False
+        )
+    except Exception as rec_exc:
+        logger.warning("hub member reconcile pre-discovery: %s", rec_exc)
+        out["member_reconcile"] = {"ok": False, "error": str(rec_exc)}
     for dk in domains:
         try:
             out["domains"][dk] = discover_and_upsert_cluster_hubs(domain_key=dk, force=force)

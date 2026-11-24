@@ -35,7 +35,11 @@ def compute_brief_fingerprint(
     domain_key: str,
 ) -> str:
     """Hash of sorted member ids + latest article activity per member."""
-    members = sorted({int(x) for x in member_storyline_ids if int(x) > 0})
+    from services.vault_cluster_hub_service import resolve_active_hub_member_ids
+
+    members = sorted(
+        set(resolve_active_hub_member_ids(domain_key, list(member_storyline_ids)))
+    )
     if not members:
         return hashlib.sha256(b"empty").hexdigest()[:40]
     schema = resolve_domain_schema(domain_key)
@@ -83,8 +87,12 @@ def _brief_is_stale(meta: dict[str, Any], fingerprint: str) -> bool:
 
 
 def _build_evidence_text(hub: dict[str, Any]) -> str:
+    from services.vault_cluster_hub_service import resolve_active_hub_member_ids
+
     domain_key = str(hub.get("domain_key") or "politics")
-    members = [int(x) for x in (hub.get("member_storyline_ids") or [])]
+    members = resolve_active_hub_member_ids(
+        domain_key, list(hub.get("member_storyline_ids") or [])
+    )
     seeds = [int(x) for x in (hub.get("seed_entity_ids") or [])]
     schema = resolve_domain_schema(domain_key)
     parts: list[str] = [
@@ -204,15 +212,12 @@ def _persist_brief(hub: dict[str, Any], brief: str, fingerprint: str) -> dict[st
     vault_path = hub.get("vault_path") or ""
     brief_clean = (brief or "").strip()[:BRIEF_MAX_CHARS]
     now = _now_iso()
+    # Never rewrite member_storyline_ids here — brief refresh must not re-assert
+    # ghost ids from old corpus (registry is owned by write_cluster_hub / reconcile).
     meta_patch = {
         "current_brief": brief_clean,
         "brief_updated_at": now,
         "brief_fingerprint": fingerprint,
-        "hub": True,
-        "cluster_key": cluster_key,
-        "member_storyline_ids": list(hub.get("member_storyline_ids") or []),
-        "seed_entity_ids": list(hub.get("seed_entity_ids") or []),
-        "domain_key": domain_key,
     }
 
     if vault_path:

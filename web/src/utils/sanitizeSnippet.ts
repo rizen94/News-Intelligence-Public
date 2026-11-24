@@ -26,6 +26,54 @@ export function sanitizeSnippet(input: unknown, fallback = ''): string {
 }
 
 /** Strip leftover markdown markers for plain-text reader surfaces (hub / vault excerpts). */
+const ARTICLE_BOILERPLATE =
+  /^(?:already an? .+ subscriber\??|login|get audio access with any .+ subscription\.?|- get audio access)/i;
+
+/** Prep article summary/content for the v2 article reader (RSS markdown junk). */
+export function prepareArticleReaderText(
+  raw: string,
+  title?: string
+): string {
+  let s = stripReaderMdMarkers(sanitizeSnippet(raw, '')).trim();
+  if (!s) return '';
+  s = s
+    .split('\n')
+    .filter(line => !ARTICLE_BOILERPLATE.test(line.trim()))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (title) {
+    const t = title.trim().toLowerCase();
+    const lines = s.split('\n');
+    while (lines.length) {
+      const head = lines[0].replace(/^\s*#{1,6}\s+/, '').trim().toLowerCase();
+      if (!head || head === t || t.startsWith(head) || head.startsWith(t.slice(0, 48))) {
+        lines.shift();
+        continue;
+      }
+      break;
+    }
+    s = lines.join('\n').trim();
+  }
+  return s;
+}
+
+export function articleSummaryIsRedundant(
+  summary: string,
+  body: string,
+  title: string
+): boolean {
+  const a = summary.trim().toLowerCase();
+  const b = body.trim().toLowerCase();
+  const t = title.trim().toLowerCase();
+  if (!a) return true;
+  if (a === t || t.startsWith(a) || a.startsWith(t.slice(0, 60))) return true;
+  if (b && (b.startsWith(a) || a.startsWith(b.slice(0, Math.min(200, b.length))))) {
+    return true;
+  }
+  return false;
+}
+
 export function stripReaderMdMarkers(raw: string): string {
   return String(raw || '')
     .replace(/\*\*([^*]+)\*\*/g, '$1')

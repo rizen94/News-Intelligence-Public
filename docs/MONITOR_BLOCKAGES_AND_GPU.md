@@ -136,6 +136,39 @@ Wait 300 seconds. If the host is healthy, the half-open probe succeeds and the b
 
 ---
 
+## Throughput tuning (sustained speed, not catch-up)
+
+Tune **one knob at a time**; watch Monitor for shed/defer/trickle and fusion/claim parse retries.
+
+### Unified intake (fusion)
+
+| Env | Default | Notes |
+|-----|---------|-------|
+| `UNIFIED_INTAKE_EXTRACTION_BATCH_SIZE` | 6 | Max **8** articles per LLM call |
+| `UNIFIED_INTAKE_EXTRACTION_PARALLEL` | 8 | Capped by `OLLAMA_GPU_CONCURRENCY` |
+| `UNIFIED_INTAKE_EXTRACTION_ARTICLES_PER_DOMAIN` | phase default | Runner fair-share up to **120** per domain |
+
+**Steady state:** leave `UNIFIED_INTAKE_DEFER_CONTEXT_SYNC` **unset**. Fusion should inline context + claims; defer only during `BULK_CATCHUP_ACTIVE` unless you deliberately offload context to `claim_extraction`.
+
+### Claim extraction (multi-context batching)
+
+| Env | Default | Notes |
+|-----|---------|-------|
+| `CLAIM_EXTRACTION_LLM_BATCH_SIZE` | 4 | Contexts per LLM prompt; `1` = legacy one-context-per-call |
+| `CLAIM_EXTRACTION_PARALLEL` | 48 | With batching, concurrent **multi-context** calls — start **8** when enabling batching |
+| `CLAIM_EXTRACTION_BATCH_LIMIT` | 4000 | Contexts selected per drain iteration |
+| `CLAIM_EXTRACTION_DRAIN_MAX_SECONDS` | 900 | `0` = unlimited drain per enqueue |
+
+Canary: set `CLAIM_EXTRACTION_LLM_BATCH_SIZE=4` and `CLAIM_EXTRACTION_PARALLEL=8`, trigger `claim_extraction`, compare claims inserted per wall-minute vs singleton path before raising parallel or batch size toward 6–8.
+
+### When not to batch harder
+
+- Ollama CB open (**shed**) — fix host first
+- `underwater` capacity chip from **backlog drain**, not intake/d — combine batch tuning with corpus prune and phase priority
+- Raising `OLLAMA_GPU_CONCURRENCY` and batch sizes together on one 5090 risks OOM (see warning above)
+
+---
+
 ## Configuration Summary
 
 | Env Var | Default | Role |

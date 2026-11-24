@@ -18,6 +18,8 @@ import {
   type ReaderPackResponse,
 } from '../../services/readerApi';
 import { articlesApi } from '../../../services/api/articles';
+import { StorylineIntelligenceSection } from '../../components/ReaderIntelligenceSurface';
+import type { ReaderEntityMention } from '../../services/readerApi';
 
 import {
   sanitizeSnippet,
@@ -84,40 +86,22 @@ export default function StorylineReaderPage() {
     let cancelled = false;
     setError(null);
     setPack(null);
-  useEffect(() => {
-    if (!domain || !id) return;
-    let cancelled = false;
-    setError(null);
-    setPack(null);
     fetchReaderStoryline(id, domain)
       .then(res => {
         if (!cancelled) setPack(res);
       })
       .catch(err => {
         if (!cancelled) {
-          // Check if this is a merged storyline error
-          if (err?.message?.includes('was merged into storyline')) {
-            // Extract the target storyline ID from the error message
-            const match = err.message.match(/was merged into storyline (\d+)/);
-            if (match && match[1]) {
-              // Redirect to the merged storyline
+          const msg = err?.message || 'Failed to load storyline';
+          if (msg.includes('was merged into storyline')) {
+            const match = msg.match(/was merged into storyline (\d+)/);
+            if (match?.[1]) {
               window.location.href = `/storylines/${domain}/${match[1]}`;
               return;
             }
           }
-          setError(err?.message || 'Failed to load storyline');
+          setError(msg);
         }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [domain, id]);
-    fetchReaderStoryline(id, domain)
-      .then(res => {
-        if (!cancelled) setPack(res);
-      })
-      .catch(err => {
-        if (!cancelled) setError(err?.message || 'Failed to load storyline');
       });
     return () => {
       cancelled = true;
@@ -412,6 +396,16 @@ export default function StorylineReaderPage() {
   const timelineNarrative = stripReaderMdMarkers(
     String(pack.timeline_narrative || '')
   ).trim();
+  const dossierEntities: ReaderEntityMention[] = (
+    pack.dossier_rail?.entities || []
+  ).map((e: Record<string, unknown>) => ({
+    name: String(e.name || 'Entity'),
+    entity_type: (e.entity_type as string) || null,
+    description: (e.description_short as string) || null,
+    href: (e.href as string) || null,
+    mention_count:
+      typeof e.mention_count === 'number' ? e.mention_count : undefined,
+  }));
 
   return (
     <div>
@@ -609,6 +603,12 @@ export default function StorylineReaderPage() {
             </section>
           ) : null}
 
+          <StorylineIntelligenceSection
+            entities={dossierEntities}
+            contexts={pack.intelligence_contexts || []}
+            domain={domain || 'politics'}
+          />
+
           <section>
             <hr className='v2-section-rule' />
             <h2 className='v2-section-label'>Timeline</h2>
@@ -782,8 +782,8 @@ export default function StorylineReaderPage() {
           <DossierTree nodes={tree} />
           {!tree.length ? (
             <p className='v2-empty'>
-              No entities linked yet — use Pull context to enrich the living
-              dossier.
+              Dossier hierarchy builds from extracted entities on member
+              articles — see Intelligence spine in the article column.
             </p>
           ) : null}
         </aside>

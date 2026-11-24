@@ -3,6 +3,9 @@ Flat pipeline admission — mode + priority + single admit_phase.
 
 Replaces nested pick_next_phases / residual / OOM special cases when
 ``PIPELINE_FLAT_SCHEDULER`` is enabled (default on).
+
+Lane priority (A→D): ``docs/PIPELINE_PROCESSING_LANES.md``,
+``api/shared/pipeline_processing_lanes.py``.
 """
 
 from __future__ import annotations
@@ -20,82 +23,104 @@ SchedulerMode = Literal["pressure", "preprocess", "postprocess", "maintenance"]
 PRESSURE_PRIORITY: tuple[str, ...] = (
     "pending_db_flush",
     "content_enrichment",
-    "context_sync",
-    "entity_profile_sync",
+    "unified_intake_extraction",
     "spine_sql_tail",
-    "claims_to_facts",
+    "document_processing",
+    "context_sync",
     "event_tracking",
     "mention_resolution",
+    "entity_profile_build",
+    "claim_extraction",
+    "claims_to_facts",
 )
 
-# Preprocess band order (collection appended separately when allowed).
+# Lane A → B (collection appended separately when allowed).
 PREPROCESS_PRIORITY: tuple[str, ...] = (
     "content_enrichment",
     "unified_intake_extraction",
     "spine_sql_tail",
     "document_processing",
     "context_sync",
+    "event_tracking",
     "mention_resolution",
     "entity_profile_build",
     "claim_extraction",
+    "claims_to_facts",
 )
 
-# Post-process / structure-first (Widow-local before remote assembly peers).
-# Event matching rail (catchup → coref → continuation) before legacy chemistry stir.
+# Finish spine tail, then B → C → D (debt after lane A is clear).
 POSTPROCESS_PRIORITY: tuple[str, ...] = (
+    "content_enrichment",
+    "unified_intake_extraction",
+    "spine_sql_tail",
+    "document_processing",
+    "context_sync",
+    "event_tracking",
     "mention_resolution",
     "entity_profile_build",
-    "event_tracking",
+    "claim_extraction",
+    "claims_to_facts",
+    "extracted_claims_dedupe",
+    "claim_subject_gap_refresh",
+    "entity_profile_sync",
     "chronological_events_catchup",
     "event_deduplication",
+    "story_enhancement",
     "story_continuation",
-    "editorial_research_pass",
-    "editorial_narrative_pass",
-    "editorial_reduction_pass",
     "graph_connection_distillation",
     "embedding_link_candidates",
     "collision_sampling",
     "stimulus_rag",
     "protein_harden",
+    "research_paper_profiling",
+    "claim_evidence_appraisal",
+    "editorial_research_pass",
+    "editorial_narrative_pass",
+    "editorial_reduction_pass",
     "storyline_automation",
     "storyline_review_agent",
     "storyline_membership_review",
     "storyline_assembly",
-    "spine_sql_tail",
-    "context_sync",
     "topic_clustering",
     "content_refinement_queue",
     "pending_db_flush",
 )
 
-# Maintenance fillers + residual structure when catchup drivers are quiet.
+# Maintenance: spine first, then structure, sync, debt, collection last.
 MAINTENANCE_PRIORITY: tuple[str, ...] = (
-    "context_sync",
-    "entity_profile_sync",
     "pending_db_flush",
+    "content_enrichment",
+    "unified_intake_extraction",
+    "spine_sql_tail",
+    "document_processing",
+    "context_sync",
+    "event_tracking",
     "mention_resolution",
     "entity_profile_build",
-    "event_tracking",
+    "claim_extraction",
+    "claims_to_facts",
+    "entity_profile_sync",
     "chronological_events_catchup",
     "event_deduplication",
+    "story_enhancement",
     "story_continuation",
-    "editorial_research_pass",
-    "editorial_narrative_pass",
-    "editorial_reduction_pass",
     "graph_connection_distillation",
     "embedding_link_candidates",
     "collision_sampling",
     "stimulus_rag",
     "protein_harden",
     "graph_link_drift_review",
-    "storyline_assembly",
-    "topic_clustering",
+    "research_paper_profiling",
+    "claim_evidence_appraisal",
+    "editorial_research_pass",
+    "editorial_narrative_pass",
+    "editorial_reduction_pass",
     "storyline_automation",
     "storyline_review_agent",
     "storyline_membership_review",
-    # Durable queued RAG/narrative jobs (auto-enqueue or UI) — not only postprocess mode.
+    "storyline_assembly",
+    "topic_clustering",
     "content_refinement_queue",
-    "content_enrichment",
     "rss_feed_health",
     "collection_cycle",
 )
@@ -245,11 +270,15 @@ def compute_mode(
     pressure: bool = False,
 ) -> SchedulerMode:
     """Pick exactly one scheduling mode for this replan."""
+    from api.shared.pipeline_processing_lanes import (
+        debt_product_band_pending,
+        fresh_structure_band_pending,
+        lane_a_clear,
+    )
     from api.shared.pipeline_resource_policy import (
         intake_preprocess_pending,
         post_process_preferred_enabled,
         preprocess_stable_pending,
-        structure_band_pending,
     )
 
     if pressure:
@@ -259,11 +288,11 @@ def compute_mode(
         return "preprocess"
 
     if post_process_preferred_enabled():
-        if (
-            preprocess_stable_pending(pending) <= mode_preprocess_stable()
-            and structure_band_pending(pending) > 0
-        ):
-            return "postprocess"
+        if not lane_a_clear(pending):
+            pass
+        elif preprocess_stable_pending(pending) <= mode_preprocess_stable():
+            if fresh_structure_band_pending(pending) > 0 or debt_product_band_pending(pending) > 0:
+                return "postprocess"
 
     return "maintenance"
 
@@ -416,7 +445,7 @@ def admit_phase(
             refinement_phase_allowed,
             unified_superseded_automation_phases,
         )
-        from api.shared.pipeline_resource_policy import INTAKE_PREPROCESS_PHASES
+        from api.shared.pipeline_processing_lanes import intake_preprocess_defer_exempt_phases
         from api.shared.spine_phase_order import spine_pipeline_ordered_active
 
         if intake_extraction_suppressed() and name in legacy_intake_extraction_phases():
@@ -424,18 +453,8 @@ def admit_phase(
         if intake_extraction_suppressed() and name in unified_superseded_automation_phases():
             return "unified_superseded"
 
-        # Spine-ordered: while preprocess hot, defer non-intake/non-structure-exempt phases.
-        # MR/EPB stay admissible (structure co-schedule).
-        _co_schedule = frozenset(
-            {
-                *INTAKE_PREPROCESS_PHASES,
-                "health_check",
-                "pending_db_flush",
-                "rss_feed_health",
-                "mention_resolution",
-                "entity_profile_build",
-            }
-        )
+        # Spine-ordered: while preprocess hot, defer phases outside lane A+B + ops exempt set.
+        _co_schedule = intake_preprocess_defer_exempt_phases()
         _gpu_defer = frozenset(
             {
                 "storyline_assembly",

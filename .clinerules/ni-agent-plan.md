@@ -25,3 +25,5 @@ Skill **`ni-pipeline-debug`** through step 5 (SQL/log evidence). Step 6 = **`pla
 Handoff must include: `golden_article_id`, stage 1–5 table (pass/fail), no “recommendations only” without stage N.
 
 **Platform/monitor tickets:** skill **`ni-operating-principles`** — cite `docs/NI_REPAIR_PLAN.md` IDs in Approved plan; name SSOT writer vs reader; no Plan-time dashboard-only fixes.
+
+**Ongoing events / assembly / Current / Situations / mixed bags:** read **`docs/NARRATIVE_ASSEMBLY_SOURCE_STAGES.md`** first (§0 fast path) — do not re-research archives; cite stage S0–S6 and §5 constraints in the handoff.

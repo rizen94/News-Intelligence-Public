@@ -548,6 +548,7 @@ def _collect_content_and_run_metrics() -> list[str]:
 
         content_samples: list[tuple[dict[str, str], float]] = []
         run_samples: list[tuple[dict[str, str], float]] = []
+        yield_samples: list[tuple[dict[str, str], float]] = []
         with get_ui_db_connection_context() as conn:
             with conn.cursor() as cur:
                 for kind, sql in (
@@ -638,6 +639,89 @@ def _collect_content_and_run_metrics() -> list[str]:
                     except Exception:
                         pass
 
+                try:
+                    from services.storyline_assembly_service import all_domain_linkage_stats
+
+                    for row in all_domain_linkage_stats():
+                        dk = str(row.get("domain_key") or "")
+                        if not dk:
+                            continue
+                        content_samples.append(
+                            (
+                                {"kind": "storyline_linked_articles", "domain": dk},
+                                float(row.get("linked_articles") or 0),
+                            )
+                        )
+                        content_samples.append(
+                            (
+                                {"kind": "storyline_active_articles", "domain": dk},
+                                float(row.get("articles") or 0),
+                            )
+                        )
+                        content_samples.append(
+                            (
+                                {"kind": "storyline_linkage_rate", "domain": dk},
+                                float(row.get("linkage_rate") or 0),
+                            )
+                        )
+                except Exception as e:
+                    logger.debug("ni prom storyline linkage: %s", e)
+
+                local_yield: list[tuple[dict[str, str], float]] = []
+                yield_fields = (
+                    "articles_enriched",
+                    "contexts_created",
+                    "claims_inserted",
+                    "profiles_updated",
+                    "refinement_processed",
+                    "storylines_saved",
+                    "consolidation_merges",
+                    "unlinked_before",
+                    "unlinked_after",
+                )
+                yield_samples: list[tuple[dict[str, str], float]] = []
+                for window, interval in (("1h", "1 hour"), ("24h", "24 hours")):
+                    for field in yield_fields:
+                        try:
+                            cur.execute(
+                                f"""
+                                SELECT phase_name,
+                                       COALESCE(
+                                           SUM(
+                                               NULLIF(metadata->>%s, '')::double precision
+                                           ),
+                                           0
+                                       )::double precision AS total
+                                FROM infrastructure.automation_run_history
+                                WHERE started_at >= NOW() - interval '{interval}'
+                                  AND metadata ? %s
+                                GROUP BY phase_name
+                                ORDER BY total DESC
+                                LIMIT 30
+                                """,
+                                (field, field),
+                            )
+                            for phase, total in cur.fetchall():
+                                if float(total or 0) == 0:
+                                    continue
+                                local_yield.append(
+                                    (
+                                        {
+                                            "phase": str(phase),
+                                            "field": field,
+                                            "window": window,
+                                        },
+                                        float(total or 0),
+                                    )
+                                )
+                        except Exception as ye:
+                            logger.debug("ni prom yield %s %s: %s", window, field, ye)
+                            try:
+                                conn.rollback()
+                            except Exception:
+                                pass
+                yield_samples.extend(local_yield)
+
         lines.extend(
             _gauge(
                 "ni_content_rows",
@@ -652,6 +736,14 @@ def _collect_content_and_run_metrics() -> list[str]:
                 run_samples,
             )
         )
+        if yield_samples:
+            lines.extend(
+                _gauge(
+                    "ni_automation_yield",
+                    "Summed automation_run_history.metadata yield counters by phase/field/window.",
+                    yield_samples,
+                )
+            )
     except Exception as e:
         logger.warning("ni prom content/runs: %s", e)
     return lines

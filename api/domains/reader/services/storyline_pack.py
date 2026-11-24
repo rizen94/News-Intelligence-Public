@@ -34,8 +34,11 @@ def _parse_json(raw: Any) -> Any:
     return None
 
 
+from api.shared.storyline_bag_hygiene import citations_aligned_with_story as _citations_aligned_with_story
+
+
 def _article_grounded_summary(
-    citations: list[dict[str, Any]], *, title: str = "", max_chars: int = 1400
+    citations: list[dict[str, Any]], *, title: str = "", max_chars: int = 2400
 ) -> str:
     """
     Build a short reader brief from member article body/summary when stored
@@ -50,7 +53,7 @@ def _article_grounded_summary(
         key=lambda c: len(str(c.get("content") or c.get("summary") or "")),
         reverse=True,
     )
-    for cite in ranked[:3]:
+    for cite in ranked[:5]:
         raw = cite.get("content") or cite.get("summary") or ""
         prose = html_to_visible_text(str(raw), max_length=700)
         if not prose or len(re.sub(r"\W+", "", prose)) < 80:
@@ -156,6 +159,15 @@ def _fetch_merged_storyline_content(domain: str, target_storyline_id: int) -> di
 def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any]:
     if not validate_domain(domain):
         raise ValueError(f"Invalid or inactive domain: {domain}")
+
+    try:
+        from api.shared.storyline_id_lineage import resolve_canonical_storyline_id
+
+        canonical = resolve_canonical_storyline_id(domain, int(storyline_id))
+        if canonical > 0 and canonical != int(storyline_id):
+            return build_storyline_reader_pack(domain, canonical)
+    except Exception:
+        pass
 
     schema = resolve_domain_schema(domain)
     timeline: dict[str, Any] = {"events": []}
@@ -324,19 +336,8 @@ def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any
 
                     cur.execute(list_episode_entities_sql(schema), (domain, storyline_id))
                 else:
-                    cur.execute(
-                        f"""
-                        SELECT DISTINCT ON (e.id)
-                            e.id, e.name, e.entity_type, e.description
-                        FROM {schema}.entities e
-                        JOIN {schema}.article_entities ae ON ae.entity_id = e.id
-                        JOIN {schema}.storyline_articles sa ON sa.article_id = ae.article_id
-                        WHERE sa.storyline_id = %s
-                        ORDER BY e.id, e.name
-                        LIMIT 40
-                        """,
-                        (storyline_id,),
-                    )
+                    # article_entities roll-up handled after citations (see aggregate fallback).
+                    pass
                 for r in cur.fetchall():
                     entities.append(
                         {
@@ -377,6 +378,15 @@ def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any
                                     "href": None,
                                 }
                             )
+
+            if not entities:
+                member_ids = [
+                    int(c["id"]) for c in citations if c.get("id") is not None
+                ]
+                if member_ids:
+                    from .intelligence_surface import aggregate_entities_for_articles
+
+                    entities = aggregate_entities_for_articles(domain, member_ids)
 
             # Enrich from dossiers when available
             for ent in entities:
@@ -550,15 +560,41 @@ def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any
                 ) or sanitize_briefing_lede(best, max_length=900) or best
             if summary.lstrip().startswith("```"):
                 summary = strip_llm_wrapping_artifacts(summary, max_length=12000) or summary
-    # Last resort: grounded excerpts — but never stitch unrelated headlines into one "story"
-    if not summary or is_inventory_metadata_summary(summary):
-        grounded = _article_grounded_summary(citations, title=title)
-        if grounded and not is_multi_topic_excerpt_mash(grounded):
-            summary = grounded
-        else:
-            summary = ""
-    if summary and is_multi_topic_excerpt_mash(summary):
-        summary = ""
+    aligned = _citations_aligned_with_story(title or "", citations)
+    thin_seed = len((summary or "").strip()) < 320
+
+    member_sourced = False
+    try:
+        from services.storyline_member_synthesis_service import (
+            build_reader_summary_from_members,
+        )
+
+        need_members = (
+            not summary
+            or is_inventory_metadata_summary(summary)
+            or is_multi_topic_excerpt_mash(summary)
+            or thin_seed
+        )
+        if need_members and citations:
+            member_narrative = build_reader_summary_from_members(
+                title or "", citations
+            )
+            if member_narrative and not is_multi_topic_excerpt_mash(member_narrative):
+                summary = _cap_summary(member_narrative)
+                member_sourced = True
+        elif summary and is_multi_topic_excerpt_mash(summary) and citations:
+            member_narrative = build_reader_summary_from_members(
+                title or "", citations
+            )
+            if member_narrative:
+                summary = _cap_summary(member_narrative)
+                member_sourced = True
+    except Exception as synth_exc:
+        logger.debug("member_sourced summary: %s", synth_exc)
+        if (not summary or thin_seed) and citations:
+            grounded = _article_grounded_summary(aligned or citations, title=title)
+            if grounded and not is_multi_topic_excerpt_mash(grounded):
+                summary = grounded
     summary = strip_trailing_llm_json(strip_inventory_metadata_summary(summary or ""))
 
     # Flag kitchen-sink bags so the UI can avoid presenting them as one arc
@@ -606,6 +642,16 @@ def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any
             )
 
     dossier_tree = _build_dossier_tree(entities, relationships)
+
+    intelligence_contexts: list[dict[str, Any]] = []
+    try:
+        ctx_article_ids = [int(c["id"]) for c in citations if c.get("id") is not None]
+        if ctx_article_ids:
+            from .intelligence_surface import list_contexts_for_articles
+
+            intelligence_contexts = list_contexts_for_articles(domain, ctx_article_ids)
+    except Exception:
+        intelligence_contexts = []
 
     vault_pack = None
     try:
@@ -762,6 +808,9 @@ def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any
     if isinstance(tn, str) and tn.strip():
         tn = sanitize_reader_prose(tn, title=title, max_length=4000) or tn
 
+    if member_sourced:
+        brief_source = "member_citations"
+
     return {
         "domain": domain,
         "storyline_id": sid,
@@ -795,4 +844,5 @@ def build_storyline_reader_pack(domain: str, storyline_id: int) -> dict[str, Any
         },
         "vault_context_pack": vault_pack,
         "vault_expansion": vault_expansion,
+        "intelligence_contexts": intelligence_contexts,
     }

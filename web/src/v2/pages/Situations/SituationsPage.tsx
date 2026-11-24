@@ -16,6 +16,7 @@ type HubRow = {
   current_brief?: string | null;
   updated_at?: string | null;
   member_storyline_ids?: number[];
+  active_member_count?: number;
   tags?: string[];
 };
 
@@ -75,7 +76,8 @@ export default function SituationsPage() {
 
       <div className='v2-cascade'>
         {hubs.map((h, i) => {
-          const members = (h.member_storyline_ids || []).length;
+          const members =
+            h.active_member_count ?? (h.member_storyline_ids || []).length;
           const href = withDomainQuery(
             h.href || `/hubs/${h.cluster_key || h.id}`,
             h.domain_key || domain

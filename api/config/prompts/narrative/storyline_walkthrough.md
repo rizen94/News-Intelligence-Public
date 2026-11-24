@@ -33,7 +33,8 @@ still keep the heading and one sentence saying evidence is thin):
 4. **Competing explanations are contested** — never present a single theory as settled fact when sources disagree or are thin.
 5. **Name specific actors** when sources support it (officials, parties, organizations).
 6. **No inventory dump** — do not paste URL lists or raw JSON.
-7. After the walkthrough prose, output **valid JSON only** after a line containing exactly `---JSON---`.
+7. **Multi-source synthesis (no repetition):** many outlets may report the same development in different words. **State each distinct fact once** in the walkthrough; merge corroboration into attribution inline (e.g. "Bloomberg and the BBC both reported…") instead of repeating the same beat in Lede, Background, and What happened. Do not chain-copy article ledes; write **one coherent desk voice**. If you must cut duplicate prose from a refresh, list the exact redundant phrases in `sections_to_deprecate_or_trim` in the JSON block.
+8. After the walkthrough prose, output **valid JSON only** after a line containing exactly `---JSON---`.
 
 ## Output JSON shape
 

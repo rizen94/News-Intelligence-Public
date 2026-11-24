@@ -3,7 +3,7 @@
  *
  * Single live surface (v2 architecture; folder name unchanged):
  * - News (default): `/`, `/news`, `/current`, `/hubs`, `/research`, `/one-offs`,
- *   `/storylines/:domain/:id`, `/hubs/:idOrSlug` — broadsheet (`web/src/v2/`)
+ *   `/storylines/:domain/:id`, `/:domain/articles/:id`, `/hubs/:idOrSlug` — broadsheet (`web/src/v2/`)
  * - Finance: `/finance/*` (`web/src/finance/`)
  * - Admin: `/admin/*` — ops (Monitor, Work, SQL, Audit)
  *
@@ -92,6 +92,9 @@ const V2ResearchSubjectPage = React.lazy(
 );
 const V2StorylineReaderPage = React.lazy(
   () => import('./v2/pages/StorylineReader/StorylineReaderPage')
+);
+const V2ArticleReaderPage = React.lazy(
+  () => import('./v2/pages/ArticleReader/ArticleReaderPage')
 );
 const V2HubPage = React.lazy(() => import('./v2/pages/Hub/HubPage'));
 const V2SituationsPage = React.lazy(
@@ -278,6 +281,9 @@ function App() {
                 {/* Retired classic paths → News home */}
                 <Route path='/classic/*' element={<Navigate to={NEWS_HOME} replace />} />
                 <Route path='/classic' element={<Navigate to={NEWS_HOME} replace />} />
+                <Route path='/:domain/articles/:articleId' element={<V2UserLayout />}>
+                  <Route index element={<V2ArticleReaderPage />} />
+                </Route>
                 <Route path='/:domain/*' element={<LegacyDomainHomeRedirect />} />
                 <Route path='/:domain' element={<LegacyDomainHomeRedirect />} />
                 <Route path='*' element={<Navigate to={NEWS_HOME} replace />} />

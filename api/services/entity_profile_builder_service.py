@@ -713,29 +713,64 @@ def _set_profile_build_statement_timeout(cur) -> None:
     cur.execute("SET LOCAL statement_timeout = %s", (str(_profile_build_db_timeout_ms()),))
 
 
-def get_entity_profile_ids_to_build(limit: int = 20) -> list[int]:
-    """Return buildable profile IDs: pipeline-active domains with context mentions."""
+def _entity_profile_build_select_filters() -> tuple[str, tuple[Any, ...], str, str] | None:
+    """Shared WHERE for backlog, COUNT, and ID selection (matches builder batch queue)."""
     from api.shared.entity_profile_eligibility import sql_entity_profile_selectable_for_build
     from api.shared.pipeline_domain_sql import pipeline_domain_any_sql
 
-    conn = get_db_connection()
-    if not conn:
-        return []
     domain_sql, domain_keys = pipeline_domain_any_sql(
         "ep.domain_key", phase="entity_profile_build"
     )
     if not domain_keys:
-        return []
+        return None
     upstream_sql = ""
     if _entity_profile_upstream_gate_for_select():
         upstream_sql = f" AND {sql_entity_profile_upstream_cleared_exists()} "
     selectable = sql_entity_profile_selectable_for_build("ep")
+    return domain_sql, tuple(domain_keys), upstream_sql, selectable
+
+
+def count_entity_profile_ids_to_build() -> int:
+    """Count profiles that ``get_entity_profile_ids_to_build`` can select (same filters, no LIMIT)."""
+    filters = _entity_profile_build_select_filters()
+    if not filters:
+        return 0
+    domain_sql, domain_keys, upstream_sql, selectable = filters
+    conn = get_db_connection()
+    if not conn:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            _set_profile_build_statement_timeout(cur)
+            cur.execute(
+                f"""
+                SELECT COUNT(*) FROM intelligence.entity_profiles ep
+                WHERE {domain_sql}
+                  AND {selectable}
+                  {upstream_sql}
+                """,
+                (domain_keys,),
+            )
+            return int(cur.fetchone()[0] or 0)
+    finally:
+        conn.close()
+
+
+def get_entity_profile_ids_to_build(limit: int = 20) -> list[int]:
+    """Return buildable profile IDs: pipeline-active domains with context mentions."""
+    filters = _entity_profile_build_select_filters()
+    if not filters:
+        return []
+    domain_sql, domain_keys, upstream_sql, selectable = filters
     if entity_profile_build_priority_first_pass():
         order_sql = (
             "(ep.sections IS NULL OR ep.sections = '[]'::jsonb) DESC, ep.updated_at ASC NULLS FIRST"
         )
     else:
         order_sql = "ep.updated_at ASC NULLS FIRST"
+    conn = get_db_connection()
+    if not conn:
+        return []
     try:
         with conn.cursor() as cur:
             _set_profile_build_statement_timeout(cur)

@@ -30,7 +30,8 @@ def build_vault_hub_pack(
 
     domain_key = str(hub.get("domain_key") or domain or "politics")
     schema = resolve_domain_schema(domain_key)
-    members = [int(x) for x in (hub.get("member_storyline_ids") or [])]
+    registry_members = [int(x) for x in (hub.get("member_storyline_ids") or []) if int(x) > 0]
+    members = list(registry_members)
     seeds = [int(x) for x in (hub.get("seed_entity_ids") or [])]
     vault_path = hub.get("vault_path") or ""
 
@@ -94,8 +95,39 @@ def build_vault_hub_pack(
 
     member_cards: list[dict[str, Any]] = []
     timeline: list[dict[str, Any]] = []
+    stale_registry_count = 0
     with get_ui_db_connection_context() as conn:
         with conn.cursor() as cur:
+            from api.shared.storyline_id_lineage import (
+                batch_resolve_active_storyline_ids_with_cursor,
+                ordered_active_hub_member_ids,
+            )
+
+            if registry_members:
+                resolved_map = batch_resolve_active_storyline_ids_with_cursor(
+                    cur, domain_key, schema, registry_members
+                )
+                members = ordered_active_hub_member_ids(registry_members, resolved_map)
+                stale_registry_count = max(0, len(registry_members) - len(members))
+            if members != registry_members and registry_members:
+                try:
+                    import threading
+                    from services.vault_cluster_hub_service import (
+                        patch_hub_member_registry,
+                    )
+
+                    _hub_snap = dict(hub)
+                    _resolved = list(members)
+
+                    threading.Thread(
+                        target=lambda: patch_hub_member_registry(
+                            _hub_snap, _resolved
+                        ),
+                        name=f"hub-members-{hub.get('cluster_key') or hub.get('id')}",
+                        daemon=True,
+                    ).start()
+                except Exception as _patch_exc:
+                    logger.debug("hub member registry patch: %s", _patch_exc)
             if members:
                 cur.execute(
                     f"""
@@ -193,6 +225,9 @@ def build_vault_hub_pack(
             "domain_key": domain_key,
             "vault_path": vault_path,
             "member_storyline_ids": members,
+            "registry_member_count": len(registry_members),
+            "active_member_count": len(members),
+            "stale_registry_count": stale_registry_count,
             "seed_entity_ids": seeds,
             "href": hub.get("href") or f"/hubs/{hub.get('cluster_key') or hub['id']}",
             "tags": hub.get("tags") or [],
@@ -215,7 +250,11 @@ def build_vault_hub_pack(
                 "cluster_key": h.get("cluster_key"),
                 "title": h.get("title"),
                 "href": h.get("href"),
-                "member_count": len(h.get("member_storyline_ids") or []),
+                "member_count": int(
+                    h.get("active_member_count")
+                    if h.get("active_member_count") is not None
+                    else len(h.get("member_storyline_ids") or [])
+                ),
                 "current_brief": (
                     sanitize_reader_prose(
                         (h.get("current_brief") or "")[:800],
@@ -225,7 +264,9 @@ def build_vault_hub_pack(
                     or None
                 ),
             }
-            for h in list_cluster_hubs(domain_key=domain_key, limit=12)
+            for h in list_cluster_hubs(
+                domain_key=domain_key, limit=12, resolve_members=True
+            )
             if h["id"] != hub["id"]
         ][:8],
     }

@@ -20,7 +20,9 @@ async def list_vault_hubs(
     from api.shared.llm_text_sanitize import sanitize_reader_prose
 
     try:
-        hubs = list_cluster_hubs(domain_key=domain, limit=limit)
+        hubs = list_cluster_hubs(
+            domain_key=domain, limit=limit, resolve_members=True
+        )
         cleaned = []
         for h in hubs:
             row = dict(h)

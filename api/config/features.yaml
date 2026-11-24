@@ -14,7 +14,11 @@ unified_intake_extraction:
   flags:
     env: UNIFIED_INTAKE_EXTRACTION_ENABLED
   archive_path: null
-  notes: Sole intake LLM path
+  notes: >-
+    Sole intake LLM path. Throughput: UNIFIED_INTAKE_EXTRACTION_BATCH_SIZE (max 8),
+    UNIFIED_INTAKE_EXTRACTION_PARALLEL, UNIFIED_INTAKE_EXTRACTION_ARTICLES_PER_DOMAIN.
+    Do not set UNIFIED_INTAKE_DEFER_CONTEXT_SYNC in steady state (fusion should inline
+    context + claims; defer is for BULK_CATCHUP only unless explicitly tuning).
 
 entity_extraction:
   lifecycle: archived
@@ -604,10 +608,10 @@ chronological_events_catchup:
   flags:
     env: CHRONOLOGICAL_EVENTS_CATCHUP_ENABLED
   notes: >
-    Re-extract chronological_events for UIE-complete articles that have none
-    (post-flush recovery). Direct EventExtractionService path; does not redo UIE.
-    Feeds story_continuation input queue. Backlog-scheduled + handoff from UIE
-    via api/shared/pipeline_handoffs.py (after_unified_intake).
+    Re-extract chronological_events for UIE-stamped or enriched+entity articles
+    with none (post-flush / legacy-intake gap). EventExtractionService path.
+    Feeds story_continuation. SPINE_COMPOUNDING_* gates auto_approve when CE flows.
+    Handoff from UIE via pipeline_handoffs.after_unified_intake.
 
 legacy_editorial_writers:
   lifecycle: archived
@@ -747,6 +751,22 @@ event_core_membership:
     Legacy TE typed evidence (migration 280). Attach SSOT superseded by
     episode_container_assembly (events→episodes via signature). TE/hubs are
     containers that never own articles. Split hygiene still useful for migrate.
+
+narrative_source_stage_patch:
+  lifecycle: staged
+  enabled: false
+  introduced_in: "12.1.0"
+  modules:
+    - api/shared/narrative_source_stage_patch.py
+    - api/shared/storyline_id_lineage.py
+    - api/services/storyline_assembly_service.py
+  flags:
+    env: NARRATIVE_SOURCE_STAGE_PATCH
+  notes: >
+    Patch v1 assembly allow-list: cron discovery off (save_to_db false), proactive
+    promote gated, EEL→derived bag reconcile per run. Enable with
+    NARRATIVE_SOURCE_STAGE_PATCH=v1 or FEATURE_OVERRIDE_NARRATIVE_SOURCE_STAGE_PATCH=true.
+    Operator override: STORYLINE_ASSEMBLY_OPERATOR_OVERRIDE=true.
 
 episode_container_assembly:
   lifecycle: incorporated

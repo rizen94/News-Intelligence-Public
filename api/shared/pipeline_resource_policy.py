@@ -25,6 +25,16 @@ from enum import Enum
 import logging
 
 from api.config.runtime import env_bool, env_set, env_setdefault, env_str
+from api.shared.pipeline_processing_lanes import (
+    DEBT_PRODUCT_BAND_PHASES,
+    FRESH_STRUCTURE_BAND_PHASES,
+    STRUCTURE_BAND_PHASES,
+    debt_product_band_pending,
+    fresh_structure_band_pending,
+    lane_a_clear,
+    structure_band_pending as _lanes_structure_band_pending,
+    structure_catchup_pending as _lanes_structure_catchup_pending,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -519,20 +529,11 @@ _INTAKE_FIRST_GPU_DEFER_PHASES = frozenset(
     }
 )
 
-# Never deferred by intake-preprocess gate (ops / drains that clear the spine,
-# plus Widow-local structure drains that must not starve behind enrichment).
-_INTAKE_PREPROCESS_DEFER_EXEMPT: frozenset[str] = frozenset(
-    {
-        *INTAKE_PREPROCESS_PHASES,
-        "health_check",
-        "pending_db_flush",
-        "rss_feed_health",
-        "mention_resolution",
-        "entity_profile_build",
-        "storyline_membership_review",
-        "storyline_hygiene",
-    }
-)
+def intake_preprocess_defer_exempt() -> frozenset[str]:
+    """Phases allowed while lane A is hot — see ``pipeline_processing_lanes``."""
+    from api.shared.pipeline_processing_lanes import intake_preprocess_defer_exempt_phases
+
+    return intake_preprocess_defer_exempt_phases()
 
 
 def intake_preprocess_clear_threshold() -> int:
@@ -652,7 +653,7 @@ def bulk_extract_compete_defer_phase(
         return False
 
     # Hard gate: while core preprocess backlog is hot, defer all post-band work.
-    if intake_preprocess_hot(p) and phase_name not in _INTAKE_PREPROCESS_DEFER_EXEMPT:
+    if intake_preprocess_hot(p) and phase_name not in intake_preprocess_defer_exempt():
         return True
     # Prefer finishing unified intake before assembly/GPU peers burn PopOS slots.
     if (
@@ -721,66 +722,21 @@ def apply_intake_mode_pending_mask(counts: dict[str, int]) -> dict[str, int]:
     return out
 
 
-# Post-intake Band 1 — structure / new-material drains (before refinement filler).
-STRUCTURE_BAND_PHASES: frozenset[str] = frozenset(
-    {
-        "mention_resolution",
-        "entity_profile_build",
-        "storyline_assembly",
-        "storyline_automation",
-        "storyline_review_agent",
-        "event_tracking",
-        "chronological_events_catchup",
-        "event_deduplication",
-        "story_continuation",
-        "episode_assembly_maintenance",
-        "editorial_research_pass",
-        "editorial_narrative_pass",
-        "editorial_reduction_pass",
-        "graph_connection_distillation",
-        "embedding_link_candidates",
-        "collision_sampling",
-        "stimulus_rag",
-        "protein_harden",
-    }
-)
-
-
 def structure_band_pending(pending: dict[str, int] | None = None) -> int:
-    p = pending or {}
-    return sum(int(p.get(ph, 0) or 0) for ph in STRUCTURE_BAND_PHASES)
+    return _lanes_structure_band_pending(pending)
 
 
 def post_process_preferred(pending: dict[str, int] | None = None) -> bool:
-    """True when preprocess is stable and structure-band backlog still needs churn."""
+    """True when lane A is clear, preprocess stable, and fresh or debt structure needs churn."""
     if not post_process_preferred_enabled():
         return False
-    return preprocess_stable(pending) and structure_band_pending(pending) > 0
-
-
-# Pending sum used to decide when structure catchup is "hot" (defers refinement).
-_STRUCTURE_CATCHUP_PENDING_PHASES: frozenset[str] = frozenset(
-    {
-        "mention_resolution",
-        "entity_profile_build",
-        "storyline_assembly",
-        "storyline_automation",
-        "storyline_review_agent",
-        "event_tracking",
-        "chronological_events_catchup",
-        "event_deduplication",
-        "story_continuation",
-        "episode_assembly_maintenance",
-        "editorial_research_pass",
-        "editorial_narrative_pass",
-        "editorial_reduction_pass",
-        "graph_connection_distillation",
-        "embedding_link_candidates",
-        "collision_sampling",
-        "stimulus_rag",
-        "protein_harden",
-    }
-)
+    if not lane_a_clear(pending):
+        return False
+    if not preprocess_stable(pending):
+        return False
+    return (
+        fresh_structure_band_pending(pending) > 0 or debt_product_band_pending(pending) > 0
+    )
 
 # Tier.REFINEMENT phases that still belong in the structure band (linking), not filler.
 _STRUCTURE_BAND_REFINEMENT_EXEMPT: frozenset[str] = frozenset(
@@ -802,8 +758,7 @@ def structure_catchup_refinement_defer_threshold() -> int:
 
 
 def structure_catchup_pending(pending: dict[str, int] | None = None) -> int:
-    p = pending or {}
-    return sum(int(p.get(ph, 0) or 0) for ph in _STRUCTURE_CATCHUP_PENDING_PHASES)
+    return _lanes_structure_catchup_pending(pending)
 
 
 def structure_catchup_hot(pending: dict[str, int] | None = None) -> bool:

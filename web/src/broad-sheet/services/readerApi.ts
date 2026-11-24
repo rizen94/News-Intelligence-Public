@@ -138,6 +138,17 @@ export type ReaderPackResponse = {
     title?: string;
     href?: string;
   } | null;
+  intelligence_contexts?: ReaderContextSnapshot[];
+};
+
+export type ReaderContextSnapshot = {
+  context_id: number;
+  title?: string | null;
+  excerpt?: string | null;
+  article_id?: number | null;
+  updated_at?: string | null;
+  href?: string | null;
+  article_href?: string | null;
 };
 
 export async function fetchReaderHome(
@@ -162,11 +173,23 @@ export async function fetchReaderStoryline(
   domain: string
 ): Promise<ReaderPackResponse> {
   const api = getApi();
-  const { data } = await api.get<ReaderPackResponse>(
-    `/api/reader/storylines/${storylineId}`,
-    { params: { domain } }
-  );
-  return data;
+  try {
+    const { data } = await api.get<ReaderPackResponse>(
+      `/api/reader/storylines/${storylineId}`,
+      { params: { domain } }
+    );
+    return data;
+  } catch (err: unknown) {
+    const ax = err as {
+      response?: { data?: { detail?: string | unknown } };
+      message?: string;
+    };
+    const detail = ax.response?.data?.detail;
+    if (typeof detail === 'string' && detail.trim()) {
+      throw new Error(detail);
+    }
+    throw new Error(ax.message || 'Failed to load storyline');
+  }
 }
 
 export type VaultHubPackResponse = {
@@ -178,6 +201,9 @@ export type VaultHubPackResponse = {
     domain_key: string;
     vault_path?: string;
     member_storyline_ids?: number[];
+    active_member_count?: number;
+    registry_member_count?: number;
+    stale_registry_count?: number;
     seed_entity_ids?: number[];
     href?: string;
     tags?: string[];

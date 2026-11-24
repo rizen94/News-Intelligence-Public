@@ -26,11 +26,14 @@ BATCH_PHASES_CONTINUOUS = {
     "timeline_generation",
     "topic_clustering",
     "event_extraction",
+    "event_deduplication",
     "content_refinement_queue",
     # Severe backlog drains - without continuous requeue these starve behind claim_extraction
     "story_enhancement",
     "storyline_discovery",
     "storyline_assembly",
+    "research_paper_profiling",
+    "claim_evidence_appraisal",
 }
 
 # When these phases have pending >= AUTOMATION_BACKLOG_SEVERE_THRESHOLD, claim_extraction

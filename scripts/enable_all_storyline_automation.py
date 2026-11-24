@@ -38,7 +38,9 @@ except ImportError:
 
 # DB credentials are sourced from .env at script entry. The legacy .db_password_widow file was removed in the credential-sourcing migration.
 
-SCHEMAS = ("politics", "finance", "science_tech")
+from api.shared.domain_registry import get_pipeline_schema_names_active
+
+SCHEMAS = get_pipeline_schema_names_active()
 VALID_MODES = ("suggest_only", "review_queue", "manual", "auto_approve")
 
 

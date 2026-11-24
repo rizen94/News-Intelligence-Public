@@ -38,6 +38,7 @@ Use this index for **current** documentation. See **[../PROJECT_STATUS.md](../PR
 | Doc | Purpose |
 |-----|---------|
 | [KNOWLEDGE_LOOP.md](KNOWLEDGE_LOOP.md) | **Product intent** — content improves over time; materiality gate, prior canonical, narrow debt, vault twin. |
+| [NARRATIVE_ASSEMBLY_SOURCE_STAGES.md](NARRATIVE_ASSEMBLY_SOURCE_STAGES.md) | **Agent SSOT** — sources, pipeline stages S0–S6, attach constraints, mixed-bag rules; skip assembly research. |
 | [RESEARCH_PAPER_PATHWAY.md](RESEARCH_PAPER_PATHWAY.md) | Research twin — papers → appraisal → subject ledger / knowledge_profiles → `/research` board. |
 | [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md) | System map — routes, UI, services. |
 | [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) | Hosts, DB, Widow, scripts, pipeline visibility. |

@@ -645,11 +645,19 @@ def list_morning_expansions(
                 with get_db_connection_context() as conn:
                     with conn.cursor() as cur:
                         cur.execute(
-                            f"SELECT COALESCE(article_count, 0) FROM {schema}.storylines WHERE id = %s",
+                            f"""
+                            SELECT COALESCE(article_count, 0)
+                            FROM {schema}.storylines
+                            WHERE id = %s
+                              AND merged_into_id IS NULL
+                              AND COALESCE(status, 'active') NOT IN ('merged', 'deleted', 'archived')
+                            """,
                             (sid,),
                         )
                         r = cur.fetchone()
-                        acount = int(r[0] or 0) if r else 0
+                        if r is None:
+                            continue
+                        acount = int(r[0] or 0)
                         cur.execute(
                             f"""
                             SELECT a.title
@@ -837,4 +845,28 @@ def list_priority_current_event_arcs(*, limit: int = 40) -> list[dict[str, Any]]
             -int(r.get("age_days") or 0),
         )
     )
+    ranked = _filter_arcs_with_live_storyline_rows(ranked)
     return ranked[:lim]
+
+
+def _filter_arcs_with_live_storyline_rows(arcs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop vault arcs whose storyline_id does not resolve; rewrite id to canonical."""
+    try:
+        from api.shared.storyline_id_lineage import resolve_canonical_storyline_id
+    except Exception:
+        return arcs
+
+    out: list[dict[str, Any]] = []
+    for arc in arcs:
+        dk = str(arc.get("domain_key") or "")
+        sid = int(arc.get("storyline_id") or arc.get("object_id") or 0)
+        if sid <= 0 or not dk:
+            continue
+        canonical = resolve_canonical_storyline_id(dk, sid)
+        if canonical <= 0:
+            continue
+        patched = dict(arc)
+        patched["storyline_id"] = canonical
+        patched["object_id"] = canonical
+        out.append(patched)
+    return out

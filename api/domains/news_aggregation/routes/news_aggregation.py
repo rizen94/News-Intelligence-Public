@@ -30,9 +30,8 @@ from api.shared.services.llm_service import TaskType, llm_service
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(
-    prefix="/api", tags=["News Aggregation"], responses={404: {"description": "Not found"}}
-)
+# Mounted at ``/api`` in main.py — do not add another ``/api`` prefix (see CODING_STYLE_GUIDE).
+router = APIRouter(tags=["News Aggregation"], responses={404: {"description": "Not found"}})
 
 
 @router.get("/health")

@@ -80,8 +80,15 @@ class RAGAnalysisService(DomainAwareService):
                     if not articles:
                         return {"success": False, "error": "No articles in storyline"}
 
-                    # Build comprehensive context
-                    context = await self._build_comprehensive_context(storyline, articles)
+                    from services.storyline_member_synthesis_service import (
+                        build_member_evidence_context,
+                        filter_members_on_topic,
+                    )
+
+                    story_title = str(storyline.get("title") or "")
+                    article_dicts = [dict(a) for a in articles]
+                    on_topic = filter_members_on_topic(story_title, article_dicts)
+                    context = build_member_evidence_context(story_title, on_topic or article_dicts)
 
                     # Retrieve historical context (if available)
                     historical_context = await self._retrieve_historical_context(
@@ -94,20 +101,53 @@ class RAGAnalysisService(DomainAwareService):
                     analysis_result = await llm_service.generate_storyline_analysis(analysis_prompt)
 
                     if analysis_result.get("success"):
-                        # Extract insights
+                        analysis_text = str(analysis_result.get("analysis", "") or "")
                         insights = await self._extract_insights(
-                            analysis_result.get("analysis", ""), storyline_id
+                            analysis_text, storyline_id
                         )
-
-                        # Update storyline with analysis — both columns for pipeline compatibility
+                        lede = (
+                            analysis_text.split("\n\n", 1)[0].strip()[:1200]
+                            if analysis_text
+                            else ""
+                        )
+                        editorial_doc = {
+                            "lede": lede,
+                            "analysis": analysis_text,
+                            "developments": [],
+                            "sources": list(
+                                {
+                                    str(a.get("source_domain") or "")
+                                    for a in (on_topic or article_dicts)
+                                    if a.get("source_domain")
+                                }
+                            ),
+                            "generated_at": datetime.now().isoformat(),
+                            "based_on_articles": [
+                                int(a["id"]) for a in (on_topic or article_dicts) if a.get("id")
+                            ],
+                            "source": "member_citation_synthesis",
+                        }
                         cur.execute(
                             f"""
                             UPDATE {self.schema}.storylines
-                            SET analysis_summary = %s, master_summary = %s,
-                                updated_at = %s
+                            SET analysis_summary = %s,
+                                master_summary = %s,
+                                editorial_document = %s::jsonb,
+                                document_status = 'rag_analyzed',
+                                document_version = COALESCE(document_version, 0) + 1,
+                                ml_processing_status = 'completed',
+                                updated_at = %s,
+                                last_refinement = %s
                             WHERE id = %s
                         """,
-                            (analysis_result.get("analysis", ""), analysis_result.get("analysis", ""), datetime.now(), storyline_id),
+                            (
+                                analysis_text,
+                                analysis_text,
+                                json.dumps(editorial_doc),
+                                datetime.now(),
+                                datetime.now(),
+                                storyline_id,
+                            ),
                         )
 
                         conn.commit()
@@ -116,9 +156,10 @@ class RAGAnalysisService(DomainAwareService):
                             "success": True,
                             "data": {
                                 "storyline_id": storyline_id,
-                                "analysis": analysis_result.get("analysis", ""),
+                                "analysis": analysis_text,
                                 "insights": insights,
-                                "articles_analyzed": len(articles),
+                                "articles_analyzed": len(on_topic or article_dicts),
+                                "articles_linked": len(articles),
                                 "context_retrieved": historical_context is not None,
                             },
                         }

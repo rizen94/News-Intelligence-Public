@@ -77,6 +77,25 @@ export const articlesApi = {
     }
   },
 
+  async fetchFullContent(id: string | number, domain?: string) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().post(
+        `/api/${domainKey}/articles/${id}/fetch-full-content`,
+        {},
+        { timeout: 120000 }
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch full article content', error as Error);
+      return {
+        success: false,
+        message: (error as Error).message,
+        data: { content: '' },
+      };
+    }
+  },
+
   async deleteArticle(id: string | number, domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();

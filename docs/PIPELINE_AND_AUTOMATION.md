@@ -9,6 +9,7 @@
 | Concern | Location |
 |---------|----------|
 | **Scheduled enqueue SSOT** | `api/services/pipeline_controller.py` → `PipelineController.run` / `_replan` → `pick_next_phases` (flat mode default) → `AutomationManager.reconcile_and_enqueue` |
+| **Processing lanes (A→D)** | [PIPELINE_PROCESSING_LANES.md](PIPELINE_PROCESSING_LANES.md) → `api/shared/pipeline_processing_lanes.py` |
 | Admission / mode machine | `api/shared/pipeline_admission.py` + `orchestrator_governance.yaml` → `pipeline_controller.modes` |
 | Task names, `depends_on`, phase numbers, default intervals | `api/services/automation_manager.py` → `self.schedules` |
 | Per-task implementation | Same file → `async def _execute_<task_name>` (grep `_execute_`) |

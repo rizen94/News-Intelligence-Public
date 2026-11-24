@@ -376,6 +376,12 @@ class StorylineAutomationService(DomainAwareService):
                                 storyline_id,
                             )
 
+                    from api.shared.spine_compounding import effective_automation_mode
+
+                    automation_mode = effective_automation_mode(
+                        self.domain, automation_mode or "suggest_only"
+                    )
+
                     store_filter_stats: dict[str, int] = {}
                     suggestions_count = 0
                     added_count = 0

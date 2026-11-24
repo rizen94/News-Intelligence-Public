@@ -147,6 +147,7 @@ BACKLOG_ANY_INTERVAL = _bl.BACKLOG_ANY_INTERVAL
 from api.shared.services.automation_run_history_writer import (
     persist_automation_run_history as _persist_automation_run,
 )
+from api.shared.services.automation_run_yield import build_automation_run_yield_metadata
 
 
 # BATCH_PHASES_CONTINUOUS — extracted to services.automation.phase_constants (imported above).
@@ -3943,6 +3944,7 @@ class AutomationManager:
                     task.completed_at,
                     True,
                     None,
+                    metadata=build_automation_run_yield_metadata(task.metadata),
                 )
             # Record completion for last-60m run counts (used by monitoring timeline).
             try:
@@ -3992,27 +3994,21 @@ class AutomationManager:
                             task.name,
                             self._max_requeue_per_window,
                         )
-                    else:
-                        # Batch-check pending for all continuous batch phases + research nudge targets
-                        _batch_phases = BATCH_PHASES_CONTINUOUS | {
-                            "research_paper_profiling",
-                            "claim_evidence_appraisal",
-                        }
-                        _batch_pending = get_all_phase_pending_statuses(_batch_phases)
-                        # Only re-enqueue if we have definitive "no pending" data or batch says has-work.
-                        # Unknown (None) → treat as "has work" to be safe.
-                        phase_pending = _batch_pending.get(task.name, True)
-                        has_pending = phase_pending if phase_pending is not None else True
-                        
-                        if has_pending:
-                            if self._scheduled_enqueue_paused() and task.name not in QUEUE_PAUSE_ALLOW_SCHEDULED:
-                                logger.debug(
-                                    "Queue soft cap: skip continuous re-queue for %s (depth=%s)",
-                                    task.name,
-                                    self._automation_queue_depth(),
-                                )
-                            elif automation_should_defer_new_scheduled_work(task.name) and task.name != "content_enrichment":
-                                logger.debug(
+                    elif await self._has_pending_work(task.name):
+                        if (
+                            self._scheduled_enqueue_paused()
+                            and task.name not in QUEUE_PAUSE_ALLOW_SCHEDULED
+                        ):
+                            logger.debug(
+                                "Queue soft cap: skip continuous re-queue for %s (depth=%s)",
+                                task.name,
+                                self._automation_queue_depth(),
+                            )
+                        elif (
+                            automation_should_defer_new_scheduled_work(task.name)
+                            and task.name != "content_enrichment"
+                        ):
+                            logger.debug(
                                 "DB worker pool pressure — skip continuous re-queue for %s",
                                 task.name,
                             )
@@ -4061,17 +4057,17 @@ class AutomationManager:
                 and not (task.metadata or {}).get("nightly_sequential_drain")
             ):
                 try:
-                    peer_still_pending = False
                     if task.name in BATCH_PHASES_CONTINUOUS:
-                        _batch_phases = (
-                            BATCH_PHASES_CONTINUOUS | {"research_paper_profiling", "claim_evidence_appraisal"}
-                        )
-                        _batch_pending = get_all_phase_pending_statuses(_batch_phases)
-                        peer_still_pending = _batch_pending.get(task.name, False) or False
+                        peer_still_pending = await self._has_pending_work(task.name)
                     else:
                         pc = getattr(self, "_pending_counts", None) or {}
                         peer_still_pending = int(pc.get(task.name, 0) or 0) > 0
                     if not peer_still_pending and research_llm_backlog_pending(max_age_s=15.0) > 0:
+                        _batch_phases = {
+                            "research_paper_profiling",
+                            "claim_evidence_appraisal",
+                        }
+                        _batch_pending = get_all_phase_pending_statuses(_batch_phases)
                         rpp_pending = _batch_pending.get("research_paper_profiling", True)
                         cea_pending = _batch_pending.get("claim_evidence_appraisal", True)
                         if rpp_pending or rpp_pending is None:
@@ -4082,8 +4078,6 @@ class AutomationManager:
                     logger.debug("Research pickup nudge after %s: %s", task.name, e)
 
             # Chain: request any phase that depends on this one so the pipeline keeps moving
-                except Exception:
-                    pass
             if (task.metadata or {}).get("nightly_sequential_drain"):
                 pass
             else:
@@ -4160,6 +4154,7 @@ class AutomationManager:
                     finished_at,
                     False,
                     str(e),
+                    metadata=build_automation_run_yield_metadata(task.metadata),
                 )
                 # Record failure for last-60m run counts (used by monitoring timeline).
                 try:
@@ -4397,6 +4392,7 @@ class AutomationManager:
                 enriched = await loop.run_in_executor(
                     None, lambda: enrich_articles_batch(batch_size=_bs)
                 )
+            task.metadata["articles_enriched"] = int(enriched or 0)
             if enriched and enriched > 0:
                 await self._maybe_request_storyline_assembly_after_enrichment()
         except Exception as e:
@@ -4767,16 +4763,19 @@ class AutomationManager:
 
         from services.context_processor_service import sync_domain_articles_to_contexts
 
+        created_total = 0
         for domain_key in get_pipeline_active_domain_keys():
             try:
                 # Production: 100 contexts/batch, ~5-10s per batch, prevents backlog
                 total = await asyncio.get_event_loop().run_in_executor(
                     None, lambda d=domain_key: sync_domain_articles_to_contexts(d, limit=100)
                 )
+                created_total += int(total or 0)
                 if total > 0:
                     logger.info(f"Context sync {domain_key}: {total} contexts created")
             except Exception as e:
                 logger.warning(f"Context sync {domain_key} failed: {e}")
+        task.metadata["contexts_created"] = created_total
 
     async def _execute_entity_profile_sync(self, task: Task):
         """Sync entity_canonical -> entity_profiles + old_entity_to_new (Phase 1.3 context-centric)."""
@@ -4839,6 +4838,8 @@ class AutomationManager:
                     )
             else:
                 res = await run_claim_extraction_batch(limit=nlim)
+                task.metadata["claims_inserted"] = int(res.claims_inserted or 0)
+                task.metadata["rows_processed"] = int(getattr(res, "rows_processed", 0) or 0)
                 if res.claims_inserted > 0:
                     logger.info(
                         "Claim extraction: %s claims inserted",
@@ -5060,8 +5061,18 @@ class AutomationManager:
 
         try:
             result = await run_profile_builder_batch(limit=25)  # v8
+            task.metadata["batch_updated"] = int(result.updated)
+            task.metadata["batch_attempted"] = int(result.attempted)
+            task.metadata["profiles_updated"] = int(result.updated)
+            task.metadata["profiles_attempted"] = int(result.attempted)
+            task.metadata["profiles_skipped_unchanged"] = int(result.skipped_unchanged)
             if result.updated > 0:
                 logger.info(f"Entity profile build: {result.updated} profiles updated")
+            elif result.attempted == 0:
+                task.metadata.setdefault("_was_skipped", True)
+                task.metadata.setdefault("skip_automation_run_history", True)
+            else:
+                task.metadata.setdefault("skip_automation_run_history", True)
         except Exception as e:
             logger.warning(f"Entity profile build failed: {e}")
 
@@ -5205,6 +5216,8 @@ class AutomationManager:
         try:
             auto_enqueue_comprehensive_rag_for_automation()
             stats = await process_content_refinement_queue_batch()
+            task.metadata["refinement_processed"] = int(stats.get("processed") or 0)
+            task.metadata["refinement_failed"] = int(stats.get("failed") or 0)
             logger.info(
                 "Content refinement queue: pending_before=%s processed=%s failed=%s by_type=%s pending_after=%s",
                 stats.get("pending_before"),
@@ -5321,7 +5334,12 @@ class AutomationManager:
             metadata=nightly_meta,
         )
         await self._execute_task(task, "nightly_sequential_drain")
-        return {"skipped": False}
+        meta = task.metadata or {}
+        return {
+            "skipped": False,
+            "batch_updated": meta.get("batch_updated"),
+            "batch_attempted": meta.get("batch_attempted"),
+        }
 
     async def _execute_entity_enrichment(self, task: Task):
         """Phase 3 RAG: Run entity enrichment batch (Wikipedia -> entity_profiles + versioned_facts)."""
@@ -6675,9 +6693,30 @@ class AutomationManager:
             # Bound O(n²) pair materialization — do not use the full 10k fetch default.
             discovery_article_limit = assembly_discovery_article_cap()
             total_created = 0
-            for domain in get_pipeline_active_domain_keys():
+            deferred_sprawl = 0
+            consolidation_merges = 0
+            from services.storyline_assembly_service import (
+                domain_storyline_sprawl_active,
+                run_consolidation_for_domain,
+                sort_domains_for_linkage_work,
+            )
+
+            loop = asyncio.get_event_loop()
+            for domain in sort_domains_for_linkage_work(get_pipeline_active_domain_keys()):
                 try:
-                    loop = asyncio.get_event_loop()
+                    if domain_storyline_sprawl_active(domain):
+                        cons = await loop.run_in_executor(
+                            None, lambda d=domain: run_consolidation_for_domain(d)
+                        )
+                        consolidation_merges += int(cons.get("merges_performed") or 0)
+                        if domain_storyline_sprawl_active(domain):
+                            deferred_sprawl += 1
+                            logger.info(
+                                "Storyline discovery [%s]: deferred (sprawl; merges=%s)",
+                                domain,
+                                cons.get("merges_performed"),
+                            )
+                            continue
                     result = await loop.run_in_executor(
                         None,
                         lambda d=domain: service.discover_storylines(
@@ -6713,6 +6752,9 @@ class AutomationManager:
                     if is_ollama_pressure_error(e):
                         raise
                     logger.warning("Storyline discovery failed for %s: %s", domain, e)
+            task.metadata["storylines_saved"] = int(total_created)
+            task.metadata["discovery_deferred_sprawl"] = int(deferred_sprawl)
+            task.metadata["consolidation_merges"] = int(consolidation_merges)
             logger.info("Storyline discovery complete: %d new storylines created", total_created)
             if total_created > 0:
                 try:
@@ -6768,17 +6810,30 @@ class AutomationManager:
             logger.warning("Proactive detection task failed: %s", e)
 
     async def _execute_storyline_assembly(self, task: Task):
-        """Run proactive detection + discovery + automation for one domain or all pipeline domains."""
+        """Run proactive detection + discovery + automation for one domain or domains above threshold."""
         from services.storyline_assembly_service import (
-            run_storyline_assembly_all_domains,
+            domains_needing_assembly,
             run_storyline_assembly_for_domain,
         )
 
         meta = task.metadata or {}
         domain = meta.get("domain")
+        if not domain and not meta.get("operator_request"):
+            needing = domains_needing_assembly()
+            if not needing:
+                task.metadata.setdefault("_was_skipped", True)
+                task.metadata.setdefault("skip_automation_run_history", True)
+                logger.debug(
+                    "Storyline assembly: no domains above unlinked threshold — skip"
+                )
+                return None
+        unlinked_before_sum = 0
+        unlinked_after_sum = 0
         try:
             if domain:
                 result = await run_storyline_assembly_for_domain(domain)
+                unlinked_before_sum = int(result.get("unlinked_before") or 0)
+                unlinked_after_sum = int(result.get("unlinked_after") or 0)
                 logger.info(
                     "Storyline assembly [%s]: unlinked %s → %s steps=%s",
                     domain,
@@ -6787,8 +6842,10 @@ class AutomationManager:
                     list((result.get("steps") or {}).keys()),
                 )
             else:
-                batch = await run_storyline_assembly_all_domains()
-                for dk, res in (batch.get("domains") or {}).items():
+                for dk in domains_needing_assembly():
+                    res = await run_storyline_assembly_for_domain(dk)
+                    unlinked_before_sum += int(res.get("unlinked_before") or 0)
+                    unlinked_after_sum += int(res.get("unlinked_after") or 0)
                     if res.get("unlinked_before", 0) != res.get("unlinked_after", 0):
                         logger.info(
                             "Storyline assembly [%s]: unlinked %s → %s",
@@ -6798,6 +6855,9 @@ class AutomationManager:
                         )
         except Exception as e:
             logger.warning("Storyline assembly failed: %s", e)
+        if unlinked_before_sum or unlinked_after_sum:
+            task.metadata["unlinked_before"] = unlinked_before_sum
+            task.metadata["unlinked_after"] = unlinked_after_sum
 
     async def _execute_fact_verification(self, task: Task):
         """v8: Verify recent claims per domain (governance-weighted corroboration, Wikipedia + internal checks; results returned to logs/API, not persisted on claim rows)."""
@@ -7871,6 +7931,8 @@ class AutomationManager:
             if last_run and collection_started_at and last_run >= collection_started_at:
                 continue
             has_work = (pending_counts.get(phase_name) or 0) > 0
+            if not has_work and phase_name in BATCH_PHASES_CONTINUOUS:
+                has_work = await self._has_pending_work(phase_name)
             if (
                 not has_work
                 and phase_name not in pending_counts
@@ -7885,6 +7947,109 @@ class AutomationManager:
                     logger.debug("Watchdog request_phase %s: %s", phase_name, e)
         if requested:
             logger.info("Collection watchdog: requested phases (add to queue) %s", requested)
+
+    async def _has_pending_work(self, phase_name: str) -> bool:
+        """True when this continuous phase still has drainable work (re-enqueue + watchdog)."""
+        if phase_name not in BATCH_PHASES_CONTINUOUS:
+            return False
+        pc = getattr(self, "_pending_counts", None) or {}
+        if int(pc.get(phase_name, 0) or 0) > 0:
+            return True
+        if get_all_phase_pending_statuses:
+            try:
+                st = get_all_phase_pending_statuses({phase_name}).get(phase_name)
+                if st is True:
+                    return True
+                if st is False:
+                    return False
+            except Exception as e:
+                logger.debug("_has_pending_work status %s: %s", phase_name, e)
+        try:
+            conn = await self._get_db_connection()
+            if not conn:
+                return False
+            cur = conn.cursor()
+            try:
+                if phase_name == "event_deduplication":
+                    from api.shared.domain_registry import get_pipeline_schema_names_active
+
+                    seen: set[str] = set()
+                    for schema in ("public", *get_pipeline_schema_names_active()):
+                        if schema in seen:
+                            continue
+                        seen.add(schema)
+                        try:
+                            cur.execute(
+                                f"SELECT 1 FROM {schema}.chronological_events "
+                                "WHERE canonical_event_id IS NULL LIMIT 1"
+                            )
+                            if cur.fetchone():
+                                return True
+                        except Exception:
+                            continue
+                elif phase_name == "story_enhancement":
+                    cur.execute(
+                        "SELECT 1 FROM intelligence.fact_change_log WHERE processed = FALSE LIMIT 1"
+                    )
+                    if cur.fetchone():
+                        return True
+                    cur.execute(
+                        "SELECT 1 FROM intelligence.story_update_queue WHERE processed = FALSE LIMIT 1"
+                    )
+                    if cur.fetchone():
+                        return True
+                elif phase_name == "research_paper_profiling":
+                    cur.execute(
+                        """
+                        SELECT 1 FROM intelligence.research_paper_profiles
+                        WHERE extraction_status IN ('pending', 'failed') LIMIT 1
+                        """
+                    )
+                    if cur.fetchone():
+                        return True
+                elif phase_name == "claim_evidence_appraisal":
+                    try:
+                        from services.claim_evidence_appraisal_service import is_enabled
+
+                        if not is_enabled():
+                            return False
+                    except Exception:
+                        return False
+                    cur.execute(
+                        """
+                        SELECT 1 FROM intelligence.processed_documents pd
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM intelligence.claim_evidence_appraisal a
+                            WHERE a.document_id = pd.id
+                        )
+                        AND (
+                            COALESCE(pd.metadata->>'literature', '') IN ('true', '1')
+                            OR pd.source_type IN ('europepmc', 'pubmed', 'literature')
+                        )
+                        LIMIT 1
+                        """
+                    )
+                    if cur.fetchone():
+                        return True
+                elif phase_name == "content_refinement_queue":
+                    from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
+
+                    if in_nightly_pipeline_window_est():
+                        return False
+                    cur.execute(
+                        """
+                        SELECT 1 FROM intelligence.content_refinement_queue
+                        WHERE status = 'pending' LIMIT 1
+                        """
+                    )
+                    if cur.fetchone():
+                        return True
+            finally:
+                cur.close()
+                conn.close()
+        except Exception as e:
+            logger.debug("_has_pending_work %s: %s", phase_name, e)
+        return False
 
 
 

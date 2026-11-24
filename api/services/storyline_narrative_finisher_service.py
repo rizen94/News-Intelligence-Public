@@ -32,7 +32,7 @@ PROMPT_PATH = (
     / "narrative"
     / "storyline_walkthrough.md"
 )
-PROMPT_VERSION = "storyline_walkthrough.v1"
+PROMPT_VERSION = "storyline_walkthrough.v2"
 
 
 def _schema_name(domain_key: str) -> str | None:
@@ -109,6 +109,26 @@ def _title_theme_tokens(title: str) -> set[str]:
             continue
         tokens.add(t)
     return tokens
+
+
+def _normalize_title_key(title: str) -> str:
+    t = re.sub(r"\W+", " ", (title or "").lower()).strip()
+    return t[:96] if t else ""
+
+
+def _dedupe_article_summaries(
+    summaries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Drop near-duplicate member rows so the finisher is not fed the same headline twice."""
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for row in summaries:
+        key = _normalize_title_key(str(row.get("title") or ""))
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+    return out
 
 
 def _timeline_bullet_on_theme(bullet: str, theme_tokens: set[str]) -> bool:
@@ -399,6 +419,28 @@ def load_finisher_bundle_from_db(
                         }
                     )
 
+                from services.storyline_member_synthesis_service import filter_members_on_topic
+
+                article_dicts = [
+                    {
+                        "id": row["id"],
+                        "title": row.get("title"),
+                        "summary": row.get("summary"),
+                        "content": row.get("content_excerpt"),
+                    }
+                    for row in article_summaries
+                ]
+                on_topic_ids = {
+                    int(a["id"])
+                    for a in filter_members_on_topic(title, article_dicts)
+                    if a.get("id") is not None
+                }
+                if len(on_topic_ids) >= 2:
+                    article_summaries = [
+                        s for s in article_summaries if int(s.get("id") or 0) in on_topic_ids
+                    ]
+                article_summaries = _dedupe_article_summaries(article_summaries)
+
                 entity_highlights: list[str] = []
                 entity_ids: list[int] = []
                 if article_ids:
@@ -610,7 +652,10 @@ FINAL INSTRUCTION: Do NOT write chain-of-thought, scratchpads, or "thinking proc
 Start the response with `## Lede` for THIS title only ({bundle.storyline_title}).
 Ignore timeline or RAG material that is not about this story. Use living vault for durable
 arc background when present. When prior canonical exists, improve it with new evidence rather
-than discarding still-valid sections. After the markdown sections,
+than discarding still-valid sections. Many articles may repeat the same facts — synthesize:
+each distinct development appears once; merge outlet corroboration; no copy-paste per-source
+ledes across sections. List any redundant phrases you removed in JSON `sections_to_deprecate_or_trim`.
+After the markdown sections,
 output a line with exactly ---JSON--- and the JSON object. Do not omit the ---JSON--- marker.
 """
 
@@ -819,11 +864,20 @@ def persist_narrative_finish_to_db(
     if canonical and "## " not in canonical and not canonical.lower().startswith("lede"):
         canonical = strip_llm_wrapping_artifacts(canonical, max_length=12000)
         canonical = strip_trailing_llm_json(canonical)
+    trim_spans = parsed.get("sections_to_deprecate_or_trim")
+    trim_applied = 0
+    trim_unmatched: list[str] = []
+    if canonical and isinstance(trim_spans, list) and trim_spans:
+        canonical, trim_applied, trim_unmatched = apply_sections_to_deprecate_or_trim(
+            canonical, [str(s) for s in trim_spans if s]
+        )
     meta: dict[str, Any] = {
         "prompt_version": run_result.get("prompt_version") or PROMPT_VERSION,
         "suggested_new_entities": parsed.get("suggested_new_entities"),
         "suggested_new_context_hooks": parsed.get("suggested_new_context_hooks"),
         "sections_to_deprecate_or_trim": parsed.get("sections_to_deprecate_or_trim"),
+        "sections_trim_applied": trim_applied,
+        "sections_trim_unmatched": trim_unmatched[:20],
         "open_questions": parsed.get("open_questions"),
         "competing_theories": parsed.get("competing_theories"),
         "insufficient_evidence": parsed.get("insufficient_evidence"),

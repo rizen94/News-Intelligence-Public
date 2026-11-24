@@ -57,6 +57,8 @@ def _bulk_catchup_fast_path() -> bool:
 
 
 def _defer_context_during_bulk() -> bool:
+    # Steady state: inline context + fusion claims (keeps claim_extraction backlog flat).
+    # Bulk/catch-up only: defer context/claims to speed fusion throughput unless overridden.
     if env_str("UNIFIED_INTAKE_DEFER_CONTEXT_SYNC", "").lower() in ("1", "true", "yes"):
         return True
     return _bulk_catchup_fast_path()

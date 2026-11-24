@@ -240,34 +240,52 @@ class EventExtractionService:
 
     def _parse_json_response(self, response: str) -> list[dict]:
         """Extract a JSON array from the LLM response, tolerating markdown fences."""
+
+        def _dict_events(parsed: object) -> list[dict]:
+            if isinstance(parsed, list):
+                return [x for x in parsed if isinstance(x, dict)]
+            if isinstance(parsed, dict):
+                if (parsed.get("event_title") or "").strip():
+                    return [parsed]
+                for k in ("events", "items", "data", "results"):
+                    v = parsed.get(k)
+                    if isinstance(v, list):
+                        return [x for x in v if isinstance(x, dict)]
+            return []
+
         text = response.strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[-1]
         if text.endswith("```"):
             text = text.rsplit("```", 1)[0]
         text = text.strip()
+        if not text:
+            logger.warning("Empty LLM response for event extraction")
+            return []
 
         start = text.find("[")
         end = text.rfind("]")
-        if start == -1 or end == -1:
-            logger.warning("No JSON array found in LLM response")
-            return []
+        if start != -1 and end > start:
+            try:
+                parsed = json.loads(text[start : end + 1])
+            except json.JSONDecodeError as e:
+                logger.warning(f"JSON parse error (array slice): {e}")
+                parsed = None
+            if parsed is not None:
+                events = _dict_events(parsed)
+                if events:
+                    return events
 
+        # Qwen + Ollama ``format: json`` often returns a single object, not an array.
         try:
-            parsed = json.loads(text[start : end + 1])
+            parsed = json.loads(text)
         except json.JSONDecodeError as e:
             logger.warning(f"JSON parse error: {e}")
             return []
-
-        if isinstance(parsed, list):
-            return [x for x in parsed if isinstance(x, dict)]
-        if isinstance(parsed, dict):
-            for k in ("events", "items", "data", "results"):
-                v = parsed.get(k)
-                if isinstance(v, list):
-                    return [x for x in v if isinstance(x, dict)]
-            return []
-        return []
+        events = _dict_events(parsed)
+        if not events:
+            logger.warning("No JSON events found in LLM response")
+        return events
 
     def _normalise_event(
         self,
@@ -427,7 +445,19 @@ class EventExtractionService:
                 embed_and_store_chronological_events,
             )
 
-            n = embed_and_store_chronological_events(conn, text_rows)
+            emb_cur = conn.cursor()
+            try:
+                emb_cur.execute("SAVEPOINT ce_embed_post_save")
+                n = embed_and_store_chronological_events(conn, text_rows)
+                emb_cur.execute("RELEASE SAVEPOINT ce_embed_post_save")
+            except Exception as _emb_err:
+                try:
+                    emb_cur.execute("ROLLBACK TO SAVEPOINT ce_embed_post_save")
+                except Exception:
+                    pass
+                raise _emb_err from _emb_err
+            finally:
+                emb_cur.close()
             if n > 0:
                 logger.info(f"Stored embeddings for {n}/{len(text_rows)} events")
         except Exception as _emb_err:

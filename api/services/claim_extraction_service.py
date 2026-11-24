@@ -391,11 +391,22 @@ def get_claim_extraction_batch_limit() -> int:
     return n
 
 
+def get_claim_extraction_llm_batch_size() -> int:
+    """Contexts per LLM prompt when multi-context batching is enabled (1 = legacy singleton)."""
+    try:
+        n = int(env_str("CLAIM_EXTRACTION_LLM_BATCH_SIZE", "4"))
+    except ValueError:
+        n = 4
+    return max(1, min(12, n))
+
+
 def get_claim_extraction_parallel() -> int:
     """
     Concurrent LLM extractions per batch. No hard upper bound (tune to GPU / Ollama capacity).
-    If CLAIM_EXTRACTION_PARALLEL <= 0, concurrency equals min(batch, claim_pipeline_max_fetch())
-    so fanout tracks batch without spawning more coroutines than contexts selected.
+    When ``CLAIM_EXTRACTION_LLM_BATCH_SIZE`` > 1, this caps concurrent **multi-context** LLM calls
+    (not per-context singleton coroutines). If CLAIM_EXTRACTION_PARALLEL <= 0, concurrency equals
+    min(batch, claim_pipeline_max_fetch()) so fanout tracks batch without spawning more coroutines
+    than contexts selected.
 
     Optional CLAIM_EXTRACTION_PARALLEL_DAYTIME_MAX: when >0 and outside the unified nightly
     pipeline window, parallel is min(env_parallel, daytime_max) so one batch does not saturate
@@ -836,6 +847,221 @@ def _parse_claims_response(raw: str) -> list[tuple[str, str, str, float]]:
     return out
 
 
+def _parse_batched_claims_response(
+    raw: str,
+    expected_ids: list[int],
+) -> dict[int, list[tuple[str, str, str | None, float]]]:
+    """
+  Parse multi-context LLM JSON: top-level keys are context ids (strings),
+  values are claim arrays (same shape as singleton extraction).
+    """
+    out: dict[int, list[tuple[str, str, str | None, float]]] = {cid: [] for cid in expected_ids}
+    if not (raw or "").strip():
+        return out
+    try:
+        start = raw.find("{")
+        if start < 0:
+            return out
+        obj, _ = json.JSONDecoder().raw_decode(raw[start:])
+    except json.JSONDecodeError:
+        return out
+    if not isinstance(obj, dict):
+        return out
+    payload = obj
+    if "contexts" in obj and isinstance(obj.get("contexts"), dict):
+        payload = obj["contexts"]
+    for key, claims_raw in payload.items():
+        try:
+            cid = int(key)
+        except (TypeError, ValueError):
+            continue
+        if cid not in out:
+            continue
+        if isinstance(claims_raw, list):
+            for item in claims_raw:
+                if not isinstance(item, dict):
+                    continue
+                s = (item.get("subject") or item.get("subject_text") or "").strip()
+                p = (item.get("predicate") or item.get("predicate_text") or "").strip()
+                o = (item.get("object") or item.get("object_text") or "").strip()
+                if not (s and p):
+                    continue
+                c = float(item.get("confidence", 0.8))
+                out[cid].append(
+                    (s[:2000], p[:500], o[:2000] if o else None, max(0.0, min(1.0, c)))
+                )
+    return out
+
+
+def _fetch_context_rows_for_claim_batch(
+    context_ids: list[int],
+) -> dict[int, tuple[Any, Any, Any, Any]]:
+    """Bulk-load title, content, metadata, domain_key for context ids."""
+    if not context_ids:
+        return {}
+    conn = get_db_connection()
+    if not conn:
+        return {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, title, content, metadata, domain_key
+                FROM intelligence.contexts
+                WHERE id = ANY(%s)
+                """,
+                (context_ids,),
+            )
+            rows = cur.fetchall() or []
+    finally:
+        conn.close()
+    return {int(r[0]): (r[1], r[2], r[3], r[4]) for r in rows}
+
+
+def _context_credibility_multiplier(metadata: Any) -> float:
+    cred_mult = 1.0
+    if not metadata:
+        return cred_mult
+    try:
+        md = metadata if isinstance(metadata, dict) else json.loads(metadata)
+        if isinstance(md, dict):
+            sc = md.get("source_credibility") or {}
+            cred_mult = float(sc.get("multiplier", 1.0))
+            return max(0.0, min(1.0, cred_mult))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        pass
+    return 1.0
+
+
+def _mark_context_claim_short_text(context_id: int) -> None:
+    try:
+        from api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_context_phase_pass
+
+        if phase_backlog_uses_pass_marker("claim_extraction"):
+            from api.shared.pipeline_pass_marker import TERMINAL_PROCESSED_EMPTY_LEGITIMATE
+
+            record_context_phase_pass(
+                context_id,
+                "claim_extraction",
+                "skipped_short_text",
+                terminal_state=TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
+            )
+    except Exception:
+        pass
+
+
+def _insert_claims_tuples_for_context(
+    context_id: int,
+    claims: list[tuple[str, str, str | None, float]],
+    *,
+    context_domain_key: str | None,
+    cred_mult: float,
+    savepoint_prefix: str = "claim_llm",
+) -> tuple[int, int, int]:
+    """Insert parsed claim tuples; returns (inserted, skipped_generic, skipped_unseeded)."""
+    if not claims:
+        return 0, 0, 0
+    conn = get_db_connection()
+    if not conn:
+        return 0, 0, 0
+    inserted = 0
+    skipped_generic = 0
+    skipped_unseeded = 0
+    strict_domains = _claim_extraction_strict_seeded_domain_keys()
+    strict_seeded = bool(context_domain_key and context_domain_key in strict_domains)
+    from api.shared.pg_savepoint import execute_with_savepoint
+
+    try:
+        with conn.cursor() as cur:
+            for idx, (subject_text, predicate_text, object_text, confidence) in enumerate(claims):
+                if _is_overly_generic_subject(subject_text):
+                    skipped_generic += 1
+                    continue
+                if strict_seeded and not _subject_matches_seeded_pool(
+                    cur,
+                    str(context_domain_key),
+                    subject_text,
+                    context_id=context_id,
+                ):
+                    skipped_unseeded += 1
+                    continue
+                adj_conf = max(0.0, min(1.0, float(confidence) * cred_mult))
+                if execute_with_savepoint(
+                    cur,
+                    conn,
+                    f"{savepoint_prefix}_{context_id}_{idx}",
+                    """
+                        INSERT INTO intelligence.extracted_claims
+                        (context_id, subject_text, predicate_text, object_text, confidence)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (context_id, subject_text, predicate_text, object_text, adj_conf),
+                ):
+                    inserted += 1
+        conn.commit()
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.warning("Claim extraction insert failed for context %s: %s", context_id, e)
+        return 0, 0, 0
+    finally:
+        conn.close()
+
+    if skipped_generic > 0 or skipped_unseeded > 0:
+        logger.info(
+            "claim_extraction_filters context_id=%s domain=%s skipped_generic=%s skipped_unseeded=%s strict_seeded=%s",
+            context_id,
+            context_domain_key,
+            skipped_generic,
+            skipped_unseeded,
+            strict_seeded,
+        )
+    try:
+        from api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_context_phase_pass
+
+        if phase_backlog_uses_pass_marker("claim_extraction"):
+            from api.shared.pipeline_pass_marker import infer_claim_extraction_terminal
+
+            terminal, outcome = infer_claim_extraction_terminal(
+                inserted=inserted,
+                outcome_hint="no_claims_after_filters",
+            )
+            record_context_phase_pass(
+                context_id,
+                "claim_extraction",
+                outcome,
+                terminal_state=terminal,
+            )
+    except Exception:
+        pass
+    return inserted, skipped_generic, skipped_unseeded
+
+
+def _build_multi_context_claim_prompt(context_blocks: list[tuple[int, str]]) -> str:
+    """``context_blocks``: (context_id, text snippet)."""
+    id_list = ", ".join(f'"{cid}"' for cid, _ in context_blocks)
+    sections = []
+    for cid, text in context_blocks:
+        sections.append(f"=== CONTEXT {cid} ===\n{text[:4500]}")
+    bodies = "\n\n".join(sections)
+    return f"""Extract factual claims from each context block below as subject-predicate-object triples.
+
+Return ONLY one JSON object (no markdown). Top-level keys MUST be exactly: {id_list}.
+Each key maps to a JSON array of claims for that context id.
+
+{bodies}
+
+Claim object shape per item:
+{{"subject": "entity or concept", "predicate": "what they did or state", "object": "target or value", "confidence": 0.9}}
+
+Rules: subject and predicate required; object optional. confidence 0.0-1.0. Keep phrases short and factual.
+For subject, prefer a short proper noun that could match a Wikipedia-style entity name when the text supports it.
+Keep each subject under ~80 characters when possible.
+Use an empty array [] when a context has no extractable claims."""
+
+
 def insert_parsed_claims_for_context(
     context_id: int,
     claims_raw: list[dict],
@@ -997,20 +1223,7 @@ async def extract_claims_for_context(context_id: int) -> int:
     text = f"{title or ''}\n\n{content or ''}"[:6000].strip()
     min_tl = claim_extraction_min_text_len()
     if len(text) < min_tl:
-        try:
-            from api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_context_phase_pass
-
-            if phase_backlog_uses_pass_marker("claim_extraction"):
-                from api.shared.pipeline_pass_marker import TERMINAL_PROCESSED_EMPTY_LEGITIMATE
-
-                record_context_phase_pass(
-                    context_id,
-                    "claim_extraction",
-                    "skipped_short_text",
-                    terminal_state=TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
-                )
-        except Exception:
-            pass
+        _mark_context_claim_short_text(context_id)
         return 0
 
     prompt = f"""Extract factual claims from this text as subject-predicate-object triples. One claim per line of reasoning.
@@ -1118,90 +1331,129 @@ Keep each subject under ~80 characters when possible."""
             pass
         return 0
 
-    conn = get_db_connection()
-    if not conn:
-        return 0
-    inserted = 0
-    skipped_generic = 0
-    skipped_unseeded = 0
-    strict_domains = _claim_extraction_strict_seeded_domain_keys()
-    strict_seeded = bool(context_domain_key and context_domain_key in strict_domains)
-    from api.shared.pg_savepoint import execute_with_savepoint
-
-    try:
-        with conn.cursor() as cur:
-            for idx, (subject_text, predicate_text, object_text, confidence) in enumerate(claims):
-                if _is_overly_generic_subject(subject_text):
-                    skipped_generic += 1
-                    continue
-                if strict_seeded and not _subject_matches_seeded_pool(
-                    cur,
-                    str(context_domain_key),
-                    subject_text,
-                    context_id=context_id,
-                ):
-                    skipped_unseeded += 1
-                    continue
-                adj_conf = max(0.0, min(1.0, float(confidence) * cred_mult))
-                if execute_with_savepoint(
-                    cur,
-                    conn,
-                    f"claim_llm_{context_id}_{idx}",
-                    """
-                        INSERT INTO intelligence.extracted_claims
-                        (context_id, subject_text, predicate_text, object_text, confidence)
-                        VALUES (%s, %s, %s, %s, %s)
-                    """,
-                    (context_id, subject_text, predicate_text, object_text, adj_conf),
-                ):
-                    inserted += 1
-                else:
-                    logger.debug(
-                        "Claim insert skip context_id=%s subject=%r",
-                        context_id,
-                        subject_text[:80],
-                    )
-        conn.commit()
-    except Exception as e:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-        logger.warning("Claim extraction insert failed for context %s: %s", context_id, e)
-        return 0
-    finally:
-        conn.close()
-
+    inserted, _, _ = _insert_claims_tuples_for_context(
+        context_id,
+        claims,
+        context_domain_key=context_domain_key,
+        cred_mult=cred_mult,
+    )
     if inserted > 0:
-        logger.debug(f"Claims extracted for context {context_id}: {inserted}")
-    if skipped_generic > 0 or skipped_unseeded > 0:
-        logger.info(
-            "claim_extraction_filters context_id=%s domain=%s skipped_generic=%s skipped_unseeded=%s strict_seeded=%s",
-            context_id,
-            context_domain_key,
-            skipped_generic,
-            skipped_unseeded,
-            strict_seeded,
-        )
-    try:
-        from api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_context_phase_pass
-
-        if phase_backlog_uses_pass_marker("claim_extraction"):
-            from api.shared.pipeline_pass_marker import infer_claim_extraction_terminal
-
-            terminal, outcome = infer_claim_extraction_terminal(
-                inserted=inserted,
-                outcome_hint="no_claims_after_filters",
-            )
-            record_context_phase_pass(
-                context_id,
-                "claim_extraction",
-                outcome,
-                terminal_state=terminal,
-            )
-    except Exception:
-        pass
+        logger.debug("Claims extracted for context %s: %s", context_id, inserted)
     return inserted
+
+
+async def extract_claims_llm_batch(context_ids: list[int]) -> dict[int, int]:
+    """
+    Multi-context claim extraction: one LLM call for up to ``CLAIM_EXTRACTION_LLM_BATCH_SIZE`` ids.
+    Falls back to singleton extraction on parse failure (split batch when len > 1).
+  Returns context_id -> claims inserted.
+    """
+    ids = [int(x) for x in context_ids if x]
+    if not ids:
+        return {}
+    if len(ids) == 1:
+        return {ids[0]: await extract_claims_for_context(ids[0])}
+
+    rows = _fetch_context_rows_for_claim_batch(ids)
+    min_tl = claim_extraction_min_text_len()
+    eligible: list[tuple[int, str, str | None, float]] = []
+    inserted_map: dict[int, int] = {}
+
+    for cid in ids:
+        row = rows.get(cid)
+        if not row:
+            inserted_map[cid] = 0
+            continue
+        title, content, metadata, context_domain_key = row
+        text = f"{title or ''}\n\n{content or ''}"[:6000].strip()
+        if len(text) < min_tl:
+            _mark_context_claim_short_text(cid)
+            inserted_map[cid] = 0
+            continue
+        cred_mult = _context_credibility_multiplier(metadata)
+        eligible.append((cid, text, context_domain_key, cred_mult))
+
+    if not eligible:
+        return inserted_map
+
+    context_blocks = [(cid, txt) for cid, txt, _, _ in eligible]
+    prompt = _build_multi_context_claim_prompt(context_blocks)
+    expected = [cid for cid, _, _, _ in eligible]
+    raw = ""
+    model_name = ""
+    try:
+        caller = get_ollama_model_caller()
+        gen = await caller.generate(
+            prompt,
+            kind=InvocationKind.STRUCTURED_EXTRACTION,
+            approx_prompt_chars=len(prompt),
+            batch_size=len(eligible),
+        )
+        raw = (gen.text or "") if gen is not None else ""
+        model_name = getattr(gen, "model", "") or ""
+    except Exception as e:
+        logger.warning("claim_extraction batch LLM failed (%s contexts): %s", len(eligible), e)
+        try:
+            from api.shared.services.llm_service import is_ollama_pressure_error
+        except ImportError:
+            is_ollama_pressure_error = lambda exc: False  # type: ignore[misc,assignment]
+        if is_ollama_pressure_error(e):
+            return dict.fromkeys(ids, 0)
+        mid = len(eligible) // 2
+        left = await extract_claims_llm_batch([x[0] for x in eligible[:mid]])
+        right = await extract_claims_llm_batch([x[0] for x in eligible[mid:]])
+        return {**inserted_map, **left, **right}
+
+    parsed = _parse_batched_claims_response(raw, expected)
+    nonempty = sum(1 for cid in expected if parsed.get(cid))
+    if nonempty == 0 and len(eligible) > 1:
+        logger.warning(
+            "claim_extraction batch parse empty model=%s contexts=%s; split fallback",
+            model_name,
+            len(eligible),
+        )
+        mid = len(eligible) // 2
+        left = await extract_claims_llm_batch([x[0] for x in eligible[:mid]])
+        right = await extract_claims_llm_batch([x[0] for x in eligible[mid:]])
+        return {**inserted_map, **left, **right}
+    if nonempty == 0 and len(eligible) == 1:
+        return {eligible[0][0]: await extract_claims_for_context(eligible[0][0])}
+
+    for cid, _, domain_key, cred_mult in eligible:
+        tuples = parsed.get(cid) or []
+        if not tuples:
+            try:
+                from api.shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_context_phase_pass
+
+                if phase_backlog_uses_pass_marker("claim_extraction"):
+                    from api.shared.pipeline_pass_marker import TERMINAL_PROCESSED_EMPTY_LEGITIMATE
+
+                    record_context_phase_pass(
+                        cid,
+                        "claim_extraction",
+                        "parsed_empty",
+                        terminal_state=TERMINAL_PROCESSED_EMPTY_LEGITIMATE,
+                    )
+            except Exception:
+                pass
+            inserted_map[cid] = 0
+            continue
+        ins, _, _ = _insert_claims_tuples_for_context(
+            cid,
+            tuples,
+            context_domain_key=domain_key,
+            cred_mult=cred_mult,
+            savepoint_prefix="claim_batch",
+        )
+        inserted_map[cid] = ins
+
+    logger.info(
+        "claim_extraction_llm_batch contexts=%s claims=%s model=%s",
+        len(expected),
+        sum(inserted_map.get(cid, 0) for cid in expected),
+        model_name,
+    )
+    return inserted_map
 
 
 class ClaimExtractionBatchResult(NamedTuple):
@@ -1316,43 +1568,71 @@ async def run_claim_extraction_batch(limit: int | None = None) -> ClaimExtractio
     if not ids:
         return ClaimExtractionBatchResult(0, 0)
     parallel = get_claim_extraction_parallel()
+    llm_batch = get_claim_extraction_llm_batch_size()
     try:
         chunk_sz = int(env_str("CLAIM_EXTRACTION_INTERNAL_CHUNK", "0"))
     except ValueError:
         chunk_sz = 0
     if chunk_sz <= 0:
-        chunk_sz = max(parallel * 10, 96)
-    chunk_sz = max(chunk_sz, parallel)
+        if llm_batch > 1:
+            chunk_sz = max(parallel * llm_batch * 4, 96)
+        else:
+            chunk_sz = max(parallel * 10, 96)
+    chunk_sz = max(chunk_sz, parallel * max(1, llm_batch))
 
     total = 0
     for off in range(0, len(ids), chunk_sz):
         chunk = ids[off : off + chunk_sz]
         sem = asyncio.Semaphore(parallel)
 
-        async def _one(cid: int) -> int:
-            async with sem:
-                return await extract_claims_for_context(cid)
+        if llm_batch <= 1:
 
-        results = await asyncio.gather(*[_one(cid) for cid in chunk], return_exceptions=True)
-        for r in results:
-            if isinstance(r, int):
-                total += r
-            elif isinstance(r, Exception):
-                logger.debug("claim extraction batch item failed: %s", r)
+            async def _one_singleton(cid: int) -> int:
+                async with sem:
+                    return await extract_claims_for_context(cid)
+
+            results = await asyncio.gather(
+                *[_one_singleton(cid) for cid in chunk],
+                return_exceptions=True,
+            )
+            for r in results:
+                if isinstance(r, int):
+                    total += r
+                elif isinstance(r, Exception):
+                    logger.debug("claim extraction batch item failed: %s", r)
+        else:
+            llm_slices = [chunk[i : i + llm_batch] for i in range(0, len(chunk), llm_batch)]
+
+            async def _one_batch(slice_ids: list[int]) -> dict[int, int]:
+                async with sem:
+                    return await extract_claims_llm_batch(slice_ids)
+
+            batch_results = await asyncio.gather(
+                *[_one_batch(s) for s in llm_slices],
+                return_exceptions=True,
+            )
+            for br in batch_results:
+                if isinstance(br, dict):
+                    total += sum(int(v or 0) for v in br.values())
+                elif isinstance(br, Exception):
+                    logger.debug("claim extraction LLM batch failed: %s", br)
+
         if len(ids) > chunk_sz:
             logger.info(
-                "claim_extraction progress %s/%s contexts (chunk size %s)",
+                "claim_extraction progress %s/%s contexts (chunk size %s llm_batch=%s)",
                 min(off + len(chunk), len(ids)),
                 len(ids),
                 len(chunk),
+                llm_batch,
             )
         await asyncio.sleep(0)
 
     if total > 0:
         logger.info(
-            "Claim extraction batch: %s contexts processed, %s claims inserted",
+            "Claim extraction batch: %s contexts processed, %s claims inserted (llm_batch=%s)",
             len(ids),
             total,
+            llm_batch,
         )
     return ClaimExtractionBatchResult(total, len(ids))
 

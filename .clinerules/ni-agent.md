@@ -44,6 +44,7 @@ Graded on: **correctness** (evidence-backed), **continuity** (vault handoff), **
 | Plan → Act handoff | **`ni-plan-handoff`** (Plan end / Act read) |
 | Authorized Widow deploy | **`ni-ship-widow`** (Act) |
 | Monitor, Prometheus, Grafana, drift/repair | **`ni-operating-principles`** → `docs/NI_REPAIR_PLAN.md` |
+| Assembly, mixed bags, Current/Situations, same-topic | **`docs/NARRATIVE_ASSEMBLY_SOURCE_STAGES.md`** (§0) → `ASSEMBLY_MODEL.md` if needed |
 
 Memory: vault handoff `00_Inbox/handoffs/YYYY-MM-DD-<slug>.md` · repomix `repomix-output.xml` · runtime SoT `docs/RUNTIME_PIPELINE_TROUBLESHOOTING.md` §2.
 

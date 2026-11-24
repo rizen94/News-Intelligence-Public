@@ -789,6 +789,83 @@ def count_content_refinement_pending() -> int:
             pass
 
 
+def requeue_failed_refinement_jobs(
+    *,
+    job_type: str = JOB_NARRATIVE_FINISHER,
+    error_substring: str | None = None,
+    limit: int = 500,
+) -> int:
+    """Reset ``failed`` rows to ``pending`` (e.g. after fixing transient/code errors).
+
+    When ``error_substring`` is set, only rows whose ``error_message`` contains it (case-insensitive).
+    """
+    conn = get_db_connection()
+    if not conn:
+        return 0
+    lim = max(1, min(int(limit), 5000))
+    try:
+        with conn.cursor() as cur:
+            if error_substring:
+                cur.execute(
+                    """
+                    UPDATE intelligence.content_refinement_queue
+                    SET status = 'pending',
+                        started_at = NULL,
+                        completed_at = NULL,
+                        error_message = NULL
+                    WHERE id IN (
+                        SELECT id FROM intelligence.content_refinement_queue
+                        WHERE status = 'failed'
+                          AND job_type = %s
+                          AND error_message ILIKE %s
+                        ORDER BY created_at ASC
+                        LIMIT %s
+                    )
+                    """,
+                    (job_type, f"%{error_substring}%", lim),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE intelligence.content_refinement_queue
+                    SET status = 'pending',
+                        started_at = NULL,
+                        completed_at = NULL,
+                        error_message = NULL
+                    WHERE id IN (
+                        SELECT id FROM intelligence.content_refinement_queue
+                        WHERE status = 'failed'
+                          AND job_type = %s
+                        ORDER BY created_at ASC
+                        LIMIT %s
+                    )
+                    """,
+                    (job_type, lim),
+                )
+            n = int(cur.rowcount or 0)
+        conn.commit()
+        if n:
+            logger.info(
+                "requeue_failed_refinement_jobs: job_type=%s substring=%r requeued=%s",
+                job_type,
+                error_substring,
+                n,
+            )
+        return n
+    except Exception as e:
+        logger.warning("requeue_failed_refinement_jobs: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _content_refinement_queue_capacity_admission_control() -> dict[str, Any]:
     """
     Three-plane capacity admission control for content refinement queue.

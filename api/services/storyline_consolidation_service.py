@@ -693,6 +693,20 @@ class StorylineConsolidationService:
                     (new_desc[:500], primary.id),
                 )
 
+                try:
+                    from api.shared.storyline_id_lineage import record_storyline_lineage
+
+                    record_storyline_lineage(
+                        conn,
+                        domain_key=domain,
+                        old_storyline_id=int(secondary.id),
+                        canonical_storyline_id=int(primary.id),
+                        reason="merged",
+                        metadata={"source": "storyline_consolidation_service"},
+                    )
+                except Exception as le:
+                    logger.debug("storyline_id_lineage record skipped: %s", le)
+
                 conn.commit()
 
                 logger.info(
@@ -868,7 +882,7 @@ class StorylineConsolidationService:
         return groups
 
     def _fold_duplicate_mega_rows(
-        self, cur, schema: str, mega_title: str, canonical_id: int
+        self, cur, schema: str, mega_title: str, canonical_id: int, *, domain: str
     ) -> None:
         """Merge extra mega rows with the same title into canonical_id (reparent + article pool)."""
         cur.execute(
@@ -916,6 +930,19 @@ class StorylineConsolidationService:
                 """,
                 (canonical_id, dup_id),
             )
+            try:
+                from api.shared.storyline_id_lineage import record_storyline_lineage
+
+                record_storyline_lineage(
+                    cur.connection,
+                    domain_key=domain,
+                    old_storyline_id=int(dup_id),
+                    canonical_storyline_id=int(canonical_id),
+                    reason="merged",
+                    metadata={"source": "storyline_consolidation_fold_duplicate"},
+                )
+            except Exception as le:
+                logger.debug("storyline_id_lineage record skipped: %s", le)
 
     def _refresh_mega_counts_from_db(self, cur, schema: str, mega_id: int) -> None:
         """Set description and article totals from child rows and pooled articles."""
@@ -1001,7 +1028,9 @@ class StorylineConsolidationService:
                 created_new = mega_id is None
 
                 if mega_id is not None:
-                    self._fold_duplicate_mega_rows(cur, schema, mega_title, mega_id)
+                    self._fold_duplicate_mega_rows(
+                        cur, schema, mega_title, mega_id, domain=domain
+                    )
                 else:
                     total_articles = sum(c.article_count for c in children)
                     cur.execute(

@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from typing import Any
 
 from api.shared.database import get_db_connection_context
@@ -28,6 +29,9 @@ from api.shared.vault_note_contract import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Reader index hides hubs with zero resolvable members after this grace window.
+HUB_ORPHAN_GRACE_DAYS = float(os.environ.get("NI_HUB_ORPHAN_GRACE_DAYS", "7"))
 
 # Legacy Iran hub path kept for bootstrap continuity
 LEGACY_IRAN_WAR_PATH = "40_Reference/entities/iran_war.md"
@@ -80,15 +84,241 @@ def _dedupe_bullets(bullets: list[str], *, limit: int = 16) -> list[str]:
     return out
 
 
+def annotate_cluster_hubs_active_members(hubs: list[dict[str, Any]]) -> None:
+    """Add active_member_count / resolved_member_storyline_ids (mutates hubs)."""
+    if not hubs:
+        return
+    from api.shared.storyline_id_lineage import (
+        batch_resolve_active_storyline_ids_with_cursor,
+        ordered_active_hub_member_ids,
+    )
+
+    by_domain: dict[str, list[dict[str, Any]]] = {}
+    for h in hubs:
+        dk = str(h.get("domain_key") or "politics")
+        by_domain.setdefault(dk, []).append(h)
+
+    try:
+        with get_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                for dk, group in by_domain.items():
+                    schema = resolve_domain_schema(dk)
+                    raw_all: list[int] = []
+                    for h in group:
+                        raw_all.extend(
+                            int(x)
+                            for x in (h.get("member_storyline_ids") or [])
+                            if int(x) > 0
+                        )
+                    resolved_map = batch_resolve_active_storyline_ids_with_cursor(
+                        cur, dk, schema, raw_all
+                    )
+                    for h in group:
+                        raw = [
+                            int(x)
+                            for x in (h.get("member_storyline_ids") or [])
+                            if int(x) > 0
+                        ]
+                        active = ordered_active_hub_member_ids(raw, resolved_map)
+                        h["resolved_member_storyline_ids"] = active
+                        h["active_member_count"] = len(active)
+    except Exception as exc:
+        logger.debug("annotate_cluster_hubs_active_members: %s", exc)
+        for h in hubs:
+            h.setdefault(
+                "active_member_count",
+                len(h.get("member_storyline_ids") or []),
+            )
+
+
+def resolve_active_hub_member_ids(
+    domain_key: str, member_storyline_ids: list[int]
+) -> list[int]:
+    """Registry ids → unique active episode ids still in the domain schema."""
+    raw = [int(x) for x in member_storyline_ids if int(x) > 0]
+    if not raw:
+        return []
+    schema = resolve_domain_schema(domain_key)
+    from api.shared.storyline_id_lineage import (
+        batch_resolve_active_storyline_ids_with_cursor,
+        ordered_active_hub_member_ids,
+    )
+
+    try:
+        with get_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                resolved_map = batch_resolve_active_storyline_ids_with_cursor(
+                    cur, domain_key, schema, raw
+                )
+                return ordered_active_hub_member_ids(raw, resolved_map)
+    except Exception as exc:
+        logger.debug("resolve_active_hub_member_ids %s: %s", domain_key, exc)
+        return []
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
+
+
+def update_hub_orphan_lifecycle(*, hub_id: int, active_member_count: int) -> str:
+    """Mark orphaned_since / lifecycle from resolvable member count. Returns lifecycle."""
+    now = datetime.now(timezone.utc)
+    try:
+        with get_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COALESCE(lifecycle, 'living'),
+                           COALESCE(metadata, '{}'::jsonb)
+                    FROM intelligence.vault_notes
+                    WHERE id = %s
+                    """,
+                    (int(hub_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return "living"
+                lifecycle = str(row[0] or "living")
+                meta = row[1] if isinstance(row[1], dict) else {}
+                if isinstance(row[1], str):
+                    try:
+                        meta = json.loads(row[1])
+                    except Exception:
+                        meta = {}
+
+                if active_member_count > 0:
+                    meta.pop("orphaned_since", None)
+                    meta.pop("hub_orphaned", None)
+                else:
+                    since = _parse_iso_datetime(meta.get("orphaned_since"))
+                    if since is None:
+                        meta["orphaned_since"] = now.isoformat()
+                        meta["hub_orphaned"] = HUB_ORPHAN_GRACE_DAYS <= 0
+                    else:
+                        age = now - since
+                        meta["hub_orphaned"] = age >= timedelta(
+                            days=HUB_ORPHAN_GRACE_DAYS
+                        )
+
+                cur.execute(
+                    """
+                    UPDATE intelligence.vault_notes
+                    SET metadata = %s::jsonb,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (json.dumps(meta), int(hub_id)),
+                )
+            conn.commit()
+        return "orphaned" if meta.get("hub_orphaned") else "living"
+    except Exception as exc:
+        logger.debug("update_hub_orphan_lifecycle %s: %s", hub_id, exc)
+        return "living"
+
+
+def reconcile_all_hub_member_registries(
+    *,
+    domain_key: str | None = None,
+    limit: int = 500,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Drop ghost member ids from hub metadata (old corpus / merged episodes)."""
+    hubs = list_cluster_hubs(domain_key=domain_key, limit=limit, resolve_members=True)
+    stats: dict[str, Any] = {
+        "ok": True,
+        "dry_run": dry_run,
+        "scanned": len(hubs),
+        "patched": 0,
+        "stale_total": 0,
+        "hubs": [],
+    }
+    stats["orphaned"] = 0
+    for h in hubs:
+        raw = [int(x) for x in (h.get("member_storyline_ids") or []) if int(x) > 0]
+        active = list(h.get("resolved_member_storyline_ids") or [])
+        stale_n = max(0, len(raw) - len(active))
+        active_n = len(active)
+        if not dry_run:
+            lc = update_hub_orphan_lifecycle(
+                hub_id=int(h["id"]), active_member_count=active_n
+            )
+            if lc == "orphaned":
+                stats["orphaned"] += 1
+        if raw == active and active_n > 0:
+            continue
+        stats["stale_total"] += stale_n
+        row = {
+            "id": h.get("id"),
+            "cluster_key": h.get("cluster_key"),
+            "title": h.get("title"),
+            "registry_n": len(raw),
+            "active_n": active_n,
+            "stale_n": stale_n,
+        }
+        stats["hubs"].append(row)
+        if dry_run:
+            continue
+        if raw != active and patch_hub_member_registry(h, active):
+            stats["patched"] += 1
+    stats["hubs"] = stats["hubs"][:80]
+    return stats
+
+
+def patch_hub_member_registry(
+    hub: dict[str, Any], resolved_member_ids: list[int]
+) -> bool:
+    """Shrink vault hub metadata when registry ids no longer resolve."""
+    raw = [
+        int(x) for x in (hub.get("member_storyline_ids") or []) if int(x) > 0
+    ]
+    resolved = [int(x) for x in resolved_member_ids if int(x) > 0]
+    if raw == resolved:
+        return False
+    hub_id = int(hub.get("id") or 0)
+    if hub_id <= 0:
+        return False
+    try:
+        with get_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE intelligence.vault_notes
+                    SET metadata = jsonb_set(
+                        COALESCE(metadata, '{}'::jsonb),
+                        '{member_storyline_ids}',
+                        to_jsonb(%s::int[])
+                    ),
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (resolved, hub_id),
+                )
+            conn.commit()
+        return True
+    except Exception as exc:
+        logger.debug("patch_hub_member_registry %s: %s", hub_id, exc)
+        return False
+
+
 def list_cluster_hubs(
     *,
     domain_key: str | None = None,
     limit: int = 40,
+    resolve_members: bool = False,
+    include_orphaned: bool = False,
 ) -> list[dict[str, Any]]:
     """Active hub registry rows (cluster note_type or metadata.hub)."""
     sql = """
         SELECT id, domain_key, note_type, object_id, vault_path, title, tags,
-               metadata, note_updated_at, updated_at
+               metadata, note_updated_at, updated_at, lifecycle
         FROM intelligence.vault_notes
         WHERE (
             note_type = 'cluster'
@@ -96,6 +326,11 @@ def list_cluster_hubs(
         )
           AND note_status IN ('note_ready', 'living', 'seeded', 'note_pending')
     """
+    if not include_orphaned:
+        sql += (
+            " AND COALESCE(metadata->>'hub_orphaned', 'false')"
+            " NOT IN ('true', '1', 't')"
+        )
     params: list[Any] = []
     if domain_key:
         sql += " AND domain_key = %s"
@@ -137,6 +372,13 @@ def list_cluster_hubs(
                             or None,
                             "brief_fingerprint": (meta or {}).get("brief_fingerprint")
                             or None,
+                            "lifecycle": str(row[10] or "living"),
+                            "hub_orphaned": bool(
+                                str((meta or {}).get("hub_orphaned") or "")
+                                .lower()
+                                in ("true", "1", "t")
+                            ),
+                            "orphaned_since": (meta or {}).get("orphaned_since"),
                             "updated_at": (row[8] or row[9]).isoformat()
                             if (row[8] or row[9])
                             else None,
@@ -145,6 +387,8 @@ def list_cluster_hubs(
                     )
     except Exception as e:
         logger.warning("list_cluster_hubs: %s", e)
+    if resolve_members and out:
+        annotate_cluster_hubs_active_members(out)
     return out
 
 
@@ -156,7 +400,9 @@ def get_cluster_hub(
     slug: str | None = None,
 ) -> dict[str, Any] | None:
     key = (cluster_key or slug or "").strip()
-    hubs = list_cluster_hubs(domain_key=domain_key, limit=200)
+    hubs = list_cluster_hubs(
+        domain_key=domain_key, limit=200, include_orphaned=True, resolve_members=True
+    )
     if hub_id is not None:
         for h in hubs:
             if int(h["id"]) == int(hub_id):
@@ -287,6 +533,15 @@ def write_cluster_hub(
 
     with get_db_connection_context() as conn:
         with conn.cursor() as cur:
+            from api.shared.storyline_id_lineage import (
+                batch_resolve_active_storyline_ids_with_cursor,
+                ordered_active_hub_member_ids,
+            )
+
+            resolved_map = batch_resolve_active_storyline_ids_with_cursor(
+                cur, domain_key, schema, members
+            )
+            members = ordered_active_hub_member_ids(members, resolved_map)
             sl_rows = _hub_storyline_rows(cur, schema, members)
             bullets = _timeline_bullets(cur, schema, members)
             wikilinks = _entity_wikilinks(cur, schema, seeds)
@@ -443,10 +698,11 @@ def refresh_all_cluster_hubs(
     *,
     domain_key: str | None = None,
     force: bool = False,
-    limit: int = 50,
+    limit: int = 200,
 ) -> dict[str, Any]:
     if not vault_cluster_hubs_enabled():
         return {"ok": False, "skipped": True, "reason": "disabled"}
+    reconcile_all_hub_member_registries(domain_key=domain_key, limit=limit, dry_run=False)
     hubs = list_cluster_hubs(domain_key=domain_key, limit=limit)
     stats = {"ok": True, "refreshed": 0, "failed": 0, "hubs": []}
     for h in hubs:

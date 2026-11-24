@@ -98,7 +98,7 @@ def embed_and_store_chronological_events(
 
         sql = f"""
             UPDATE {table}
-            SET embedding = v.embedding
+            SET embedding = v.embedding::vector
             FROM unnest(%s::uuid[], %s::text[]) AS v(event_id_col, embedding)
             WHERE {table}.event_id = v.event_id_col::text
               AND {table}.embedding IS NULL

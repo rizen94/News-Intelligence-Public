@@ -590,6 +590,18 @@ class ProactiveDetectionService(DomainAwareService):
         """
         if not self._should_promote_to_storyline(emerging):
             return False
+        try:
+            from api.config.runtime import env_bool
+            from api.shared.narrative_source_stage_patch import (
+                assembly_operator_override,
+                narrative_source_stage_patch_enabled,
+            )
+
+            if narrative_source_stage_patch_enabled() and not assembly_operator_override():
+                if not env_bool("STORYLINE_ASSEMBLY_PROACTIVE_PROMOTE", False):
+                    return False
+        except Exception:
+            pass
 
         article_ids = [int(x) for x in (emerging.get("article_ids") or [])]
         min_linked = self.min_article_count

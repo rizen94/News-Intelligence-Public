@@ -25,7 +25,7 @@ def is_enabled() -> bool:
 
 
 def batch_limit() -> int:
-    return max(1, min(50, env_int("CHRONOLOGICAL_EVENTS_CATCHUP_BATCH", 5)))
+    return max(1, min(50, env_int("CHRONOLOGICAL_EVENTS_CATCHUP_BATCH", 12)))
 
 
 def get_lookback_days() -> int:
@@ -34,6 +34,40 @@ def get_lookback_days() -> int:
 
 def ce_write_watchdog_hours() -> int:
     return max(1, min(168, env_int("CE_WRITE_WATCHDOG_HOURS", 6)))
+
+
+def _sql_skip_completed_empty_event(alias: str = "a") -> str:
+    return f"""
+          AND COALESCE(
+                {alias}.metadata #>> '{{pipeline,event_extraction,last_terminal_state}}',
+                ''
+              ) NOT IN (
+                'completed_empty',
+                'processed_empty_legitimate',
+                'TERMINAL_PROCESSED_EMPTY_LEGITIMATE'
+              )
+          AND COALESCE(
+                {alias}.metadata #>> '{{pipeline,event_extraction,status}}',
+                ''
+              ) NOT IN ('completed_empty', 'processed_empty')
+    """
+
+
+def _sql_ce_catchup_eligible(alias: str, schema: str) -> str:
+    """UIE-stamped rows or enriched+entity rows missing chronological_events."""
+    return f"""
+          AND (
+                ({alias}.metadata #>> '{{pipeline,unified_intake_extraction,last_pass_at}}') IS NOT NULL
+             OR ({alias}.metadata #>> '{{pipeline,unified_intake,last_pass_at}}') IS NOT NULL
+             OR (
+                    COALESCE({alias}.enrichment_status, '') IN ('complete', 'enriched')
+                AND EXISTS (
+                    SELECT 1 FROM {schema}.article_entities ae
+                    WHERE ae.article_id = {alias}.id
+                )
+             )
+          )
+    """
 
 
 def count_uie_without_chrono(
@@ -123,26 +157,12 @@ def list_articles_needing_chrono(
         FROM {schema}.articles a
         WHERE a.content IS NOT NULL
           AND LENGTH(TRIM(a.content)) > 100
-          AND (
-                (a.metadata #>> '{{pipeline,unified_intake_extraction,last_pass_at}}') IS NOT NULL
-             OR (a.metadata #>> '{{pipeline,unified_intake,last_pass_at}}') IS NOT NULL
-          )
+          {_sql_ce_catchup_eligible("a", schema)}
           AND NOT EXISTS (
                 SELECT 1 FROM public.chronological_events ce
                 WHERE ce.source_article_id = a.id
           )
-          AND COALESCE(
-                a.metadata #>> '{{pipeline,event_extraction,last_terminal_state}}',
-                ''
-              ) NOT IN (
-                'completed_empty',
-                'processed_empty_legitimate',
-                'TERMINAL_PROCESSED_EMPTY_LEGITIMATE'
-              )
-          AND COALESCE(
-                a.metadata #>> '{{pipeline,event_extraction,status}}',
-                ''
-              ) NOT IN ('completed_empty', 'processed_empty')
+          {_sql_skip_completed_empty_event("a")}
           AND (
                 a.published_at IS NULL
              OR a.published_at >= NOW() - (%s || ' days')::interval
@@ -281,6 +301,20 @@ async def catchup_articles_batched(
         return []
 
     svc = EventExtractionService()
+    if not hasattr(svc, "extract_events_batch"):
+        results: list[dict[str, Any]] = []
+        for art in articles:
+            row = await catchup_article(
+                schema=schema,
+                domain_key=domain_key,
+                article=art,
+                dry_run=dry_run,
+            )
+            row["domain_key"] = domain_key
+            row["schema"] = schema
+            results.append(row)
+        return results
+
     payload = []
     for art in articles:
         pub = art.get("published_at") or datetime.now(timezone.utc)

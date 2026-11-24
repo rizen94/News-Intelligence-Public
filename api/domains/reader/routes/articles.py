@@ -82,6 +82,23 @@ async def get_pull_context(pull_id: int):
     return out
 
 
+@router.get("/articles/{article_id}/intelligence")
+async def reader_article_intelligence(
+    article_id: int,
+    domain: str = Query("politics"),
+):
+    """article_entities + linked intelligence.context for the public article reader."""
+    from domains.reader.services.intelligence_surface import build_article_intelligence_surface
+
+    try:
+        return build_article_intelligence_surface(domain, article_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("reader article intelligence failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/articles/{article_id}/pull-context")
 async def latest_pull_context(
     article_id: int,

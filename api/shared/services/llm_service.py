@@ -773,6 +773,9 @@ FORBIDDEN:
 If the article list is thin or off-topic for the title, say so briefly and summarize
 only what clearly belongs to the title — do not invent a global mega-narrative.
 
+Many sources may repeat the same facts in different words. Synthesize: state each distinct
+development once, attribute corroboration inline, do not paste each outlet's lede in sequence.
+
 Provide a professional journalistic report covering:
 1. Main narrative thread (must match the storyline title)
 2. Key developments for THIS story only
@@ -920,6 +923,7 @@ Storyline context:
         await cb.begin_probe_if_due()
 
         try:
+            from api.config.runtime import env_str
             from api.shared.services.ollama_model_policy import (
                 InvocationKind,
                 extraction_temperature_for_invocation,
@@ -951,7 +955,14 @@ Storyline context:
                 "options": opts,
             }
             if kind == InvocationKind.STRUCTURED_EXTRACTION:
-                payload["format"] = "json"
+                # Ollama ``format: json`` targets a single object; array prompts (CE, etc.) break on Qwen.
+                fmt_mode = env_str("OLLAMA_STRUCTURED_EXTRACTION_JSON_FORMAT", "auto").lower()
+                use_ollama_json = fmt_mode in ("1", "true", "yes")
+                if fmt_mode == "auto":
+                    pl = (prompt or "").lower()
+                    use_ollama_json = "json array" not in pl and "only a json array" not in pl
+                if use_ollama_json:
+                    payload["format"] = "json"
                 # Qwen3 defaults to thinking-mode; JSON then lands in ``thinking``.
                 payload["think"] = False
             elif kind in (
@@ -964,11 +975,13 @@ Storyline context:
 
         except ImportError as e:
             raise Exception(f"Failed to load model policy for {model}: {e}") from e
+        import random as _stdlib_random
+
         backoff_base = 1.0
         backoff_max = 30.0
         max_retries = getattr(self, 'max_retries', 2)
         backoff_multiplier = getattr(self, 'backoff_multiplier', 2.0)
-        jitter = random.uniform(0, 1)
+        jitter = _stdlib_random.uniform(0, 1)
 
         try:
             for attempt in range(max_retries):

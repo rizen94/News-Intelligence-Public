@@ -421,6 +421,18 @@ async def _maybe_nightly_kickoff_rss(
         logger.warning("Nightly pipeline: kickoff RSS failed: %s", e)
 
 
+def _nightly_sequential_stop_after_idle_batch(phase_name: str, run_result: dict[str, Any]) -> bool:
+    """Stop inner drain loops when entity_profile_build produced no durable updates."""
+    if phase_name != "entity_profile_build":
+        return False
+    if int(run_result.get("batch_updated") or 0) > 0:
+        return False
+    logger.debug(
+        "Nightly sequential entity_profile_build: batch yielded no updates — advancing"
+    )
+    return True
+
+
 async def _drain_sequential_phase(
     automation: Any,
     phase_name: str,
@@ -447,6 +459,8 @@ async def _drain_sequential_phase(
             r = await automation.run_nightly_sequential_phase(phase_name)
             if r.get("skipped"):
                 break
+            if _nightly_sequential_stop_after_idle_batch(phase_name, r):
+                break
             i += 1
             stats["sequential_phase_runs"] = stats.get("sequential_phase_runs", 0) + 1
             stats.setdefault("sequential_by_phase", {})
@@ -464,6 +478,8 @@ async def _drain_sequential_phase(
             break
         r = await automation.run_nightly_sequential_phase(phase_name)
         if r.get("skipped"):
+            break
+        if _nightly_sequential_stop_after_idle_batch(phase_name, r):
             break
         i += 1
         stats["sequential_phase_runs"] = stats.get("sequential_phase_runs", 0) + 1

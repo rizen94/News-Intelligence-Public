@@ -586,59 +586,14 @@ def _count_claim_extraction_backlog() -> int:
 
 
 def _count_entity_profile_build_backlog() -> int:
-    """Profiles selectable for build — aligned with ``get_entity_profile_ids_to_build``.
-
-    Counts only profiles that need_build + CEM exists (unconditional).  Profiles without
-    CEM are inventory, not actionable build work — they never enter the builder queue
-    regardless of gate state.
-    """
-    conn = _get_conn()
-    if not conn:
-        return 0
+    """Profiles selectable for build — same filters as ``get_entity_profile_ids_to_build``."""
     try:
-        from services.entity_profile_builder_service import (
-            sql_entity_profile_upstream_cleared_exists,
-        )
-        from api.shared.entity_profile_eligibility import sql_entity_profile_selectable_for_build
-        from api.shared.pipeline_domain_sql import pipeline_domain_any_sql
+        from services.entity_profile_builder_service import count_entity_profile_ids_to_build
 
-        selectable = sql_entity_profile_selectable_for_build("ep")
-        domain_sql, domain_keys = pipeline_domain_any_sql(
-            "ep.domain_key", phase="entity_profile_build"
-        )
-        if not domain_keys:
-            return 0
-
-        # Always apply upstream-cleared-exists filter.  The gate controls which
-        # profiles get selected next batch; the backlog count must only include
-        # profiles that actually have CEM data (otherwise they are inventory,
-        # not actionable build work).  Gate state does NOT change what counts.
-        try:
-            upstream_sql = f" AND ({sql_entity_profile_upstream_cleared_exists()}) "
-        except Exception:
-            upstream_sql = ""  # fall back gracefully if the func raises
-
-        with conn.cursor() as cur:
-            # Mention-gate EXISTS can exceed 8s on large cem; keep Monitor honest.
-            cur.execute("SET LOCAL statement_timeout = '20s'")
-            cur.execute(
-                f"""
-                SELECT COUNT(*) FROM intelligence.entity_profiles ep
-                WHERE {domain_sql}
-                  AND {selectable}
-                  {upstream_sql}
-                """,
-                (domain_keys,),
-            )
-            return int(cur.fetchone()[0] or 0)
+        return count_entity_profile_ids_to_build()
     except Exception as e:
         logger.debug("backlog entity_profile_build count: %s", e)
         return 0
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
 
 
 def _count_investigation_report_backlog() -> int:
@@ -1091,12 +1046,17 @@ def _count_storyline_discovery_pending() -> int:
 
 
 def _count_storyline_assembly_pending() -> int:
-    """Unlinked recent full-lane articles — assembly ties detection + discovery + automation."""
+    """Unlinked articles only for domains above per-domain assembly threshold."""
     try:
-        from services.storyline_assembly_service import count_unlinked_articles
-        from api.shared.domain_registry import get_pipeline_active_domain_keys
+        from services.storyline_assembly_service import (
+            count_unlinked_articles,
+            domains_needing_assembly,
+        )
 
-        return sum(count_unlinked_articles(dk) for dk in get_pipeline_active_domain_keys())
+        domains = domains_needing_assembly()
+        if not domains:
+            return 0
+        return sum(count_unlinked_articles(dk) for dk in domains)
     except Exception as e:
         logger.debug("backlog storyline_assembly count: %s", e)
         return 0

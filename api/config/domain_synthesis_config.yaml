@@ -57,7 +57,8 @@ defaults:
         - hhs.gov
         - nih.gov
     automation:
-      default_mode: auto_approve
+      # No silent bag absorb until episode identity lock is proven in prod (politics-model default).
+      default_mode: suggest_only
       assembly_after_enrichment: true
       unlinked_article_threshold: 5
       automation_batch_per_assembly: 20
@@ -251,7 +252,7 @@ domains:
     storyline_development:
       discovery:
         clustering_similarity_threshold: 0.63
-        min_cluster_size: 3
+        min_cluster_size: 2
         semantic_weight: 0.82
         entity_weight: 0.12
       proactive:
@@ -276,9 +277,11 @@ domains:
           - fda recall
         allow_promote_pair_on_outbreak: true
       automation:
-        # Until episode identity lock is fully proven in prod, do not silent-absorb.
+        # Default suggest_only; auto_approve when spine_compounding sees CE flowing (see spine_compounding.py).
         default_mode: suggest_only
-        unlinked_article_threshold: 5
+        assembly_after_enrichment: true
+        unlinked_article_threshold: 1
+        automation_batch_per_assembly: 35
 
   finance: &finance_v1
     story_kind: market_regulatory_arc
@@ -408,10 +411,10 @@ domains:
         parent_similarity_threshold: 0.52
         min_articles_for_mega: 12
       automation:
-        default_mode: auto_approve
+        default_mode: suggest_only
         assembly_after_enrichment: true
-        unlinked_article_threshold: 5
-        automation_batch_per_assembly: 20
+        unlinked_article_threshold: 1
+        automation_batch_per_assembly: 35
 
   legal:
     story_kind: matter_docket
@@ -502,7 +505,7 @@ domains:
         parent_similarity_threshold: 0.55
         min_articles_for_mega: 12
       automation:
-        default_mode: auto_approve
+        default_mode: suggest_only
         assembly_after_enrichment: true
         unlinked_article_threshold: 5
         automation_batch_per_assembly: 20
@@ -627,7 +630,7 @@ domains:
         parent_similarity_threshold: 0.48
         min_articles_for_mega: 8
       automation:
-        default_mode: auto_approve
+        default_mode: suggest_only
         unlinked_article_threshold: 5
         automation_batch_per_assembly: 40
         # Tight attach — evidence threads must not absorb generic medicine RSS
@@ -790,7 +793,7 @@ domains:
         parent_similarity_threshold: 0.48
         min_articles_for_mega: 8
       automation:
-        default_mode: auto_approve
+        default_mode: suggest_only
         unlinked_article_threshold: 5
         automation_batch_per_assembly: 40
         min_relevance_score: 0.52
@@ -878,7 +881,7 @@ domains:
         federation_max_domains: 3
         federation_score_cap: 0.88
       automation:
-        default_mode: auto_approve
+        default_mode: suggest_only
         assembly_after_enrichment: true
         unlinked_article_threshold: 5
         automation_batch_per_assembly: 20

@@ -387,7 +387,9 @@ def _apply_vault_hub_feed_hygiene(
     if not vault_cluster_hubs_enabled():
         return items
 
-    hubs = list_cluster_hubs(domain_key=domain_filter, limit=40)
+    hubs = list_cluster_hubs(
+        domain_key=domain_filter, limit=40, resolve_members=True
+    )
     if not hubs:
         return items
 
@@ -421,7 +423,14 @@ def _apply_vault_hub_feed_hygiene(
         dk = str(h.get("domain_key") or "politics")
         if domain_filter and dk != domain_filter:
             continue
-        members = set(int(x) for x in (h.get("member_storyline_ids") or []))
+        members = set(
+            int(x)
+            for x in (
+                h.get("resolved_member_storyline_ids")
+                or h.get("member_storyline_ids")
+                or []
+            )
+        )
         present = [
             it
             for it in items
@@ -469,7 +478,11 @@ def _apply_vault_hub_feed_hygiene(
     hub_units: list[dict[str, Any]] = []
     for _n, h, _present in hub_activity[:5]:
         ck = h.get("cluster_key") or str(h["id"])
-        member_n = len(h.get("member_storyline_ids") or [])
+        member_n = int(
+            h.get("active_member_count")
+            if h.get("active_member_count") is not None
+            else len(h.get("member_storyline_ids") or [])
+        )
         updated = None
         if h.get("updated_at"):
             try:
@@ -573,17 +586,23 @@ def _morning_expansion_units(*, lane_filter: str | None = None) -> list[dict[str
             )
             or "Morning expansion ready."
         )
+        from api.shared.storyline_id_lineage import reader_storyline_href, resolve_canonical_storyline_id
+
+        canonical = resolve_canonical_storyline_id(dk, sid)
+        href = reader_storyline_href(dk, sid)
+        if not href or canonical <= 0:
+            continue
         unit = _story_unit(
             section_label="Ongoing" if lane == "ongoing" else "New of note",
             headline=headline,
             dek=dek,
             domain=dk,
-            storyline_id=sid,
+            storyline_id=canonical,
             updated_at=updated_at,
             article_count=0,
             badges=[lane],
             surface_kind="storyline_expansion",
-            href=f"/storylines/{dk}/{sid}",
+            href=href,
         )
         unit["briefing_lane"] = lane
         unit["vault_path"] = ex.get("vault_path")
@@ -655,17 +674,23 @@ def _priority_current_event_units(*, limit: int = 40) -> list[dict[str, Any]]:
             )
             or "Living vault coverage for this arc."
         )
+        from api.shared.storyline_id_lineage import reader_storyline_href, resolve_canonical_storyline_id
+
+        canonical = resolve_canonical_storyline_id(dk, sid)
+        href = reader_storyline_href(dk, sid)
+        if not href or canonical <= 0:
+            continue
         unit = _story_unit(
             section_label="Ongoing",
             headline=headline,
             dek=dek,
             domain=dk,
-            storyline_id=sid,
+            storyline_id=canonical,
             updated_at=updated_at,
             article_count=0,
             badges=badges,
             surface_kind="storyline_expansion",
-            href=f"/storylines/{dk}/{sid}",
+            href=href,
         )
         unit["briefing_lane"] = "ongoing"
         unit["vault_path"] = arc.get("vault_path")

@@ -46,6 +46,9 @@ export default function HubPage() {
       ''
   );
   const siblings = pack?.sibling_hubs || [];
+  const activeMemberCount =
+    hub?.active_member_count ?? (pack?.members || []).length;
+  const staleRegistryCount = hub?.stale_registry_count ?? 0;
   const memberDekBullets = (pack?.members || [])
     .map(m => stripReaderMdMarkers(m.dek || '').trim())
     .filter(Boolean)
@@ -70,7 +73,7 @@ export default function HubPage() {
             {hub.title}
           </h1>
           <p className='v2-story-dek'>
-            {(hub.member_storyline_ids || []).length} member episodes
+            {activeMemberCount} member episode{activeMemberCount === 1 ? '' : 's'}
             {hub.domain_key ? ` · ${hub.domain_key}` : ''}
             {hub.brief_updated_at
               ? ` · brief ${(hub.brief_updated_at || '').slice(0, 10)}`
@@ -118,7 +121,11 @@ export default function HubPage() {
           <h2 className='v2-section-label'>Member episodes</h2>
           <div className='v2-rail-list'>
             {(pack?.members || []).length === 0 ? (
-              <p className='v2-empty'>No active members.</p>
+              <p className='v2-empty'>
+                {staleRegistryCount > 0
+                  ? 'No active members — indexed episodes no longer resolve in the database; cluster discovery will repopulate this situation.'
+                  : 'No active members.'}
+              </p>
             ) : (
               (pack?.members || []).map(m => (
                 <article

@@ -40,6 +40,7 @@ _PHASE_BOUNDS: dict[str, dict[str, Any]] = {
         "min": 64,
         "max": None,
         "step": 32,
+        # LLM prompt batching: CLAIM_EXTRACTION_LLM_BATCH_SIZE (contexts per call, default 4).
     },
     "topic_clustering": {
         "track": TRACK_GPU,

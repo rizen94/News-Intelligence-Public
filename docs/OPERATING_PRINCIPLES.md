@@ -12,6 +12,7 @@ How humans and agents (Cline Plan/Act, Cursor) ship **durable** fixes without te
 | Claim | Required evidence |
 |-------|-------------------|
 | **Reader / feed / RSS / briefs** | Golden trace: one `article_id` from RSS through the **first broken stage** → reader when in scope (`docs/GOLDEN_RSS_TO_READER.md`). |
+| **Assembly / ongoing arcs / hubs** | Stage table + constraints in `docs/NARRATIVE_ASSEMBLY_SOURCE_STAGES.md`; optional golden **event cluster** when S2→S4 in scope. |
 | **Pipeline / spine / automation** | Stage moves for that trace **or** phase runs + pending down for the named phase (SQL + `automation_run_history`). |
 | **Monitoring / Grafana only** | Metric or panel proves the **same SSOT** the Monitor uses — not a new COUNT on scrape. |
 | **Healthy API** | Necessary, not sufficient. `/health` green with silent spine + stale reader = **not done**. |
